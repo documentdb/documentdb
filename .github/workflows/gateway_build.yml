@@ -56,7 +56,7 @@ jobs:
           --build-arg BASE_ARCH=${{ matrix.base_arch }} \
           --build-arg BASE_VERSION=${{ env.BASE_VERSION }} \
           -t ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:$TAG \
-          -f emullator/docker/Dockerfile_gateway .
+          -f emulator/docker/Dockerfile_gateway .
         docker push ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:$TAG
 
   create-manifest:
