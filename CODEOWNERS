@@ -7,7 +7,7 @@
 *.csv @documentdb/documentdb-maintainers
 *.sql @documentdb/documentdb-maintainers
 Make* @documentdb/documentdb-maintainers
-/emulator/ @xgerman
+/docuemntdb-local/ @xgerman
 /internal/ @documentdb/documentdb-maintainers
 /pg_documentdb/ @documentdb/documentdb-maintainers
 /pg_documentdb_core/ @documentdb/documentdb-maintainers
