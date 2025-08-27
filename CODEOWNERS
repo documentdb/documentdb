@@ -2,7 +2,7 @@
 
 /.pipelines/ @safern @visridha @shuaitian-git @lichoil
 /.github/workflows/ @safern @visridha @shuaitian-git @lichoil
-/.github/workflows/gateway-*.yml @xgerman
+/.github/workflows/gateway_*.yml @xgerman
 
 *.csv @documentdb/documentdb-maintainers
 *.sql @documentdb/documentdb-maintainers
