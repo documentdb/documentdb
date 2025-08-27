@@ -14,7 +14,7 @@
 | Maruthi Devarenti | Amazon |
 | Patrick Mclain | AB InBev |
 | Hari Krishna | Rippling |
-| Hari Krishna Iyer | Yugabyte |
+| Hari Krishna Sunder | YugabyteDB |
 
 ## Current Maintainers
 
