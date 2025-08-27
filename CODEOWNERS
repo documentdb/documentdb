@@ -2,11 +2,12 @@
 
 /.pipelines/ @safern @visridha @shuaitian-git @lichoil
 /.github/workflows/ @safern @visridha @shuaitian-git @lichoil
-/.github/workflows/gateway-* @guanzhousongmicrosoft
+/.github/workflows/gateway-*.yml @xgerman
 
 *.csv @documentdb/documentdb-maintainers
 *.sql @documentdb/documentdb-maintainers
 Make* @documentdb/documentdb-maintainers
+/emulator/ @xgerman
 /internal/ @documentdb/documentdb-maintainers
 /pg_documentdb/ @documentdb/documentdb-maintainers
 /pg_documentdb_core/ @documentdb/documentdb-maintainers
