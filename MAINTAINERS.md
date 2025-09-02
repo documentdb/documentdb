@@ -12,7 +12,7 @@
 | Norman Townsend | Amazon |
 | Viktor Tarassov | Amazon |
 | Maruthi Devarenti | Amazon |
-| Patrick Mclain | AB InBev |
+| Patrick McLain | AB InBev |
 | Hari Krishna | Rippling |
 | Hari Krishna Sunder | YugabyteDB |
 
