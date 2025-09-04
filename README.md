@@ -138,7 +138,7 @@ for document in quickStartCollection.find():
 
 # Read a specific document
 singleDocumentReadResult = quickStartCollection.find_one({'name': 'John Doe'})
-    print(singleDocumentReadResult)
+print(singleDocumentReadResult)
 
 ```
 
