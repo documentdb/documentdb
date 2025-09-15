@@ -155,8 +155,3 @@ jobs:
           overwrite: true
           path: "**/*.log"
 
-  cache:
-    - name: Cache Rust dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        workspaces: pg_documentdb_gw
