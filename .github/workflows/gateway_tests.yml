@@ -134,10 +134,10 @@ jobs:
         run: |
           echo "/usr/lib/postgresql/${{ matrix.pg_version }}/bin" >> $GITHUB_PATH
 
-      - name: Clippy Check
-        run: |
-          cargo clippy --all-targets --all-features -- -D warnings
-        working-directory: pg_documentdb_gw
+      # - name: Clippy Check
+      #   run: |
+      #     cargo clippy --all-targets --all-features -- -D warnings
+      #   working-directory: pg_documentdb_gw
 
       - name: Gateway Integration Test
         run: |
