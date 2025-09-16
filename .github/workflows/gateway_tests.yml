@@ -125,7 +125,7 @@ jobs:
 
           cp ./scripts/install_setup_postgis.sh /tmp/install_setup/
           sudo INSTALL_DEPENDENCIES_ROOT=$INSTALL_DEPENDENCIES_ROOT PGVERSION=$PG_VERSION /tmp/install_setup/install_setup_postgis.sh
-     
+
       - name: Install Rust
         run: |
           curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path --default-toolchain ${{ matrix.rust_version }}
@@ -134,15 +134,23 @@ jobs:
         run: |
           echo "/usr/lib/postgresql/${{ matrix.pg_version }}/bin" >> $GITHUB_PATH
 
+      - name: Configure, Build and Install DocumentDB
+        run: |
+          which pg_config
+          make
+          sudo PATH=$PATH make install
+
       # - name: Clippy Check
       #   run: |
       #     cargo clippy --all-targets --all-features -- -D warnings
       #   working-directory: pg_documentdb_gw
 
-      - name: Gateway Integration Test
+      - name: Start DocumentDB service
         run: |
+          export PG_VERSION=${{ matrix.pg_version }}
           mkdir /tmp/pgdata
           ./scripts/start_oss_server.sh -d /tmp/pgdata
+          cat /tmp/pgdata/pglog.log
 
       - name: Run Gateway Tests
         run: |
