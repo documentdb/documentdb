@@ -141,7 +141,7 @@ jobs:
 
       - name: Gateway Integration Test
         run: |
-          ./scripts/rebuild_and_start_postgres_server.sh -c
+          ./scripts/start_oss_server.sh 
         
       - name: Run Gateway Tests
         run: |
