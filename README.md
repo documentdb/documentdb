@@ -12,86 +12,6 @@ The project comprises of three components, which work together to support docume
 - **pg_documentdb :** The public API surface for DocumentDB providing CRUD functionality on documents in the store.
 - **pg_documentdb_gw :** The gateway protocol translation layer that converts the user's MongoDB APIs into PostgreSQL queries.
 
-## Building and Running DocumentDB from Source
-
-If you want to build and run DocumentDB from source (instead of using Docker), follow these steps. This guide is designed for beginners and works best on Ubuntu/Debian. For other operating systems, package names may differ.
-
-### Prerequisites
-
-Install the required dependencies:
-
-```bash
-sudo apt update
-sudo apt install build-essential libbson-dev postgresql-server-dev-all pkg-config rustc cargo
-```
-
-### Step 1: Build PostgreSQL Extensions
-
-```bash
-cd /path/to/documentdb/pg_documentdb_core
-make
-sudo make install
-
-cd /path/to/documentdb/pg_documentdb
-make
-sudo make install
-```
-
-### Step 2: Build the Gateway
-
-```bash
-cd /path/to/documentdb/pg_documentdb_gw
-cargo build --release
-```
-
-### Step 3: Start PostgreSQL
-
-If PostgreSQL isn’t running, start it:
-
-```bash
-sudo service postgresql start
-```
-
-### Step 4: Enable Extensions
-
-Connect to PostgreSQL and run:
-
-```bash
-psql -U postgres -d postgres -c "CREATE EXTENSION pg_documentdb_core;"
-psql -U postgres -d postgres -c "CREATE EXTENSION pg_documentdb;"
-```
-
-### Step 5: Start the Gateway
-
-Use the provided script:
-
-```bash
-cd /path/to/documentdb/scripts
-./build_and_start_gateway.sh -u <username> -p <password>
-```
-Replace `<username>` and `<password>` with your desired credentials.
-
-### Step 6: Connect and Test
-
-Use a MongoDB client (like `mongosh`):
-
-```bash
-mongosh --host localhost --port 9712
-```
-
-Try basic MongoDB commands to verify everything works.
-
-### Troubleshooting
-
-- **libbson-static-1.0 not found:**  Install `libbson-dev` and check your `PKG_CONFIG_PATH`.
-- **pg_config not found:**  Install `postgresql-server-dev-all`.
-- **Other errors:**  Double-check all dependencies and your OS version.
-
-### Need Help?
-
-- Join our [Discord](https://discord.gg/vH7bYu524D)
-- See [docs](https://documentdb.io/docs) for more details
-
 ## Why DocumentDB ?
 
 At DocumentDB, we believe in the power of open-source to drive innovation and collaboration. Our commitment to being a fully open-source MongoDB compatible document database means that we are dedicated to transparency, community involvement, and continuous improvement. We are open-sourced under the most permissive [MIT](https://opensource.org/license/mit) license, where developers and organizations alike have no restrictions incorporating the project into new and existing solutions of their own. DocumentDB introduces the BSON data type to PostgreSQL and provides APIs for seamless operation within native PostgreSQL, enhancing efficiency and aligning with operational advantages.
@@ -109,6 +29,8 @@ We chose PostgreSQL as our platform for several reasons:
 5. **Compliance and Security**: PostgreSQL's robust security features and compliance with various standards makes it an ideal choice for organizations with stringent security and regulatory requirements.
 
 ## Get Started
+
+[Building From Source](/docs/v1/building.md)
 
 ### Prerequisites
 - Python 3.7+
