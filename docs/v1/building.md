@@ -27,7 +27,7 @@ sudo make install
 
 ```bash
 cd /path/to/documentdb/pg_documentdb_gw
-cargo build --release
+cargo build --release-with-symbols
 ```
 
 ### Step 3: Start PostgreSQL
