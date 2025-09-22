@@ -147,11 +147,19 @@ jobs:
 
       - name: Start DocumentDB service
         run: |
-          export PG_VERSION=${{ matrix.pg_version }}
+          export PG_VERSION_USED=${{ matrix.pg_version }}
           mkdir /tmp/pgdata
           ./scripts/start_oss_server.sh -d /tmp/pgdata
           cat /tmp/pgdata/pglog.log
 
+      - name: Setup user
+        run: |
+          export hostname=localhost
+          export port=9712
+          export owner=$(whoami)
+          export userName=cosmosdev
+          echo "Setting up user cosmosdev"
+          psql -h "$hostname" -p "$port" -U "$owner" -d postgres -t -c "SELECT documentdb_api.users_info('{\"usersInfo\":\"$userName\"}');"
       - name: Run Gateway Tests
         run: |
           cargo test -- --test-threads=1
