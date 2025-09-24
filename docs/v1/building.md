@@ -27,7 +27,7 @@ sudo make install
 
 ```bash
 cd /path/to/documentdb/pg_documentdb_gw
-cargo build --release-with-symbols
+cargo build --profile=release-with-symbols
 ```
 
 ### Step 3: Start PostgreSQL
@@ -62,7 +62,7 @@ Replace `<username>` and `<password>` with your desired credentials.
 Use a MongoDB client (like `mongosh`):
 
 ```bash
-mongosh --host localhost --port 9712
+mongosh --host localhost --port 10260
 ```
 
 Try basic MongoDB commands to verify everything works.
