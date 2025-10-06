@@ -578,5 +578,5 @@ pub async fn get_user_oid(connection_context: &ConnectionContext, username: &str
         .ok_or(DocumentDBError::pg_response_empty())?
         .try_get::<_, tokio_postgres::types::Oid>(0)?;
 
-    Ok(user_oid as u32)
+    Ok(user_oid)
 }

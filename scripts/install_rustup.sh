@@ -6,4 +6,4 @@ set -u
 set -e
 
 curl https://sh.rustup.rs -sSf | bash -s -- -y --no-modify-path --default-toolchain none
-rustup show
+. "$CARGO_HOME/env" && rustup show
