@@ -149,4 +149,9 @@ if [ -z "$configFile" ]; then
     ./target/release-with-symbols/documentdb_gateway
 else
     ./target/release-with-symbols/documentdb_gateway "$configFile"
-fi
+fi &
+
+gateway_pid=$!
+
+# Wait for the gateway process to keep the script alive
+wait $gateway_pid
