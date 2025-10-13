@@ -26,9 +26,21 @@ For role definitions and privileges, see [GOVERNANCE.md](./GOVERNANCE.md#8-roles
 - Vinod Sridharan (Microsoft)
 - Santiago Fernandez Madero (Microsoft)
 
+
 ## documentdb-coordinators
-- German Eichberger  (Microsoft)
-- JC Aguilera  (Microsoft)
+- German Eichberger (Microsoft)
+- JC Aguilera (Microsoft)
+- Abinav Rameesh (Microsoft)
+- Vinod Sridharan (Microsoft)
+- Siddhesh Vethe (Microsoft)
+- Zhe Li (Microsoft)
+- Rashim Gupta (Amazon)
+- Norman Townsend (Amazon)
+- Viktor Tarassov (Amazon)
+- Maruthi Devarenti (Amazon)
+- Patrick McLain (AB InBev)
+- Hari Krishna (Rippling)
+- Hari Krishna Sunder (YugabyteDB)
 
 ## Project Chair
 - Abinav Rameesh (Microsoft)
