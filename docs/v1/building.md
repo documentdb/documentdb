@@ -4,14 +4,14 @@ If you want to build and run DocumentDB from source (instead of using Docker), f
 
 ### Prerequisites
 
-Install the required dependencies:
+*Recommended* use the provided devcontainer for VSCode which contains all the dependencies pre-installed.
+
+Or install the required dependencies:
 
 ```bash
 sudo apt update
 sudo apt install build-essential libbson-dev postgresql-server-dev-all pkg-config rustc cargo
 ```
-
-Or you can also use the provided devcontainer configurations for VSCode.
 
 ### Step 1: Build PostgreSQL Extensions
 
@@ -46,12 +46,6 @@ Try basic MongoDB commands to verify everything works.
 ```bash
 psql -p 9712 -d postgres
 ```
-
-### Troubleshooting
-
-- **libbson-static-1.0 not found:**  Install `libbson-dev` and check your `PKG_CONFIG_PATH`.
-- **pg_config not found:**  Install `postgresql-server-dev-all`.
-- **Other errors:**  Double-check all dependencies and your OS version.
 
 ### Need Help?
 
