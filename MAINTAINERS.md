@@ -1,5 +1,3 @@
-
-
 # Maintainers and Project Roles
 
 For role definitions and privileges, see [GOVERNANCE.md](./GOVERNANCE.md#8-roles-and-privileges).
@@ -20,16 +18,15 @@ For role definitions and privileges, see [GOVERNANCE.md](./GOVERNANCE.md#8-roles
 ## documentdb-admins
 - Abinav Rameesh (Microsoft)
 - Zhe Li (Microsoft)
-- Shuai Tian(Microsoft)
+- Shuai Tian (Microsoft)
 
 ## documentdb-maintainers
 - Vinod Sridharan (Microsoft)
 - Santiago Fernandez Madero (Microsoft)
 
-
 ## documentdb-coordinators
 - German Eichberger (Microsoft)
-- JC Aguilera (Microsoft)
+- Juan Carlos Aguilera Mendez (Microsoft)
 - Abinav Rameesh (Microsoft)
 - Vinod Sridharan (Microsoft)
 - Siddhesh Vethe (Microsoft)
