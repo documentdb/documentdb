@@ -27,6 +27,7 @@ For role definitions and privileges, see [GOVERNANCE.md](./GOVERNANCE.md#8-roles
 ## documentdb-coordinators
 - German Eichberger (Microsoft)
 - Juan Carlos Aguilera Mendez (Microsoft)
+- Andrew Khoma (Microsoft)
 - Abinav Rameesh (Microsoft)
 - Vinod Sridharan (Microsoft)
 - Siddhesh Vethe (Microsoft)
