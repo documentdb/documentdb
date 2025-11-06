@@ -18,8 +18,6 @@ For role definitions and privileges, see [GOVERNANCE.md](./GOVERNANCE.md#8-roles
 | Hari Krishna | Rippling |
 | Hari Krishna Sunder | YugabyteDB |
 
-
-
 ## Current Maintainers
 
 | Member | Organization |
@@ -37,7 +35,7 @@ For role definitions and privileges, see [GOVERNANCE.md](./GOVERNANCE.md#8-roles
 | Pankaj Khattar | Microsoft |
 | Yogesh Kumar | Microsoft |
 
-_Note: TSC members also serve coordination roles for escalation and planning; only non‑TSC coordinators are listed._
+Note: TSC members also serve coordination roles for escalation and planning; only non‑TSC coordinators are listed.
 
 ## Current Project Chair
 
