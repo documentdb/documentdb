@@ -30,17 +30,8 @@ For role definitions and privileges, see [GOVERNANCE.md](./GOVERNANCE.md#8-roles
 - Andrew Khoma (Microsoft)
 - Pankaj Khattar (Microsoft)
 - Yogesh Kumar (Microsoft)
-- Abinav Rameesh (Microsoft)
-- Vinod Sridharan (Microsoft)
-- Siddhesh Vethe (Microsoft)
-- Zhe Li (Microsoft)
-- Rashim Gupta (Amazon)
-- Norman Townsend (Amazon)
-- Viktor Tarassov (Amazon)
-- Maruthi Devarenti (Amazon)
-- Patrick McLain (AB InBev)
-- Hari Krishna (Rippling)
-- Hari Krishna Sunder (YugabyteDB)
+
+TSC members also serve coordination roles for escalation and planning; only non‑TSC coordinators are listed.
 
 ## Project Chair
 - Abinav Rameesh (Microsoft)
