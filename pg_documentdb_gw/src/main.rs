@@ -74,6 +74,8 @@ async fn start_gateway(setup_configuration: DocumentDBSetupConfiguration) {
     .await
     .expect("Failed to create TLS provider.");
 
+    tracing::info!("TLS provider initialized successfully.");
+
     let query_catalog = create_query_catalog();
 
     let system_requests_pool = Arc::new(

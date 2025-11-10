@@ -30,7 +30,7 @@ use socket2::TcpKeepalive;
 use std::net::IpAddr;
 use std::{pin::Pin, sync::Arc, time::Duration};
 use tokio::{
-    io::BufStream,
+    io::{AsyncRead, AsyncWrite, BufStream},
     net::{TcpListener, TcpStream},
 };
 use tokio_openssl::SslStream;
@@ -58,7 +58,8 @@ const TCP_KEEPALIVE_INTERVAL_SECS: u64 = 60;
 const STREAM_READ_BUFFER_SIZE: usize = 8 * 1024;
 const STREAM_WRITE_BUFFER_SIZE: usize = 8 * 1024;
 
-type GwStream = BufStream<SslStream<TcpStream>>;
+// TLS detection timeout
+const TLS_PEEK_TIMEOUT_SECS: u64 = 5;
 
 /// Runs the DocumentDB gateway server, accepting and handling incoming connections.
 ///
@@ -129,11 +130,88 @@ where
     }
 }
 
-/// Handles a single TCP connection by setting up TLS and processing the connection.
+/// Detects whether a TLS handshake is being initiated by peeking at the stream.
+///
+/// This function examines the first three bytes of the TCP stream to determine if
+/// the client is initiating a TLS connection. It checks for the standard TLS pattern:
+/// - Byte 0: 0x16 (Handshake record type)
+/// - Byte 1: 0x03 (SSL/TLS major version)
+/// - Byte 2: 0x01-0x04 (TLS minor version for TLS 1.0 through 1.3)
+///
+/// The client has a limited timeframe to send the first three bytes of the stream.
+///
+/// # Arguments
+///
+/// * `tcp_stream` - The TCP stream to examine
+/// * `connection_id` - Connection identifier for logging purposes
+///
+/// # Returns
+///
+/// Returns `Ok(true)` if first bytes imply TLS, `Ok(false)` otherwise.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// * The peek operation fails
+/// * The peek operation times out
+async fn detect_tls_handshake(tcp_stream: &TcpStream, connection_id: Uuid) -> Result<bool> {
+    let mut peek_buf = [0u8; 3];
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(TLS_PEEK_TIMEOUT_SECS);
+
+    // Loop to cover the rare cases where peek might not immediately return the full header.
+    loop {
+        let time_remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+
+        match tokio::time::timeout(time_remaining, tcp_stream.peek(&mut peek_buf)).await {
+            Ok(Ok(0)) => {
+                return Err(DocumentDBError::internal_error(
+                    "Connection closed".to_string(),
+                ));
+            }
+            Ok(Ok(n)) => {
+                // Return false immediately if any of the seen bytes do not match
+                if peek_buf[0] != 0x16
+                    || (n >= 2 && peek_buf[1] != 0x03)
+                    || (n >= 3 && (peek_buf[2] < 0x01 || peek_buf[2] > 0x04))
+                {
+                    return Ok(false);
+                }
+
+                if n >= 3 {
+                    return Ok(true);
+                }
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    activity_id = connection_id.to_string().as_str(),
+                    "Error during TLS detection: {e:?}"
+                );
+                return Err(DocumentDBError::internal_error(format!(
+                    "Error reading from stream {e:?}"
+                )));
+            }
+            Err(_) => {
+                tracing::warn!(
+                    activity_id = connection_id.to_string().as_str(),
+                    "TLS detection peek operation timed out after {} seconds.",
+                    TLS_PEEK_TIMEOUT_SECS
+                );
+                return Err(DocumentDBError::internal_error(
+                    "Timeout reading from stream".to_string(),
+                ));
+            }
+        }
+
+        // Successive peeks to a non-empty buffer will return immediately, so we wait before retry.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Handles a single TCP connection, detecting and setting up TLS if needed
 ///
 /// This function configures the TCP stream with appropriate settings (no delay, keepalive),
-/// establishes a TLS session using the service's SSL configuration, and then delegates
-/// to the stream handler for processing MongoDB protocol messages.
+/// detects whether the client is attempting a TLS handshake by peeking at the first bytes,
+/// and then either establishes a TLS session or proceeds with a plain TCP connection.
 ///
 /// # Arguments
 ///
@@ -150,6 +228,7 @@ where
 ///
 /// This function will return an error if:
 /// * TCP stream configuration fails (nodelay, keepalive)
+/// * TLS detection fails (peek errors)
 /// * SSL/TLS handshake fails
 /// * Connection context creation fails
 /// * Stream buffering setup fails
@@ -177,18 +256,12 @@ where
 
     socket2::SockRef::from(&tcp_stream).set_tcp_keepalive(&tcp_keepalive)?;
 
-    // SSL configuration part
-    let tls_acceptor = service_context.tls_provider().tls_acceptor();
-
-    let ssl_session = Ssl::new(tls_acceptor.context())?;
-    let mut tls_stream = SslStream::new(ssl_session, tcp_stream)?;
-
-    if let Err(ssl_error) = SslStream::accept(Pin::new(&mut tls_stream)).await {
-        tracing::error!("Failed to create TLS connection: {ssl_error:?}.");
-        return Err(DocumentDBError::internal_error(format!(
-            "SSL handshake failed: {ssl_error:?}."
-        )));
-    }
+    // Detect TLS handshake by peeking at the first bytes
+    let is_tls = if service_context.setup_configuration().enforce_tls() {
+        true
+    } else {
+        detect_tls_handshake(&tcp_stream, connection_id).await?
+    };
 
     let ip_address = match peer_address.ip() {
         IpAddr::V4(v4) => IpAddr::V4(v4),
@@ -202,33 +275,72 @@ where
         }
     };
 
-    tracing::info!(
-        activity_id = connection_id.to_string().as_str(),
-        "TCP connection established - Connection Id {connection_id}, client IP {ip_address}"
-    );
+    if is_tls {
+        // TLS path
+        let tls_acceptor = service_context.tls_provider().tls_acceptor();
+        let ssl_session = Ssl::new(tls_acceptor.context())?;
+        let mut tls_stream = SslStream::new(ssl_session, tcp_stream)?;
 
-    let connection_context = ConnectionContext::new(
-        service_context,
-        telemetry,
-        ip_address.to_string(),
-        Some(tls_stream.ssl()),
-        connection_id,
-        "TCP".to_string(),
-    );
+        if let Err(ssl_error) = SslStream::accept(Pin::new(&mut tls_stream)).await {
+            tracing::error!("Failed to create TLS connection: {ssl_error:?}.");
+            return Err(DocumentDBError::internal_error(format!(
+                "SSL handshake failed: {ssl_error:?}."
+            )));
+        }
 
-    let buffered_stream = BufStream::with_capacity(
-        STREAM_READ_BUFFER_SIZE,
-        STREAM_WRITE_BUFFER_SIZE,
-        tls_stream,
-    );
+        let conn_ctx = ConnectionContext::new(
+            service_context,
+            telemetry,
+            ip_address.to_string(),
+            Some(tls_stream.ssl()),
+            connection_id,
+            "TCP".to_string(),
+        );
 
-    handle_stream::<T>(buffered_stream, connection_context).await;
+        let buffered_stream = BufStream::with_capacity(
+            STREAM_READ_BUFFER_SIZE,
+            STREAM_WRITE_BUFFER_SIZE,
+            tls_stream,
+        );
+
+        tracing::info!(
+            activity_id = connection_id.to_string().as_str(),
+            "TLS TCP connection established - Connection Id {connection_id}, client IP {ip_address}"
+        );
+
+        handle_stream::<T, _>(buffered_stream, conn_ctx).await;
+    } else {
+        // Non-TLS path
+        let conn_ctx = ConnectionContext::new(
+            service_context,
+            telemetry,
+            ip_address.to_string(),
+            None,
+            connection_id,
+            "TCP".to_string(),
+        );
+
+        let buffered_stream = BufStream::with_capacity(
+            STREAM_READ_BUFFER_SIZE,
+            STREAM_WRITE_BUFFER_SIZE,
+            tcp_stream,
+        );
+
+        tracing::info!(
+            activity_id = connection_id.to_string().as_str(),
+            "Non-TLS TCP connection established - Connection Id {connection_id}, client IP {ip_address}"
+        );
+
+        handle_stream::<T, _>(buffered_stream, conn_ctx).await;
+    }
+
     Ok(())
 }
 
-async fn handle_stream<T>(mut stream: GwStream, mut connection_context: ConnectionContext)
+async fn handle_stream<T, S>(mut stream: S, mut connection_context: ConnectionContext)
 where
     T: PgDataClient,
+    S: AsyncRead + AsyncWrite + Unpin,
 {
     let connection_activity_id = connection_context.connection_id.to_string();
     let connection_activity_id_as_str = connection_activity_id.as_str();
@@ -239,7 +351,7 @@ where
                 let request_activity_id =
                     connection_context.generate_request_activity_id(header.request_id);
 
-                if let Err(e) = handle_message::<T>(
+                if let Err(e) = handle_message::<T, S>(
                     &mut connection_context,
                     &header,
                     &mut stream,
@@ -247,7 +359,7 @@ where
                 )
                 .await
                 {
-                    if let Err(e) = log_and_write_error(
+                    if let Err(e) = log_and_write_error::<S>(
                         &connection_context,
                         &header,
                         &e,
@@ -332,14 +444,15 @@ where
     Ok(response)
 }
 
-async fn handle_message<T>(
+async fn handle_message<T, S>(
     connection_context: &mut ConnectionContext,
     header: &Header,
-    stream: &mut GwStream,
+    stream: &mut S,
     activity_id: &str,
 ) -> Result<()>
 where
     T: PgDataClient,
+    S: AsyncRead + AsyncWrite + Unpin,
 {
     // Read the request message off the stream
     let mut request_tracker = RequestTracker::new();
@@ -376,7 +489,8 @@ where
     };
 
     let mut collection = String::new();
-    let request_result = handle_request::<T>(
+
+    let request_result = handle_request::<T, S>(
         connection_context,
         header,
         &mut request_context,
@@ -389,7 +503,7 @@ where
     // Errors in request handling are handled explicitly so that telemetry can have access to the request
     // Returns Ok afterwards so that higher level error telemetry is not invoked.
     let command_error = if let Err(e) = request_result {
-        match log_and_write_error(
+        match log_and_write_error::<S>(
             connection_context,
             header,
             &e,
@@ -425,16 +539,17 @@ where
     Ok(())
 }
 
-async fn handle_request<T>(
+async fn handle_request<T, S>(
     connection_context: &mut ConnectionContext,
     header: &Header,
     request_context: &mut RequestContext<'_>,
-    stream: &mut GwStream,
+    stream: &mut S,
     collection: &mut String,
     handle_request_start: tokio::time::Instant,
 ) -> Result<()>
 where
     T: PgDataClient,
+    S: AsyncRead + AsyncWrite + Unpin,
 {
     *collection = request_context.info.collection().unwrap_or("").to_string();
 
@@ -483,16 +598,19 @@ where
 }
 
 #[expect(clippy::too_many_arguments)]
-async fn log_and_write_error(
+async fn log_and_write_error<S>(
     connection_context: &ConnectionContext,
     header: &Header,
     e: &DocumentDBError,
     request: Option<&Request<'_>>,
-    stream: &mut GwStream,
+    stream: &mut S,
     collection: Option<String>,
     request_tracker: &mut RequestTracker,
     activity_id: &str,
-) -> Result<CommandError> {
+) -> Result<CommandError>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let command_error = CommandError::from_error(connection_context, e, activity_id).await;
     let response = command_error.to_raw_document_buf();
 

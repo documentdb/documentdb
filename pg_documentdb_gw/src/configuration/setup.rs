@@ -26,6 +26,7 @@ pub struct DocumentDBSetupConfiguration {
     // Gateway listener configuration
     pub use_local_host: Option<bool>,
     pub gateway_listen_port: Option<u16>,
+    pub enforce_tls: Option<bool>,
 
     // Postgres configuration
     pub postgres_system_user: Option<String>,
@@ -139,5 +140,9 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
 
     fn postgres_idle_connection_timeout_minutes(&self) -> u64 {
         self.postgres_idle_connection_timeout_minutes.unwrap_or(5)
+    }
+
+    fn enforce_tls(&self) -> bool {
+        self.enforce_tls.unwrap_or(true)
     }
 }

@@ -78,6 +78,9 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
     /// Returns the timeout duration (in minutes) for PostgreSQL connections
     fn postgres_idle_connection_timeout_minutes(&self) -> u64;
 
+    /// Returns whether TLS should be enforced for all connections.
+    fn enforce_tls(&self) -> bool;
+
     /// Provides a way to downcast the trait object to a concrete type.
     fn as_any(&self) -> &dyn std::any::Any;
 }
