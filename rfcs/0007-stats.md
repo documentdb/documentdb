@@ -1,182 +1,139 @@
 ---
 rfc: 0007
-title: "RFC Title"
+title: "Guidance for Onboarding Statistical Views"
 status: Draft
-owner: "@github-username"
-issue: "https://github.com/documentdb/documentdb/issues/XXX"
-discussion: "https://github.com/documentdb/documentdb/discussions/XXX"
-version-target: 1.0
-implementations:
-  - "https://github.com/documentdb/documentdb/pull/XXX"
+owner: "@WentingWu666666"
+issue: NA
+discussion: NA
+version-target: NA
+implementations: NA
+
 ---
 
-# RFC-XXXX: [Title]
-
-*Delete these italicized instructions before submitting your RFC. For details of the RFC process, see https://github.com/documentdb/documentdb/blob/main/rfcs/0003-rfc-process.md*
-
-*RFC statuses follow this flow:*
-
-```
-[Draft] → [Proposed] → [Accepted/Rejected] → [Implementing] → [Complete]
-                                           ↘ [Archived]
-```
+# RFC-0007: Guidance for Onboarding Statistical Views
 
 ## Problem
 
-*This section is REQUIRED before moving from Draft to Proposed status.*
+DocumentDB currently lacks a standardized, well-defined process for contributors to onboard new statistical views. 
+While contributors may want to expose various runtime, performance, or usage insights through SQL views, there is no consistent guidance for:
+- How views should be named and organized  
+- Where SQL definitions should live in the repository  
+- How columns and units should be defined  
+- How permissions should be handled  
+- How statistics collection should be enabled/disabled safely  
 
-**Section purpose:** Clearly articulate the problem or opportunity this RFC addresses. 
+This creates friction for both contributors and reviewers:
+- Contributors must guess conventions or invent their own patterns.
+- Reviewers lack a consistent set of rules to evaluate submissions.
+- Inconsistencies across views make them harder to discover, document, and maintain.
 
-**Complete this section when:** You're ready to start a discussion and get initial feedback on whether this problem is worth solving.
+Without this guidance, statistical views may become fragmented, inconsistent, or unsafe (e.g., unexpected overhead, unclear reset behavior, or overly broad permissions).
 
-**Guidance:**
-- What problem are you trying to solve?
-- Who is impacted by this problem?
-- What are the consequences of not solving it?
-- What are the current workarounds, if any?
-- What are the success criteria?
-- What are the non-goals?
-- What behavior are you intending to emulate? What are the quircks there?
-- Is there an API spec being targeted?
+This RFC proposes a set of conventions and rules that define *how* statistical views should be added, not *which* specific views must exist.
 
-**Example prompts to guide your thinking:**
-- "Users currently struggle with..."
-- "The system lacks..."
-- "This creates friction when..."
-- "Without this, contributors must..."
+### Who is impacted
+
+- Contributors adding new statistical or observability-related functionality  
+- Maintainers reviewing and approving contributions  
+- Users who rely on DocumentDB system statistics for monitoring and troubleshooting  
+
+### Success criteria
+
+- A clear, documented set of rules for adding new statistical views  
+- Consistent naming, schema placement, and column conventions  
+- Controlled permissions and predictable reset behavior  
+- Minimal friction for contributors to follow the pattern  
+
+### Non-goals
+
+- This RFC does **not** design or implement any specific statistical view.
+- This RFC does **not** replace existing PostgreSQL statistical views.
 
 ---
 
 ## Approach
 
-*This section is REQUIRED before moving from Proposed to Accepted status.*
-
-**Purpose:** Describe your proposed solution at a high level.
-
-**Complete this section when:** You've received feedback that the problem is worth solving and you're ready to propose a specific approach.
-
-**Progressive disclosure:** Start lean! You don't need all the details yet. Focus on the core idea and high-level approach. Detailed design comes later.
-
-**Guidance:**
-- What is your proposed solution?
-- Why is this approach better than alternatives?
-- What are the key benefits and tradeoffs?
-- How does this fit with existing DocumentDB architecture?
-
-**Example prompts for solution thinking:**
-- "The proposed solution is to..."
-- "This approach is preferable because..."
-- "Key tradeoffs include..."
-- "This aligns with existing patterns by..."
+The proposed solution is to define and document a standard onboarding pattern for statistical views in DocumentDB, 
+inspired by established conventions in PostgreSQL (e.g., `pg_stat_*` views) and widely-used extensions (e.g., Citus).
 
 ---
 
 ## Detailed Design
 
-*This section MAY BE REQUIRED before moving from Proposed to Accepted status. This section MUST be completed and approved to move to Implementing status.*
-
-**Purpose:** Provide comprehensive technical details needed for implementation.
-
-**Complete this section when:** Your solution approach has been validated and you're ready to commit to specific implementation details.
-
-**Guidance:** This is where you get specific. Include enough detail that someone could implement this RFC without having to make major design decisions.
-
-### Technical Details
-
-*Describe the technical implementation specifics*
-- Data structures
-- Algorithms
-- Architecture patterns
-- Performance considerations
-
 ### API Changes
 
-*Document any public API additions or modifications*
-- New functions, including UDFs
-- Modified signatures
-- Breaking changes
-- Deprecation plans
+#### 1. Naming Convention
+**View name**: documentdb_stat_<scope>
+Examples:
+- `documentdb_stat_collections`
+- `documentdb_stat_queries`
+- `documentdb_stat_connections`
 
-### Database Schema Changes
+**Column naming**
+- Columns representing a value must end with a unit suffix:
+  - `_count`
+  - `_seconds`
+  - `_milliseconds`
+  - `_bytes`
+  - `_percent`
 
-*If applicable, describe schema modifications*
-- New tables/collections
-- Schema migrations
-- Index changes
-- Data migration strategies
+- Columns representing dimensions (e.g., name, database, collection, user) should **not** use a suffix.
+
+TBD
 
 ### Configuration Changes
 
-*Document new or modified configuration options*
-- New settings
-- Modified defaults
-- Environment variables
-- Configuration validation
+Since collecting statistics introduces overhead, each category of statistical data should be gated behind a configuration flag.
 
-### Testing Strategy
+Pattern: documentdb_track_<scope>
 
-*Describe how this will be tested*
-- Unit test approach
-- Integration test requirements
-- Compatibility test requirements
-- Performance test plans
-- Migration test strategy
+Examples:
 
-### Migration Path
+- `documentdb_track_queries`
+- `documentdb_track_connections`
+- `documentdb_track_collections`
 
-*How do existing users/deployments upgrade?*
-- Backwards/forwards compatibility
-- Migration steps
-- Rollback strategy
-- Deprecation timeline
+Default value: true
+
+These parameters should be configurable via `postgresql.conf` and/or runtime configuration where supported.
+
+When the flag is set to `false`:
+- Statistics collection should stop
+- The corresponding view should return empty or zeroed data (not fail)
+
 
 ### Documentation Updates
 
-*What documentation needs to change?*
-- User-facing docs
-- Developer guides
-- API references
-- Examples/tutorials
+Update the following documentation to include:
+
+- List of statistical views
+- Column descriptions and units
+- Reset functions (if any)
+- Related configuration parameters
+
+Target location:
+https://github.com/documentdb/documentdb.github.io
+/articles/postgresql/stats.md
+
+Each new statistical view must include:
+- Description of purpose
+- Example query
+- Sample output
 
 ---
 
 ## Implementation Tracking
 
-*This section SHALL be populated during the Implementation phase.*
-
-**Purpose:** Track the implementation progress of this RFC.
-
-**Complete this section when:** Your RFC has been accepted and implementation work begins.
-
-**Guidance:**
-- Link to the PRs that implement this RFC. Update as implementation progresses.
-- Provide success metrics.
-
-### Implementation PRs
-
-- [ ] PR #XXX: [Brief description of what this PR implements]
-- [ ] PR #XXX: [Brief description of what this PR implements]
-- [ ] PR #XXX: [Brief description of what this PR implements]
+NA
 
 ### Status Updates
 
-*Add dated status updates as implementation progresses*
-
-**YYYY-MM-DD:** Initial implementation started in PR #XXX
-
-**YYYY-MM-DD:** [Update on progress, blockers, or changes]
+NA
 
 ### Open Questions
 
-*Track unresolved questions that arise during implementation*
-
-- [ ] Question: [Description]
-  - Discussion: [Link to discussion or resolution]
+NA
 
 ### Implementation Notes
 
-*Capture important decisions or learnings during implementation*
-
-- **Decision [YYYY-MM-DD]:** [What was decided]
-  - **Context:** [Why this decision was made]
-  - **Alternatives:** [What else was considered]
+NA
