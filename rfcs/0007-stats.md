@@ -78,7 +78,7 @@ Statistcs will be exposed through views.
 
 **View naming pattern**
 ```
-documentdb_stat_<scope>
+__API_CATALOG_SCHEMA__.documentdb_stat_<scope>
 ```
 
 **Column naming in views**
@@ -93,7 +93,7 @@ documentdb_stat_<scope>
 
 By default, all statistical views are readable by all users:
 ```
-GRANT SELECT ON documentdb_stat_<scope> TO PUBLIC;
+GRANT SELECT ON __API_CATALOG_SCHEMA__.documentdb_stat_<scope> TO PUBLIC;
 ```
 
 All statistical views must be defined in the following location:
@@ -104,12 +104,12 @@ pg_documentdb/sql/stats/stats--<version>.sql
 ### Helper Functions
 If a view is backed by one or more helper functions, those functions must follow this naming pattern:
 ```
-documentdb_stat_get_<scope>
+__API_CATALOG_SCHEMA__.documentdb_stat_get_<scope>
 ```
 
 By default, helper functions must be executable by all users:
 ```
-GRANT EXECUTE ON FUNCTION documentdb_stat_get_<xxxx>() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION __API_CATALOG_SCHEMA__.documentdb_stat_get_<scope>() TO PUBLIC;
 ```
 
 #### Reset functions (for cumulative counters)
@@ -118,11 +118,11 @@ If a view contains cumulative counters that may need to be reset, a reset functi
 
 **Naming pattern**
 ```
-documentdb_stat_reset_<xxxx>
+__API_CATALOG_SCHEMA__.documentdb_stat_reset_<scope>
 ```
 By default, this function is restricted to superusers:
 ```
-REVOKE EXECUTE ON FUNCTION documentdb_stat_reset_<xxxx>() FROM public;
+REVOKE EXECUTE ON FUNCTION __API_CATALOG_SCHEMA__.documentdb_stat_reset_<scope>() FROM public;
 ```
 Other roles may be explicitly granted permission as needed.
 
