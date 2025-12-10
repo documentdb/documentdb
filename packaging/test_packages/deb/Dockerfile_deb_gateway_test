@@ -57,7 +57,7 @@ ARG POSTGRES_VERSION
 RUN sudo groupmod -g 103 postgres && sudo usermod -u 105 -g 103 postgres
 RUN sudo apt-get update && \
     sudo apt-get install -y --no-install-recommends \
-    jq openssl lsof libc6 python3-venv && \
+    jq openssl lsof libc6 python3-venv netcat-openbsd && \
     sudo rm -rf /var/lib/apt/lists/*
 
 ENV LANGUAGE=en_US.UTF-8 \
@@ -81,6 +81,11 @@ ENV CERT_PATH="" \
 RUN sudo mkdir /home/documentdb/gateway
 RUN sudo mkdir -p /home/documentdb/gateway/pg_documentdb_gw/target/release-with-symbols
 RUN  ln -s /usr/bin/documentdb_gateway /home/documentdb/gateway/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway  
+
+# Create /var/run/postgresql directory with proper permissions
+RUN sudo mkdir -p /var/run/postgresql && \
+    sudo chown -R documentdb:documentdb /var/run/postgresql && \
+    sudo chmod 755 /var/run/postgresql
 
 COPY pg_documentdb_gw/SetupConfiguration.json /home/documentdb/gateway/pg_documentdb_gw/SetupConfiguration.json
 COPY scripts/start_oss_server.sh /home/documentdb/gateway/scripts/start_oss_server.sh
