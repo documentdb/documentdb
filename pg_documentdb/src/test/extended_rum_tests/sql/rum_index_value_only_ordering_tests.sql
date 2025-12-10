@@ -13,7 +13,7 @@ CREATE FUNCTION value_ordered_test_schema.gin_bson_get_composite_path_generated_
 $$gin_bson_get_composite_path_generated_terms$$;
 
 -- debug function to read index pages
-CREATE OR REPLACE FUNCTION value_ordered_test_schema.documentdb_rum_page_get_entries(page bytea, firstEntryType Oid)
+CREATE OR REPLACE FUNCTION value_ordered_test_schema.documentdb_rum_page_get_entries(page bytea, indexRelId Oid)
 RETURNS SETOF jsonb
 LANGUAGE c
 AS '$libdir/pg_documentdb_extended_rum_core', 'documentdb_rum_page_get_entries';
@@ -37,11 +37,11 @@ SELECT COUNT(documentdb_api.insert_one('comp_odb', 'comp_value_ordering', bson_b
 -- now walk the index terms and assert that they're ordered correctly and every odd term is value only
 SELECT entry->> 'offset',
     value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea)
-        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_302', 1), 'bytea'::regtype) entry;
+        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_302', 1), 'documentdb_data.documents_rum_index_302'::regclass) entry;
 
 SELECT entry->> 'offset',
     value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea)
-        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_303', 1), 'bytea'::regtype) entry;
+        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_303', 1), 'documentdb_data.documents_rum_index_303'::regclass) entry;
 
 -- note that the terms are co-comparable - adding even values again does not add new terms
 set documentdb.enableValueOnlyIndexTerms to on;
@@ -52,11 +52,11 @@ SELECT COUNT(*) FROM documentdb_api.collection('comp_odb', 'comp_value_ordering'
 
 SELECT entry->> 'offset',
     value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea)
-        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_302', 1), 'bytea'::regtype) entry;
+        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_302', 1), 'documentdb_data.documents_rum_index_302'::regclass) entry;
 
 SELECT entry->> 'offset',
     value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea)
-        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_303', 1), 'bytea'::regtype) entry;
+        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_303', 1), 'documentdb_data.documents_rum_index_303'::regclass) entry;
 
 -- same is true when factoring in truncation.
 TRUNCATE documentdb_data.documents_301;
@@ -94,13 +94,13 @@ SELECT entry->> 'offset',
     value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$flags',
     length(value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea)::bytea),
     SUBSTRING(value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$', 0, 15)
-        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_302', 1), 'bytea'::regtype) entry;
+        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_302', 1), 'documentdb_data.documents_rum_index_302'::regclass) entry;
 
 SELECT entry->> 'offset',
     value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$flags',
     length(value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea)::bytea),
     SUBSTRING(value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$', 0, 15)
-        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_303', 1), 'bytea'::regtype) entry;
+        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_303', 1), 'documentdb_data.documents_rum_index_303'::regclass) entry;
 
 -- ensure value only truncation works the same with > 16 paths
 set documentdb.enableValueOnlyIndexTerms to off;

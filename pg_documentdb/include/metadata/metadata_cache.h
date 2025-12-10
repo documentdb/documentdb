@@ -39,6 +39,7 @@ extern PGDLLIMPORT char *ApiAdminRoleV2;
 extern PGDLLIMPORT char *ApiBgWorkerRole;
 extern PGDLLIMPORT char *ApiReadOnlyRole;
 extern PGDLLEXPORT char *ApiReadWriteRole;
+extern PGDLLEXPORT char *ApiReplicationRole;
 extern PGDLLEXPORT char *ApiRootInternalRole;
 extern PGDLLIMPORT char *ApiRootRole;
 extern PGDLLEXPORT char *ApiUserAdminRole;
@@ -323,6 +324,7 @@ Oid ApiCatalogAggregationPipelineFunctionId(void);
 Oid ApiCatalogAggregationFindFunctionId(void);
 Oid ApiCatalogAggregationCountFunctionId(void);
 Oid ApiCatalogAggregationDistinctFunctionId(void);
+Oid ApiCatalogAggregationGetMoreFunctionId(void);
 Oid BsonCovariancePopAggregateFunctionOid(void);
 Oid BsonCovarianceSampAggregateFunctionOid(void);
 Oid BsonDollarAddFieldsFunctionOid(void);
@@ -440,6 +442,7 @@ Oid UpdateWorkerFunctionOid(void);
 Oid InsertWorkerFunctionOid(void);
 Oid DeleteWorkerFunctionOid(void);
 Oid CommandNodeWorkerFunctionOid(void);
+Oid CursorGetMoreFunctionOid(void);
 
 /* Compat functions*/
 Oid DocumentDBCoreBsonToBsonFunctionOId(void);

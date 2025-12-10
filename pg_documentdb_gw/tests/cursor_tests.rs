@@ -220,8 +220,7 @@ pub async fn test_cursor_kill_multiple_cursors() {
 
         assert!(
             get_more_result.is_err(),
-            "getMore should fail on killed cursor at index {}",
-            i
+            "getMore should fail on killed cursor at index {i}"
         );
     }
 }

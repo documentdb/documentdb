@@ -22,6 +22,9 @@ SET search_path to documentdb_core,documentdb_api,documentdb_api_catalog,change_
 -- Delete all old create index requests from other tests
 DELETE from documentdb_api_catalog.documentdb_index_queue;
 
+-- show index_queue schema
+\d documentdb_api_catalog.documentdb_index_queue;
+
 ---- createIndexes - top level - parse error ----
 SELECT * FROM documentdb_api.create_indexes_background('db', NULL);
 SELECT * FROM documentdb_api.create_indexes_background(NULL, '{}');

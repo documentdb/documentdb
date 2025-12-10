@@ -75,16 +75,16 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
 ERROR:  Error in specification { "name" : "comp_index", "key" : { "a.$**" : 1 }, "enableCompositeTerm" : true }:enableCompositeTerm is not supported with wildcard indexes.
 -- create a regular index
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
-    'comp_db', '{ "createIndexes": "comp_collection_desc", "indexes": [ { "name": "comp_index1", "key": { "a": -1, "b": -1 } } ] }');
+    'comp_db', '{ "createIndexes": "comp_collection_desc", "indexes": [ { "name": "comp_index", "key": { "a": -1, "b": -1 } } ] }');
 NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
--- create a composite index with a different name and same key (works)
+-- create a non-composite index with a different name and same key (works)
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
-    'comp_db', '{ "createIndexes": "comp_collection_desc", "indexes": [ { "name": "comp_index", "key": { "a": -1, "b": -1 }, "enableCompositeTerm": true } ] }', TRUE);
+    'comp_db', '{ "createIndexes": "comp_collection_desc", "indexes": [ { "name": "comp_index1", "key": { "a": -1, "b": -1 }, "enableCompositeTerm": false } ] }', TRUE);
                                                                                                    create_indexes_non_concurrently                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -100,8 +100,8 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_7400" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_7401" documentdb_rum (document bson_rum_single_path_ops (path=a, tl='2691'), document bson_rum_single_path_ops (path=b, tl='2691'))
-    "documents_rum_index_7402" documentdb_rum (document documentdb_api_internal.bson_rum_composite_path_ops (pathspec='[ { "a" : -1 }, { "b" : -1 } ]', tl='2691'))
+    "documents_rum_index_7401" documentdb_rum (document documentdb_api_internal.bson_rum_composite_path_ops (pathspec='[ { "a" : -1 }, { "b" : -1 } ]', tl='2691'))
+    "documents_rum_index_7402" documentdb_rum (document bson_rum_single_path_ops (path=a, tl='2691'), document bson_rum_single_path_ops (path=b, tl='2691'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '7400'::bigint)
 
@@ -121,7 +121,7 @@ CALL documentdb_api.drop_indexes('comp_db', '{ "dropIndexes": "comp_collection_d
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_7400" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_7402" documentdb_rum (document documentdb_api_internal.bson_rum_composite_path_ops (pathspec='[ { "a" : -1 }, { "b" : -1 } ]', tl='2691'))
+    "documents_rum_index_7401" documentdb_rum (document documentdb_api_internal.bson_rum_composite_path_ops (pathspec='[ { "a" : -1 }, { "b" : -1 } ]', tl='2691'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '7400'::bigint)
 

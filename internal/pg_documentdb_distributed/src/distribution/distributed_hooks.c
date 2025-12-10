@@ -35,6 +35,7 @@
 extern bool UseLocalExecutionShardQueries;
 extern char *ApiDistributedSchemaName;
 
+extern bool ShouldSetupIndexQueueInUdf;
 extern bool EnableMetadataReferenceTableSync;
 extern char *DistributedOperationsQuery;
 extern char *DistributedApplicationNamePrefix;
@@ -751,6 +752,7 @@ InitializeDocumentDBDistributedHooks(void)
 	ensure_metadata_table_replicated_hook = EnsureMetadataTableReplicatedCore;
 	DefaultInlineWriteOperations = false;
 	ShouldUpgradeDataTables = false;
+	ShouldSetupIndexQueueInUdf = false;
 
 	UpdateColocationHooks();
 

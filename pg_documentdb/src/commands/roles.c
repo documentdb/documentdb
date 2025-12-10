@@ -406,7 +406,7 @@ ParseDropRoleSpec(pgbson *dropRoleBson, DropRoleSpec *dropRoleSpec)
 								errmsg("'dropRole' cannot be empty.")));
 			}
 
-			if (IS_BUILTIN_ROLE(roleNameValue) || IS_SYSTEM_ROLE(roleNameValue))
+			if (IS_BUILTIN_ROLE(roleNameValue) || IS_SYSTEM_LOGIN_ROLE(roleNameValue))
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg(
@@ -816,7 +816,7 @@ ProcessAllRoles(pgbson_array_writer *rolesArrayWriter, RolesInfoSpec rolesInfoSp
 		}
 
 		/* Exclude built-in roles if the request doesn't demand them */
-		if (IS_SYSTEM_ROLE(roleName) ||
+		if (IS_SYSTEM_LOGIN_ROLE(roleName) ||
 			(IS_BUILTIN_ROLE(roleName) && !rolesInfoSpec.showBuiltInRoles))
 		{
 			continue;

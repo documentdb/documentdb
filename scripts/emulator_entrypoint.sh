@@ -97,6 +97,15 @@ Optional arguments:
                         Allow external connections to PostgreSQL.
                         Defaults to false.
                         Overrides ALLOW_EXTERNAL_CONNECTIONS environment variable.
+  --init-data-path [PATH]
+                        Specify a directory containing JavaScript files for database initialization.
+                        Files will be executed in alphabetical order using mongosh.
+                        When this option is used, built-in sample data is automatically disabled.
+                        Defaults to /init_doc_db.d
+                        Overrides INIT_DATA_PATH environment variable.
+  --skip-init-data      Skip initialization with built-in sample data.
+                        By default, sample collections (users, products, orders, analytics) in 'sampledb' database will be created.
+                        Overrides SKIP_INIT_DATA environment variable.
                         
 EOF
 }
@@ -183,6 +192,16 @@ do
         export ALLOW_EXTERNAL_CONNECTIONS=$1
         shift;;
 
+    --init-data-path)
+        shift
+        export INIT_DATA_PATH=$1
+        export SKIP_INIT_DATA=true  # Disable built-in sample data when custom path is provided
+        shift;;
+
+    --skip-init-data)
+        export SKIP_INIT_DATA=true
+        shift;;
+
     -*)
         echo "Unknown option $1"
         exit 1;; 
@@ -198,6 +217,8 @@ export USERNAME=${USERNAME:-default_user}
 export PASSWORD=${PASSWORD:-Admin100}
 export CREATE_USER=${CREATE_USER:-true}
 export START_POSTGRESQL=${START_POSTGRESQL:-true}
+export INIT_DATA_PATH=${INIT_DATA_PATH:-/init_doc_db.d}
+export SKIP_INIT_DATA=${SKIP_INIT_DATA:-false}
 
 # Setup centralized log directory structure
 echo "Setting up centralized log directory at /var/log/documentdb..."
@@ -260,6 +281,13 @@ if [ -n "$LOG_LEVEL" ] && \
    [ "$LOG_LEVEL" != "debug" ] && \
    [ "$LOG_LEVEL" != "trace" ]; then
     echo "Invalid log level value $LOG_LEVEL, must be one of: quiet, error, warn, info, debug, trace"
+    exit 1
+fi
+
+if [ -n "$SKIP_INIT_DATA" ] && \
+   [ "$SKIP_INIT_DATA" != "true" ] && \
+   [ "$SKIP_INIT_DATA" != "false" ]; then
+    echo "Invalid skip-init-data value $SKIP_INIT_DATA, must be true or false"
     exit 1
 fi
 
@@ -384,6 +412,85 @@ fi
 
 gateway_pid=$! # Capture the PID of the gateway process
 
+# Wait for the gateway to be ready before attempting initialization
+echo "Waiting for gateway to be ready..."
+max_attempts=60
+attempt=0
+while [ $attempt -lt $max_attempts ]; do
+    if nc -z localhost "$DOCUMENTDB_PORT"; then
+        echo "Gateway is ready on localhost:$DOCUMENTDB_PORT"
+        break
+    fi
+    echo "Attempt $((attempt + 1))/$max_attempts: Gateway not ready yet, waiting..."
+    sleep 1
+    attempt=$((attempt + 1))
+done
+
+if [ $attempt -eq $max_attempts ]; then
+    echo "Error: Gateway failed to start within $max_attempts seconds"
+    exit 1
+fi
+
+# Initialize database with custom data if directory exists and contains JS files
+custom_data_initialized=false
+if [ -d "$INIT_DATA_PATH" ] && [ "$(ls -A "$INIT_DATA_PATH"/*.js 2>/dev/null)" ]; then
+    echo "Initializing database with custom data from: $INIT_DATA_PATH"
+    
+    # Use the dedicated initialization script
+    init_script="/home/documentdb/gateway/scripts/init_documentdb_data.sh"
+    if [ -f "$init_script" ]; then
+        echo "Using custom initialization data from: $INIT_DATA_PATH"
+        if "$init_script" -H localhost -P "$DOCUMENTDB_PORT" -u "$USERNAME" -p "$PASSWORD" -d "$INIT_DATA_PATH" -v; then
+            echo "Custom data initialization completed."
+            custom_data_initialized=true
+        else
+            echo "Error: Custom data initialization failed"
+            exit 1
+        fi
+    else
+        echo "Warning: Initialization script not found at $init_script"
+    fi
+fi
+
+# Initialize database with sample data if enabled (default behavior unless --skip-init-data is specified)
+if [ "$SKIP_INIT_DATA" != "true" ]; then
+    echo "Initializing database with built-in sample data..."
+    
+    # Use the sample data directory
+    sample_data_path="/home/documentdb/gateway/sample-data"
+    init_script="/home/documentdb/gateway/scripts/init_documentdb_data.sh"
+    
+    if [ -f "$init_script" ] && [ -d "$sample_data_path" ]; then
+        echo "Loading sample data from: $sample_data_path"
+        if "$init_script" -H localhost -P "$DOCUMENTDB_PORT" -u "$USERNAME" -p "$PASSWORD" -d "$sample_data_path" -v; then
+            echo "Sample data initialization completed."
+        else
+            echo "Error: Sample data initialization failed"
+            exit 1
+        fi
+        echo ""
+        echo "Sample data has been loaded into the 'sampledb' database with the following collections:"
+        echo "  - users (5 sample users)"
+        echo "  - products (5 sample products)"  
+        echo "  - orders (4 sample orders)"
+        echo "  - analytics (sample metrics and activity data)"
+        echo ""
+        echo "Connect to your DocumentDB instance and use: use('sampledb')"
+    else
+        echo "Warning: Sample data or initialization script not found"
+        if [ ! -f "$init_script" ]; then
+            echo "  - Missing: $init_script"
+        fi
+        if [ ! -d "$sample_data_path" ]; then
+            echo "  - Missing: $sample_data_path"
+        fi
+    fi
+fi
+
+if [ "$custom_data_initialized" = "false" ] && [ "$SKIP_INIT_DATA" = "true" ]; then
+    echo "No initialization data loaded (--skip-init-data was specified)."
+    echo "To load data: use --init-data-path [PATH] for custom data, or remove --skip-init-data for built-in sample data."
+fi
 # Also stream existing gateway logs (for historical logs that might already exist)
 if [ -f "$GATEWAY_LOG" ]; then
     echo "Starting gateway log streaming for existing logs..."

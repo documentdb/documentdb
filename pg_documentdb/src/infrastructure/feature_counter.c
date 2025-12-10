@@ -401,7 +401,22 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_STAGE_VECTOR_SEARCH_NATIVE] = "vector_search_native",
 
 	/* Feature Mapping region - Update operators */
+	[FEATURE_UPDATE_OPERATOR_ADDTOSET] = "update_operator_addtoset",
+	[FEATURE_UPDATE_OPERATOR_BIT] = "update_operator_bit",
+	[FEATURE_UPDATE_OPERATOR_CURRENTDATE] = "update_operator_currentdate",
 	[FEATURE_UPDATE_OPERATOR_GEN_EMBEDDINGS] = "update_operator_vector_gen_embeddings",
+	[FEATURE_UPDATE_OPERATOR_INC] = "update_operator_inc",
+	[FEATURE_UPDATE_OPERATOR_MAX] = "update_operator_max",
+	[FEATURE_UPDATE_OPERATOR_MIN] = "update_operator_min",
+	[FEATURE_UPDATE_OPERATOR_MUL] = "update_operator_mul",
+	[FEATURE_UPDATE_OPERATOR_POP] = "update_operator_pop",
+	[FEATURE_UPDATE_OPERATOR_PULL] = "update_operator_pull",
+	[FEATURE_UPDATE_OPERATOR_PULLALL] = "update_operator_pullall",
+	[FEATURE_UPDATE_OPERATOR_PUSH] = "update_operator_push",
+	[FEATURE_UPDATE_OPERATOR_RENAME] = "update_operator_rename",
+	[FEATURE_UPDATE_OPERATOR_SET] = "update_operator_set",
+	[FEATURE_UPDATE_OPERATOR_SET_ON_INSERT] = "update_operator_set_on_insert",
+	[FEATURE_UPDATE_OPERATOR_UNSET] = "update_operator_unset",
 
 	/* Feature usage stats */
 	[FEATURE_USAGE_TTL_PURGER_CALLS] = "ttl_purger_calls",

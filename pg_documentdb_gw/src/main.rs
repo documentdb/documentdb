@@ -42,10 +42,7 @@ fn main() {
         .init()
         .expect("Failed to start logger");
 
-    log::info!(
-        "Starting server with configuration: {:?}",
-        setup_configuration
-    );
+    log::info!("Starting server with configuration: {setup_configuration:?}");
 
     // Create Tokio runtime with configured worker threads
     let async_runtime_worker_threads = setup_configuration.async_runtime_worker_threads();
@@ -55,10 +52,7 @@ fn main() {
         .build()
         .expect("Failed to create Tokio runtime");
 
-    log::info!(
-        "Created Tokio runtime with {} worker threads",
-        async_runtime_worker_threads
-    );
+    log::info!("Created Tokio runtime with {async_runtime_worker_threads} worker threads");
 
     // Run the async main logic
     runtime.block_on(start_gateway(setup_configuration));

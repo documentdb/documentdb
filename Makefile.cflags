@@ -36,9 +36,9 @@ PG_LDFLAGS += -l:pg_documentdb_distributed.so -L $(DOCUMENTDB_DISTRIBUTED_DIR)
 endif
 
 ifeq ($(CC),gcc)
-    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB)
+    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB)
 else
-    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB)
+    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB)
 endif
 
 ifneq ($(SKIP_API_SCHEMA),yes)

@@ -143,9 +143,14 @@ documentdb_rumhandler(PG_FUNCTION_ARGS)
 	amroutine->amstorage = true;
 	amroutine->amclusterable = false;
 	amroutine->ampredlocks = true;
-#if PG_VERSION_NUM >= 100000
+
+	/* Since not every rum index can support this
+	 * Set this to false. Specific indexes can override
+	 * it in the planner as needed.
+	 * TODO: After more confidence is built up, we can enable this more
+	 * globally.
+	 */
 	amroutine->amcanparallel = false;
-#endif
 
 #if PG_VERSION_NUM >= 170000
 	amroutine->amcanbuildparallel = RumEnableParallelIndexBuild;
@@ -177,11 +182,9 @@ documentdb_rumhandler(PG_FUNCTION_ARGS)
 	amroutine->ambuildphasename = rumbuildphasename;
 	amroutine->ammarkpos = NULL;
 	amroutine->amrestrpos = NULL;
-#if PG_VERSION_NUM >= 100000
-	amroutine->amestimateparallelscan = NULL;
-	amroutine->aminitparallelscan = NULL;
-	amroutine->amparallelrescan = NULL;
-#endif
+	amroutine->amestimateparallelscan = rumestimateparallelscan;
+	amroutine->aminitparallelscan = ruminitparallelscan;
+	amroutine->amparallelrescan = rumparallelrescan;
 
 	/* Allow operator classes to define custom opclass-options */
 	amroutine->amoptsprocnum = RUM_INDEX_CONFIG_PROC;

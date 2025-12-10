@@ -201,7 +201,7 @@ fn generate_server_nonce(client_nonce: &str) -> String {
         result.push(CHARSET[idx] as char);
     }
 
-    format!("{}{}", client_nonce, result)
+    format!("{client_nonce}{result}")
 }
 
 async fn handle_sasl_start(
@@ -215,8 +215,7 @@ async fn handle_sasl_start(
 
     if mechanism != "SCRAM-SHA-256" && mechanism != "MONGODB-OIDC" {
         return Err(DocumentDBError::unauthorized(format!(
-            "Only SCRAM-SHA-256 and MONGODB-OIDC are supported, got: {}",
-            mechanism
+            "Only SCRAM-SHA-256 and MONGODB-OIDC are supported, got: {mechanism}"
         )));
     }
 
@@ -244,11 +243,11 @@ async fn handle_scram(
     let server_nonce = generate_server_nonce(client_nonce);
 
     let (salt, iterations) = get_salt_and_iteration(connection_context, username).await?;
-    let response = format!("r={},s={},i={}", server_nonce, salt, iterations);
+    let response = format!("r={server_nonce},s={salt},i={iterations}");
 
     connection_context.auth_state.first_state = Some(ScramFirstState {
         nonce: server_nonce,
-        first_message_bare: format!("n={},r={}", username, client_nonce),
+        first_message_bare: format!("n={username},r={client_nonce}"),
         first_message: response.clone(),
     });
 
@@ -282,7 +281,7 @@ async fn handle_oidc(
 
     let payload_doc = bson::Document::from_reader(&mut std::io::Cursor::new(payload.bytes))
         .map_err(|e| {
-            DocumentDBError::bad_value(format!("Failed to parse OIDC payload as BSON: {}", e))
+            DocumentDBError::bad_value(format!("Failed to parse OIDC payload as BSON: {e}"))
         })?;
 
     let jwt_token = payload_doc.get_str("jwt").map_err(|_| {
@@ -344,8 +343,7 @@ async fn handle_oidc_token_authentication(
     let connection_activity_id = connection_context.connection_id.to_string();
     let connection_activity_id_as_str = connection_activity_id.as_str();
     log::info!(activity_id = connection_activity_id_as_str;
-        "Setting authentication expiry timer for {} seconds until token expiry.",
-        seconds_until_expiry,
+        "Setting authentication expiry timer for {seconds_until_expiry} seconds until token expiry.",
     );
     connection_context
         .auth_state
@@ -512,7 +510,7 @@ async fn handle_sasl_continue(
 
         let payload = bson::Binary {
             subtype: BinarySubtype::Generic,
-            bytes: format!("v={}", server_signature).as_bytes().to_vec(),
+            bytes: format!("v={server_signature}").as_bytes().to_vec(),
         };
 
         connection_context.auth_state.password = Some("".to_string());
@@ -550,10 +548,7 @@ fn parse_sasl_payload<'a, 'b: 'a>(
         .get_binary("payload")
         .map_err(DocumentDBError::parse_failure())?;
     let mut payload = from_utf8(payload.bytes).map_err(|e| {
-        DocumentDBError::bad_value(format!(
-            "Sasl payload couldn't be converted to utf-8: {}",
-            e
-        ))
+        DocumentDBError::bad_value(format!("Sasl payload couldn't be converted to utf-8: {e}"))
     })?;
 
     if with_header {

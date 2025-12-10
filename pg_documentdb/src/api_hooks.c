@@ -22,6 +22,8 @@
 #include "utils/documentdb_errors.h"
 #include "vector/vector_spec.h"
 
+extern bool DefaultUseCompositeOpClass;
+
 
 IsMetadataCoordinator_HookType is_metadata_coordinator_hook = NULL;
 RunCommandOnMetadataCoordinator_HookType run_command_on_metadata_coordinator_hook = NULL;
@@ -75,6 +77,9 @@ UserNameValidation_HookType
 	username_validation_hook = NULL;
 PasswordValidation_HookType
 	password_validation_hook = NULL;
+
+DefaultEnableCompositeOpClass_HookType
+	default_enable_composite_op_class_hook = NULL;
 
 /*
  * Single node scenario is always a metadata coordinator
@@ -619,4 +624,16 @@ GetOperationCancellationQuery(int64 shardId, StringView *opIdView, int *nargs,
 		return NULL;
 	}
 	return default_get_query(shardId, opIdView, nargs, argTypes, argValues, argNulls);
+}
+
+
+bool
+ShouldUseCompositeOpClassByDefault()
+{
+	if (default_enable_composite_op_class_hook != NULL)
+	{
+		return default_enable_composite_op_class_hook();
+	}
+
+	return DefaultUseCompositeOpClass;
 }

@@ -9,9 +9,13 @@
 
 #include <postgres.h>
 
+#include <catalog/pg_authid.h>
 #include <lib/stringinfo.h>
+#include <miscadmin.h>
+#include <utils/acl.h>
 #include <utils/builtins.h>
 
+#include "commands/commands_common.h"
 #include "commands/parse_error.h"
 #include "utils/documentdb_errors.h"
 #include "utils/error_utils.h"
@@ -207,7 +211,7 @@ ValidateAndParseKillOpCommand(pgbson *commandSpec, ParsedKillOpArgs *parsedArgs)
 			/* This is the command name, ignore */
 			continue;
 		}
-		else
+		else if (!IsCommonSpecIgnoredField(keyView.string))
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 							errmsg("%.*s is an unknown field",
@@ -228,6 +232,25 @@ ValidateAndParseKillOpCommand(pgbson *commandSpec, ParsedKillOpArgs *parsedArgs)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 						errmsg("killOp may only be run against the admin database.")));
+	}
+
+	if (!has_privs_of_role(GetUserId(), ROLE_PG_SIGNAL_BACKEND))
+	{
+		/*
+		 * Be strict about who can call killOp and attemp to kill backends, only allow
+		 * superusers and explicit users having pg_signal_backend role.
+		 *
+		 * TODO: In future when user/roles are supported, this can be extended similar to PG
+		 * to allow users owning their backends to be cancelled even if they miss the above
+		 * roles
+		 */
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_UNAUTHORIZED),
+						errmsg("not authorized on admin to execute command"
+							   " { killOp: 1, op: \"%.*s:%.*s\" }",
+							   parsedArgs->shardIdView.length,
+							   parsedArgs->shardIdView.string,
+							   parsedArgs->opIdView.length,
+							   parsedArgs->opIdView.string)));
 	}
 }
 

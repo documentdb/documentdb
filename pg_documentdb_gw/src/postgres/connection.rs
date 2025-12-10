@@ -192,7 +192,7 @@ impl Connection {
             }) if self.in_transaction => {
                 let set_timeout_start = request_tracker.start_timer();
                 self.inner_conn
-                    .batch_execute(&format!("set local statement_timeout to {}", max_time_ms))
+                    .batch_execute(&format!("set local statement_timeout to {max_time_ms}"))
                     .await?;
                 request_tracker.record_duration(
                     RequestIntervalKind::PostgresSetStatementTimeout,
@@ -230,7 +230,7 @@ impl Connection {
 
                 let set_timeout_start = request_tracker.start_timer();
                 self.inner_conn
-                    .batch_execute(&format!("set local statement_timeout to {}", max_time_ms))
+                    .batch_execute(&format!("set local statement_timeout to {max_time_ms}"))
                     .await?;
                 request_tracker.record_duration(
                     RequestIntervalKind::PostgresSetStatementTimeout,
@@ -260,7 +260,7 @@ impl Connection {
             }) => {
                 let set_timeout_start = request_tracker.start_timer();
                 self.inner_conn
-                    .batch_execute(&format!("set statement_timeout to {}", max_time_ms))
+                    .batch_execute(&format!("set statement_timeout to {max_time_ms}"))
                     .await?;
                 request_tracker.record_duration(
                     RequestIntervalKind::PostgresSetStatementTimeout,

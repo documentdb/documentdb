@@ -276,10 +276,32 @@ EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bs
                      Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "12" }, { "$numberInt" : "14" } ] }'::bson)
 (9 rows)
 
-SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
-                                                                     get_feature_counter_pretty                                                                      
+set documentdb.enableOrderByIdOnCostFunction to on;
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$eq": 14}}, "sort": {"_id": 1}, "limit": 20 }');
+                                         QUERY PLAN                                          
 ---------------------------------------------------------------------
- {"Feature_usage":[{"query_operator_eq" : 4}, {"query_operator_gt" : 4}, {"query_operator_in" : 1}, {"limit" : 7}, {"match" : 9}, {"sort" : 9}, {"sort_by_id" : 9}]}
+ Limit (actual rows=20 loops=1)
+   ->  Index Scan using _id_ on documents_964001_9640002 collection (actual rows=20 loops=1)
+         Index Cond: (shard_key_value = '964001'::bigint)
+         Filter: (document @= '{ "a" : { "$numberInt" : "14" } }'::bson)
+         Rows Removed by Filter: 38
+(5 rows)
+
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$in": [12, 14]}}, "sort": {"_id": 1}, "limit": 20 }');
+                                              QUERY PLAN                                               
+---------------------------------------------------------------------
+ Limit (actual rows=20 loops=1)
+   ->  Index Scan using _id_ on documents_964001_9640002 collection (actual rows=20 loops=1)
+         Index Cond: (shard_key_value = '964001'::bigint)
+         Filter: (document @*= '{ "a" : [ { "$numberInt" : "12" }, { "$numberInt" : "14" } ] }'::bson)
+         Rows Removed by Filter: 10
+(5 rows)
+
+reset documentdb.enableOrderByIdOnCostFunction;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                       get_feature_counter_pretty                                                                       
+---------------------------------------------------------------------
+ {"Feature_usage":[{"query_operator_eq" : 5}, {"query_operator_gt" : 4}, {"query_operator_in" : 2}, {"limit" : 9}, {"match" : 11}, {"sort" : 11}, {"sort_by_id" : 11}]}
 (1 row)
 
 BEGIN;

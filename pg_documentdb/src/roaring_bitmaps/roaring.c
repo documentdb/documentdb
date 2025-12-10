@@ -21243,7 +21243,7 @@ roaring_bitmap_t *roaring_bitmap_from_range(uint64_t min, uint64_t max,
         uint32_t container_min = min_tmp & 0xFFFF;
         uint32_t container_max =
             (uint32_t)minimum_uint64(max - (key << 16), 1 << 16);
-        uint8_t type;
+        uint8_t type = 0;
         container_t *container = container_from_range(
             &type, container_min, container_max, (uint16_t)step);
         ra_append(&answer->high_low_container, (uint16_t)key, container, type);
@@ -24733,7 +24733,7 @@ roaring64_bitmap_t *roaring64_bitmap_from_range(uint64_t min, uint64_t max,
         uint16_t container_min = min & 0xFFFF;
         uint32_t container_max = (uint32_t)minimum(max - high_bits, 1 << 16);
 
-        uint8_t typecode;
+        uint8_t typecode = 0;
         container_t *container = container_from_range(
             &typecode, container_min, container_max, (uint16_t)step);
 

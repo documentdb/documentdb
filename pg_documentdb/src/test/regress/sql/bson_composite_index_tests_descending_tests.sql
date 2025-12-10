@@ -30,11 +30,11 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
 
 -- create a regular index
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
-    'comp_db', '{ "createIndexes": "comp_collection_desc", "indexes": [ { "name": "comp_index1", "key": { "a": -1, "b": -1 } } ] }');
+    'comp_db', '{ "createIndexes": "comp_collection_desc", "indexes": [ { "name": "comp_index", "key": { "a": -1, "b": -1 } } ] }');
 
--- create a composite index with a different name and same key (works)
+-- create a non-composite index with a different name and same key (works)
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
-    'comp_db', '{ "createIndexes": "comp_collection_desc", "indexes": [ { "name": "comp_index", "key": { "a": -1, "b": -1 }, "enableCompositeTerm": true } ] }', TRUE);
+    'comp_db', '{ "createIndexes": "comp_collection_desc", "indexes": [ { "name": "comp_index1", "key": { "a": -1, "b": -1 }, "enableCompositeTerm": false } ] }', TRUE);
 
 -- check the index
 \d documentdb_data.documents_7400

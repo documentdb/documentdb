@@ -131,8 +131,6 @@ static void HoldPortal(Portal portal);
 static uint32 CursorHashEntryHashFunc(const void *obj, size_t objsize);
 static int CursorHashEntryCompareFunc(const void *obj1, const void *obj2,
 									  Size objsize);
-static pgbson * SerializeContinuationForWorker(HTAB *cursorMap, int32_t batchSize, bool
-											   isTailable);
 
 static void UpdateCursorInContinuationMap(pgbson *continuationValue, HTAB *cursorMap, bool
 										  isTailable);
@@ -1761,7 +1759,7 @@ SerializeTailableContinuationsToWriter(pgbson_writer *writer, HTAB *cursorMap)
  * Serializes continuation state from the map into a bson that can be sent to the
  * workers. This includes continuation state and page size hints for round trips.
  */
-static pgbson *
+pgbson *
 SerializeContinuationForWorker(HTAB *cursorMap, int32_t batchSize, bool isTailable)
 {
 	pgbson_writer finalWriter;

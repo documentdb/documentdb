@@ -59,7 +59,7 @@ pub async fn process(
         "minWireVersion": 0,
         "maxWireVersion": dynamic_configuration.server_version().await.max_wire_protocol(),
         "readOnly": dynamic_configuration.read_only().await,
-        "connectionId": connection_context.get_connection_id_as_i64(),
+        "connectionId": connection_context.get_connection_id_hash(),
         "saslSupportedMechs": ["SCRAM-SHA-256"],
         "internal": dynamic_configuration.topology(),
         "ok": OK_SUCCEEDED,

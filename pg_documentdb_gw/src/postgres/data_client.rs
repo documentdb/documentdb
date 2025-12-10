@@ -224,6 +224,13 @@ pub trait PgDataClient: Send + Sync {
         connection_context: &ConnectionContext,
     ) -> Result<Response>;
 
+    async fn execute_kill_op(
+        &self,
+        request_context: &mut RequestContext<'_>,
+        operation_id: &str,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response>;
+
     async fn execute_coll_mod(
         &self,
         request_context: &mut RequestContext<'_>,

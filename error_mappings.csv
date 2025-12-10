@@ -3,6 +3,7 @@ ErrorMapping,ErrorName
 2,BadValue
 5,GraphContainsCycle
 9,FailedToParse
+13,Unauthorized
 14,TypeMismatch
 15,Overflow
 16,InvalidLength

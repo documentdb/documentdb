@@ -2820,6 +2820,7 @@ GinBsonExtractQueryDollarType(BsonExtractQueryArgs *args)
 	/* and int32, int64 etc are ordered together by value. */
 	/* We can optimize this further, but for now we just use minValue. */
 	*partialmatch = (bool *) palloc(sizeof(bool));
+	*extra_data = (Pointer *) palloc(sizeof(Pointer) * 1);
 	*nentries = 1;
 	**partialmatch = true;
 
@@ -2848,12 +2849,11 @@ GinBsonExtractQueryDollarType(BsonExtractQueryArgs *args)
 
 	/* now allocate the structure containing the integer type codes */
 	Datum *extraDataPtr = (Datum *) palloc(sizeof(Datum) * (numTerms + 1));
-
-	*extra_data = (Pointer *) &extraDataPtr;
+	**extra_data = (Pointer) extraDataPtr;
 
 	/* The array is represented as a length N followed by N type values */
 	/*  <int32_t length> <int32_t type> <int32_t type> ... */
-	*extraDataPtr = Int32GetDatum(numTerms);
+	extraDataPtr[0] = Int32GetDatum(numTerms);
 
 	/* add the type codes as extra data. */
 	int index = 1;
@@ -3866,7 +3866,7 @@ GinBsonComparePartialType(BsonIndexTerm *queryValue, BsonIndexTerm *compareValue
 	{
 		/* The array is represented as a length N followed by N type values */
 		/*  <int32_t length> <int32_t type> <int32_t type> ... */
-		int32_t arrayLength = DatumGetInt32(*typeArray);
+		int32_t arrayLength = DatumGetInt32(typeArray[0]);
 		typeArray++;
 		for (int i = 0; i < arrayLength; i++)
 		{

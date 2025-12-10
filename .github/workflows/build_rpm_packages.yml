@@ -24,15 +24,7 @@ jobs:
     if: github.event.pull_request.draft == false
     strategy:
       fail-fast: false
-      matrix:
-        os: ${{ fromJson(github.event_name == 'pull_request' && '["rhel9"]' || '["rhel8","rhel9"]') }}
-        arch: [amd64, arm64]
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-        pg_version: ${{ fromJson(github.event_name == 'pull_request' && '["17"]' || '["16","17"]') }}
+      matrix: ${{ fromJson(github.event_name == 'pull_request' && '{"include":[{"os":"rhel9","arch":"amd64","runner":"ubuntu-24.04","pg_version":"17"},{"os":"rhel9","arch":"arm64","runner":"ubuntu-24.04-arm","pg_version":"18"}]}' || '{"os":["rhel8","rhel9"],"arch":["amd64","arm64"],"include":[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}],"pg_version":["16","17","18"]}') }}
 
     steps:
       - name: Checkout repository

@@ -257,6 +257,14 @@ pub async fn process_request(
                 )
                 .await
             }
+            RequestType::KillOp => {
+                data_management::process_kill_op(
+                    request_context,
+                    connection_context,
+                    &pg_data_client,
+                )
+                .await
+            }
             RequestType::CollMod => {
                 data_description::process_coll_mod(
                     request_context,

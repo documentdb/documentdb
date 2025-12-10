@@ -94,6 +94,17 @@ PGDLLEXPORT bool RumNewBulkDeleteInlineDataPages =
 PGDLLEXPORT bool RumVacuumSkipPrunePostingTreePages =
 	RUM_DEFAULT_SKIP_PRUNE_POSTING_TREE_PAGES;
 
+#define RUM_DEFAULT_VACUUM_CYCLE_ID_OVERRIDE -1
+int32_t RumVacuumCycleIdOverride = RUM_DEFAULT_VACUUM_CYCLE_ID_OVERRIDE;
+
+#define RUM_DEFAULT_TRAVERSE_PAGE_ONLY_ON_BACKTRACK false
+PGDLLEXPORT bool RumTraversePageOnlyOnBackTrack =
+	RUM_DEFAULT_TRAVERSE_PAGE_ONLY_ON_BACKTRACK;
+
+#define RUM_DEFAULT_SKIP_GLOBAL_VISIBILITY_CHECK_ON_PRUNE false
+PGDLLEXPORT bool RumSkipGlobalVisibilityCheckOnPrune =
+	RUM_DEFAULT_SKIP_GLOBAL_VISIBILITY_CHECK_ON_PRUNE;
+
 /* rumget.c */
 #define RUM_DEFAULT_ENABLE_SUPPORT_DEAD_INDEX_ITEMS false
 PGDLLEXPORT bool RumEnableSupportDeadIndexItems =
@@ -300,6 +311,35 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumSkipResetOnDeadEntryPage,
 		RUM_DEFAULT_SKIP_RESET_ON_DEAD_ENTRY_PAGE,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.vacuum_cycle_id_override", documentDBRumGucPrefix),
+		"test only override for setting the vacuum cycle id",
+		NULL,
+		&RumVacuumCycleIdOverride,
+		RUM_DEFAULT_VACUUM_CYCLE_ID_OVERRIDE, -1, UINT16_MAX,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.default_traverse_rum_page_only_on_backtrack",
+				 documentDBRumGucPrefix),
+		"test only guc to only traverse vacuum pages on the backtrack path",
+		NULL,
+		&RumTraversePageOnlyOnBackTrack,
+		RUM_DEFAULT_TRAVERSE_PAGE_ONLY_ON_BACKTRACK,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.skip_global_visibility_check_on_prune",
+				 documentDBRumGucPrefix),
+		"test only guc to skip checking visibility on pruning pages",
+		NULL,
+		&RumSkipGlobalVisibilityCheckOnPrune,
+		RUM_DEFAULT_TRAVERSE_PAGE_ONLY_ON_BACKTRACK,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 

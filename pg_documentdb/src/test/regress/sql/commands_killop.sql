@@ -19,3 +19,23 @@ SELECT documentdb_api.kill_op('{ "killOp": 1, "op": "10000000001:12345", "$db": 
 
 -- Valid but no-ops
 SELECT documentdb_api.kill_op('{ "killOp": 1, "op": "10000004122:12345", "$db": "admin" }');
+
+-- Validate a random user can't run kill_op without pg_signal_backend role
+CREATE ROLE killop_user WITH LOGIN;
+GRANT ALL PRIVILEGES ON SCHEMA documentdb_api TO killop_user;
+SET SESSION AUTHORIZATION killop_user;
+
+-- This should fail with unauthorized error
+SELECT documentdb_api.kill_op('{ "killOp": 1, "op": "10000004122:12345", "$db": "admin" }');
+RESET SESSION AUTHORIZATION;
+
+-- Now grant pg_signal_backend role and try again
+GRANT pg_signal_backend TO killop_user;
+SET SESSION AUTHORIZATION killop_user;
+-- This should succeed now
+SELECT documentdb_api.kill_op('{ "killOp": 1, "op": "10000004122:12345", "$db": "admin" }');
+RESET SESSION AUTHORIZATION;
+
+-- Cleanup
+REVOKE ALL PRIVILEGES ON SCHEMA documentdb_api FROM killop_user;
+DROP ROLE killop_user;

@@ -32,9 +32,15 @@
 
 #include "pg_documentdb_rum.h"
 
+typedef struct RumPageGetEntriesContext
+{
+	RumState rumState;
+	Page page;
+} RumPageGetEntriesContext;
+
 static Jsonb * GetResultJsonB(int count, char **keys, JsonbValue *values);
 static Page get_page_from_raw(bytea *raw_page);
-static Jsonb * RumPrintEntryToJsonB(Page page, uint64 counter, Oid firstEntryOid);
+static Jsonb * RumPrintEntryToJsonB(RumPageGetEntriesContext *context, uint64 counter);
 static Jsonb * RumPrintDataPageLineToJsonB(Page page, uint64 counter);
 
 PG_FUNCTION_INFO_V1(documentdb_rum_get_meta_page_info);
@@ -144,6 +150,12 @@ documentdb_rum_page_get_stats(PG_FUNCTION_ARGS)
 	char *args[6] = { 0 };
 	JsonbValue values[6] = { 0 };
 
+	if (PageIsNew(page))
+	{
+		/* If it's a void page, just treat it as a deleted page */
+		RumInitPage(page, RUM_DELETED, BLCKSZ);
+	}
+
 	args[0] = "flags";
 	values[0].type = jbvNumeric;
 	values[0].val.numeric = int64_to_numeric(RumPageGetOpaque(page)->flags);
@@ -202,35 +214,41 @@ documentdb_rum_page_get_stats(PG_FUNCTION_ARGS)
 PGDLLEXPORT Datum
 documentdb_rum_page_get_entries(PG_FUNCTION_ARGS)
 {
-	Oid entryTypeOid = PG_GETARG_OID(1);
+	Oid indexOid = PG_GETARG_OID(1);
+
 	FuncCallContext *fctx;
-	Page page;
+	RumPageGetEntriesContext *context;
 	if (SRF_IS_FIRSTCALL())
 	{
+		Relation indexRelation;
 		bytea *raw_page = PG_GETARG_BYTEA_P(0);
 		MemoryContext mctx;
 
 		fctx = SRF_FIRSTCALL_INIT();
 
 		mctx = MemoryContextSwitchTo(fctx->multi_call_memory_ctx);
-		page = get_page_from_raw(raw_page);
+		context = palloc0(sizeof(RumPageGetEntriesContext));
+		context->page = get_page_from_raw(raw_page);
+		indexRelation = index_open(indexOid, AccessShareLock);
+		initRumState(&context->rumState, indexRelation);
+		RelationClose(indexRelation);
 		MemoryContextSwitchTo(mctx);
 
-		if (RumPageIsData(page) || RumPageIsDeleted(page))
+		if (RumPageIsData(context->page) || RumPageIsDeleted(context->page))
 		{
 			ereport(WARNING, (errmsg("Cannot yet enumerate data or deleted pages")));
 			PG_RETURN_NULL();
 		}
 
-		fctx->max_calls = PageGetMaxOffsetNumber(page);
-		fctx->user_fctx = page;
+		fctx->max_calls = PageGetMaxOffsetNumber(context->page);
+		fctx->user_fctx = context;
 	}
 
 	fctx = SRF_PERCALL_SETUP();
-	page = (Page) fctx->user_fctx;
+	context = (RumPageGetEntriesContext *) fctx->user_fctx;
 	if (fctx->call_cntr < fctx->max_calls)
 	{
-		Jsonb *result = RumPrintEntryToJsonB(page, fctx->call_cntr, entryTypeOid);
+		Jsonb *result = RumPrintEntryToJsonB(context, fctx->call_cntr);
 		SRF_RETURN_NEXT(fctx, PointerGetDatum(result));
 	}
 
@@ -330,13 +348,17 @@ get_page_from_raw(bytea *raw_page)
 
 
 static Jsonb *
-RumPrintEntryToJsonB(Page page, uint64 counter, Oid firstEntryOid)
+RumPrintEntryToJsonB(RumPageGetEntriesContext *context, uint64 counter)
 {
 	OffsetNumber offset = (OffsetNumber) (counter + 1);
-	int nargs = 8;
-	char *args[8] = { 0 };
-	JsonbValue values[8] = { 0 };
+	int nargs = 9;
+	char *args[9] = { 0 };
+	JsonbValue values[9] = { 0 };
 	IndexTuple tuple;
+	Datum indexDatum, entryCstringDatum;
+	RumNullCategory category;
+	int entryAttrNumber;
+	Page page = context->page;
 
 	char *ptr, *dump, *datacstring, *firstEntryCString;
 	Size dlen;
@@ -392,19 +414,13 @@ RumPrintEntryToJsonB(Page page, uint64 counter, Oid firstEntryOid)
 		dump += 2;
 	}
 
-	if (firstEntryOid != InvalidOid)
-	{
-		Datum firstEntryDatum, firstEntryCStringDatum;
-		firstEntryDatum = fetch_att(ptr, get_typbyval(firstEntryOid), get_typlen(
-										firstEntryOid));
-		getTypeOutputInfo(firstEntryOid, &typeOutputFunction, &typIsVarlena);
-		firstEntryCStringDatum = OidFunctionCall1(typeOutputFunction, firstEntryDatum);
-		firstEntryCString = DatumGetCString(firstEntryCStringDatum);
-	}
-	else
-	{
-		firstEntryCString = "";
-	}
+	entryAttrNumber = rumtuple_get_attrnum(&context->rumState, tuple);
+	indexDatum = rumtuple_get_key(&context->rumState, tuple, &category);
+	getTypeOutputInfo(TupleDescAttr(context->rumState.origTupdesc,
+									entryAttrNumber - 1)->atttypid,
+					  &typeOutputFunction, &typIsVarlena);
+	entryCstringDatum = OidFunctionCall1(typeOutputFunction, indexDatum);
+	firstEntryCString = DatumGetCString(entryCstringDatum);
 
 	values[4].val.string.len = dlen * 2;
 	values[4].val.string.val = datacstring;
@@ -439,6 +455,10 @@ RumPrintEntryToJsonB(Page page, uint64 counter, Oid firstEntryOid)
 	args[7] = "entryFlags";
 	values[7].type = jbvNumeric;
 	values[7].val.numeric = int64_to_numeric(itemId->lp_flags);
+
+	args[8] = "attrNumber";
+	values[8].type = jbvNumeric;
+	values[8].val.numeric = int64_to_numeric(entryAttrNumber);
 
 	return GetResultJsonB(nargs, args, values);
 }

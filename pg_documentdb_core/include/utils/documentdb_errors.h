@@ -1156,4 +1156,6 @@ typedef int DocumentdbErrorEreportCode;
 
 #define ERRCODE_DOCUMENTDB_LOCATION31321 MAKE_SQLSTATE('M', '0', '0', 'E', 'Q')
 
+#define ERRCODE_DOCUMENTDB_UNAUTHORIZED MAKE_SQLSTATE('M', '0', '0', 'E', 'R')
+
 #endif

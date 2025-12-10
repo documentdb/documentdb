@@ -681,11 +681,12 @@ NOTICE:  creating collection
 
 SELECT documentdb_api.insert('db', '{"insert":"writeFC", "documents":[
    { "_id" : 2, "movie": "Wolverine", "Budget": 180000000, "year": 2012 },
-   { "_id" : 3, "movie": "Spider Man", "Budget": 180000000, "year": 2013 }
+   { "_id" : 3, "movie": "Spider Man", "Budget": 180000000, "year": 2013 },
+   { "_id": 4, "movie": "AntMan", "Budget": 180000000, "year": 2015, "actors": ["Paul Rudd", "Evangeline Lilly"], "tags": ["Marvel", "Superhero"], "ratings": {"critics": 80, "audience": 90}}
 ]}');
                                          insert                                         
 ---------------------------------------------------------------------
- ("{ ""n"" : { ""$numberInt"" : ""2"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+ ("{ ""n"" : { ""$numberInt"" : ""3"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
 SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 1},"u":{"$set":{"year": "1998" }},"multi":true}]}');
@@ -700,10 +701,118 @@ SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""2"" }, ""n"" : { ""$numberInt"" : ""2"" } }",t)
 (1 row)
 
-SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
-                                                                             get_feature_counter_pretty                                                                             
+SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$inc":{"year": 1 }},"multi":false}]}');
+                                                               update                                                               
 ---------------------------------------------------------------------
- {"Feature_usage":[{"command_insert" : 2}, {"command_insert_one" : 1}, {"command_insert_100" : 1}, {"command_update" : 2}, {"command_update_one" : 1}, {"command_update_100" : 1}]}
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                                                          get_feature_counter_pretty                                                                                                          
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_insert" : 2}, {"command_insert_one" : 1}, {"command_insert_100" : 1}, {"command_update" : 3}, {"command_update_one" : 2}, {"command_update_100" : 1}, {"update_operator_inc" : 1}, {"update_operator_set" : 3}]}
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$min":{"year": 3000 }},"multi":false}]}');
+                                                               update                                                               
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$max":{"year": 2000 }},"multi":false}]}');
+                                                               update                                                               
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$push":{"actors": "New Actor" }},"multi":false}]}');
+                                                               update                                                               
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                   get_feature_counter_pretty                                                                   
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_update" : 3}, {"command_update_one" : 3}, {"update_operator_max" : 1}, {"update_operator_min" : 1}, {"update_operator_push" : 1}]}
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$pop": { "actors": -1 }},"multi":false}]}');
+                                                               update                                                               
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$rename": { "year": "Year" }},"multi":false}]}');
+                                                               update                                                               
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$setOnInsert": { "Year": 2015 }},"multi":false}]}');
+                                                               update                                                               
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                         get_feature_counter_pretty                                                                         
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_update" : 3}, {"command_update_one" : 3}, {"update_operator_pop" : 1}, {"update_operator_rename" : 1}, {"update_operator_set_on_insert" : 1}]}
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$addToSet": { "actors": "Paul Rudd" }},"multi":false}]}');
+                                                               update                                                               
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$pullAll": { "actors": ["No Actor"] }},"multi":false}]}');
+                                                               update                                                               
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$pull": { "actors": "No Actor" }},"multi":false}]}');
+                                                               update                                                               
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                       get_feature_counter_pretty                                                                        
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_update" : 3}, {"command_update_one" : 3}, {"update_operator_addtoset" : 1}, {"update_operator_pull" : 1}, {"update_operator_pullall" : 1}]}
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$mul": { "Budget": 1 }},"multi":false}]}');
+                                                               update                                                               
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$currentDate": { "updatedAt": true }},"multi":false}]}');
+                                                               update                                                               
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$bit": { "Year": { "and": 2016 } }},"multi":false}]}');
+                                                               update                                                               
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$unset": { "tags": "" }},"multi":false}]}');
+                                                               update                                                               
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                                      get_feature_counter_pretty                                                                                      
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_update" : 4}, {"command_update_one" : 4}, {"update_operator_bit" : 1}, {"update_operator_currentdate" : 1}, {"update_operator_mul" : 1}, {"update_operator_unset" : 1}]}
 (1 row)
 
 -- Test: Feature counter for list_databases command

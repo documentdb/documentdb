@@ -162,7 +162,7 @@ where
     let (tcp_stream, peer_address) = stream_and_address?;
 
     let connection_id = Uuid::new_v4();
-    log::info!(activity_id = connection_id.to_string().as_str(); "New TCP connection established");
+    log::info!(activity_id = connection_id.to_string().as_str(); "Accepted new TCP connection");
 
     // Configure TCP stream
     tcp_stream.set_nodelay(true)?;
@@ -197,7 +197,12 @@ where
         }
     };
 
-    let conn_ctx = ConnectionContext::new(
+    log::info!(
+        activity_id = connection_id.to_string().as_str();
+        "TCP connection established - Connection Id {connection_id}, client IP {ip_address}"
+    );
+
+    let connection_context = ConnectionContext::new(
         service_context,
         telemetry,
         ip_address.to_string(),
@@ -212,7 +217,7 @@ where
         tls_stream,
     );
 
-    handle_stream::<T>(buffered_stream, conn_ctx).await;
+    handle_stream::<T>(buffered_stream, connection_context).await;
     Ok(())
 }
 
@@ -265,6 +270,7 @@ where
                     &connection_context,
                     e,
                     &mut stream,
+                    connection_activity_id_as_str,
                 )
                 .await
                 {
@@ -461,11 +467,12 @@ async fn log_and_write_error(
     request_tracker: &mut RequestTracker,
     activity_id: &str,
 ) -> Result<()> {
-    let error_response = CommandError::from_error(connection_context, e).await;
+    let error_response = CommandError::from_error(connection_context, e, activity_id).await;
     let response = error_response.to_raw_document_buf()?;
 
     responses::writer::write_and_flush(header, &response, stream).await?;
 
+    // telemety can block so do it after write and flush.
     log::error!(activity_id = activity_id; "Request failure: {e}");
 
     if let Some(telemetry) = connection_context.telemetry_provider.as_ref() {

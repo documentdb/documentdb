@@ -34,6 +34,7 @@ BsonIndexAmEntry RumIndexAmEntry = {
 	.is_order_by_supported = false,
 	.is_backwards_scan_supported = false,
 	.is_index_only_scan_supported = false,
+	.can_support_parallel_scans = false,
 	.get_am_oid = RumIndexAmId,
 	.get_single_path_op_family_oid = BsonRumSinglePathOperatorFamily,
 	.get_composite_path_op_family_oid = BsonRumCompositeIndexOperatorFamily,
@@ -331,6 +332,20 @@ IsCompositeOpFamilyOid(Oid relam, Oid opFamilyOid)
 	}
 
 	return amEntry->get_composite_path_op_family_oid() == opFamilyOid;
+}
+
+
+bool
+IsCompositeOpFamilyOidWithParallelSupport(Oid relam, Oid opFamilyOid)
+{
+	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relam);
+	if (amEntry == NULL)
+	{
+		return false;
+	}
+
+	return amEntry->get_composite_path_op_family_oid() == opFamilyOid &&
+		   amEntry->can_support_parallel_scans;
 }
 
 

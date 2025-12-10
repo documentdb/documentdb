@@ -11,7 +11,8 @@ cassert="false"
 help="false";
 withasan="false"
 pgVersion=""
-while getopts "d:hxcv:a" opt; do
+withvalgrind="false"
+while getopts "d:hxcv:ag" opt; do
   case $opt in
     d) postgresqlInstallDir="$OPTARG"
     ;;
@@ -24,6 +25,8 @@ while getopts "d:hxcv:a" opt; do
     v) pgVersion="$OPTARG"
     ;;
     a) withasan="true"
+    ;;
+    g) withvalgrind="true"
     ;;
   esac
 
@@ -82,14 +85,23 @@ git checkout FETCH_HEAD
 
 echo "building and installing postgresql ref $POSTGRESQL_REF and installing to $postgresqlInstallDir..."
 
+EXTRA_CPP_FLAGS=" "
+EXTRA_CPP_FLAGS_ARGS=""
+if [ "$withvalgrind" == "true" ]; then
+  EXTRA_CPP_FLAGS=" -DUSE_VALGRIND -Og"
+  EXTRA_CPP_FLAGS_ARGS='CFLAGS="-DUSE_VALGRIND -Og"'
+fi
+
 if [ "$withasan" == "true" ]; then
-  export CPPFLAGS="-ggdb -Og -g3 -fsanitize=address -fsanitize=undefined -fno-sanitize-recover=all -fno-sanitize=nonnull-attribute -fstack-protector"
+  export CPPFLAGS="-ggdb -Og -g3 -fsanitize=address -fsanitize=undefined -fno-sanitize-recover=all -fno-sanitize=nonnull-attribute -fstack-protector $EXTRA_CPP_FLAGS"
   export LDFLAGS="-fsanitize=address -fsanitize=undefined -lstdc++ -static-libasan"
   ./configure --enable-debug --enable-cassert --enable-tap-tests --with-openssl --prefix="$postgresqlInstallDir" --with-icu
 elif [ "$debug" == "true" ]; then
-  ./configure --enable-debug --enable-cassert --enable-tap-tests CFLAGS="-ggdb -Og -g3 -fno-omit-frame-pointer" --with-openssl --prefix="$postgresqlInstallDir" --with-icu
+  ./configure --enable-debug --enable-cassert --enable-tap-tests CFLAGS="-ggdb -Og -g3 -fno-omit-frame-pointer $EXTRA_CPP_FLAGS" --with-openssl --prefix="$postgresqlInstallDir" --with-icu
 elif [ "$cassert" == "true" ]; then
-  ./configure --enable-debug --enable-cassert --enable-tap-tests --with-openssl --prefix="$postgresqlInstallDir" --with-icu
+  ./configure --enable-debug --enable-cassert --enable-tap-tests --with-openssl --prefix="$postgresqlInstallDir" --with-icu $EXTRA_CPP_FLAGS_ARGS
+elif [ "$withvalgrind" == "true" ]; then
+  ./configure --enable-debug --enable-tap-tests --with-openssl --prefix="$postgresqlInstallDir" --with-icu $EXTRA_CPP_FLAGS_ARGS
 else
   ./configure --enable-debug --enable-tap-tests --with-openssl --prefix="$postgresqlInstallDir" --with-icu
 fi

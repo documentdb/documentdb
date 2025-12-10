@@ -913,6 +913,7 @@ typedef struct RumScanOpaqueData
 	bool isVoidRes;             /* true if query is unsatisfiable */
 	bool willSort;              /* is there any columns in ordering */
 	RumScanType scanType;
+	bool isParallelEnabled;
 
 	ScanDirection naturalOrder;
 	bool secondPass;
@@ -955,6 +956,23 @@ extern Datum rummarkpos(PG_FUNCTION_ARGS);
 extern Datum rumrestrpos(PG_FUNCTION_ARGS);
 extern void rumNewScanKey(IndexScanDesc scan);
 extern void freeScanKeys(RumScanOpaque so);
+
+#if PG_VERSION_NUM >= 180000
+extern Size rumestimateparallelscan(Relation rel, int nkeys, int norderbys);
+#elif PG_VERSION_NUM >= 170000
+extern Size rumestimateparallelscan(int nkeys, int norderbys);
+#else
+extern Size rumestimateparallelscan(void);
+#endif
+extern void ruminitparallelscan(void *target);
+extern void rumparallelrescan(IndexScanDesc scan);
+extern bool rum_parallel_scan_start(IndexScanDesc scan, bool *startScan);
+extern bool rum_parallel_scan_start_notify(IndexScanDesc scan);
+
+extern bool rum_parallel_seize(ParallelIndexScanDesc parallelScan,
+							   BlockNumber *blockNumber);
+extern void rum_parallel_release(ParallelIndexScanDesc parallelScan, BlockNumber
+								 nextBlock);
 
 /* rumget.c */
 extern int64 rumgetbitmap(IndexScanDesc scan, TIDBitmap *tbm);

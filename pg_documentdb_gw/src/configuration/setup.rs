@@ -55,7 +55,7 @@ impl DocumentDBSetupConfiguration {
     pub fn new(config_path: &Path) -> Result<Self> {
         let config_file = File::open(config_path)?;
         serde_json::from_reader(config_file).map_err(|e| {
-            DocumentDBError::internal_error(format!("Failed to parse configuration file: {}", e))
+            DocumentDBError::internal_error(format!("Failed to parse configuration file: {e}"))
         })
     }
 }

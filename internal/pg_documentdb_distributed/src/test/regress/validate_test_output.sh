@@ -75,7 +75,7 @@ aggregateCollectionIdStr=""
 aggregateShardIdStr=""
 maxCollectionIdStr=""
 
-validationExceptions="/sql/documentdb_distributed_test_helpers.sql,/sql/public_api_schema.sql,/sql/documentdb_distributed_setup.sql"
+validationExceptions="/sql/documentdb_distributed_test_helpers.sql,/sql/public_api_schema.sql,/sql/documentdb_distributed_setup.sql,/sql/distributed_install_setup.sql"
 
 skippedDuplicateCheckFile=""
 echo "Validating test file output"

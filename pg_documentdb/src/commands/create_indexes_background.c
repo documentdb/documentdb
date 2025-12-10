@@ -107,6 +107,7 @@ typedef enum BackgroundIndexRunStatus
 	RunStatus_IndexBuildDone = 4,
 } BackgroundIndexRunStatus;
 
+bool ShouldSetupIndexQueueInUdf = true;
 extern int MaxIndexBuildAttempts;
 extern int IndexQueueEvictionIntervalInSec;
 
@@ -137,6 +138,7 @@ PG_FUNCTION_INFO_V1(command_check_build_index_status);
 PG_FUNCTION_INFO_V1(command_check_build_index_status_internal);
 PG_FUNCTION_INFO_V1(schedule_background_index_build_jobs);
 PG_FUNCTION_INFO_V1(command_build_index_background);
+PG_FUNCTION_INFO_V1(setup_index_queue_table);
 
 static pgbson * RunIndexCommandOnMetadataCoordinator(const char *query, int
 													 expectedSpiOk);
@@ -1074,6 +1076,38 @@ schedule_background_index_build_jobs(PG_FUNCTION_ARGS)
 
 	UnscheduleIndexBuildTasks(ExtensionObjectPrefixV2);
 	ScheduleIndexBuildTasks(ExtensionObjectPrefixV2);
+
+	PG_RETURN_VOID();
+}
+
+
+/*
+ * Setup the index queue table based on the installation script version that called it.
+ * If the flag ShouldSetupIndexQueueInUdf is false, we skip this function.
+ * This flag allows extensions that depend on documentdb to skip the creation of the index queue table and have them
+ * manage it themselves, e.g. for distributed scenarios where the queue might not be needed on all nodes.
+ */
+Datum
+setup_index_queue_table(PG_FUNCTION_ARGS)
+{
+	if (!ShouldSetupIndexQueueInUdf)
+	{
+		PG_RETURN_VOID();
+	}
+
+	int majorVersion = PG_GETARG_INT32(0);
+	int minorVersion = PG_GETARG_INT32(1);
+	int patchVersion = PG_GETARG_INT32(2);
+
+	/* Create the index queue table when we are called for 0.109.0 */
+	if (majorVersion == DocDB_V0 &&
+		minorVersion == 109 &&
+		patchVersion == 0)
+	{
+		bool includeOptions = true;
+		bool includeDropCommandType = true;
+		CreateIndexQueueIfNotExists(includeOptions, includeDropCommandType);
+	}
 
 	PG_RETURN_VOID();
 }

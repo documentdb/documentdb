@@ -45,6 +45,7 @@
 #include "metadata/metadata_cache.h"
 #include "utils/error_utils.h"
 #include "utils/index_utils.h"
+#include "utils/version_utils.h"
 
 #define ONE_SEC_IN_MS 1000L
 
@@ -66,6 +67,7 @@ extern char *LocalhostConnectionString;
 
 extern int LatchTimeOutSec;
 extern int BackgroundWorkerJobTimeoutThresholdSec;
+extern bool PopulateBackgroundWorkerJobsTable;
 
 static bool BackgroundWorkerReloadConfig = false;
 
@@ -144,6 +146,9 @@ static bool CheckIfJobCommandIsAllowed(BackgroundWorkerJobCommand command);
 static bool CanExecuteJob(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTime);
 static bool CheckIfRoleExists(const char *roleName);
 static List * GenerateJobExecutions(void);
+static void AddJobInJobTable(int jobId, int scheduleIntervalSec, const char *command, int
+							 timeoutSec,
+							 bool executeOnCoordinatorOnly);
 static BackgroundWorkerJobExecution * CreateJobExecutionObj(BackgroundWorkerJob job);
 static char * GenerateCommandQuery(BackgroundWorkerJob job, MemoryContext stableContext);
 static void CancelJobIfTimeIsUp(BackgroundWorkerJobExecution *jobExec, TimestampTz
@@ -773,7 +778,8 @@ GenerateJobExecutions(void)
 
 	for (int i = 0; i < JobEntries; i++)
 	{
-		BackgroundWorkerJobExecution *jobExec = CreateJobExecutionObj(JobRegistry[i]);
+		BackgroundWorkerJob job = JobRegistry[i];
+		BackgroundWorkerJobExecution *jobExec = CreateJobExecutionObj(job);
 
 		/*
 		 * Check for nullity. NULL is returned if an error happened while creating
@@ -783,15 +789,115 @@ GenerateJobExecutions(void)
 		{
 			ereport(WARNING, (errmsg(
 								  "Skipping background worker job %s with id %d because an execution instance could not be generated.",
-								  JobRegistry[i].jobName, JobRegistry[i].jobId)));
+								  job.jobName, job.jobId)));
 		}
 		else
 		{
+			/* Add the job in the job queue. This call is idempotent, adding the job
+			 * in the queue only if it does not exist. Do this only after we have a valid
+			 * job execution object.
+			 */
+			StringInfo jobName = makeStringInfo();
+			appendStringInfo(jobName, "%s.%s", job.command.schema, job.command.name);
+
+			AddJobInJobTable(job.jobId,
+							 job.get_schedule_interval_in_seconds_hook(),
+							 jobName->data,
+							 job.timeoutInSeconds,
+							 job.toBeExecutedOnMetadataCoordinatorOnly);
+
 			jobExecutions = lappend(jobExecutions, jobExec);
+
+			pfree(jobName->data);
+			pfree(jobName);
 		}
 	}
 
 	return jobExecutions;
+}
+
+
+/*
+ * AddJobInJobTable inserts a record into ApiCatalogSchemaNameV2.{ExtensionObjectPrefixV2}_background_jobs
+ * for given job using SPI if it doesn't already exist.
+ * The function is idempotent - it only adds the job if it doesn't already exist.
+ */
+static void
+AddJobInJobTable(int jobId, int scheduleIntervalSec, const char *command, int timeoutSec,
+				 bool executeOnCoordinatorOnly)
+{
+	/* Bail early if populating background worker jobs table is disabled.
+	 */
+	if (!PopulateBackgroundWorkerJobsTable)
+	{
+		return;
+	}
+
+	SetCurrentStatementStartTimestamp();
+	PopAllActiveSnapshots();
+	StartTransactionCommand();
+	PushActiveSnapshot(GetTransactionSnapshot());
+
+	/* Adding to the table is only supported with schema 108-0 that adds
+	 * the {ExtensionObjectPrefix}_background_jobs table.
+	 */
+	if (IsClusterVersionAtleast(DocDB_V0, 109, 0))
+	{
+		PG_TRY();
+		{
+			StringInfo cmdStr = makeStringInfo();
+			appendStringInfo(cmdStr,
+							 "INSERT INTO %s.%s_background_jobs (jobid, schedule_sec, command, timeout_sec, exec_on_coordinator_only) "
+							 "VALUES ($1, $2, $3, $4, $5) ON CONFLICT (jobid) DO NOTHING",
+							 ApiCatalogSchemaNameV2,
+							 ExtensionObjectPrefixV2);
+
+			int argCount = 5;
+			Oid argTypes[5];
+			Datum argValues[5];
+			char argNulls[5] = { ' ', ' ', ' ', ' ', ' ' };
+
+			argTypes[0] = INT4OID;
+			argValues[0] = Int32GetDatum(jobId);
+
+			argTypes[1] = INT4OID;
+			argValues[1] = Int32GetDatum(scheduleIntervalSec);
+
+			argTypes[2] = TEXTOID;
+			argValues[2] = PointerGetDatum(cstring_to_text(command));
+
+			argTypes[3] = INT4OID;
+			argValues[3] = Int32GetDatum(timeoutSec);
+
+			argTypes[4] = BOOLOID;
+			argValues[4] = BoolGetDatum(executeOnCoordinatorOnly);
+
+			bool isNull = true;
+			bool readOnly = false;
+
+			ExtensionExecuteQueryWithArgsViaSPI(cmdStr->data, argCount, argTypes,
+												argValues, argNulls, readOnly,
+												SPI_OK_INSERT,
+												&isNull);
+
+			PopActiveSnapshot();
+			CommitTransactionCommand();
+		}
+		PG_CATCH();
+		{
+			ereport(WARNING, errmsg("could not add job in background jobs table"));
+			PopAllActiveSnapshots();
+			AbortCurrentTransaction();
+		}
+		PG_END_TRY();
+	}
+	else
+	{
+		ereport(LOG, errmsg(
+					"Skipping adding job in background jobs table because the cluster version is less than 108-0"));
+		PopActiveSnapshot();
+		CommitTransactionCommand();
+	}
 }
 
 

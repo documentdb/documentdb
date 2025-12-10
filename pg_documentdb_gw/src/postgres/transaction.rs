@@ -25,16 +25,14 @@ impl Transaction {
             IsolationLevel::ReadCommitted => "READ COMMITTED",
             other => {
                 return Err(DocumentDBError::bad_value(format!(
-                    "Isolation level not supported: {:?}",
-                    other
+                    "Isolation level not supported: {other:?}"
                 )))
             }
         };
 
         conn
             .batch_execute(&format!(
-                "START TRANSACTION ISOLATION LEVEL {}; SET LOCAL lock_timeout='20ms'; SET LOCAL citus.max_adaptive_executor_pool_size=1;",
-                isolation
+                "START TRANSACTION ISOLATION LEVEL {isolation}; SET LOCAL lock_timeout='20ms'; SET LOCAL citus.max_adaptive_executor_pool_size=1;"
             ))
             .await?;
 

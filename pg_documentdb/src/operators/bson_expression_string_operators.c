@@ -1737,9 +1737,7 @@ ProcessDollarStrLenBytes(const bson_value_t *currentValue, bson_value_t *result)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION34473), errmsg(
 							"Expected 'string' type for $strLenBytes but found '%s' type",
-							currentValue->value_type == BSON_TYPE_EOD ?
-							MISSING_TYPE_NAME :
-							BsonTypeName(currentValue->value_type))));
+							BsonTypeNameExtended(currentValue->value_type))));
 	}
 
 	result->value_type = BSON_TYPE_INT32;
@@ -1755,9 +1753,7 @@ ProcessDollarStrLenCP(const bson_value_t *currentValue, bson_value_t *result)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION34471), errmsg(
 							"$strLenCP needs a string input, but received: %s",
-							currentValue->value_type == BSON_TYPE_EOD ?
-							MISSING_TYPE_NAME :
-							BsonTypeName(currentValue->value_type))));
+							BsonTypeNameExtended(currentValue->value_type))));
 	}
 
 	result->value_type = BSON_TYPE_INT32;
@@ -2026,9 +2022,7 @@ ProcessDollarIndexOfCore(FourArgumentExpressionState *input,
 		ereport(ERROR, (errcode(errorCode), errmsg(
 							"%s expects its second argument to be a string, but received: %s",
 							opName,
-							input->secondArgument.value_type == BSON_TYPE_EOD ?
-							MISSING_TYPE_NAME :
-							BsonTypeName(input->secondArgument.value_type))));
+							BsonTypeNameExtended(input->secondArgument.value_type))));
 	}
 
 	if (input->totalProcessedArgs >= 3)
@@ -2038,18 +2032,14 @@ ProcessDollarIndexOfCore(FourArgumentExpressionState *input,
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40096), errmsg(
 								"An integral starting index is required for %s, but the provided value has type: %s with actual value: %s",
 								opName,
-								input->thirdArgument.value_type == BSON_TYPE_EOD ?
-								MISSING_TYPE_NAME :
-								BsonTypeName(input->thirdArgument.value_type),
+								BsonTypeNameExtended(input->thirdArgument.value_type),
 								input->thirdArgument.value_type == BSON_TYPE_EOD ?
 								MISSING_VALUE_NAME :
 								BsonValueToJsonForLogging(&input->thirdArgument)),
 							errdetail_log(
 								"Expected 'integer' type for %s but found '%s' type",
 								opName,
-								input->thirdArgument.value_type == BSON_TYPE_EOD ?
-								MISSING_TYPE_NAME :
-								BsonTypeName(input->thirdArgument.value_type))));
+								BsonTypeNameExtended(input->thirdArgument.value_type))));
 		}
 
 		*startIndex = BsonValueAsInt32(&input->thirdArgument);
@@ -2069,18 +2059,14 @@ ProcessDollarIndexOfCore(FourArgumentExpressionState *input,
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40096), errmsg(
 								"%s needs an integral ending index but received a value of type %s with the value %s",
 								opName,
-								input->fourthArgument.value_type == BSON_TYPE_EOD ?
-								MISSING_TYPE_NAME :
-								BsonTypeName(input->fourthArgument.value_type),
+								BsonTypeNameExtended(input->fourthArgument.value_type),
 								input->fourthArgument.value_type == BSON_TYPE_EOD ?
 								MISSING_VALUE_NAME :
 								BsonValueToJsonForLogging(&input->fourthArgument)),
 							errdetail_log(
 								"%s needs an integral ending index but received a value of type %s",
 								opName,
-								input->fourthArgument.value_type == BSON_TYPE_EOD ?
-								MISSING_TYPE_NAME :
-								BsonTypeName(input->fourthArgument.value_type))));
+								BsonTypeNameExtended(input->fourthArgument.value_type))));
 		}
 
 		*endIndex = BsonValueAsInt32(&input->fourthArgument);

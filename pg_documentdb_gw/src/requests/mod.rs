@@ -124,6 +124,7 @@ pub enum RequestType {
     IsDBGrid,
     IsMaster,
     KillCursors,
+    KillOp,
     ListCollections,
     ListCommands,
     ListDatabases,
@@ -210,6 +211,7 @@ impl FromStr for RequestType {
             "ismaster" => Ok(RequestType::IsMaster),
             "isMaster" => Ok(RequestType::IsMaster),
             "killCursors" => Ok(RequestType::KillCursors),
+            "killOp" => Ok(RequestType::KillOp),
             "listCollections" => Ok(RequestType::ListCollections),
             "listCommands" => Ok(RequestType::ListCommands),
             "listDatabases" => Ok(RequestType::ListDatabases),
@@ -234,7 +236,7 @@ impl FromStr for RequestType {
             "whatsmyuri" => Ok(RequestType::WhatsMyUri),
             _ => Err(DocumentDBError::documentdb_error(
                 ErrorCode::CommandNotSupported,
-                format!("Unknown request received: {}", cmd_name),
+                format!("Unknown request received: {cmd_name}"),
             )),
         }
     }
@@ -242,7 +244,7 @@ impl FromStr for RequestType {
 
 impl fmt::Display for RequestType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -304,11 +306,14 @@ impl<'a> Request<'a> {
         }
     }
 
-    pub fn extract_common(&self) -> Result<RequestInfo> {
+    pub fn extract_common(&'a self) -> Result<RequestInfo<'a>> {
         self.extract_fields_and_common(|_, _| Ok(()))
     }
 
-    pub fn extract_coll_and_common(&self, collection_key: &str) -> Result<(String, RequestInfo)> {
+    pub fn extract_coll_and_common(
+        &'a self,
+        collection_key: &str,
+    ) -> Result<(String, RequestInfo<'a>)> {
         let mut collection = None;
         let request_info = self.extract_fields_and_common(|k, v| {
             if k == collection_key {
@@ -325,14 +330,13 @@ impl<'a> Request<'a> {
         })?;
         Ok((
             collection.ok_or(DocumentDBError::bad_value(format!(
-                "{} should be present",
-                collection_key
+                "{collection_key} should be present"
             )))?,
             request_info,
         ))
     }
 
-    pub fn extract_fields_and_common<F>(&self, mut coll_extractor: F) -> Result<RequestInfo>
+    pub fn extract_fields_and_common<F>(&'a self, mut coll_extractor: F) -> Result<RequestInfo<'a>>
     where
         F: FnMut(&str, RawBsonRef) -> Result<()>,
     {

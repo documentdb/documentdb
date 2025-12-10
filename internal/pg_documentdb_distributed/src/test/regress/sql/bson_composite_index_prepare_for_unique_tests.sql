@@ -177,7 +177,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('prep_unique_db',
 -- test with a secondary user
 SELECT documentdb_api.create_user('{"createUser":"newPrepareUniqueUser", "pwd":"Admin123!", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}, {"role":"clusterAdmin","db":"admin"}]}');
 
-\c regression newPrepareUniqueUser
+\c - newPrepareUniqueUser
 set documentdb.enablePrepareUnique to on;
 
 SELECT documentdb_api.coll_mod('prep_unique_db', 'collection', '{ "collMod": "collection", "index": { "name": "f_1", "prepareUnique": true } }');

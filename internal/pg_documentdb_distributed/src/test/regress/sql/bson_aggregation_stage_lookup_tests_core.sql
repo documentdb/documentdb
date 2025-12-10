@@ -741,3 +741,628 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
           } 
         }] 
       }}]}');
+
+
+SELECT documentdb_api.create_collection('db', 'tenantCollection');
+SELECT documentdb_api.create_collection('db', 'candidateRequest');
+SELECT documentdb_api.insert('db','{ "insert" : "tenantCollection",  
+"documents" : [
+{"_id": 1, "name": "Tenant 1", "archived": false },
+{"_id": 2, "name": "Tenant 2", "archived": false },
+{"_id": 3, "name": "Tenant 3", "archived": false },
+{"_id": 4, "name": "Tenant 4", "archived": false },
+{"_id": 5, "name": "Tenant 5", "archived": false },
+{"_id": 6, "name": "Tenant 6", "archived": false },
+{"_id": 7, "name": "Tenant 7", "archived": false },
+{"_id": 8, "name": "Tenant 8", "archived": false },
+{"_id": 9, "name": "Tenant 9", "archived": false },
+{"_id": 10, "name": "Tenant 10", "archived": false }
+]}');
+
+SELECT documentdb_api.insert('db','{ "insert" : "candidateRequest",  
+"documents" : [
+{ "_id": 101, "tenantId": 1, "candidateId": 201, "status": "closed", "createdAt": "2025-08-14T21:50:54.099Z" },
+{ "_id": 102, "tenantId": 2, "candidateId": 202, "status": "open", "createdAt": "2025-08-15T10:15:22.399Z" },
+{ "_id": 103, "tenantId": 3, "candidateId": 203, "status": "closed", "createdAt": "2025-08-16T08:20:14.221Z" },
+{ "_id": 104, "tenantId": 4, "candidateId": 204, "status": "closed", "createdAt": "2025-08-17T12:47:11.912Z" },
+{ "_id": 105, "tenantId": 5, "candidateId": 205, "status": "open", "createdAt": "2025-08-18T09:32:44.511Z" },
+{ "_id": 106, "tenantId": 6, "candidateId": 206, "status": "closed", "createdAt": "2025-08-19T14:05:31.742Z" },
+{ "_id": 107, "tenantId": 7, "candidateId": 207, "status": "closed", "createdAt": "2025-08-20T11:18:58.287Z" },
+{ "_id": 108, "tenantId": 8, "candidateId": 208, "status": "open", "createdAt": "2025-08-21T07:44:21.663Z" },
+{ "_id": 109, "tenantId": 9, "candidateId": 209, "status": "closed", "createdAt": "2025-08-22T16:13:49.984Z" },
+{ "_id": 110, "tenantId": 10, "candidateId": 210, "status": "closed", "createdAt": "2025-08-23T19:28:33.527Z" }
+]}');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{
+     "createIndexes": "candidateRequest",
+     "indexes": [
+       {"key": {"tenantId": 1}, "name": "idx_candidateRequest_tenantId"}
+     ]
+   }',
+   true
+);
+
+-- This Transaction shows buggy output we will remove this GUC soon and will remove this test as well
+BEGIN;
+SET LOCAL documentdb.enableUseLookupNewProjectInlineMethod TO off;
+SELECT document FROM bson_aggregation_pipeline(
+    'db',
+    '{
+      "aggregate": "tenantCollection",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "candidateRequest",
+            "localField": "_id",
+            "foreignField": "tenantId",
+            "as": "requests",
+            "pipeline": [
+              { "$match": { "status": { "$ne": "unopened" } } },
+              { "$project": { "status": 1, "candidateId": 1 } }
+            ]
+          }
+        }
+      ]
+    }'
+);
+
+ROLLBACK;
+
+BEGIN;
+SET LOCAL  documentdb.enableUseLookupNewProjectInlineMethod TO on;
+SET LOCAL enable_seqscan TO off;
+SELECT document FROM bson_aggregation_pipeline(
+    'db',
+    '{
+      "aggregate": "tenantCollection",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "candidateRequest",
+            "localField": "_id",
+            "foreignField": "tenantId",
+            "as": "requests",
+            "pipeline": [
+              { "$match": { "status": { "$ne": "unopened" } } },
+              { "$project": { "status": 1, "candidateId": 1 } }
+            ]
+          }
+        }
+      ]
+    }'
+);
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline(
+    'db',
+    '{
+      "aggregate": "tenantCollection",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "candidateRequest",
+            "localField": "_id",
+            "foreignField": "tenantId",
+            "as": "requests",
+            "pipeline": [
+              { "$match": { "status": { "$ne": "unopened" } } },
+              { "$project": { "status": 1, "candidateId": 1 } }
+            ]
+          }
+        }
+      ]
+    }'
+);
+ROLLBACK;
+
+
+-- Test nested lookup with multiple levels
+SELECT documentdb_api.insert_one('db','users','{ "_id" : 1, "customerCode": "C100", "name": "Nimisha Doshi" }', NULL);
+SELECT documentdb_api.insert_one('db','users','{ "_id" : 2, "customerCode": "C101", "name": "Parag Jain" }', NULL);
+
+SELECT documentdb_api.insert_one('db','orders','{ "_id" : 1,  "orderId": 1, "customerCode": "C100", "productCode": "P200" }', NULL);
+SELECT documentdb_api.insert_one('db','orders','{ "_id" : 2, "orderId": 2, "customerCode": "C100", "productCode": "P201" }', NULL);
+SELECT documentdb_api.insert_one('db','orders','{ "_id" : 3, "orderId": 3, "customerCode": "C101", "productCode": "P200" }', NULL);
+
+SELECT documentdb_api.insert_one('db','products','{ "_id" : 1, "productCode": "P200", "title": "Laptop", "price": 55000 }', NULL);
+SELECT documentdb_api.insert_one('db','products','{ "_id" : 2, "productCode": "P201", "title": "Headphones", "price": 2000 }', NULL);
+
+-- Create indexes
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{
+     "createIndexes": "users",
+     "indexes": [
+       {"key": {"customerCode": 1}, "name": "idx_users_customerCode"}
+     ]
+   }',
+   true
+);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{
+     "createIndexes": "orders",
+     "indexes": [
+       {"key": {"customerCode": 1}, "name": "idx_orders_customerCode"},
+       {"key": {"productCode": 1}, "name": "idx_orders_productCode"}
+     ]
+   }',
+   true
+);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{
+     "createIndexes": "products",
+     "indexes": [
+       {"key": {"productCode": 1}, "name": "idx_products_productCode"}
+     ]
+   }',
+   true
+);
+
+-- Execute nested lookup aggregation
+SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "productCode": 1
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+-- Now run explain verbose to check that if projection is modifying or removing doc we don't pushdown
+-- 1. when join field is in inclusion projection, should pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "customerCode": 1
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+
+
+-- 2. when join field is in exclusion projection, should not pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "customerCode": 0
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+
+-- 3. when join field is modified in projection, should not pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "customerCode": "someOtherValue"
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+
+-- 4. when there is mix inclusion and exclusion projection, should not pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "customerCode": 1,
+                "productCode": 0
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+
+-- 5. when there is inclusion but join field not included, should not pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "productCode": 1
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+  
+-- 6. where there is exlcusion but join field not excluded, should pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "someOtherField": 0
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+
+
+-- 7. lookup is on _id and _id is excluded, should pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "_id",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "_id": 0
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');   
+
+-- 8. lookup is on _id and _id is included, we forcefully not inline when foreignField is _id
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "_id",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "_id": 1
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+
+-- 9. lookup is not on _id and _id is excluded but lookup is included,  we forcefully not inline when foreignField is _id
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "_id": 0, "customerCode" : 1
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+
+-- 10. lookup is not on _id and _id is included but lookup is excluded, should not pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "_id": 1, "customerCode" : 0
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');    
+
+ROLLBACK;
+
+-- 11 Bug Fix 2 : Should pass foreign fields to lookupinline functions
+SELECT documentdb_api.insert_one('dbAddField','users','{ "_id": 1, "name": "user1", "age": 28 }', NULL);
+SELECT documentdb_api.insert_one('dbAddField','users','{ "_id": 2, "name": "user2", "age": 27 }', NULL);
+
+SELECT documentdb_api.insert_one('dbAddField','orders','{ "_id": 101, "userId": 1, "item": "Laptop", "price": 50000 }', NULL);
+SELECT documentdb_api.insert_one('dbAddField','orders','{ "_id": 102, "userId": 1, "item": "Phone", "price": 20000 }', NULL);
+SELECT documentdb_api.insert_one('dbAddField','orders','{ "_id": 103, "userId": 2, "item": "Watch", "price": 5000 }', NULL);
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'dbAddField',
+  '{
+     "createIndexes": "orders",
+     "indexes": [
+       {"key": {"userId": 1}, "name": "idx_orders_userId"}
+     ]
+   }',
+   true
+);
+
+-- Buggy case which should fixed by enableUseForeignKeyLookupInline it on;
+BEGIN;
+SET LOCAL documentdb.enableUseForeignKeyLookupInline to off;
+-- Test $addFields modifying the foreignField in lookup pipeline
+SELECT document FROM bson_aggregation_pipeline('dbAddField', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "_id",
+          "foreignField": "userId",
+          "as": "userOrders",
+          "pipeline": [
+            {
+              "$addFields": {
+                "userId": 100
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+ROLLBACK;
+
+-- this fixes above issue
+BEGIN;
+SET LOCAL documentdb.enableUseForeignKeyLookupInline to on;
+SELECT document FROM bson_aggregation_pipeline('dbAddField', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "_id",
+          "foreignField": "userId",
+          "as": "userOrders",
+          "pipeline": [
+            {
+              "$addFields": {
+                "userId": 100
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+
+ROLLBACK;
+
+
+-- Explain plan, should not pushdown as we are modifying foreignField
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "_id",
+          "foreignField": "userId",
+          "as": "userOrders",
+          "pipeline": [
+            {
+              "$addFields": {
+                "userId": 100
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+ROLLBACK;
+
+
+
+

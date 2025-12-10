@@ -807,9 +807,7 @@ ProcessDollarSetEqualsElement(const bson_value_t *currentElement, void *state,
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION17044), errmsg(
 							"All operands of $setEquals must be arrays; one provided argument is of type: %s",
-							currentElement->value_type == BSON_TYPE_EOD ?
-							MISSING_TYPE_NAME :
-							BsonTypeName(currentElement->value_type))));
+							BsonTypeNameExtended(currentElement->value_type))));
 	}
 
 	DollarSetOperatorState *setEqualsState = (DollarSetOperatorState *) state;
@@ -939,11 +937,10 @@ ProcessDollarSetIsSubset(void *state, const char *collationString, bson_value_t 
 	if (context->firstArgument.value_type != BSON_TYPE_ARRAY)
 	{
 		int errorCode = ERRCODE_DOCUMENTDB_LOCATION17310;
-		char *typeName = MISSING_TYPE_NAME;
+		char *typeName = BsonTypeNameExtended(context->firstArgument.value_type);
 
 		if (context->firstArgument.value_type != BSON_TYPE_EOD)
 		{
-			typeName = BsonTypeName(context->firstArgument.value_type);
 			errorCode = ERRCODE_DOCUMENTDB_LOCATION17046;
 		}
 
@@ -956,9 +953,7 @@ ProcessDollarSetIsSubset(void *state, const char *collationString, bson_value_t 
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION17042), errmsg(
 							"Both operands in $setIsSubset must be arrays, but the second operand provided is of type: %s",
-							context->secondArgument.value_type == BSON_TYPE_EOD ?
-							MISSING_TYPE_NAME :
-							BsonTypeName(context->secondArgument.value_type))));
+							BsonTypeNameExtended(context->secondArgument.value_type))));
 	}
 
 	DollarSetOperatorState setIsSubsetState =
@@ -1066,9 +1061,7 @@ ProcessDollarAllOrAnyElementsTrue(const bson_value_t *currentValue, void *state,
 							"The argument provided for %s must be of array type, yet it is actually %s.",
 							IsAllElementsTrueOp ? "$allElementsTrue" :
 							"$anyElementTrue",
-							currentValue->value_type == BSON_TYPE_EOD ?
-							MISSING_TYPE_NAME :
-							BsonTypeName(currentValue->value_type))));
+							BsonTypeNameExtended(currentValue->value_type))));
 	}
 
 	bson_iter_t arrayIterator;

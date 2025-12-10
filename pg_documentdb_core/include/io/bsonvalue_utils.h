@@ -70,6 +70,7 @@ bson_type_t BsonTypeFromName(const char *name);
 
 /* also see inlined method: BsonIterTypeName */
 char * BsonTypeName(bson_type_t type);
+char * BsonTypeNameExtended(bson_type_t type);
 
 bool BsonIterSearchKeyRecursive(bson_iter_t *iter, const char *key);
 int64 BsonValueHash(const bson_value_t *value, int64 seed);

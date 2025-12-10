@@ -34,6 +34,9 @@ use simple_logger::SimpleLogger;
 use tokio_postgres::{error::SqlState, NoTls};
 use tokio_util::sync::CancellationToken;
 
+pub mod rbac_utils;
+pub mod validation_utils;
+
 static INIT: Once = Once::new();
 
 // Starts the server and returns an authenticated client
@@ -211,15 +214,12 @@ pub async fn create_user(user: &str, pass: &str, query_catalog: &QueryCatalog) -
     }?;
 
     client
-        .batch_execute(&format!("ALTER ROLE {} SUPERUSER", user))
+        .batch_execute(&format!("ALTER ROLE {user} SUPERUSER"))
         .await
         .unwrap();
 
     if let tokio_postgres::SimpleQueryMessage::Row(result) = client
-        .simple_query(&format!(
-            "SELECT * FROM pg_roles WHERE rolname = '{}'",
-            user
-        ))
+        .simple_query(&format!("SELECT * FROM pg_roles WHERE rolname = '{user}'"))
         .await
         .unwrap()
         .first()

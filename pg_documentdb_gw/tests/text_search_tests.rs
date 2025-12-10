@@ -25,8 +25,7 @@ async fn text_query_should_fail_no_index() {
                 let code_name = &command_error.code_name;
                 assert_eq!(
                     "IndexNotFound", code_name,
-                    "Expected codeName to be 'IndexNotFound', got: {}",
-                    code_name
+                    "Expected codeName to be 'IndexNotFound', got: {code_name}"
                 );
 
                 let code = command_error.code;

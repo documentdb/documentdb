@@ -604,6 +604,8 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 		*indexStartupCost = 0;
 		*indexTotalCost = INFINITY;
 		*indexSelectivity = 0;
+		*indexCorrelation = 0;
+		*indexPages = 0;
 		return;
 	}
 
@@ -622,6 +624,8 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 			*indexStartupCost = 0;
 			*indexTotalCost = INFINITY;
 			*indexSelectivity = 0;
+			*indexCorrelation = 0;
+			*indexPages = 0;
 			return;
 		}
 	}
@@ -1022,6 +1026,7 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 																 nInnerorderbys);
 
 			outerScanState->innerScan->xs_want_itup = scan->xs_want_itup;
+			outerScanState->innerScan->parallel_scan = scan->parallel_scan;
 		}
 
 		outerScanState->innerScan->ignore_killed_tuples = scan->ignore_killed_tuples;
@@ -1297,6 +1302,7 @@ CheckIndexHasArrays(Relation indexRelation, IndexAmRoutine *coreRoutine)
 	arrayKey.sk_strategy = BSON_INDEX_STRATEGY_IS_MULTIKEY;
 	arrayKey.sk_argument = PointerGetDatum(PgbsonInitEmpty());
 
+	innerDesc->parallel_scan = NULL;
 	coreRoutine->amrescan(innerDesc, &arrayKey, 1, NULL, 0);
 	bool hasArrays = coreRoutine->amgettuple(innerDesc, ForwardScanDirection);
 	coreRoutine->amendscan(innerDesc);
@@ -1322,6 +1328,7 @@ RumGetTruncationStatus(Relation indexRelation)
 	truncatedKey.sk_collation = InvalidOid;
 	truncatedKey.sk_strategy = BSON_INDEX_STRATEGY_HAS_TRUNCATED_TERMS;
 	truncatedKey.sk_argument = PointerGetDatum(PgbsonInitEmpty());
+	innerDesc->parallel_scan = NULL;
 
 	rum_index_routine.amrescan(innerDesc, &truncatedKey, 1, NULL, 0);
 	bool hasTruncation = rum_index_routine.amgettuple(innerDesc, ForwardScanDirection);

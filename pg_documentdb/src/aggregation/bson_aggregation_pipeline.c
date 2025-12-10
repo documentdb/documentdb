@@ -81,6 +81,7 @@ extern bool EnableIndexOrderbyPushdown;
 extern bool EnableConversionStreamableToSingleBatch;
 extern bool EnableFindProjectionAfterOffset;
 extern bool EnableNewCountAggregates;
+extern bool EnableUseLookupNewProjectInlineMethod;
 
 /* GUC to config tdigest compression */
 extern int TdigestCompressionAccuracy;
@@ -228,8 +229,10 @@ static bool RequiresPersistentCursorFalseNoSingleRow(const bson_value_t *pipelin
 static bool RequiresPersistentCursorTrueSingleRow(const bson_value_t *pipelineValue,
 												  bool *isSingleRowResult);
 
-static bool CanInlineLookupStageProjection(const bson_value_t *stageValue, const
-										   StringView *lookupPath, bool hasLet);
+static bool CanInlineLookupStageSetAddFields(const bson_value_t *stageValue, const
+											 StringView *lookupPath, bool hasLet);
+static bool CanInlineLookupStageProject(const bson_value_t *stageValue, const
+										StringView *lookupPath, bool hasLet);
 static bool CanInlineLookupStageUnset(const bson_value_t *stageValue, const
 									  StringView *lookupPath, bool hasLet);
 static bool CanInlineLookupStageUnwind(const bson_value_t *stageValue, const
@@ -308,7 +311,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.stage = "$addFields",
 		.mutateFunc = &HandleAddFields,
 		.requiresPersistentCursor = &RequiresPersistentCursorFalse,
-		.canInlineLookupStageFunc = &CanInlineLookupStageProjection,
+		.canInlineLookupStageFunc = &CanInlineLookupStageSetAddFields,
 		.preservesStableSortOrder = true,
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = true,
@@ -639,7 +642,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.stage = "$project",
 		.mutateFunc = &HandleProject,
 		.requiresPersistentCursor = &RequiresPersistentCursorFalse,
-		.canInlineLookupStageFunc = &CanInlineLookupStageProjection,
+		.canInlineLookupStageFunc = &CanInlineLookupStageProject,
 
 		/* Project does not change the output format */
 		.preservesStableSortOrder = true,
@@ -742,7 +745,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.stage = "$set",
 		.mutateFunc = &HandleAddFields,
 		.requiresPersistentCursor = &RequiresPersistentCursorFalse,
-		.canInlineLookupStageFunc = &CanInlineLookupStageProjection,
+		.canInlineLookupStageFunc = &CanInlineLookupStageSetAddFields,
 		.preservesStableSortOrder = true,
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = true,
@@ -874,6 +877,7 @@ static const int AggregationStageCount = sizeof(StageDefinitions) /
 static const int MaxEvenFunctionArguments = ((int) (FUNC_MAX_ARGS / 2)) * 2;
 
 PG_FUNCTION_INFO_V1(command_bson_aggregation_pipeline);
+PG_FUNCTION_INFO_V1(command_bson_aggregation_getmore);
 PG_FUNCTION_INFO_V1(command_api_collection);
 PG_FUNCTION_INFO_V1(command_aggregation_support);
 PG_FUNCTION_INFO_V1(documentdb_core_bson_to_bson);
@@ -965,7 +969,20 @@ CheckMaxAllowedAggregationStages(int numberOfStages)
 Datum
 command_bson_aggregation_pipeline(PG_FUNCTION_ARGS)
 {
-	/* dumbest possible implementation: assume 1% of rows are returned */
+	ereport(ERROR, (errmsg(
+						"bson_aggregation function should have been processed by the planner. This is an internal error")));
+	PG_RETURN_BOOL(false);
+}
+
+
+/*
+ * command_bson_aggregation_pipeline is a wrapper function that carries with it the
+ * aggregation pipeline for a getmore. This is replaced in the planner and so shouldn't
+ * ever be called in the runtime.
+ */
+Datum
+command_bson_aggregation_getmore(PG_FUNCTION_ARGS)
+{
 	ereport(ERROR, (errmsg(
 						"bson_aggregation function should have been processed by the planner. This is an internal error")));
 	PG_RETURN_BOOL(false);
@@ -1941,6 +1958,82 @@ default_find_case:
 								  addCursorAsConst);
 	}
 
+	return query;
+}
+
+
+Query *
+BuildAggregationCursorGetMoreQuery(text *database, pgbson *getMoreSpec,
+								   pgbson *continuationSpec)
+{
+	/* Form a funcExpr query that is just calling the getMore function
+	 * these cursor kinds don't really execute a brand new query on the getMore
+	 * and they simply drain what was persisted in the first phase.
+	 */
+	Query *query = makeNode(Query);
+	query->commandType = CMD_SELECT;
+	query->querySource = QSRC_ORIGINAL;
+	query->canSetTag = true;
+
+	List *colNames = list_make2(makeString("cursorpage"), makeString("continuation"));
+	RangeTblEntry *rte = makeNode(RangeTblEntry);
+	rte->rtekind = RTE_FUNCTION;
+	rte->relid = InvalidOid;
+
+	rte->eref = makeAlias("collection", colNames);
+	rte->lateral = false;
+	rte->inFromCl = true;
+	rte->functions = NIL;
+	rte->inh = false;
+#if PG_VERSION_NUM >= 160000
+	rte->perminfoindex = 0;
+#else
+	rte->requiredPerms = ACL_SELECT;
+#endif
+	rte->rellockmode = AccessShareLock;
+	rte->coltypes = list_make2_oid(BsonTypeId(), BsonTypeId());
+	rte->coltypmods = list_make2_int(-1, -1);
+	rte->colcollations = list_make2_oid(InvalidOid, InvalidOid);
+	rte->ctename = NULL;
+	rte->ctelevelsup = 0;
+
+	Const *databaseConst = makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1,
+									 PointerGetDatum(database),
+									 false, false);
+	List *queryArgs = list_make3(databaseConst, MakeBsonConst(getMoreSpec), MakeBsonConst(
+									 continuationSpec));
+
+	/* Now create the rtfunc*/
+	FuncExpr *rangeFunc = makeFuncExpr(CursorGetMoreFunctionOid(), RECORDOID, queryArgs,
+									   InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+
+	RangeTblFunction *rangeTableFunction = makeNode(RangeTblFunction);
+	rangeTableFunction->funccolcount = 2;
+	rangeTableFunction->funccolnames = colNames;
+	rangeTableFunction->funccoltypes = list_make2_oid(BsonTypeId(), BsonTypeId());
+	rangeTableFunction->funccoltypmods = list_make2_int(-1, -1);
+	rangeTableFunction->funccolcollations = list_make2_oid(InvalidOid, InvalidOid);
+	rangeTableFunction->funcparams = NULL;
+	rangeTableFunction->funcexpr = (Node *) rangeFunc;
+
+	/* Add the RTFunc to the RTE */
+	rte->functions = list_make1(rangeTableFunction);
+
+	query->rtable = list_make1(rte);
+
+	RangeTblRef *rtr = makeNode(RangeTblRef);
+	rtr->rtindex = 1;
+	query->jointree = makeFromExpr(list_make1(rtr), NULL);
+
+	Var *documentEntry = makeVar(1, 1, BsonTypeId(), -1, InvalidOid, 0);
+	Var *continuationEntry = makeVar(1, 2, BsonTypeId(), -1, InvalidOid, 0);
+	TargetEntry *documentTargetEntry = makeTargetEntry((Expr *) documentEntry, 1,
+													   "cursorpage",
+													   false);
+	TargetEntry *continuationTargetEntry = makeTargetEntry((Expr *) continuationEntry, 2,
+														   "continuation",
+														   false);
+	query->targetList = list_make2(documentTargetEntry, continuationTargetEntry);
 	return query;
 }
 
@@ -7108,7 +7201,11 @@ AddCursorFunctionsToQuery(Query *query, Query *baseQuery,
 
 	/* Add a parameter for the cursor state */
 	Node *cursorNode;
-	if (addCursorAsConst)
+	if (queryData->cursorStateConst != NULL)
+	{
+		cursorNode = (Node *) MakeBsonConst(queryData->cursorStateConst);
+	}
+	else if (addCursorAsConst)
 	{
 		cursorNode = (Node *) MakeBsonConst(PgbsonInitEmpty());
 	}
@@ -7483,8 +7580,8 @@ CanInlineLookupStageMatch(const bson_value_t *stageValue, const
  * We can probably do better but that is left as an exercise for later.
  */
 static bool
-CanInlineLookupStageProjection(const bson_value_t *stageValue, const
-							   StringView *lookupPath, bool hasLet)
+CanInlineLookupStageSetAddFields(const bson_value_t *stageValue, const
+								 StringView *lookupPath, bool hasLet)
 {
 	if (stageValue->value_type != BSON_TYPE_DOCUMENT)
 	{
@@ -7507,6 +7604,139 @@ CanInlineLookupStageProjection(const bson_value_t *stageValue, const
 		{
 			return false;
 		}
+	}
+
+	return true;
+}
+
+
+/*
+ * Helper for a $project stage on whether it can be inlined for a $lookup.
+ * Can be inlined if all the $project fields does not exclude or overwrite the lookup path.
+ */
+static bool
+CanInlineLookupStageProject(const bson_value_t *stageValue, const
+							StringView *lookupPath, bool hasLet)
+{
+	if (!EnableUseLookupNewProjectInlineMethod)
+	{
+		return CanInlineLookupStageSetAddFields(stageValue, lookupPath, hasLet);
+	}
+
+	if (stageValue->value_type != BSON_TYPE_DOCUMENT)
+	{
+		return false;
+	}
+
+	if (hasLet)
+	{
+		return false;
+	}
+
+	bson_iter_t projectIter;
+	BsonValueInitIterator(stageValue, &projectIter);
+
+	bool hasInclusion = false;
+	bool hasExclusion = false;
+	bool foundMatchInInclusion = false;
+	bool foundMatchInExclusion = false;
+	bool isIdModifiedorExcluded = false;
+	bool isJoinOnIdField = StringViewEqualsCString(lookupPath, "_id");
+
+	while (bson_iter_next(&projectIter))
+	{
+		const StringView keyView = bson_iter_key_string_view(&projectIter);
+		const bson_value_t *value = bson_iter_value(&projectIter);
+
+		StringView keyViewPrefix = StringViewFindPrefix(&keyView, '.');
+		if (keyViewPrefix.length != 0 && StringViewEquals(&keyViewPrefix, lookupPath))
+		{
+			/* it's a dotted projection and both prefix are matching so we safely return false */
+			/* TODO: We can probably do better but that is left as an exercise for later. */
+			return false;
+		}
+
+		/* handle _id cases */
+		if (StringViewEqualsCString(&keyView, "_id"))
+		{
+			if (!isJoinOnIdField)
+			{
+				/* join is not on _id so we skip */
+				continue;
+			}
+
+			if (BsonValueIsNumberOrBool(value))
+			{
+				/* join is on _id and excluded */
+				if (BsonValueAsInt32(value) == 0)
+				{
+					isIdModifiedorExcluded = true;
+				}
+			}
+			else
+			{
+				/* join is on _id and modified */
+				isIdModifiedorExcluded = true;
+			}
+			continue;
+		}
+
+		if (BsonValueIsNumberOrBool(value))
+		{
+			if (BsonValueAsInt32(value) == 0)
+			{
+				hasExclusion = true;
+
+				if (StringViewEquals(&keyView, lookupPath))
+				{
+					foundMatchInExclusion = true;
+				}
+			}
+			else
+			{
+				hasInclusion = true;
+
+				if (StringViewEquals(&keyView, lookupPath))
+				{
+					foundMatchInInclusion = true;
+				}
+			}
+		}
+		else
+		{
+			/* If a projection assigns a value (not 1, 0, true, or false) to a field */
+			/* that's used in the join, we cannot inline it as it would overwrite the join field. */
+			hasInclusion = true;
+			if (StringViewEquals(&keyView, lookupPath))
+			{
+				return false;
+			}
+		}
+
+		if (hasInclusion && hasExclusion)
+		{
+			/* Mixed inclusion and exclusion, cannot inline */
+			/* Can we do better fail early, but that is left as an exercise for later.*/
+			return false;
+		}
+	}
+
+	if (isJoinOnIdField && isIdModifiedorExcluded)
+	{
+		/* join is on _id and _id is either excluded or modified */
+		return false;
+	}
+
+	if (hasExclusion && foundMatchInExclusion)
+	{
+		/* Excluding the lookup path */
+		return false;
+	}
+
+	if (hasInclusion && !foundMatchInInclusion)
+	{
+		/* Inclusion but path does not exist */
+		return false;
 	}
 
 	return true;

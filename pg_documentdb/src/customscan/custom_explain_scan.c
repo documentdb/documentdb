@@ -147,6 +147,7 @@ void
 RegisterExplainScanNodes(void)
 {
 	RegisterExtensibleNodeMethods(&InputQueryStateMethods);
+	RegisterCustomScanMethods(&ExplainQueryScanMethods);
 }
 
 
@@ -600,5 +601,7 @@ OutInputQueryScanNode(StringInfo str, const struct ExtensibleNode *raw_node)
 static void
 ReadUnsupportedExtensionQueryScanNode(struct ExtensibleNode *node)
 {
-	ereport(ERROR, (errmsg("Read for node type CustomQueryScan not implemented")));
+	ExplainInputQueryState *newNode = (ExplainInputQueryState *) node;
+	newNode->extensible.type = T_ExtensibleNode;
+	newNode->extensible.extnodename = InputContinuationNodeName;
 }

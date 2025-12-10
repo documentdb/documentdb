@@ -98,7 +98,7 @@ impl Drop for Transaction {
                 tokio::spawn(async move {
                     if let Some(mut t) = this {
                         if let Err(e) = t.abort().await {
-                            log::error!("Failed to drop a transaction: {}", e)
+                            log::error!("Failed to drop a transaction: {e}")
                         }
                     }
                 });

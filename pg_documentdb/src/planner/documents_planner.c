@@ -20,6 +20,7 @@
 #include <storage/lmgr.h>
 #include <optimizer/planner.h>
 #include "optimizer/pathnode.h"
+#include <optimizer/cost.h>
 #include <nodes/nodes.h>
 #include <nodes/makefuncs.h>
 #include <nodes/nodeFuncs.h>
@@ -135,6 +136,9 @@ extern bool EnableLogRelationIndexesOrder;
 extern bool ForceBitmapScanForLookup;
 extern bool EnableIndexOnlyScan;
 extern bool EnableCursorsOnAggregationQueryRewrite;
+extern bool EnableIdIndexCustomCostFunction;
+extern bool EnableCompositeParallelIndexScan;
+extern bool ForceParallelScanIfAvailable;
 
 planner_hook_type ExtensionPreviousPlannerHook = NULL;
 set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook = NULL;
@@ -518,7 +522,7 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 
 	if (EnableIndexOrderbyPushdown)
 	{
-		ConsiderIndexOrderByPushdown(root, rel, rte, rti, &indexContext);
+		ConsiderIndexOrderByPushdownForId(root, rel, rte, rti, &indexContext);
 	}
 
 	if (EnableIndexOnlyScan)
@@ -532,7 +536,8 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	bool updatedPaths = false;
 	if (indexContext.hasStreamingContinuationScan)
 	{
-		updatedPaths = UpdatePathsWithExtensionStreamingCursorPlans(root, rel, rte);
+		updatedPaths = UpdatePathsWithExtensionStreamingCursorPlans(root, rel, rte,
+																	&indexContext);
 	}
 
 	/* Not a streaming cursor scenario.
@@ -578,6 +583,16 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	{
 		/* Finally: Add the custom scan wrapper for explain plans */
 		AddExplainCustomScanWrapper(root, rel, rte);
+	}
+
+	if (ForceParallelScanIfAvailable)
+	{
+		ListCell *cell;
+		foreach(cell, rel->pathlist)
+		{
+			Path *path = lfirst(cell);
+			path->total_cost += disable_cost;
+		}
 	}
 }
 
@@ -784,6 +799,26 @@ ExtensionGetRelationInfoHookCore(PlannerInfo *root, Oid relationObjectId,
 		list_sort(rel->indexlist, CompareIndexOptionsFunc);
 	}
 
+	/* In this path btree will be first if any */
+	if (list_length(rel->indexlist) > 0)
+	{
+		ListCell *cell;
+		foreach(cell, rel->indexlist)
+		{
+			IndexOptInfo *firstIndex = lfirst(cell);
+			if (EnableIdIndexCustomCostFunction && firstIndex->relam == BTREE_AM_OID)
+			{
+				firstIndex->amcostestimate = documentdb_btcostestimate;
+			}
+			else if (firstIndex->ncolumns == 1 &&
+					 IsCompositeOpFamilyOidWithParallelSupport(firstIndex->relam,
+															   firstIndex->opfamily[0]))
+			{
+				firstIndex->amcanparallel = EnableCompositeParallelIndexScan;
+			}
+		}
+	}
+
 	if (EnableLogRelationIndexesOrder)
 	{
 		LogRelationIndexesOrder(rel);
@@ -831,7 +866,8 @@ IsAggregationFunction(Oid funcId)
 	return funcId == ApiCatalogAggregationPipelineFunctionId() ||
 		   funcId == ApiCatalogAggregationFindFunctionId() ||
 		   funcId == ApiCatalogAggregationCountFunctionId() ||
-		   funcId == ApiCatalogAggregationDistinctFunctionId();
+		   funcId == ApiCatalogAggregationDistinctFunctionId() ||
+		   funcId == ApiCatalogAggregationGetMoreFunctionId();
 }
 
 
@@ -869,7 +905,8 @@ DocumentDbQueryFlagsWalker(Node *node, DocumentDbQueryFlagsState *queryFlags)
 			FuncExpr *funcExpr = (FuncExpr *) rangeTblFunc->funcexpr;
 
 			/* Defer the func check until we really have to */
-			if (list_length(funcExpr->args) != 2)
+			if (list_length(funcExpr->args) != 2 &&
+				list_length(funcExpr->args) != 3)
 			{
 				return false;
 			}
@@ -1699,14 +1736,16 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 
 	FuncExpr *aggregationFunc = (FuncExpr *) rangeTblFunc->funcexpr;
 
-	if (list_length(aggregationFunc->args) != 2)
+	if (list_length(aggregationFunc->args) != 2 &&
+		list_length(aggregationFunc->args) != 3)
 	{
 		ereport(ERROR, (errmsg(
-							"Aggregation pipeline node should have 2 args. This is unexpected")));
+							"Aggregation pipeline node should have 2 or 3 args. This is unexpected")));
 	}
 
 	Node *databaseArg = linitial(aggregationFunc->args);
 	Node *secondArg = lsecond(aggregationFunc->args);
+	Node *thirdArg = NULL;
 
 	if (!IsA(secondArg, Const) || !IsA(databaseArg, Const))
 	{
@@ -1720,6 +1759,23 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 		 * to be evaluated during the EXECUTE)
 		 */
 		return query;
+	}
+
+	if (list_length(aggregationFunc->args) == 3)
+	{
+		thirdArg = lthird(aggregationFunc->args);
+		if (!IsA(thirdArg, Const))
+		{
+			thirdArg = EvaluateBoundParameters(thirdArg, boundParams);
+		}
+
+		if (!IsA(thirdArg, Const))
+		{
+			/* Let the runtime deal with this (This will either go to the runtime function and fail,
+			 * or noop due to prepared and come back here
+			 * to be evaluated during the EXECUTE)*/
+			return query;
+		}
 	}
 
 	Const *databaseConst = (Const *) databaseArg;
@@ -1760,6 +1816,21 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 		finalQuery = GenerateDistinctQuery(DatumGetTextPP(databaseConst->constvalue),
 										   pipeline,
 										   setStatementTimeout);
+	}
+	else if (aggregationFunc->funcid == ApiCatalogAggregationGetMoreFunctionId())
+	{
+		Const *thirdConst = (Const *) thirdArg;
+		if (thirdConst->constisnull)
+		{
+			ereport(ERROR, (errmsg(
+								"Aggregation pipeline arguments should not be null. This is unexpected")));
+		}
+
+		finalQuery = GenerateGetMoreQuery(DatumGetTextPP(databaseConst->constvalue),
+										  pipeline, DatumGetPgBson(
+											  thirdConst->constvalue),
+										  &queryData, enableCursorParam,
+										  setStatementTimeout);
 	}
 	else
 	{

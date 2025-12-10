@@ -30,6 +30,7 @@ pub struct QueryCatalog {
     // explain/mod.rs
     pub explain: String, // Has 2 params
     pub set_explain_all_tasks_true: String,
+    pub set_explain_all_plans_true: String,
     pub find_coalesce: String,
     pub find_operator: String,
     pub find_bson_text_meta_qual: String,
@@ -80,6 +81,7 @@ pub struct QueryCatalog {
     pub current_op: String,
     pub get_parameter: String,
     pub compact: String,
+    pub kill_op: String,
 
     // indexing.rs
     pub create_indexes_background: String,
@@ -157,6 +159,10 @@ impl QueryCatalog {
 
     pub fn set_explain_all_tasks_true(&self) -> &str {
         &self.set_explain_all_tasks_true
+    }
+
+    pub fn set_explain_all_plans_true(&self) -> &str {
+        &self.set_explain_all_plans_true
     }
 
     pub fn find_coalesce(&self) -> &str {
@@ -391,6 +397,10 @@ impl QueryCatalog {
         &self.compact
     }
 
+    pub fn kill_op(&self) -> &str {
+        &self.kill_op
+    }
+
     pub fn kill_cursors(&self) -> &str {
         &self.kill_cursors
     }
@@ -409,6 +419,7 @@ pub fn create_query_catalog() -> QueryCatalog {
 
             // explain/mod.rs
             explain: "EXPLAIN (FORMAT JSON, ANALYZE {analyze}, VERBOSE True, BUFFERS {analyze}, TIMING {analyze}) SELECT document FROM documentdb_api_catalog.bson_aggregation_{query_base}($1, $2)".to_string(),
+            set_explain_all_plans_true: "SELECT set_config('documentdb.enableExtendedExplainPlans', 'true', true);".to_string(),
             find_coalesce: "COALESCE(documentdb_api_catalog.bson_array_agg".to_string(),
             find_operator: "OPERATOR(documentdb_api_catalog.@#%)".to_string(),
             find_bson_text_meta_qual: "documentdb_api_catalog.bson_text_meta_qual".to_string(),
@@ -467,6 +478,7 @@ pub fn create_query_catalog() -> QueryCatalog {
             current_op: "SELECT documentdb_api.current_op($1, $2, $3)".to_string(),
             get_parameter: "SELECT documentdb_api.get_parameter($1, $2, $3)".to_string(),
             compact: "SELECT documentdb_api.compact($1)".to_string(),
+            kill_op: "SELECT documentdb_api.kill_op($1)".to_string(),
 
             // indexing.rs
             create_indexes_background: "SELECT * FROM documentdb_api.create_indexes_background($1, $2)".to_string(),

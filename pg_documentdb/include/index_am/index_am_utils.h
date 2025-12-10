@@ -41,6 +41,7 @@ bool BsonIndexAmRequiresRangeOptimization(Oid indexAm, Oid opFamilyOid);
 bool IsCompositeOpClass(Relation indexRelation);
 
 bool IsCompositeOpFamilyOid(Oid relam, Oid opFamilyOid);
+bool IsCompositeOpFamilyOidWithParallelSupport(Oid relam, Oid opFamilyOid);
 
 /*
  * Whether the Oid of the oprator family points to a single path operator family.

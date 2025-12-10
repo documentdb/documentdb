@@ -237,4 +237,6 @@ const char * GetOperationCancellationQuery(int64 shardId, StringView *opIdString
 																			char **
 																			argNulls));
 
+bool ShouldUseCompositeOpClassByDefault(void);
+
 #endif

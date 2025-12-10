@@ -23,28 +23,29 @@ SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_term
 
 -- create a table and insert some data.
 
--- does not work
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
-    'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "comp_index", "key": { "a": 1, "b": -1 }, "enableCompositeTerm": true } ] }', TRUE);
+    'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "comp_index", "key": { "a": 1, "b": -1 } } ] }', TRUE);
+
+-- does not work
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "comp_index2", "key": { "$**": 1 }, "enableCompositeTerm": true } ] }', TRUE);
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "comp_index3", "key": { "a.$**": 1 }, "enableCompositeTerm": true } ] }', TRUE);
 
--- create a regular index
+-- create an index
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "comp_index1", "key": { "a": 1, "b": 1 } } ] }', TRUE);
 
--- create a composite index with a different name and same key (works)
+-- create a non composite index with a different name and same key (works)
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
-    'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "comp_index4", "key": { "a": 1, "b": 1 }, "enableCompositeTerm": true } ] }', TRUE);
+    'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "comp_index4", "key": { "a": 1, "b": 1 }, "enableCompositeTerm": false } ] }', TRUE);
 
 -- check the index
 \d documentdb_data.documents_5601
 
--- now drop the regular index
+-- now drop the extra indexes
 CALL documentdb_api.drop_indexes('comp_db', '{ "dropIndexes": "comp_collection", "index": "comp_index" }');
-CALL documentdb_api.drop_indexes('comp_db', '{ "dropIndexes": "comp_collection", "index": "comp_index1" }');
+CALL documentdb_api.drop_indexes('comp_db', '{ "dropIndexes": "comp_collection", "index": "comp_index4" }');
 
 \d documentdb_data.documents_5601
 

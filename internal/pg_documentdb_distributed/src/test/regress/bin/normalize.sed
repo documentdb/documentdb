@@ -29,3 +29,4 @@ s/TTL job elapsed time: [+-]?[0-9]*\.?[0-9]+([eE][+-]?[0-9]+)?ms,/TTL job elapse
 s/expiry_cutoff=[0-9]*,/expiry_cutoff=<redacted>/g
 s/coord_combine_agg\('[0-9]+'/coord_combine_agg\('xxxx'/g
 s/worker_partial_agg\('[0-9]+'/coord_combine_agg\('xxxx'/g
+s/Node: host=localhost port=[0-9]+ dbname=[a-zA-Z]+/Node: host=localhost port=xxx dbname=yyy/g

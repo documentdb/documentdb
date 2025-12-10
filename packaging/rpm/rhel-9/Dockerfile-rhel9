@@ -10,9 +10,9 @@ ENV DOCUMENTDB_VERSION=${DOCUMENTDB_VERSION}
 
 RUN test -n "$DOCUMENTDB_VERSION" || (echo "DOCUMENTDB_VERSION not set" && false)
 
-# Enable CRB repository for RHEL 9
-RUN dnf install -y dnf-plugins-core && \
-    dnf config-manager --set-enabled crb
+RUN printf "[main]\nskip_if_unavailable=True\n" > /etc/dnf/dnf.conf
+RUN dnf --setopt=skip_if_unavailable=True install -y dnf-plugins-core && \
+    dnf --setopt=skip_if_unavailable=True config-manager --set-enabled crb
 
 # Locale setup
 RUN dnf -y install glibc-langpack-en glibc-common && \
@@ -61,7 +61,14 @@ RUN dnf -y install \
         libcurl-devel \
         libuuid-devel \
         lz4-devel \
-        bzip2-devel
+        bzip2-devel \
+        llvm-toolset \
+        clang-devel \
+        llvm-devel
+
+# PostgreSQL 16+ with JIT enabled expects LLVM tools in /usr/lib64/llvm20/bin
+# On RHEL 9, LLVM binaries are in /usr/bin, so create a simple symlink
+RUN mkdir -p /usr/lib64/llvm20 && ln -s /usr/bin /usr/lib64/llvm20/bin
 
 RUN rpmdev-setuptree
 

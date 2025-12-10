@@ -41,6 +41,9 @@ typedef enum IndexOptionsType
 
 	/* This is a composite index on a path */
 	IndexOptionsType_Composite,
+
+	/* The options for the unique shard path opclass */
+	IndexOptionsType_UniqueShardPath,
 } IndexOptionsType;
 
 
@@ -124,6 +127,13 @@ typedef struct
 	BsonGinIndexOptionsBase base;
 	int path;
 } BsonGinExclusionHashOptions;
+
+
+typedef struct
+{
+	BsonGinIndexOptionsBase base;
+	bool enableCompositeHashGeneration;
+} BsonShardPathExclusionOptions;
 
 /*
  * This is the serialized post-processed structure that holds the indexing options

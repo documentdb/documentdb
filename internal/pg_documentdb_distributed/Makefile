@@ -61,6 +61,18 @@ clean-sql:
 check:
 	$(MAKE) -C src/test all
 
+installcheck:
+	$(MAKE) -C src/test installcheck
+
+installcheck-minimal:
+	$(MAKE) -C src/test installcheck-minimal $@
+
+check-valgrind:
+	$(OSS_SRC_DIR)/scripts/start_oss_server.sh -c -x -v -p 58070 -f $(CURDIR)/src/test/regress/regression_opts.conf
+	@sleep 5
+	DOCDB_ENABLE_VALGRIND=true $(MAKE) INSTALL_PG_PORT=58070 -C src/test installcheck || :
+	$(OSS_SRC_DIR)/scripts/start_oss_server.sh -s -v
+
 check-dist-minimal:
 	$(MAKE) -C src/test $@
 

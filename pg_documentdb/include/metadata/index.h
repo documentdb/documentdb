@@ -320,6 +320,7 @@ uint64 * GetCollectionIdsForIndexBuild(List *excludeCollectionIds);
 void AddRequestInIndexQueue(char *createIndexCmd, int indexId, uint64 collectionId, char
 							cmd_type, Oid userOid);
 char * GetIndexQueueName(void);
+void CreateIndexQueueIfNotExists(bool includeOptions, bool includeDropCommandType);
 const char * GetIndexTypeFromKeyDocument(pgbson *keyDocument);
 
 /* Static utilities */

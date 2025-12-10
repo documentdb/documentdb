@@ -98,14 +98,11 @@ where
             }
             Err(e) => {
                 if start.elapsed() < max_time {
-                    warn!("Exception when creating postgres object {:?}", e);
+                    warn!("Exception when creating postgres object {e:?}");
                     tokio::time::sleep(wait_time).await;
                     continue;
                 } else {
-                    panic!(
-                        "Failed to create postgres object after {:?}: {}",
-                        max_time, e
-                    );
+                    panic!("Failed to create postgres object after {max_time:?}: {e}");
                 }
             }
         }

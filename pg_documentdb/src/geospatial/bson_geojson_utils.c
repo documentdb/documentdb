@@ -129,6 +129,25 @@ static const WKBVisitorFunctions PolygonValidationVisitorFuncs = {
 	.VisitPolygonRing = VisitPolygonRingForValidation
 };
 
+
+/*
+ * Read the X and Y values of a point at given index from the buffer,
+ * The buffer should be at the start of the point array, caller should make
+ * sure the pointer alignment is correct.
+ *
+ * Safe method to copy point values without assuming misaligned float8 types
+ */
+static inline void
+GetPointAtIndex(char *pointsStart, int index, Point *outPoint)
+{
+	Assert(pointsStart != NULL && outPoint != NULL);
+
+	char *ptr = pointsStart + (index * WKB_BYTE_SIZE_POINT);
+	memcpy(&outPoint->x, ptr, sizeof(float8));
+	memcpy(&outPoint->y, ptr + sizeof(float8), sizeof(float8));
+}
+
+
 /*
  * Parses the GeoJSON value and builds the respective Geometry WKB in the buffer provided in parseState.
  *
@@ -1205,23 +1224,30 @@ GetPolygonInvalidityReason(Datum polygon, PolygonValidationState *state)
 
 
 /* Check if the current ring is a straight line by checking slopes of all consecutive points */
-static pg_attribute_no_sanitize_alignment() bool
+static bool
 IsRingStraightLine(char *pointsStart, int32 numPoints)
 {
-	float8 *point = (float8 *) pointsStart;
-	float8 *nextPoint = (float8 *) (pointsStart + WKB_BYTE_SIZE_POINT);
+	if (numPoints < 2)
+	{
+		return true;
+	}
 
-	bool isEdgeVertical = DOUBLE_EQUALS(nextPoint[0], point[0]);
-	float8 slope = (nextPoint[1] - point[1]) / (nextPoint[0] - point[0]);
+	Point p1 = { 0 };
+	Point p2 = { 0 };
+	GetPointAtIndex(pointsStart, 0, &p1);
+	GetPointAtIndex(pointsStart, 1, &p2);
+
+	bool isEdgeVertical = DOUBLE_EQUALS(p2.x, p1.x);
+	float8 slope = (p2.y - p1.y) / (p2.x - p1.x);
 	for (int i = 1; i < numPoints - 1; i++)
 	{
-		point = nextPoint;
-		nextPoint = (float8 *) (pointsStart + (i + 1) * WKB_BYTE_SIZE_POINT);
-		float8 newSlope = (nextPoint[1] - point[1]) / (nextPoint[0] - point[0]);
+		p1 = p2;
+		GetPointAtIndex(pointsStart, i + 1, &p2);
+		float8 newSlope = (p2.y - p1.y) / (p2.x - p1.x);
 
 		if (isEdgeVertical)
 		{
-			isEdgeVertical = DOUBLE_EQUALS(nextPoint[0], point[0]);
+			isEdgeVertical = DOUBLE_EQUALS(p2.x, p1.x);
 
 			if (isEdgeVertical)
 			{
@@ -1333,21 +1359,21 @@ IsHoleFullyCoveredByOuterRing(char *currPtr, int32 numPoints,
 
 
 /* Write points of current loop to buffer to be used in error msg*/
-static pg_attribute_no_sanitize_alignment() char *
+static char *
 GetRingPointsStringForError(char *currPtr, int32 numPoints)
 {
 	StringInfo loop = makeStringInfo();
 	appendStringInfo(loop, "[ ");
 
-	float8 *point;
+	Point point = { 0 };
 
 	for (int i = 0; i < numPoints; i++)
 	{
 		/* Get the x and y coordinates of the current point */
-		point = (float8 *) (currPtr + i * WKB_BYTE_SIZE_POINT);
+		GetPointAtIndex(currPtr, i, &point);
 
 		/* Append the point to the error buffer */
-		appendStringInfo(loop, "[%f, %f]%s", point[0], point[1],
+		appendStringInfo(loop, "[%f, %f]%s", point.x, point.y,
 						 ((i < numPoints - 1) ? ", " : " ]"));
 	}
 

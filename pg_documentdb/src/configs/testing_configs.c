@@ -89,6 +89,12 @@ bool ForceUpdateIndexInline = DEFAULT_FORCE_UPDATE_INDEX_INLINE;
 #define DEFAULT_FORCE_RUN_DIAGNOSTIC_COMMAND_INLINE false
 bool ForceRunDiagnosticCommandInline = DEFAULT_FORCE_RUN_DIAGNOSTIC_COMMAND_INLINE;
 
+#define DEFAULT_FORCE_INDEX_ONLY_SCAN_IF_AVAILABLE false
+bool ForceIndexOnlyScanIfAvailable = DEFAULT_FORCE_INDEX_ONLY_SCAN_IF_AVAILABLE;
+
+#define DEFAULT_FORCE_PARALLEL_SCAN_IF_AVAILABLE false
+bool ForceParallelScanIfAvailable = DEFAULT_FORCE_PARALLEL_SCAN_IF_AVAILABLE;
+
 
 void
 InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
@@ -306,5 +312,21 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 			"Whether or not to force running diagnostic commands in inline mode."),
 		NULL, &ForceRunDiagnosticCommandInline,
 		DEFAULT_FORCE_RUN_DIAGNOSTIC_COMMAND_INLINE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceIndexOnlyScanIfAvailable", newGucPrefix),
+		gettext_noop(
+			"If an indexonlyscan is available, force use it in the plan."),
+		NULL, &ForceIndexOnlyScanIfAvailable,
+		DEFAULT_FORCE_INDEX_ONLY_SCAN_IF_AVAILABLE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceParallelScanIfAvailable", newGucPrefix),
+		gettext_noop(
+			"If a parallel plan is available, force use it in the plan."),
+		NULL, &ForceParallelScanIfAvailable,
+		DEFAULT_FORCE_PARALLEL_SCAN_IF_AVAILABLE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }

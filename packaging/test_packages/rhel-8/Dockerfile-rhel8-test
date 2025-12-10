@@ -25,6 +25,8 @@ RUN dnf -y swap curl-minimal curl && \
     gcc \
     gcc-c++ \
     pkg-config \
+    openssl \
+    openssl-libs \
     openssl-devel \
     zlib-devel \
     libuuid-devel \
@@ -38,14 +40,17 @@ RUN if [ -n "${TARGETARCH}" ] && ( [ "${TARGETARCH}" = "arm64" ] || [ "${TARGETA
     echo "Setting up PGDG repo for RHEL 8 (arch=${ARCH})" && \
     dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-${ARCH}/pgdg-redhat-repo-latest.noarch.rpm && \
     dnf -qy module disable postgresql && \
-    dnf -y install postgresql${POSTGRES_VERSION} \
-    postgresql${POSTGRES_VERSION}-devel \
-    postgresql${POSTGRES_VERSION}-server \
-    postgresql${POSTGRES_VERSION}-contrib \
-    pgvector_${POSTGRES_VERSION} \
-    pg_cron_${POSTGRES_VERSION} \
-    postgis34_${POSTGRES_VERSION} \
-    rum_${POSTGRES_VERSION}
+    for i in 1 2 3; do \
+        dnf -y install --allowerasing --nobest --skip-broken postgresql${POSTGRES_VERSION} \
+        postgresql${POSTGRES_VERSION}-devel \
+        postgresql${POSTGRES_VERSION}-server \
+        postgresql${POSTGRES_VERSION}-contrib \
+        pgvector_${POSTGRES_VERSION} \
+        pg_cron_${POSTGRES_VERSION} \
+        postgis36_${POSTGRES_VERSION} \
+        $(if [ "${POSTGRES_VERSION}" -lt 18 ]; then echo "rum_${POSTGRES_VERSION}"; else echo ""; fi) && break || \
+        { echo "Attempt $i failed, retrying in 5 seconds..." && sleep 5; }; \
+    done
 
 RUN mkdir -p /usr/src/documentdb
 WORKDIR /usr/src/documentdb

@@ -33,7 +33,7 @@ impl FromStr for ReadPreferenceMode {
             "nearest" => Ok(ReadPreferenceMode::Nearest),
             unsupported => Err(DocumentDBError::documentdb_error(
                 ErrorCode::FailedToParse,
-                format!("Unsupported read preference mode '{}'", unsupported),
+                format!("Unsupported read preference mode '{unsupported}'"),
             )),
         }
     }

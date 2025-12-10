@@ -1520,11 +1520,16 @@ ExpressionResultSetValue(ExpressionResult *expressionResult, const
 		expressionResult->value = *value;
 	}
 
-	if (!expressionResult->expressionResultPrivate.variableContext.hasSingleVariable)
+	/* Some variable context tables (eg: from $let) need to be preserved until */
+	/* every document is processed. */
+	ExpressionVariableContext variableContext =
+		expressionResult->expressionResultPrivate.variableContext;
+	bool destroyTable = !variableContext.preserveVariableTable &&
+						!variableContext.hasSingleVariable;
+	if (destroyTable)
 	{
-		hash_destroy(
-			expressionResult->expressionResultPrivate.variableContext.context.table);
-		expressionResult->expressionResultPrivate.variableContext.context.table = NULL;
+		hash_destroy(variableContext.context.table);
+		variableContext.context.table = NULL;
 	}
 }
 
@@ -1909,7 +1914,8 @@ ParseAggregationExpressionData(AggregationExpressionData *expressionData,
 	if (context != NULL &&
 		context->validateParsedExpressionFunc != NULL)
 	{
-		context->validateParsedExpressionFunc(expressionData);
+		context->validateParsedExpressionFunc(expressionData,
+											  context->operatorVariables);
 	}
 }
 
@@ -2538,7 +2544,7 @@ ParseDocumentAggregationExpressionData(const bson_value_t *value,
 	BsonValueInitIterator(value, &docIter);
 
 	BuildBsonPathTreeContext context = { 0 };
-	context.parseAggregationContext.collationString = parseContext->collationString;
+	context.parseAggregationContext = *parseContext;
 	context.buildPathTreeFuncs = &DefaultPathTreeFuncs;
 	BsonIntermediatePathNode *treeNode = BuildBsonPathTree(&docIter, &context,
 														   forceLeafExpression,
@@ -2836,6 +2842,9 @@ ParseDollarLet(const bson_value_t *argument, AggregationExpressionData *data,
 
 	ParseVariableSpec(&vars, inputVariableContext, context);
 
+	/* do not destroy the variables table after runtime evaluation on a document */
+	inputVariableContext->preserveVariableTable = true;
+
 	if (isInConstant)
 	{
 		data->kind = AggregationExpressionKind_Constant;
@@ -2869,9 +2878,11 @@ HandlePreParsedDollarLet(pgbson *doc, void *arguments,
 	 * instead do it inline. */
 	ExpressionResult childExpressionResult = ExpressionResultCreateWithTracker(
 		expressionResult->expressionResultPrivate.tracker);
-	childExpressionResult.expressionResultPrivate.variableContext = *inputVariableContext;
-	childExpressionResult.expressionResultPrivate.variableContext.parent =
-		&expressionResult->expressionResultPrivate.variableContext;
+	ExpressionVariableContext *childContext =
+		&childExpressionResult.expressionResultPrivate.variableContext;
+
+	*childContext = *inputVariableContext;
+	childContext->parent = &expressionResult->expressionResultPrivate.variableContext;
 
 	bool isNullOnEmpty = false;
 	EvaluateAggregationExpressionData(inExpression, doc, &childExpressionResult,
@@ -2933,7 +2944,8 @@ ParseVariableArgumentsForExpression(const bson_value_t *value, bool *isConstant,
 
 /* Call back function for top level command let parsing to disallow path expressions, CURRENT and ROOT for a top level variable spec. */
 static void
-DisallowExpressionsForTopLevelLet(AggregationExpressionData *parsedExpression)
+DisallowExpressionsForTopLevelLet(AggregationExpressionData *parsedExpression,
+								  HTAB *operatorVariables)
 {
 	/* Path expressions, CURRENT and ROOT are not allowed in command level let. */
 	if (parsedExpression->kind == AggregationExpressionKind_Path ||

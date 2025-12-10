@@ -707,6 +707,21 @@ BsonTypeName(bson_type_t type)
 
 
 /*
+ * Extended version of BsonTypeName that returns "missing" for EOD type.
+ */
+char *
+BsonTypeNameExtended(bson_type_t type)
+{
+	if (type == BSON_TYPE_EOD)
+	{
+		return "missing";
+	}
+
+	return BsonTypeName(type);
+}
+
+
+/*
  * Top level function that traverses a document given by documentIterator,
  * for a specified traversalPath and applies the various Execution functions
  * depending on the state of the traversal.

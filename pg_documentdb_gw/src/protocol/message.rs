@@ -27,10 +27,10 @@ pub struct Message<'a> {
 const _DEFAULT_MAX_MESSAGE_SIZE_BYTES: i32 = 48 * 1024 * 1024;
 
 impl Message<'_> {
-    pub fn read_from_op_msg(
-        mut reader: Cursor<&[u8]>,
+    pub fn read_from_op_msg<'a>(
+        mut reader: Cursor<&'a [u8]>,
         response_to: i32,
-    ) -> Result<Message, DocumentDBError> {
+    ) -> Result<Message<'a>, DocumentDBError> {
         let mut length_remaining = reader.get_ref().len();
         let flags = MessageFlags::from_bits_truncate(reader.read_u32_sync()?);
         length_remaining -= std::mem::size_of::<u32>();
@@ -52,8 +52,7 @@ impl Message<'_> {
             checksum = Some(reader.read_u32_sync()?);
         } else if length_remaining != 0 {
             return Err(DocumentDBError::bad_value(format!(
-                "Malformed message. Expecting {} more bytes of data",
-                length_remaining
+                "Malformed message. Expecting {length_remaining} more bytes of data"
             )));
         }
 

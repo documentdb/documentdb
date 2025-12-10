@@ -20,8 +20,41 @@
 #include <commands/explain_state.h>
 #include <commands/explain_format.h>
 #endif
-
+#include <storage/lwlock.h>
 #include "pg_documentdb_rum.h"
+
+extern int RumParallelScanTrancheId;
+extern const char *RumParallelScanTrancheName;
+
+#if PG_VERSION_NUM >= 180000
+#define ParallelScanGetOpaque(x) OffsetToPointer((void *) x, \
+												 x->ps_offset_am)
+
+#else
+#define ParallelScanGetOpaque(x) OffsetToPointer((void *) x, \
+												 x->ps_offset)
+
+static bool TrancheRegistered = false;
+#endif
+
+typedef enum RumParallelScanState
+{
+	RumParallelScanState_NotInitialized = 0,
+	RumParallelScanState_RunningStartScan = 1,
+	RumParallelScanState_StartScanDone = 2,
+	RumParallelScanState_Idle = 3,
+	RumParallelScanState_ScanningTree = 4,
+	RumParallelScanState_Done = 5,
+} RumParallelScanState;
+
+typedef struct RumParallelScanDescData
+{
+	BlockNumber rum_ps_current_page; /* latest or next page to be scanned */
+	RumParallelScanState parallel_scan_state;
+	bool isParallelScanEligible;
+	LWLock rum_ps_lock;             /* protects shared parallel state */
+	ConditionVariable rum_ps_cv;    /* used to synchronize parallel scan */
+} RumParallelScanDescData;
 
 extern PGDLLEXPORT void try_explain_documentdb_rum_index(IndexScanDesc scan,
 														 struct ExplainState *es);
@@ -493,7 +526,8 @@ freeScanKeys(RumScanOpaque so)
 
 
 static void
-initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch, bool hasOrdering)
+initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch, bool hasOrdering, bool
+			hasParallel)
 {
 	Datum *queryValues;
 	int32 nQueryValues = 0;
@@ -503,7 +537,8 @@ initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch, bool hasOrder
 	int32 searchMode = GIN_SEARCH_MODE_DEFAULT;
 
 	/* Only apply the search mode when it's safe */
-	if ((hasOrdering || RumForceOrderedIndexScan || so->projectIndexTupleData) &&
+	if ((hasOrdering || RumForceOrderedIndexScan || so->projectIndexTupleData ||
+		 hasParallel) &&
 		so->rumstate.canOrdering[skey->sk_attno - 1] &&
 		so->rumstate.orderingFn[skey->sk_attno - 1].fn_nargs == 4)
 	{
@@ -737,6 +772,7 @@ rumNewScanKey(IndexScanDesc scan)
 	bool checkEmptyEntry = false;
 	bool hasPartialMatch = false;
 	bool hasOrderBy = scan->numberOfOrderBys > 0;
+	bool hasParallel = scan->parallel_scan != NULL;
 	MemoryContext oldCtx;
 	enum
 	{
@@ -773,7 +809,7 @@ rumNewScanKey(IndexScanDesc scan)
 
 	for (i = 0; i < scan->numberOfKeys; i++)
 	{
-		initScanKey(so, &scan->keyData[i], &hasPartialMatch, hasOrderBy);
+		initScanKey(so, &scan->keyData[i], &hasPartialMatch, hasOrderBy, hasParallel);
 		if (so->isVoidRes)
 		{
 			break;
@@ -801,7 +837,7 @@ rumNewScanKey(IndexScanDesc scan)
 		so->orderByKeyIndex = so->nkeys;
 		for (i = 0; i < scan->numberOfOrderBys; i++)
 		{
-			initScanKey(so, &scan->orderByData[i], NULL, hasOrderBy);
+			initScanKey(so, &scan->orderByData[i], NULL, hasOrderBy, hasParallel);
 		}
 	}
 
@@ -958,6 +994,255 @@ rumNewScanKey(IndexScanDesc scan)
 }
 
 
+Size
+#if PG_VERSION_NUM >= 180000
+rumestimateparallelscan(Relation rel, int nkeys, int norderbys)
+#elif PG_VERSION_NUM >= 170000
+rumestimateparallelscan(int nkeys, int norderbys)
+#else
+rumestimateparallelscan(void)
+#endif
+{
+	return sizeof(RumParallelScanDescData);
+}
+
+
+void
+ruminitparallelscan(void *target)
+{
+	RumParallelScanDescData *rum_ps_target = (RumParallelScanDescData *) target;
+
+#if PG_VERSION_NUM < 180000
+	if (!TrancheRegistered)
+	{
+		LWLockRegisterTranche(RumParallelScanTrancheId, RumParallelScanTrancheName);
+		TrancheRegistered = true;
+	}
+#endif
+
+	LWLockInitialize(&rum_ps_target->rum_ps_lock, RumParallelScanTrancheId);
+	rum_ps_target->rum_ps_current_page = InvalidBlockNumber;
+	rum_ps_target->parallel_scan_state = RumParallelScanState_NotInitialized;
+	rum_ps_target->isParallelScanEligible = false;
+	ConditionVariableInit(&rum_ps_target->rum_ps_cv);
+}
+
+
+void
+rumparallelrescan(IndexScanDesc scan)
+{
+	RumParallelScanDescData *psdata;
+
+	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
+
+	Assert(parallel_scan);
+
+	psdata = (RumParallelScanDescData *) ParallelScanGetOpaque(parallel_scan);
+
+	/*
+	 * In theory, we don't need to acquire the spinlock here, because there
+	 * shouldn't be any other workers running at this point, but we do so for
+	 * consistency.
+	 */
+	LWLockAcquire(&psdata->rum_ps_lock, LW_EXCLUSIVE);
+	psdata->rum_ps_current_page = InvalidBlockNumber;
+	psdata->parallel_scan_state = RumParallelScanState_NotInitialized;
+	psdata->isParallelScanEligible = false;
+	LWLockRelease(&psdata->rum_ps_lock);
+}
+
+
+bool
+rum_parallel_scan_start(IndexScanDesc scan, bool *startScan)
+{
+	RumParallelScanDescData *psdata;
+	bool result = false;
+	bool exitLoop = false;
+	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
+
+	Assert(parallel_scan);
+
+	psdata = (RumParallelScanDescData *) ParallelScanGetOpaque(parallel_scan);
+
+	while (!exitLoop)
+	{
+		CHECK_FOR_INTERRUPTS();
+		LWLockAcquire(&psdata->rum_ps_lock, LW_EXCLUSIVE);
+		switch (psdata->parallel_scan_state)
+		{
+			case RumParallelScanState_NotInitialized:
+			{
+				/* First thread to get here - start parallel scan */
+				psdata->parallel_scan_state = RumParallelScanState_RunningStartScan;
+				*startScan = true;
+				result = true;
+				exitLoop = true;
+				break;
+			}
+
+			case RumParallelScanState_RunningStartScan:
+			{
+				/* Another thread is running startScan - let the other thread finish first
+				 * before doing anything else.
+				 */
+				exitLoop = false;
+				break;
+			}
+
+			/* Any higher states should be considered one thread is done with startScan */
+			case RumParallelScanState_StartScanDone:
+			default:
+			{
+				*startScan = false;
+				exitLoop = true;
+				result = psdata->isParallelScanEligible;
+				break;
+			}
+		}
+		LWLockRelease(&psdata->rum_ps_lock);
+
+		if (!exitLoop)
+		{
+			/* Wait for notification */
+			ConditionVariableSleep(&psdata->rum_ps_cv, PG_WAIT_EXTENSION);
+		}
+	}
+
+	return result;
+}
+
+
+bool
+rum_parallel_seize(ParallelIndexScanDesc parallelScan, BlockNumber *blockNumber)
+{
+	RumParallelScanDescData *psdata;
+	bool result = false;
+	bool exitLoop = false;
+
+	Assert(parallelScan);
+
+	psdata = (RumParallelScanDescData *) ParallelScanGetOpaque(parallelScan);
+
+	while (!exitLoop)
+	{
+		CHECK_FOR_INTERRUPTS();
+		LWLockAcquire(&psdata->rum_ps_lock, LW_EXCLUSIVE);
+		switch (psdata->parallel_scan_state)
+		{
+			case RumParallelScanState_NotInitialized:
+			case RumParallelScanState_RunningStartScan:
+			{
+				/* Unexpected */
+				LWLockRelease(&psdata->rum_ps_lock);
+				ereport(ERROR, (errmsg(
+									"Parallel scan seize called before initialization. Unexpected")));
+				break;
+			}
+
+			case RumParallelScanState_StartScanDone:
+			case RumParallelScanState_Idle:
+			{
+				*blockNumber = psdata->rum_ps_current_page;
+				result = true;
+				exitLoop = true;
+				psdata->parallel_scan_state = RumParallelScanState_ScanningTree;
+				break;
+			}
+
+			case RumParallelScanState_ScanningTree:
+			{
+				result = false;
+				exitLoop = false;
+				break;
+			}
+
+			case RumParallelScanState_Done:
+			{
+				result = false;
+				exitLoop = true;
+				break;
+			}
+
+			default:
+			{
+				LWLockRelease(&psdata->rum_ps_lock);
+				ereport(ERROR, (errmsg(
+									"Parallel scan seize called with unexpected state %d",
+									psdata->parallel_scan_state)));
+				break;
+			}
+		}
+		LWLockRelease(&psdata->rum_ps_lock);
+
+		if (!exitLoop)
+		{
+			/* Wait for notification */
+			ConditionVariableSleep(&psdata->rum_ps_cv, PG_WAIT_EXTENSION);
+		}
+	}
+
+	return result;
+}
+
+
+void
+rum_parallel_release(ParallelIndexScanDesc parallelScan, BlockNumber nextBlock)
+{
+	RumParallelScanDescData *psdata;
+
+	Assert(parallelScan);
+
+	psdata = (RumParallelScanDescData *) ParallelScanGetOpaque(parallelScan);
+
+
+	LWLockAcquire(&psdata->rum_ps_lock, LW_EXCLUSIVE);
+	if (psdata->parallel_scan_state != RumParallelScanState_ScanningTree)
+	{
+		ereport(ERROR, (errmsg(
+							"rum_parallel_release called with unexpected current state %d",
+							psdata->parallel_scan_state)));
+	}
+
+	if (nextBlock == InvalidBlockNumber)
+	{
+		psdata->parallel_scan_state = RumParallelScanState_Done;
+		psdata->rum_ps_current_page = nextBlock;
+	}
+	else
+	{
+		psdata->parallel_scan_state = RumParallelScanState_Idle;
+		psdata->rum_ps_current_page = nextBlock;
+	}
+	LWLockRelease(&psdata->rum_ps_lock);
+	ConditionVariableBroadcast(&psdata->rum_ps_cv);
+}
+
+
+bool
+rum_parallel_scan_start_notify(IndexScanDesc scan)
+{
+	RumParallelScanDescData *psdata;
+	bool isParallelEnabled = false;
+	RumScanOpaque so = (RumScanOpaque) scan->opaque;
+	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
+
+	Assert(parallel_scan);
+
+	psdata = (RumParallelScanDescData *) ParallelScanGetOpaque(parallel_scan);
+
+
+	LWLockAcquire(&psdata->rum_ps_lock, LW_EXCLUSIVE);
+	psdata->parallel_scan_state = RumParallelScanState_StartScanDone;
+	psdata->isParallelScanEligible = so->scanType == RumOrderedScan &&
+									 ScanDirectionIsForward(so->orderScanDirection);
+	psdata->rum_ps_current_page = InvalidBlockNumber;
+	isParallelEnabled = psdata->isParallelScanEligible;
+	LWLockRelease(&psdata->rum_ps_lock);
+	ConditionVariableBroadcast(&psdata->rum_ps_cv);
+	return isParallelEnabled;
+}
+
+
 void
 rumrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 		  ScanKey orderbys, int norderbys)
@@ -1056,6 +1341,11 @@ try_explain_documentdb_rum_index(IndexScanDesc scan, ExplainState *es)
 	{
 		ExplainPropertyInteger("deadEntriesOrPagesSkipped", "items",
 							   so->killedItemsSkipped, es);
+	}
+
+	if (scan->parallel_scan != NULL)
+	{
+		ExplainPropertyBool("parallelScanCapable", so->isParallelEnabled, es);
 	}
 
 	switch (so->scanType)

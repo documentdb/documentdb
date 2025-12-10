@@ -18,6 +18,8 @@
 #include <nodes/parsenodes.h>
 #include <nodes/pathnodes.h>
 
+#include "metadata/collection.h"
+
 /* Section: General Extension points */
 
 /*
@@ -251,5 +253,8 @@ typedef const char *(*GetOperationCancellationQuery_HookType)(int64 shardId,
 															  Datum **argValues,
 															  char **argNulls);
 extern GetOperationCancellationQuery_HookType get_operation_cancellation_query_hook;
+
+typedef bool (*DefaultEnableCompositeOpClass_HookType)(void);
+extern DefaultEnableCompositeOpClass_HookType default_enable_composite_op_class_hook;
 
 #endif

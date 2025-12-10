@@ -66,9 +66,9 @@ COPY scripts/utils.sh /tmp/install_setup/
 COPY scripts/install_setup_postgres.sh /tmp/install_setup/
 RUN [ "bin/bash", "-c", "/tmp/install_setup/install_setup_postgres.sh -d \"/usr/lib/postgresql/${PG_VERSION}\" $POSTGRES_INSTALL_ARG -v ${PG_VERSION}" ]
 
-# Install RUM from source
+# Install RUM from source (only for PG versions < 18)
 COPY scripts/install_setup_rum_oss.sh /tmp/install_setup/
-RUN [ "bin/bash", "-c", "PGVERSION=$PG_VERSION /tmp/install_setup/install_setup_rum_oss.sh" ]
+RUN [ "bin/bash", "-c", "if [ \"${PG_VERSION:-0}\" -lt 18 ]; then PGVERSION=$PG_VERSION /tmp/install_setup/install_setup_rum_oss.sh; else echo 'Skipping public RUM install for PG_VERSION' ${PG_VERSION}; fi" ]
 
 # Install citus
 COPY scripts/install_setup_citus_core_oss.sh /tmp/install_setup/

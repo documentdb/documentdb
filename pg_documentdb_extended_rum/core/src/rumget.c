@@ -1887,6 +1887,11 @@ startScan(IndexScanDesc scan)
 		scanType = RumOrderedScan;
 		startOrderedScanEntries(scan, rumstate, so);
 	}
+	else if (scan->parallel_scan != NULL && isSupportedOrderedScan)
+	{
+		scanType = RumOrderedScan;
+		startOrderedScanEntries(scan, rumstate, so);
+	}
 	else if (scan->xs_want_itup)
 	{
 		if (!isSupportedOrderedScan)
@@ -3846,7 +3851,6 @@ MoveBuffersForOrderedScan(RumScanOpaque so, RumBtree btree)
 	}
 
 	/* We have a page already, check if it's reusable */
-
 	if (ScanDirectionIsForward(so->orderScanDirection))
 	{
 		if (scanData->orderStack->off <= PageGetMaxOffsetNumber(
@@ -3939,7 +3943,94 @@ cleanupOnMissing:
 
 
 static bool
-MoveScanForward(RumScanOpaque so, Snapshot snapshot)
+MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelIndexScanDesc
+								  parallelScan)
+{
+	RumOrderByScanData *scanData = so->orderByScanData;
+	Page page;
+	if (ScanDirectionIsForward(so->orderScanDirection))
+	{
+		if (scanData->isPageValid &&
+			scanData->orderStack->off <= PageGetMaxOffsetNumber(
+				scanData->orderByEntryPageCopy))
+		{
+			/* Current page is still valid */
+			return true;
+		}
+
+		/* About to move pages, kill entries if needed */
+		if (scanData->isPageValid && RumEnableSupportDeadIndexItems &&
+			so->numKilled > 0)
+		{
+			RumKillEntryItems(so, scanData);
+		}
+
+		while (true)
+		{
+			BlockNumber startingBlock;
+			bool hasMore = rum_parallel_seize(parallelScan, &startingBlock);
+			if (!hasMore)
+			{
+				return false;
+			}
+
+			if (startingBlock == InvalidBlockNumber)
+			{
+				/* We won the race and have registered the starting block
+				 * start by copying this and moving forward on this buffer while
+				 * notifying the parallel state that we've currently processed this block.
+				 */
+				LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
+				page = BufferGetPage(scanData->orderStack->buffer);
+				CopyPageContents(page, scanData->orderByEntryPageCopy);
+				scanData->isPageValid = true;
+
+				/* In the forward scan we store the right link as read right now in the parallel data */
+				rum_parallel_release(parallelScan, RumPageRightLink(page));
+				LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
+				return true;
+			}
+
+			/*
+			 * Some other thread had updated the parallel state already, this page is the right sibling of
+			 * the page that was last scanned. We now hold the lock on traversal of pages. The current page
+			 * is considered valid if it's not dead.
+			 */
+			ReleaseBuffer(scanData->orderStack->buffer);
+			scanData->orderStack->blkno = startingBlock;
+			scanData->orderStack->buffer = ReadBuffer(btree->index, startingBlock);
+			LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
+			page = BufferGetPage(scanData->orderStack->buffer);
+
+			/* Let other threads move on with the next buffer */
+			/* In the forward scan we store the right link as read right now in the parallel data */
+			rum_parallel_release(parallelScan, RumPageRightLink(page));
+			if (RumPageIsDeleted(page) || RumPageIsHalfDead(page))
+			{
+				/* TODO: Should we release here? */
+				continue;
+			}
+			else
+			{
+				/* The page is valid - use it */
+				CopyPageContents(page, scanData->orderByEntryPageCopy);
+				scanData->isPageValid = true;
+
+				LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
+				return true;
+			}
+		}
+	}
+	else
+	{
+		/* Backward scan logic */
+		ereport(ERROR, (errmsg("TODO : IMPLEMENT ME")));
+	}
+}
+
+
+static bool
+MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc parallelScan)
 {
 	Page page;
 	IndexTuple itup;
@@ -3966,7 +4057,9 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot)
 		/*
 		 * stack->off points to the interested entry, buffer is already locked
 		 */
-		bool moveResult = MoveBuffersForOrderedScan(so, &btree);
+		bool moveResult = parallelScan != NULL ?
+						  MoveBuffersForOrderedScanParallel(so, &btree, parallelScan) :
+						  MoveBuffersForOrderedScan(so, &btree);
 		ItemId itemId;
 		if (!moveResult)
 		{
@@ -4098,7 +4191,7 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot)
 
 				MemoryContextReset(so->tempCtx);
 
-				if (resetScan)
+				if (resetScan && parallelScan == NULL)
 				{
 					/* Check if it's worth moving to the next page */
 					btree.entryKey = entry->queryKeyOverride;
@@ -4191,7 +4284,7 @@ scanGetItemOrdered(IndexScanDesc scan, RumItem *advancePast,
 			return false;
 		}
 
-		if (!MoveScanForward(so, scan->xs_snapshot))
+		if (!MoveScanForward(so, scan->xs_snapshot, scan->parallel_scan))
 		{
 			return false;
 		}
@@ -4549,7 +4642,38 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 			return false;
 		}
 
-		startScan(scan);
+		/* If parallel is enabled, we let one thread start and
+		 * determine the scanType - if it's a supported scan, then
+		 * other workers can participate - otherwise, the other
+		 * workers bail.
+		 */
+		if (scan->parallel_scan != NULL)
+		{
+			bool runStartScan = false;
+			bool isScanParallelValid = rum_parallel_scan_start(scan, &runStartScan);
+			if (runStartScan)
+			{
+				startScan(scan);
+				so->isParallelEnabled = rum_parallel_scan_start_notify(scan);
+			}
+			else if (!isScanParallelValid)
+			{
+				return false;
+			}
+			else
+			{
+				/* Run startScan as well on the workers - the rest is done below
+				 * with parallel cooperation.
+				 */
+				so->isParallelEnabled = true;
+				startScan(scan);
+			}
+		}
+		else
+		{
+			startScan(scan);
+		}
+
 		if (so->scanType == RumOrderedScan)
 		{
 			so->useSimpleScan = true;

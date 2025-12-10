@@ -352,24 +352,132 @@ static void * HandlePullWriterGetState(const bson_value_t *tree);
 
 static MongoUpdateOperatorSpec MongoUpdateOperators[] =
 {
-	{ "$set", HandleBasicUpdateTree, HandleUpdateDollarSet, NULL },
-	{ "$inc", HandleBasicUpdateTree, HandleUpdateDollarInc, NULL },
-	{ "$min", HandleBasicUpdateTree, HandleUpdateDollarMin, NULL },
-	{ "$max", HandleBasicUpdateTree, HandleUpdateDollarMax, NULL },
-	{ "$unset", HandleUnsetUpdateTree, HandleUpdateDollarUnset, NULL },
-	{ "$push", HandleBasicUpdateTree, HandleUpdateDollarPush, NULL },
-	{ "$pop", HandleBasicUpdateTree, HandleUpdateDollarPop, NULL },
-	{ "$rename", HandleRenameUpdateTree, HandleUpdateDollarRename, NULL },
-	{ "$setOnInsert", HandleSetOnInsertUpdateTree, HandleUpdateDollarSetOnInsert, NULL },
-	{ "$pullAll", HandleBasicUpdateTree, HandleUpdateDollarPullAll, NULL },
-	{ "$addToSet", HandleBasicUpdateTree, HandleUpdateDollarAddToSet, NULL },
-	{ "$mul", HandleBasicUpdateTree, HandleUpdateDollarMul, NULL },
-	{ "$bit", HandleBasicUpdateTree, HandleUpdateDollarBit, NULL },
-	{ "$currentDate", HandleBasicUpdateTree, HandleUpdateDollarCurrentDate, NULL },
-	{ "$pull", HandleBasicUpdateTree, HandleUpdateDollarPull, HandlePullWriterGetState },
-	{ NULL, NULL, NULL, NULL },
-	{ NULL, NULL, NULL, NULL },
-	{ NULL, NULL, NULL, NULL },
+	{
+		.operatorName = "$set",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarSet,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_SET
+	},
+	{
+		.operatorName = "$inc",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarInc,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_INC
+	},
+	{
+		.operatorName = "$min",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarMin,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_MIN
+	},
+	{
+		.operatorName = "$max",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarMax,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_MAX
+	},
+	{
+		.operatorName = "$unset",
+		.updateTreeFunc = HandleUnsetUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarUnset,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_UNSET
+	},
+	{
+		.operatorName = "$push",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarPush,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_PUSH
+	},
+	{
+		.operatorName = "$pop",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarPop,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_POP
+	},
+	{
+		.operatorName = "$rename",
+		.updateTreeFunc = HandleRenameUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarRename,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_RENAME
+	},
+	{
+		.operatorName = "$setOnInsert",
+		.updateTreeFunc = HandleSetOnInsertUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarSetOnInsert,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_SET_ON_INSERT
+	},
+	{
+		.operatorName = "$pullAll",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarPullAll,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_PULLALL
+	},
+	{
+		.operatorName = "$addToSet",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarAddToSet,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_ADDTOSET
+	},
+	{
+		.operatorName = "$mul",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarMul,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_MUL
+	},
+	{
+		.operatorName = "$bit",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarBit,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_BIT
+	},
+	{
+		.operatorName = "$currentDate",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarCurrentDate,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_CURRENTDATE
+	},
+	{
+		.operatorName = "$pull",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarPull,
+		.updateWriterGetState = HandlePullWriterGetState,
+		.featureId = FEATURE_UPDATE_OPERATOR_PULL
+	},
+	{
+		.operatorName = NULL,
+		.updateTreeFunc = NULL,
+		.updateWriterFunc = NULL,
+		.updateWriterGetState = NULL,
+		.featureId = MAX_FEATURE_INDEX
+	},
+	{
+		.operatorName = NULL,
+		.updateTreeFunc = NULL,
+		.updateWriterFunc = NULL,
+		.updateWriterGetState = NULL,
+		.featureId = MAX_FEATURE_INDEX
+	},
+	{
+		.operatorName = NULL,
+		.updateTreeFunc = NULL,
+		.updateWriterFunc = NULL,
+		.updateWriterGetState = NULL,
+		.featureId = MAX_FEATURE_INDEX
+	}
 };
 
 static const int MaxNumberOfUpdateOperators = sizeof(MongoUpdateOperators) /
@@ -599,6 +707,14 @@ RegisterUpdateOperatorExtension(const MongoUpdateOperatorSpec *extensibleDefinit
 	if (extensibleDefinition->updateWriterFunc == NULL)
 	{
 		ereport(ERROR, (errmsg("No updateWriterFunc for operator name %s",
+							   extensibleDefinition->operatorName)));
+	}
+
+	if (extensibleDefinition->featureId < 0 ||
+		extensibleDefinition->featureId >= MAX_FEATURE_INDEX)
+	{
+		ereport(ERROR, (errmsg("Invalid featureId %d for operator name %s",
+							   extensibleDefinition->featureId,
 							   extensibleDefinition->operatorName)));
 	}
 
@@ -874,6 +990,12 @@ ReadUpdateSpecAndUpdateTree(bson_iter_t *updateIterator,
 									"Modifiers work only with fields, but the provided value is of type %s. Expected $mod but received operator name: %s.",
 									BsonTypeName(updateItrVal->value_type),
 									MongoUpdateOperators[i].operatorName)));
+			}
+
+			if (MongoUpdateOperators[i].featureId >= 0 &&
+				MongoUpdateOperators[i].featureId < MAX_FEATURE_INDEX)
+			{
+				ReportFeatureUsage(MongoUpdateOperators[i].featureId);
 			}
 
 			MongoUpdateOperators[i].updateTreeFunc(root, &operatorIterator,

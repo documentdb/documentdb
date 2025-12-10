@@ -84,10 +84,7 @@ async fn run_docdb_gateway(setup_configuration_file: &str) {
     let setup_configuration =
         DocumentDBSetupConfiguration::new(&cfg_file).expect("Failed to load configuration.");
 
-    log::info!(
-        "Starting server with configuration: {:?}",
-        setup_configuration
-    );
+    log::info!("Starting server with configuration: {setup_configuration:?}");
 
     let tls_provider = TlsProvider::new(
         SetupConfiguration::certificate_options(&setup_configuration),

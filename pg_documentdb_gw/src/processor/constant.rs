@@ -63,7 +63,7 @@ pub fn process_get_rw_concern(request_context: &mut RequestContext<'_>) -> Resul
         "getDefaultRWConcern" | "inMemory" | "comment" | "lsid" | "$db" => Ok(()),
         other => Err(DocumentDBError::documentdb_error(
             ErrorCode::UnknownBsonField,
-            format!("Not a valid value for getDefaultRWConcern: {}", other),
+            format!("Not a valid value for getDefaultRWConcern: {other}"),
         )),
     })?;
 

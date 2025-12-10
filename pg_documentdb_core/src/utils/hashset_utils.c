@@ -15,6 +15,7 @@
 #include "query/bson_compare.h"
 #include "utils/hashset_utils.h"
 #include "collation/collation.h"
+#include "io/bson_hash.h"
 
 /*
  * Callbacks used to deal with bson element keys within a hash table.
@@ -33,7 +34,9 @@ static void BsonValueHashFuncCore(const bson_value_t *bsonValue, const
 static uint32 PgbsonElementOrderedHashEntryFunc(const void *obj, size_t objsize);
 static int PgbsonElementOrderedHashCompareFunc(const void *obj1, const void *obj2, Size
 											   objsize);
-
+static uint32 PgbsonElementPathAndValueHashEntryHashFunc(const void *obj, size_t objsize);
+static int PgbsonElementPathAndValueHashEntryCompareFunc(const void *obj1, const
+														 void *obj2, Size objsize);
 
 /*
  * Creates a hash table that stores pgbsonelement entries using
@@ -55,6 +58,23 @@ CreatePgbsonElementHashSet()
 }
 
 
+HTAB *
+CreatePgbsonElementPathAndValueHashSet(void)
+{
+	HASHCTL hashInfo = CreateExtensionHashCTL(
+		sizeof(PgbsonElementHashEntry),
+		sizeof(PgbsonElementHashEntry),
+		PgbsonElementPathAndValueHashEntryCompareFunc,
+		PgbsonElementPathAndValueHashEntryHashFunc
+		);
+	HTAB *bsonElementHashSet =
+		hash_create("Bson Element PathValue Hash Table", 32, &hashInfo,
+					DefaultExtensionHashFlags);
+
+	return bsonElementHashSet;
+}
+
+
 /*
  * PgbsonElementHashEntryHashFunc is the (HASHCTL.hash) callback (based on
  * string_hash()) used to hash a PgbsonElementHashEntry object based on key
@@ -66,6 +86,17 @@ PgbsonElementHashEntryHashFunc(const void *obj, size_t objsize)
 	const PgbsonElementHashEntry *hashEntry = obj;
 	return hash_bytes((const unsigned char *) hashEntry->element.path,
 					  (int) hashEntry->element.pathLength);
+}
+
+
+static uint32
+PgbsonElementPathAndValueHashEntryHashFunc(const void *obj, size_t objsize)
+{
+	const PgbsonElementHashEntry *hashEntry = obj;
+	uint32 pathHash = hash_bytes((const unsigned char *) hashEntry->element.path,
+								 (int) hashEntry->element.pathLength);
+
+	return HashBsonValueComparable(&hashEntry->element.bsonValue, pathHash);
 }
 
 
@@ -90,6 +121,33 @@ PgbsonElementHashEntryCompareFunc(const void *obj1, const void *obj2, Size objsi
 		return hashEntry1->element.pathLength - hashEntry2->element.pathLength;
 	}
 	return result;
+}
+
+
+static int
+PgbsonElementPathAndValueHashEntryCompareFunc(const void *obj1, const void *obj2, Size
+											  objsize)
+{
+	const PgbsonElementHashEntry *hashEntry1 = obj1;
+	const PgbsonElementHashEntry *hashEntry2 = obj2;
+
+	int minLength = Min(hashEntry1->element.pathLength, hashEntry2->element.pathLength);
+	int result = strncmp(hashEntry1->element.path, hashEntry2->element.path, minLength);
+
+	if (result != 0)
+	{
+		return result;
+	}
+
+	if (hashEntry1->element.pathLength != hashEntry2->element.pathLength)
+	{
+		return hashEntry1->element.pathLength - hashEntry2->element.pathLength;
+	}
+
+	bool isComparisonValidIgnore = false;
+	return CompareBsonValueAndType(&hashEntry1->element.bsonValue,
+								   &hashEntry2->element.bsonValue,
+								   &isComparisonValidIgnore);
 }
 
 

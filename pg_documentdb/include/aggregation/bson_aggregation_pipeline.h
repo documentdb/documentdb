@@ -63,6 +63,9 @@ typedef struct
 	 */
 	int cursorStateParamNumber;
 
+	/* Optional cursor state const param */
+	pgbson *cursorStateConst;
+
 	/*
 	 * The namespaceName associated with the query.
 	 */
@@ -84,6 +87,12 @@ typedef struct
 
 Query * GenerateFindQuery(text *database, pgbson *findSpec, QueryData *queryData,
 						  bool addCursorParams, bool setStatementTimeout);
+Query * GenerateGetMoreQuery(text *database, pgbson *getMoreSpec,
+							 pgbson *continuationSpec,
+							 QueryData *queryData, bool addCursorParams, bool
+							 setStatementTimeout);
+Query * BuildAggregationCursorGetMoreQuery(text *database, pgbson *getMoreSpec,
+										   pgbson *continuationSpec);
 Query * GenerateCountQuery(text *database, pgbson *countSpec, bool setStatementTimeout);
 Query * GenerateDistinctQuery(text *database, pgbson *distinctSpec, bool
 							  setStatementTimeout);

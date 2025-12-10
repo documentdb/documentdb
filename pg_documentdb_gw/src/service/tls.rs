@@ -398,8 +398,8 @@ impl TlsProvider {
 
         if !result {
             match TlsProvider::sha1_thumbprint(&certificate) {
-                Ok(thumbprint) => log::error!("Detected invalid certificate. Thumbprint: {:?}", thumbprint),
-                Err(e) => log::error!("Detected invalid certificate. Failed to generate certificate. Thumbprint: {:?}", e),
+                Ok(thumbprint) => log::error!("Detected invalid certificate. Thumbprint: {thumbprint:?}"),
+                Err(e) => log::error!("Detected invalid certificate. Failed to generate certificate. Thumbprint: {e:?}"),
             }
         }
 

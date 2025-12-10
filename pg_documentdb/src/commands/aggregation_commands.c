@@ -138,7 +138,7 @@ typedef struct
 /* --------------------------------------------------------- */
 
 static void ParseGetMoreSpec(text **database, pgbson *getMoreSpec, pgbson *cursorSpec,
-							 QueryGetMoreInfo *getMoreInfo);
+							 QueryGetMoreInfo *getMoreInfo, bool setStatementTimeout);
 
 static pgbson * BuildStreamingContinuationDocument(HTAB *cursorMap, pgbson *querySpec,
 												   int64_t cursorId, QueryKind queryKind,
@@ -357,7 +357,9 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 	TupleDesc tupleDesc = ConstructCursorResultTupleDesc(maxResponseAttributeNumber);
 
 	QueryGetMoreInfo getMoreInfo = { 0 };
-	ParseGetMoreSpec(&database, getMoreSpec, cursorSpec, &getMoreInfo);
+	bool getMoreSetStatementTimeout = true;
+	ParseGetMoreSpec(&database, getMoreSpec, cursorSpec, &getMoreInfo,
+					 getMoreSetStatementTimeout);
 
 	pgbson_writer writer;
 	pgbson_writer cursorDoc;
@@ -649,6 +651,76 @@ delete_cursors(ArrayType *cursorArray)
 	}
 
 	return PointerGetDatum(PgbsonInitEmpty());
+}
+
+
+Query *
+GenerateGetMoreQuery(text *database, pgbson *getMoreSpec, pgbson *continuationSpec,
+					 QueryData *queryData, bool addCursorParams, bool setStatementTimeout)
+{
+	QueryGetMoreInfo getMoreInfo = { 0 };
+	ParseGetMoreSpec(&database, getMoreSpec, continuationSpec, &getMoreInfo,
+					 setStatementTimeout);
+
+	switch (getMoreInfo.cursorKind)
+	{
+		case CursorKind_Streaming:
+		{
+			Query *query;
+
+			HTAB *cursorMap = CreateCursorHashSet();
+			BuildContinuationMap(continuationSpec, cursorMap);
+			pgbson *workerSpec = SerializeContinuationForWorker(cursorMap,
+																getMoreInfo.queryData.
+																batchSize, false);
+
+			/* Some blank query data to pass to the generation. */
+			QueryData queryData = { 0 };
+			switch (getMoreInfo.queryKind)
+			{
+				case QueryKind_Find:
+				{
+					queryData.timeSystemVariables =
+						getMoreInfo.queryData.timeSystemVariables;
+					queryData.cursorStateConst = workerSpec;
+					query = GenerateFindQuery(database,
+											  getMoreInfo.querySpec, &queryData,
+											  addCursorParams,
+											  setStatementTimeout);
+					break;
+				}
+
+				case QueryKind_Aggregate:
+				{
+					queryData.timeSystemVariables =
+						getMoreInfo.queryData.timeSystemVariables;
+					queryData.cursorStateConst = workerSpec;
+					query = GenerateAggregationQuery(database,
+													 getMoreInfo.querySpec, &queryData,
+													 addCursorParams,
+													 setStatementTimeout);
+					break;
+				}
+
+				default:
+				{
+					Assert(false);
+					pg_unreachable();
+				}
+			}
+
+			return query;
+		}
+
+		case CursorKind_Persisted:
+		case CursorKind_Tailable:
+		default:
+		{
+			/* This path doesn't build a new query on getMore - thunk to just calling the getmore Func */
+			return BuildAggregationCursorGetMoreQuery(database, getMoreSpec,
+													  continuationSpec);
+		}
+	}
 }
 
 
@@ -1122,7 +1194,7 @@ ParseCursorInputSpec(pgbson *cursorSpec, QueryGetMoreInfo *getMoreInfo)
  */
 static void
 ParseGetMoreSpec(text **databaseName, pgbson *getMoreSpec, pgbson *cursorSpec,
-				 QueryGetMoreInfo *getMoreInfo)
+				 QueryGetMoreInfo *getMoreInfo, bool setStatementTimeout)
 {
 	/* Default batchSize for getMore */
 	getMoreInfo->queryData.batchSize = INT_MAX;
@@ -1130,7 +1202,6 @@ ParseGetMoreSpec(text **databaseName, pgbson *getMoreSpec, pgbson *cursorSpec,
 	ParseCursorInputSpec(cursorSpec, getMoreInfo);
 
 	/* Parses the wire protocol getMore */
-	bool setStatementTimeout = true;
 	int64_t cursorId = ParseGetMore(databaseName, getMoreSpec, &getMoreInfo->queryData,
 									setStatementTimeout);
 	if (cursorId != getMoreInfo->cursorId)

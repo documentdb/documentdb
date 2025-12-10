@@ -1,9 +1,4 @@
 
-CREATE OR REPLACE FUNCTION documentdb_api_internal.rum_prune_empty_entries_on_index(index_relid regclass)
-RETURNS void
-LANGUAGE c
-AS '$libdir/pg_documentdb_extended_rum_core', 'documentdb_rum_prune_empty_entries_on_index';
-
 SELECT name, setting, reset_val, boot_val FROM pg_settings WHERE name in ('documentdb_rum.track_incomplete_split', 'documentdb_rum.fix_incomplete_split');
 
 SELECT documentdb_api.drop_collection('pvacuum_db', 'pclean');
@@ -129,3 +124,28 @@ SELECT documentdb_api_internal.rum_prune_empty_entries_on_index(('documentdb_dat
 set documentdb.forceDisableSeqScan to on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
 reset documentdb.forceDisableSeqScan;
+
+-- test multi-level posting tree cleanup
+SELECT FORMAT('TRUNCATE documentdb_data.documents_%s;', :vacuum_col) \gexec
+
+-- insert some entries
+SELECT COUNT(documentdb_api.insert_one('pvacuum_db', 'pclean',  FORMAT('{ "_id": %s, "a": %s }', i, i)::bson)) FROM generate_series(1, 1000) AS i;
+
+-- now insert entries that trigger a multi-level posting tree (allow only 50 entries per data page)
+set documentdb_rum.data_page_posting_tree_size = 3;
+SELECT COUNT(documentdb_api.insert_one('pvacuum_db', 'pclean',  FORMAT('{ "_id": -%s, "a": 500 }', i)::bson)) FROM generate_series(1, 15000) AS i;
+
+-- now assert that it produces a multi-level tree
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON) documentdb_data.documents_%s;', :vacuum_col) \gexec
+SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page(('documentdb_data.documents_rum_index_' || :vacuum_index_id), 0));
+
+WITH r1 AS (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page(('documentdb_data.documents_rum_index_' || :vacuum_index_id), i)) AS entry FROM generate_series(1, 21) i)
+SELECT * FROM r1 WHERE entry->>'flagsStr' LIKE '%DATA%' ORDER by (entry->>'flags')::int8, i ASC;
+
+-- now delete everything.
+SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ { "q": { "_id": { "$exists": true } }, "limit": 0 } ]}');
+set client_min_messages to LOG;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON) documentdb_data.documents_%s;', :vacuum_col) \gexec
+
+WITH r1 AS (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page(('documentdb_data.documents_rum_index_' || :vacuum_index_id), i)) AS entry FROM generate_series(1, 21) i)
+SELECT * FROM r1 WHERE entry->>'flagsStr' LIKE '%DATA%' ORDER by (entry->>'flags')::int8, i ASC;

@@ -38,6 +38,7 @@ pub struct ConnectionContext {
     pub cipher_type: i32,
     pub ssl_protocol: String,
     transport_protocol: String,
+    connection_id_hash: i32,
 }
 
 impl ConnectionContext {
@@ -72,6 +73,7 @@ impl ConnectionContext {
             cipher_type,
             ssl_protocol,
             transport_protocol,
+            connection_id_hash: Self::get_uuid_hash(connection_id),
         }
     }
 
@@ -172,24 +174,24 @@ impl ConnectionContext {
             .to_string()
     }
 
-    /// Returns a positive 64-bit integer derived from the `connection_id` UUID by hashing it.
-    ///
-    /// This computes a `u64` hash of `self.connection_id` using `DefaultHasher`
-    /// and then masks the result to ensure the returned value is non-negative
-    /// when cast to `i64`.
-    ///
-    /// # Behavior
-    /// - Uses `std::collections::hash_map::DefaultHasher`
-    /// - The current mask `0x7FFF_FFFF` keeps only **31 bits** of the hash
-    ///   keeping the value non-negative.
-    pub fn get_connection_id_as_i64(&self) -> i64 {
-        let mut hasher = DefaultHasher::new();
-        self.connection_id.hash(&mut hasher);
-        let finished_hash = hasher.finish();
-        (finished_hash & 0x7FFF_FFFF) as i64
-    }
-
     pub fn transport_protocol(&self) -> &str {
         &self.transport_protocol
+    }
+
+    pub fn get_connection_id_hash(&self) -> i32 {
+        self.connection_id_hash
+    }
+
+    /// Returns a non-negative 32-bit hash for `self.connection_id`.
+    ///
+    /// Implementation details:
+    /// - Hashes `connection_id` with `DefaultHasher` to a 64-bit value.
+    /// - Folds to 32 bits by XORing high and low halves.
+    /// - Masks off the sign bit (`& 0x7fff_ffff`) so the result fits in `0..=i31::MAX`.
+    fn get_uuid_hash(connection_id: Uuid) -> i32 {
+        let mut hasher = DefaultHasher::new();
+        connection_id.hash(&mut hasher);
+        let finished_hash = hasher.finish();
+        ((finished_hash ^ (finished_hash >> 32)) & 0x7fff_ffff) as i32
     }
 }

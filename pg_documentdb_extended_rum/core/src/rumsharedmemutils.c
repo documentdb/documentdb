@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
- * rumvacuumutils.c
- *	  delete & vacuum utilities for the postgres RUM
+ * rumsharedmemutils.c
+ *	  shared memory & vacuum utilities for the postgres RUM
  *
  * Portions Copyright (c) Microsoft Corporation.  All rights reserved.
  * Portions Copyright (c) 2015-2022, Postgres Professional
@@ -41,6 +41,10 @@ typedef struct RumSharedVacInfo
 } RumSharedVacInfo;
 
 PGDLLEXPORT RumSharedVacInfo *rumSharedVacInfo;
+extern int32_t RumVacuumCycleIdOverride;
+
+PGDLLEXPORT int RumParallelScanTrancheId = 0;
+PGDLLEXPORT const char *RumParallelScanTrancheName = "RUM parallel scan Tranche";
 
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
@@ -94,6 +98,20 @@ RumVacuumShmemInit(void)
 
 
 static void
+InitializeRumParallelLWLock(void)
+{
+	if (RumParallelScanTrancheId == 0)
+	{
+#if PG_VERSION_NUMBER >= 180000
+		RumParallelScanTrancheId = LWLockNewTrancheId(RumParallelScanTrancheName);
+#else
+		RumParallelScanTrancheId = LWLockNewTrancheId();
+#endif
+	}
+}
+
+
+static void
 RumVacuumSharedMemoryRequest(void)
 {
 	if (prev_shmem_request_hook != NULL)
@@ -111,6 +129,7 @@ RumVacuumSharedMemoryInit(void)
 {
 	/* CODESYNC: With Shmem request above */
 	RumVacuumShmemInit();
+	InitializeRumParallelLWLock();
 
 	if (prev_shmem_startup_hook != NULL)
 	{
@@ -147,6 +166,11 @@ rum_start_vacuum_cycle_id(Relation rel)
 	RumVacuumCycleId result;
 	int i;
 	RumSingleVacInfo *vac;
+
+	if (RumVacuumCycleIdOverride > 0 && RumVacuumCycleIdOverride <= UINT16_MAX)
+	{
+		return (RumVacuumCycleId) RumVacuumCycleIdOverride;
+	}
 
 	LWLockAcquire(BtreeVacuumLock, LW_EXCLUSIVE);
 
@@ -229,6 +253,11 @@ rum_vacuum_get_cycleId(Relation rel)
 {
 	RumVacuumCycleId result = 0;
 	int i;
+
+	if (RumVacuumCycleIdOverride > 0 && RumVacuumCycleIdOverride <= UINT16_MAX)
+	{
+		return (RumVacuumCycleId) RumVacuumCycleIdOverride;
+	}
 
 	/* Share lock is enough since this is a read-only operation */
 	LWLockAcquire(BtreeVacuumLock, LW_SHARED);

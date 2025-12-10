@@ -70,7 +70,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'test_o
 (7 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'test_object_id_index') WHERE document @@ '{ "$and": [ {"_id": 15 }, { "_id": 16 } ] }';
-                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                   
+                                                                                                                                QUERY PLAN                                                                                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -78,7 +78,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'test_o
    ->  Task
          Node: host=localhost port=58070 dbname=regression
          ->  Index Scan using _id_ on documents_2510_251007 collection
-               Index Cond: ((shard_key_value = '2510'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "15" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "16" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : { "$numberInt" : "15" } }'::documentdb_core.bson))
+               Index Cond: ((shard_key_value = '2510'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "15" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "16" } }'::documentdb_core.bson))
 (7 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'test_object_id_index') WHERE document @@ '{ "$and": [ {"_id": { "$in": [ 15, 16, 17] }}, { "_id": { "$in": [ 16, 17, 18 ] } } ] }';
