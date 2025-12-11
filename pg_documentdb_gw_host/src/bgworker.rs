@@ -5,14 +5,14 @@ use std::time::Duration;
 
 use documentdb_gateway::{
     configuration::{DocumentDBSetupConfiguration, PgConfiguration, SetupConfiguration},
-    postgres::{create_query_catalog, DocumentDBDataClient},
+    postgres::{
+        create_query_catalog, DocumentDBDataClient, AUTHENTICATION_MAX_CONNECTIONS,
+        SYSTEM_REQUESTS_MAX_CONNECTIONS,
+    },
     run_gateway,
     service::TlsProvider,
     shutdown_controller::SHUTDOWN_CONTROLLER,
-    startup::{
-        create_postgres_object, get_service_context, get_system_connection_pool,
-        AUTHENTICATION_MAX_CONNECTIONS, SYSTEM_REQUESTS_MAX_CONNECTIONS,
-    },
+    startup::{create_postgres_object, get_service_context, get_system_connection_pool},
 };
 
 use crate::gucs::{PG_DOCUMENTDB_GATEWAY_DATABASE, PG_DOCUMENTDB_SETUP_CONFIGURATION};
@@ -84,10 +84,7 @@ async fn run_docdb_gateway(setup_configuration_file: &str) {
     let setup_configuration =
         DocumentDBSetupConfiguration::new(&cfg_file).expect("Failed to load configuration.");
 
-    log::info!(
-        "Starting server with configuration: {:?}",
-        setup_configuration
-    );
+    log::info!("Starting server with configuration: {setup_configuration:?}");
 
     let tls_provider = TlsProvider::new(
         SetupConfiguration::certificate_options(&setup_configuration),

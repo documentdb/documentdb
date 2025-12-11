@@ -77,7 +77,10 @@ pub fn is_output_count(output: &str, query_catalog: &QueryCatalog) -> bool {
         return true;
     }
 
-    if output.contains(query_catalog.output_count_regex()) {
+    if output.contains(query_catalog.output_bson_count_aggregate())
+        || output.contains(query_catalog.output_bson_command_count_aggregate())
+        || output.contains(query_catalog.output_count_regex())
+    {
         return true;
     }
 

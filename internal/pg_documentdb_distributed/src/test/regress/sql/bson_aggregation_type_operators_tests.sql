@@ -754,7 +754,6 @@ SELECT * FROM bson_dollar_project('{}', '{"result": {"$toUUID": 1234 }}');
 -- invalid count number of array input
 SELECT * FROM bson_dollar_project('{}', '{"result": {"$toUUID": ["123e4567-e89b-12d3-a456-426614174000", "123e4567-e89b-12d3-a456-426614174000"] }}');
 
-
 -- $convert with constant onError handling
 -- Test invalid ObjectId conversion with onError (guaranteed to fail)
 SELECT * FROM bson_dollar_project('{}', '{"result": {"$convert": {"input": "xyz123", "to": "objectId", "onError": "CONVERSION_FAILED"}}}');

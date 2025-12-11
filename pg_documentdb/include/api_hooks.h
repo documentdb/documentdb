@@ -225,4 +225,18 @@ void UpdatePostgresIndexWithOverride(uint64_t collectionId, int indexId, int ope
 									 bool value,
 									 void (*default_update)(uint64_t, int, int, bool));
 
+const char * GetOperationCancellationQuery(int64 shardId, StringView *opIdStringView,
+										   int *nargs, Oid **argTypes, Datum **argValues,
+										   char **argNulls,
+										   const char *(*default_get_query)(int64,
+																			StringView *,
+																			int *nargs,
+																			Oid **argTypes,
+																			Datum **
+																			argValues,
+																			char **
+																			argNulls));
+
+bool ShouldUseCompositeOpClassByDefault(void);
+
 #endif

@@ -148,6 +148,12 @@ pub struct ExplainPlan {
     #[serde(rename = "Sort Space Used")]
     pub sort_space_used: Option<i64>,
 
+    #[serde(rename = "Startup Cost")]
+    pub startup_cost: Option<f64>,
+
+    #[serde(rename = "Total Cost")]
+    pub total_cost: Option<f64>,
+
     #[serde(rename = "Function Name")]
     pub function_name: Option<String>,
 

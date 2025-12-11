@@ -29,4 +29,10 @@ pgbson * RunWorkerDiagnosticLogic(pgbson *(*workerFunc)(void *state), void *stat
 #define ErrCodeKey "err_code"
 #define ErrCodeLength 8
 
+/*
+ * For Single node scenarios the nodeId always points to itself.
+ */
+#define SINGLE_NODE_ID 10000000000LL
+#define SINGLE_NODE_ID_STR "10000000000"
+
 #endif

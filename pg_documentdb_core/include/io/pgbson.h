@@ -52,6 +52,19 @@ typedef struct
 #define PG_GETARG_MAYBE_NULL_PGBSON_PACKED(n) PG_ARGISNULL(n) ? NULL : \
 	PG_GETARG_PGBSON_PACKED(n)
 
+
+/*
+ * Compatibility alignment macro for pgbson struct,
+ * pgbson has a 128 byte alignment requirement and PG 16+ supports aligned allocation.
+ * We only want to suppress alignment sanitizer for PG versions < 16 via
+ * pg_attribute_no_sanitize_alignment()
+ */
+#if PG_VERSION_NUM >= 160000
+#define pgbson_require_alignment()
+#else
+#define pgbson_require_alignment() pg_attribute_no_sanitize_alignment()
+#endif
+
 /* basic type functions */
 bool PgbsonEquals(const pgbson *left, const pgbson *right);
 int PgbsonCountKeys(const pgbson *bsonDocument);

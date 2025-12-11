@@ -293,7 +293,7 @@ PgbsonElementToPgbson(pgbsonelement *element)
 /* Private helper methods */
 /* --------------------------------------------------------- */
 
-static bool
+pg_attribute_no_sanitize_alignment() static bool
 FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element, bool
 						skipLengthOffset)
 {

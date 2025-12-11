@@ -25,47 +25,94 @@ extern PGDLLEXPORT void DocumentDBSetRumUnredactedLogEmitHook(rum_format_log_hoo
 
 PGDLLEXPORT bool DocumentDBRumLoadCommonGUCs = true;
 
+#define RUM_DEFAULT_THROW_ERROR_ON_INVALID_DATA_PAGE false
 PGDLLEXPORT bool RumThrowErrorOnInvalidDataPage =
 	RUM_DEFAULT_THROW_ERROR_ON_INVALID_DATA_PAGE;
+
+#define RUM_DEFAULT_USE_NEW_ITEM_PTR_DECODING true
 PGDLLEXPORT bool RumUseNewItemPtrDecoding = RUM_DEFAULT_USE_NEW_ITEM_PTR_DECODING;
+
+#define RUM_ENABLE_PARALLEL_VACUUM_FLAGS true
 PGDLLEXPORT bool RumEnableParallelVacuumFlags = RUM_ENABLE_PARALLEL_VACUUM_FLAGS;
 
 /* rumbtree.c */
 PGDLLEXPORT bool RumTrackIncompleteSplit = RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT;
 PGDLLEXPORT bool RumFixIncompleteSplit = RUM_DEFAULT_FIX_INCOMPLETE_SPLIT;
+
+#define RUM_DEFAULT_ENABLE_INJECT_PAGE_SPLIT_INCOMPLETE false
 PGDLLEXPORT bool RumInjectPageSplitIncomplete =
 	RUM_DEFAULT_ENABLE_INJECT_PAGE_SPLIT_INCOMPLETE;
 
 /* rumdatapage.c */
 PGDLLEXPORT int RumDataPageIntermediateSplitSize = -1;
+
+#define RUM_DEFAULT_SKIP_RESET_ON_DEAD_ENTRY_PAGE false
 PGDLLEXPORT bool RumSkipResetOnDeadEntryPage = RUM_DEFAULT_SKIP_RESET_ON_DEAD_ENTRY_PAGE;
 
 /* rumget.c */
 PGDLLEXPORT int RumFuzzySearchLimit = 0;
+
+#define RUM_DEFAULT_DISABLE_FAST_SCAN false
 PGDLLEXPORT bool RumDisableFastScan = RUM_DEFAULT_DISABLE_FAST_SCAN;
+
+#define DEFAULT_FORCE_RUM_ORDERED_INDEX_SCAN false
 PGDLLEXPORT bool RumForceOrderedIndexScan = DEFAULT_FORCE_RUM_ORDERED_INDEX_SCAN;
+
+#define RUM_DEFAULT_PREFER_ORDERED_INDEX_SCAN true
 PGDLLEXPORT bool RumPreferOrderedIndexScan = RUM_DEFAULT_PREFER_ORDERED_INDEX_SCAN;
+
+#define RUM_DEFAULT_ENABLE_SKIP_INTERMEDIATE_ENTRY true
 PGDLLEXPORT bool RumEnableSkipIntermediateEntry =
 	RUM_DEFAULT_ENABLE_SKIP_INTERMEDIATE_ENTRY;
 
 /* ruminsert.c */
+#define RUM_DEFAULT_ENABLE_PARALLEL_INDEX_BUILD true
 PGDLLEXPORT bool RumEnableParallelIndexBuild = RUM_DEFAULT_ENABLE_PARALLEL_INDEX_BUILD;
+
+#define RUM_DEFAULT_PARALLEL_INDEX_WORKERS_OVERRIDE -1
 PGDLLEXPORT int RumParallelIndexWorkersOverride =
 	RUM_DEFAULT_PARALLEL_INDEX_WORKERS_OVERRIDE;
 
 /* rumvacuum.c */
+#define RUM_DEFAULT_SKIP_RETRY_ON_DELETE_PAGE true
 PGDLLEXPORT bool RumSkipRetryOnDeletePage = RUM_DEFAULT_SKIP_RETRY_ON_DELETE_PAGE;
+
+#define RUM_DEFAULT_VACUUM_ENTRY_ITEMS true
 PGDLLEXPORT bool RumVacuumEntryItems = RUM_DEFAULT_VACUUM_ENTRY_ITEMS;
+
+#define RUM_DEFAULT_PRUNE_EMPTY_PAGES false
 PGDLLEXPORT bool RumPruneEmptyPages = RUM_DEFAULT_PRUNE_EMPTY_PAGES;
+
+#define RUM_DEFAULT_ENABLE_NEW_BULK_DELETE false
 PGDLLEXPORT bool RumEnableNewBulkDelete = RUM_DEFAULT_ENABLE_NEW_BULK_DELETE;
+
+#define RUM_DEFAULT_ENABLE_NEW_BULK_DELETE_INLINE_DATA_PAGES true
 PGDLLEXPORT bool RumNewBulkDeleteInlineDataPages =
 	RUM_DEFAULT_ENABLE_NEW_BULK_DELETE_INLINE_DATA_PAGES;
+
+#define RUM_DEFAULT_SKIP_PRUNE_POSTING_TREE_PAGES false
 PGDLLEXPORT bool RumVacuumSkipPrunePostingTreePages =
 	RUM_DEFAULT_SKIP_PRUNE_POSTING_TREE_PAGES;
 
+#define RUM_DEFAULT_VACUUM_CYCLE_ID_OVERRIDE -1
+int32_t RumVacuumCycleIdOverride = RUM_DEFAULT_VACUUM_CYCLE_ID_OVERRIDE;
+
+#define RUM_DEFAULT_TRAVERSE_PAGE_ONLY_ON_BACKTRACK false
+PGDLLEXPORT bool RumTraversePageOnlyOnBackTrack =
+	RUM_DEFAULT_TRAVERSE_PAGE_ONLY_ON_BACKTRACK;
+
+#define RUM_DEFAULT_SKIP_GLOBAL_VISIBILITY_CHECK_ON_PRUNE false
+PGDLLEXPORT bool RumSkipGlobalVisibilityCheckOnPrune =
+	RUM_DEFAULT_SKIP_GLOBAL_VISIBILITY_CHECK_ON_PRUNE;
+
 /* rumget.c */
+#define RUM_DEFAULT_ENABLE_SUPPORT_DEAD_INDEX_ITEMS false
 PGDLLEXPORT bool RumEnableSupportDeadIndexItems =
 	RUM_DEFAULT_ENABLE_SUPPORT_DEAD_INDEX_ITEMS;
+
+/* rumselfuncs.c */
+#define RUM_DEFAULT_ENABLE_CUSTOM_COST_ESTIMATE true
+PGDLLEXPORT bool RumEnableCustomCostEstimate = RUM_DEFAULT_ENABLE_CUSTOM_COST_ESTIMATE;
 
 PGDLLEXPORT rum_format_log_hook rum_unredacted_log_emit_hook = NULL;
 
@@ -264,6 +311,35 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumSkipResetOnDeadEntryPage,
 		RUM_DEFAULT_SKIP_RESET_ON_DEAD_ENTRY_PAGE,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.vacuum_cycle_id_override", documentDBRumGucPrefix),
+		"test only override for setting the vacuum cycle id",
+		NULL,
+		&RumVacuumCycleIdOverride,
+		RUM_DEFAULT_VACUUM_CYCLE_ID_OVERRIDE, -1, UINT16_MAX,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.default_traverse_rum_page_only_on_backtrack",
+				 documentDBRumGucPrefix),
+		"test only guc to only traverse vacuum pages on the backtrack path",
+		NULL,
+		&RumTraversePageOnlyOnBackTrack,
+		RUM_DEFAULT_TRAVERSE_PAGE_ONLY_ON_BACKTRACK,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.skip_global_visibility_check_on_prune",
+				 documentDBRumGucPrefix),
+		"test only guc to skip checking visibility on pruning pages",
+		NULL,
+		&RumSkipGlobalVisibilityCheckOnPrune,
+		RUM_DEFAULT_TRAVERSE_PAGE_ONLY_ON_BACKTRACK,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 

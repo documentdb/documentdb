@@ -5,11 +5,12 @@
 ---------------------------------------------------------------------
  documentdb_api_distributed | complete_upgrade             | boolean              |                                           | func
  documentdb_api_distributed | initialize_cluster           | void                 |                                           | func
+ documentdb_api_distributed | move_collection              | documentdb_core.bson | move_collection_spec documentdb_core.bson | func
  documentdb_api_distributed | rebalancer_start             | documentdb_core.bson | p_spec documentdb_core.bson               | func
  documentdb_api_distributed | rebalancer_status            | documentdb_core.bson | p_spec documentdb_core.bson               | func
  documentdb_api_distributed | rebalancer_stop              | documentdb_core.bson | p_spec documentdb_core.bson               | func
  documentdb_api_distributed | update_postgres_index_worker | documentdb_core.bson | p_local_function_arg documentdb_core.bson | func
-(6 rows)
+(7 rows)
 
 -- show all aggregates exported
 \da+ documentdb_api_distributed.*

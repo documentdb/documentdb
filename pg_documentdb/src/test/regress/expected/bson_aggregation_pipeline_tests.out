@@ -193,13 +193,12 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 (2 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$match": { "_id": { "$gt": "1" } } }], "cursor": {} }');
-                                                   QUERY PLAN                                                    
------------------------------------------------------------------------------------------------------------------
+                                                                             QUERY PLAN                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan using _id_ on documentdb_data.documents_3500 collection
    Output: document
-   Index Cond: ((collection.shard_key_value = '3500'::bigint) AND (collection.object_id > '{ "" : "1" }'::bson))
-   Filter: (collection.document @> '{ "_id" : "1" }'::bson)
-(4 rows)
+   Index Cond: ((collection.shard_key_value = '3500'::bigint) AND (collection.object_id > '{ "" : "1" }'::bson) AND (collection.object_id < '{ "" : {  } }'::bson))
+(3 rows)
 
 -- match + project
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$match": { "_id": { "$gt": "1" } } }, { "$project": { "a.b": 1 } }], "cursor": {} }');
@@ -214,9 +213,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan using _id_ on documentdb_data.documents_3500 collection
    Output: documentdb_api_internal.bson_dollar_project(document, '{ "a.b" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   Index Cond: ((collection.shard_key_value = '3500'::bigint) AND (collection.object_id > '{ "" : "1" }'::bson))
-   Filter: (collection.document @> '{ "_id" : "1" }'::bson)
-(4 rows)
+   Index Cond: ((collection.shard_key_value = '3500'::bigint) AND (collection.object_id > '{ "" : "1" }'::bson) AND (collection.object_id < '{ "" : {  } }'::bson))
+(3 rows)
 
 -- match + project + match
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$match": { "_id": { "$gt": "1" } } }, { "$project": { "a.b": 1, "c": "$_id", "_id": 0 } }, { "$match": { "c": { "$gt": "2" } } }], "cursor": {} }');
@@ -226,12 +224,12 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 (1 row)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$match": { "_id": { "$gt": "1" } } }, { "$project": { "a.b": 1, "c": "$_id", "_id": 0 } }, { "$match": { "c": { "$gt": "2" } } }], "cursor": {} }');
-                                                                                                                                                          QUERY PLAN                                                                                                                                                           
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                               QUERY PLAN                                                                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan using _id_ on documentdb_data.documents_3500 collection
    Output: documentdb_api_internal.bson_dollar_project(document, '{ "a.b" : { "$numberInt" : "1" }, "c" : "$_id", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   Index Cond: ((collection.shard_key_value = '3500'::bigint) AND (collection.object_id > '{ "" : "1" }'::bson))
-   Filter: ((collection.document @> '{ "_id" : "1" }'::bson) AND (documentdb_api_internal.bson_dollar_project(collection.document, '{ "a.b" : { "$numberInt" : "1" }, "c" : "$_id", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson) @> '{ "c" : "2" }'::bson))
+   Index Cond: ((collection.shard_key_value = '3500'::bigint) AND (collection.object_id > '{ "" : "1" }'::bson) AND (collection.object_id < '{ "" : {  } }'::bson))
+   Filter: (documentdb_api_internal.bson_dollar_project(collection.document, '{ "a.b" : { "$numberInt" : "1" }, "c" : "$_id", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson) @> '{ "c" : "2" }'::bson)
 (4 rows)
 
 -- unwind
@@ -549,9 +547,9 @@ EXPlAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                ->  CTE Scan on facet_base_0_0 facetsub_stage_1
                      Output: facetsub_stage_1.document
          ->  Aggregate
-               Output: COALESCE(bson_array_agg((bson_repath_and_build('d'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson))), 'b'::text), '{ "b" : [  ] }'::bson)
+               Output: COALESCE(bson_array_agg((bson_repath_and_build('d'::text, documentdb_api_internal.bsoncount(1))), 'b'::text), '{ "b" : [  ] }'::bson)
                ->  Aggregate
-                     Output: bson_repath_and_build('d'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson))
+                     Output: bson_repath_and_build('d'::text, documentdb_api_internal.bsoncount(1))
                      ->  CTE Scan on facet_base_0_0 facetsub_stage_2
          ->  Aggregate
                Output: COALESCE(bson_array_agg((bson_dollar_unwind(facetsub_stage_3.document, '$a.b'::text)), 'c'::text), '{ "c" : [  ] }'::bson)
@@ -579,15 +577,16 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "aggregation_pipelin
 BEGIN;
 set local documentdb.enableIndexOrderbyPushdown to on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('db', '{ "find": "aggregation_pipeline", "filter": { "_id": { "$gt": "1" } }, "projection": { "a.b": 1 }, "sort": { "_id": 1 }, "skip": 1, "limit": 2 }');
-                                                                                                                                               QUERY PLAN                                                                                                                                               
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Limit
-   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a.b" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$gt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
-   ->  Index Scan using _id_ on documentdb_data.documents_3500 collection
-         Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "a.b" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$gt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
-         Index Cond: ((collection.shard_key_value = '3500'::bigint) AND (collection.object_id > '{ "" : "1" }'::bson))
-         Filter: (collection.document @> '{ "_id" : "1" }'::bson)
-(6 rows)
+                                                                                                                QUERY PLAN                                                                                                                
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_4
+   Output: documentdb_api_internal.bson_dollar_project_find(agg_stage_4.document, '{ "a.b" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$gt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Limit
+         Output: collection.document, (bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+         ->  Index Scan using _id_ on documentdb_data.documents_3500 collection
+               Output: collection.document, bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+               Index Cond: ((collection.shard_key_value = '3500'::bigint) AND (collection.object_id > '{ "" : "1" }'::bson) AND (collection.object_id < '{ "" : {  } }'::bson))
+(7 rows)
 
 ROLLBACK;
 -- FIND with $natural
@@ -765,13 +764,12 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_count('db', '{ "count"
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_count('db', '{ "count": "aggregation_pipeline", "query": { "_id": { "$gt": "1" } } }');
-                                           QUERY PLAN                                            
--------------------------------------------------------------------------------------------------
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
  Aggregate
-   ->  Index Scan using _id_ on documents_3500 collection
-         Index Cond: ((shard_key_value = '3500'::bigint) AND (object_id > '{ "" : "1" }'::bson))
-         Filter: (document @> '{ "_id" : "1" }'::bson)
-(4 rows)
+   ->  Index Only Scan using _id_ on documents_3500 collection
+         Index Cond: ((shard_key_value = '3500'::bigint) AND (object_id > '{ "" : "1" }'::bson) AND (object_id < '{ "" : {  } }'::bson))
+(3 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_count('db', '{ "count": "non_existent_coll" }');
                      QUERY PLAN                     
@@ -1094,8 +1092,8 @@ SELECT document FROM bson_aggregation_pipeline('db',
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
     '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "pipeline": [ { "$count": "efe" } ] } }, { "$sample": { "size": 3 } } ], "cursor": {} }');
-                                                                                                                                       QUERY PLAN                                                                                                                                        
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                 QUERY PLAN                                                                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    Output: agg_stage_1.document, (random())
    ->  Sort
@@ -1104,11 +1102,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          ->  Subquery Scan on agg_stage_1
                Output: agg_stage_1.document, random()
                ->  Nested Loop
-                     Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg((bson_repath_and_build('efe'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson))), 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)), true)
+                     Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg((bson_repath_and_build('efe'::text, documentdb_api_internal.bsoncount(1))), 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)), true)
                      ->  Aggregate
-                           Output: COALESCE(bson_array_agg((bson_repath_and_build('efe'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson))), 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)
+                           Output: COALESCE(bson_array_agg((bson_repath_and_build('efe'::text, documentdb_api_internal.bsoncount(1))), 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)
                            ->  Aggregate
-                                 Output: bson_repath_and_build('efe'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson))
+                                 Output: bson_repath_and_build('efe'::text, documentdb_api_internal.bsoncount(1))
                                  ->  Bitmap Heap Scan on documentdb_data.documents_3503 collection_0_1
                                        Recheck Cond: (collection_0_1.shard_key_value = '3503'::bigint)
                                        ->  Bitmap Index Scan on _id_
@@ -1143,9 +1141,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                            Index Cond: (collection_0_1.shard_key_value = '3503'::bigint)
    SubPlan 1
      ->  Aggregate
-           Output: COALESCE(bson_array_agg((bson_repath_and_build('efe'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson))), 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)
+           Output: COALESCE(bson_array_agg((bson_repath_and_build('efe'::text, documentdb_api_internal.bsoncount(1))), 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)
            ->  Aggregate
-                 Output: bson_repath_and_build('efe'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson))
+                 Output: bson_repath_and_build('efe'::text, documentdb_api_internal.bsoncount(1))
                  ->  Function Scan on documentdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
                        Output: lookup_subpipeline_substage_0.lookup_unwind
                        Function Call: bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'matched_docs'::text)

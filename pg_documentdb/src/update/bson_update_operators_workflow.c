@@ -217,7 +217,7 @@ typedef struct UpdateArrayWriter
 	bool isValid;
 
 	/* Whether or not the array writer modified something */
-	bool modified;
+	ModifyType modifyType;
 } UpdateArrayWriter;
 
 
@@ -238,18 +238,12 @@ typedef struct UpdateOperatorWriter
 	const char *relativePath;
 
 	/* whether or not the value was modified */
-	bool modified;
+	ModifyType modifyType;
 
 	/* the underlying array writer if one is requested */
 	UpdateArrayWriter updateArrayWriter;
 } UpdateOperatorWriter;
 
-/* --------------------------------------------------------- */
-/* Global hooks */
-/* --------------------------------------------------------- */
-NotifyUpdatedField_HookType notify_updated_field_hook = NULL;
-NotifyUpdatedFieldPathView_HookType notify_updated_field_path_view_hook = NULL;
-NotifyRemovedField_HookType notify_remove_field_hook = NULL;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -358,24 +352,132 @@ static void * HandlePullWriterGetState(const bson_value_t *tree);
 
 static MongoUpdateOperatorSpec MongoUpdateOperators[] =
 {
-	{ "$set", HandleBasicUpdateTree, HandleUpdateDollarSet, NULL },
-	{ "$inc", HandleBasicUpdateTree, HandleUpdateDollarInc, NULL },
-	{ "$min", HandleBasicUpdateTree, HandleUpdateDollarMin, NULL },
-	{ "$max", HandleBasicUpdateTree, HandleUpdateDollarMax, NULL },
-	{ "$unset", HandleUnsetUpdateTree, HandleUpdateDollarUnset, NULL },
-	{ "$push", HandleBasicUpdateTree, HandleUpdateDollarPush, NULL },
-	{ "$pop", HandleBasicUpdateTree, HandleUpdateDollarPop, NULL },
-	{ "$rename", HandleRenameUpdateTree, HandleUpdateDollarRename, NULL },
-	{ "$setOnInsert", HandleSetOnInsertUpdateTree, HandleUpdateDollarSetOnInsert, NULL },
-	{ "$pullAll", HandleBasicUpdateTree, HandleUpdateDollarPullAll, NULL },
-	{ "$addToSet", HandleBasicUpdateTree, HandleUpdateDollarAddToSet, NULL },
-	{ "$mul", HandleBasicUpdateTree, HandleUpdateDollarMul, NULL },
-	{ "$bit", HandleBasicUpdateTree, HandleUpdateDollarBit, NULL },
-	{ "$currentDate", HandleBasicUpdateTree, HandleUpdateDollarCurrentDate, NULL },
-	{ "$pull", HandleBasicUpdateTree, HandleUpdateDollarPull, HandlePullWriterGetState },
-	{ NULL, NULL, NULL, NULL },
-	{ NULL, NULL, NULL, NULL },
-	{ NULL, NULL, NULL, NULL },
+	{
+		.operatorName = "$set",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarSet,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_SET
+	},
+	{
+		.operatorName = "$inc",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarInc,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_INC
+	},
+	{
+		.operatorName = "$min",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarMin,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_MIN
+	},
+	{
+		.operatorName = "$max",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarMax,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_MAX
+	},
+	{
+		.operatorName = "$unset",
+		.updateTreeFunc = HandleUnsetUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarUnset,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_UNSET
+	},
+	{
+		.operatorName = "$push",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarPush,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_PUSH
+	},
+	{
+		.operatorName = "$pop",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarPop,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_POP
+	},
+	{
+		.operatorName = "$rename",
+		.updateTreeFunc = HandleRenameUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarRename,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_RENAME
+	},
+	{
+		.operatorName = "$setOnInsert",
+		.updateTreeFunc = HandleSetOnInsertUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarSetOnInsert,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_SET_ON_INSERT
+	},
+	{
+		.operatorName = "$pullAll",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarPullAll,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_PULLALL
+	},
+	{
+		.operatorName = "$addToSet",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarAddToSet,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_ADDTOSET
+	},
+	{
+		.operatorName = "$mul",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarMul,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_MUL
+	},
+	{
+		.operatorName = "$bit",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarBit,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_BIT
+	},
+	{
+		.operatorName = "$currentDate",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarCurrentDate,
+		.updateWriterGetState = NULL,
+		.featureId = FEATURE_UPDATE_OPERATOR_CURRENTDATE
+	},
+	{
+		.operatorName = "$pull",
+		.updateTreeFunc = HandleBasicUpdateTree,
+		.updateWriterFunc = HandleUpdateDollarPull,
+		.updateWriterGetState = HandlePullWriterGetState,
+		.featureId = FEATURE_UPDATE_OPERATOR_PULL
+	},
+	{
+		.operatorName = NULL,
+		.updateTreeFunc = NULL,
+		.updateWriterFunc = NULL,
+		.updateWriterGetState = NULL,
+		.featureId = MAX_FEATURE_INDEX
+	},
+	{
+		.operatorName = NULL,
+		.updateTreeFunc = NULL,
+		.updateWriterFunc = NULL,
+		.updateWriterGetState = NULL,
+		.featureId = MAX_FEATURE_INDEX
+	},
+	{
+		.operatorName = NULL,
+		.updateTreeFunc = NULL,
+		.updateWriterFunc = NULL,
+		.updateWriterGetState = NULL,
+		.featureId = MAX_FEATURE_INDEX
+	}
 };
 
 static const int MaxNumberOfUpdateOperators = sizeof(MongoUpdateOperators) /
@@ -475,14 +577,16 @@ WriteCurrentNode(const BsonUpdateLeafNode *leaf, const bson_value_t *currentValu
 	/* If the update operator did not modify the document
 	 * and there is a value to be written,
 	 * write out the original value.
+	 * Exclude MODIFY_TYPE_ORIGINAL_REWRITE since that means the existing
+	 * value is already written on the new document.
 	 */
-	if (!updateWriter.modified &&
+	if (updateWriter.modifyType == MODIFY_TYPE_NOCHANGE &&
 		currentValue->value_type != BSON_TYPE_EOD)
 	{
 		PgbsonElementWriterWriteValue(writer, currentValue);
 	}
 
-	return updateWriter.modified;
+	return updateWriter.modifyType == MODIFY_TYPE_CHANGED;
 }
 
 
@@ -603,6 +707,14 @@ RegisterUpdateOperatorExtension(const MongoUpdateOperatorSpec *extensibleDefinit
 	if (extensibleDefinition->updateWriterFunc == NULL)
 	{
 		ereport(ERROR, (errmsg("No updateWriterFunc for operator name %s",
+							   extensibleDefinition->operatorName)));
+	}
+
+	if (extensibleDefinition->featureId < 0 ||
+		extensibleDefinition->featureId >= MAX_FEATURE_INDEX)
+	{
+		ereport(ERROR, (errmsg("Invalid featureId %d for operator name %s",
+							   extensibleDefinition->featureId,
 							   extensibleDefinition->operatorName)));
 	}
 
@@ -735,12 +847,7 @@ void
 UpdateWriterWriteModifiedValue(UpdateOperatorWriter *writer, const bson_value_t *value)
 {
 	PgbsonElementWriterWriteValue(writer->writer, value);
-	writer->modified = true;
-
-	if (notify_updated_field_hook != NULL)
-	{
-		notify_updated_field_hook(writer->updateTracker, writer->relativePath, value);
-	}
+	writer->modifyType = MODIFY_TYPE_CHANGED;
 }
 
 
@@ -751,11 +858,7 @@ UpdateWriterWriteModifiedValue(UpdateOperatorWriter *writer, const bson_value_t 
 void
 UpdateWriterSkipValue(UpdateOperatorWriter *writer)
 {
-	writer->modified = true;
-	if (notify_remove_field_hook != NULL)
-	{
-		notify_remove_field_hook(writer->updateTracker, writer->relativePath);
-	}
+	writer->modifyType = MODIFY_TYPE_CHANGED;
 }
 
 
@@ -769,7 +872,7 @@ UpdateWriterGetArrayWriter(UpdateOperatorWriter *writer)
 	{
 		PgbsonElementWriterStartArray(writer->writer, &writer->updateArrayWriter.writer);
 		writer->updateArrayWriter.isValid = true;
-		writer->updateArrayWriter.modified = false;
+		writer->updateArrayWriter.modifyType = MODIFY_TYPE_NOCHANGE;
 	}
 
 	return &writer->updateArrayWriter;
@@ -794,8 +897,20 @@ UpdateArrayWriterWriteOriginalValue(UpdateArrayWriter *writer, const bson_value_
 void
 UpdateArrayWriterWriteModifiedValue(UpdateArrayWriter *writer, const bson_value_t *value)
 {
+	UpdateArrayWriterWriteValueWithModifyType(writer, value, MODIFY_TYPE_CHANGED);
+}
+
+
+/*
+ * Writes a value to the arrayWriter with the specified modify type.
+ */
+void
+UpdateArrayWriterWriteValueWithModifyType(UpdateArrayWriter *writer,
+										  const bson_value_t *value,
+										  ModifyType modifyType)
+{
 	PgbsonArrayWriterWriteValue(&writer->writer, value);
-	writer->modified = true;
+	writer->modifyType = modifyType;
 }
 
 
@@ -806,7 +921,7 @@ UpdateArrayWriterWriteModifiedValue(UpdateArrayWriter *writer, const bson_value_
 void
 UpdateArrayWriterSkipValue(UpdateArrayWriter *writer)
 {
-	writer->modified = true;
+	writer->modifyType = MODIFY_TYPE_CHANGED;
 }
 
 
@@ -818,21 +933,8 @@ void
 UpdateArrayWriterFinalize(UpdateOperatorWriter *writer, UpdateArrayWriter *arrayWriter)
 {
 	PgbsonElementWriterEndArray(writer->writer, &arrayWriter->writer);
-
-	if (writer->updateTracker != NULL &&
-		arrayWriter->modified)
-	{
-		bson_value_t value = PgbsonElementWriterGetValue(writer->writer);
-
-		if (notify_updated_field_hook != NULL)
-		{
-			notify_updated_field_hook(writer->updateTracker, writer->relativePath,
-									  &value);
-		}
-	}
-
 	writer->updateArrayWriter.isValid = false;
-	writer->modified = writer->modified || arrayWriter->modified;
+	writer->modifyType = Max(writer->modifyType, arrayWriter->modifyType);
 }
 
 
@@ -888,6 +990,12 @@ ReadUpdateSpecAndUpdateTree(bson_iter_t *updateIterator,
 									"Modifiers work only with fields, but the provided value is of type %s. Expected $mod but received operator name: %s.",
 									BsonTypeName(updateItrVal->value_type),
 									MongoUpdateOperators[i].operatorName)));
+			}
+
+			if (MongoUpdateOperators[i].featureId >= 0 &&
+				MongoUpdateOperators[i].featureId < MAX_FEATURE_INDEX)
+			{
+				ReportFeatureUsage(MongoUpdateOperators[i].featureId);
 			}
 
 			MongoUpdateOperators[i].updateTreeFunc(root, &operatorIterator,
@@ -1627,11 +1735,9 @@ TraverseArrayAndApplyUpdate(bson_iter_t *sourceDocIterator,
 	 * See use of trackArrayValue.
 	 */
 	BsonUpdateTracker *trackerInner = tracker;
-	bool trackArrayValue = false;
 	if (tree->hasPositionalChildren)
 	{
 		trackerInner = NULL;
-		trackArrayValue = true;
 	}
 
 	int32_t index = 0;
@@ -1659,16 +1765,6 @@ TraverseArrayAndApplyUpdate(bson_iter_t *sourceDocIterator,
 	if (fieldHandledBitmapSet != NULL)
 	{
 		bms_free(fieldHandledBitmapSet);
-	}
-
-	if (modified && trackArrayValue && notify_updated_field_hook != NULL)
-	{
-		bson_value_t value = PgbsonArrayWriterGetValue(writer);
-
-		/* The relative path reported here is the relative path until the array */
-		StringView relativePathToNode = GetRelativePathUntilField((const
-																   BsonPathNode *) tree);
-		notify_updated_field_path_view_hook(tracker, &relativePathToNode, &value);
 	}
 
 	return modified;

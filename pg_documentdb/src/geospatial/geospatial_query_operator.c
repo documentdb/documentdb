@@ -528,7 +528,9 @@ static bool
 CompareForGeoWithinDatum(const ProcessCommonGeospatialState *state, StringInfo wkbBuffer)
 {
 	GeospatialType type = state->geospatialType;
-	WKBGeometryType wkbType = *(int32 *) (wkbBuffer->data + WKB_BYTE_SIZE_ORDER);
+	WKBGeometryType wkbType = WKBGeometryType_Invalid;
+	memcpy(&wkbType, (wkbBuffer->data + WKB_BYTE_SIZE_ORDER), WKB_BYTE_SIZE_TYPE);
+
 	if (!IsWKBCollectionType(wkbType) || type == GeospatialType_Geometry)
 	{
 		/* Simple Shape case or 2d can be directly delegated to postgis */

@@ -50,8 +50,8 @@ static void ParseInputExpressionAndPersistValue(AggregationExpressionData *expre
  * nodeWindowAgg.c: https://github.com/postgres/postgres/blob/9c24111c4dad850bc2625c2113bb3d2dfd592efc/src/backend/executor/nodeWindowAgg.c#L367
  *
  */
-bytea *
-SerializeOrderState(BsonOrderAggState *state)
+pg_attribute_no_sanitize_alignment() bytea *
+SerializeOrderState(BsonOrderAggState * state)
 {
 	int valueSize = 0;
 	for (int i = 0; i < state->currentCount; i++)
@@ -201,7 +201,7 @@ SerializeOrderState(BsonOrderAggState *state)
  * Incoming bytes look like:
  * varlena Header | numAggValues | numSortKeys  | BsonOrderAggValues * numAggValues | sortDirections (bool) | inputExpression (pgbson)
  */
-void
+pg_attribute_no_sanitize_alignment() void
 DeserializeOrderState(bytea *byteArray,
 					  BsonOrderAggState *state)
 {
@@ -563,7 +563,7 @@ BsonOrderTransition(PG_FUNCTION_ARGS, bool invertSort, bool isSingle, bool
  *      2) The number of documents to be returned or 'N'
  *      3) The input expression to be applied on the results.
  */
-Datum
+pg_attribute_no_sanitize_alignment() Datum
 BsonOrderTransitionOnSorted(PG_FUNCTION_ARGS, bool invertSort, bool isSingle)
 {
 	MemoryContext aggregateContext;
@@ -1155,7 +1155,7 @@ BsonOrderFinal(PG_FUNCTION_ARGS, bool isSingle, bool invert)
  * if IsSingle is true a single value will be returned
  * otherwise an array of values will be returned.
  */
-Datum
+pg_attribute_no_sanitize_alignment() Datum
 BsonOrderFinalOnSorted(PG_FUNCTION_ARGS, bool isSingle)
 {
 	MemoryContext aggregateContext;

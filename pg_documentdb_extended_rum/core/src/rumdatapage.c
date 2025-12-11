@@ -1419,6 +1419,12 @@ dataSplitPageInternal(RumBtree btree, Buffer lbuf, Buffer rbuf,
 		RumDataPageEntryRevive(rPage);
 	}
 
+	if (RumEnableNewBulkDelete)
+	{
+		RumPageGetCycleId(newlPage) = rum_vacuum_get_cycleId(btree->index);
+		RumPageGetCycleId(rPage) = RumPageGetCycleId(newlPage);
+	}
+
 	ptr = RumDataPageGetItem(newlPage, FirstOffsetNumber);
 	memcpy(ptr, vector, separator * sizeofitem);
 	RumDataPageMaxOff(newlPage) = separator;

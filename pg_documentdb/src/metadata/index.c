@@ -2027,6 +2027,86 @@ GetIndexQueueName(void)
 }
 
 
+void
+CreateIndexQueueIfNotExists(bool includeOptions, bool includeDropCommandType)
+{
+	bool readOnly = false;
+	bool isNull = false;
+
+	const char *indexQueueTableName = GetIndexQueueName();
+	const char *cmdTypeCheck = includeDropCommandType ? "'C', 'D', 'R'" : "'C', 'R'";
+	const char *optionsColumn = includeOptions ?
+								psprintf(",options %s.bson DEFAULT null",
+										 CoreSchemaName) : "";
+
+	StringInfo createStr = makeStringInfo();
+
+	appendStringInfo(createStr,
+					 "CREATE TABLE IF NOT EXISTS %s ("
+					 "index_cmd text not null,"
+
+					 "cmd_type char CHECK (cmd_type IN (%s)),"
+					 "index_id integer not null,"
+
+	                 /* index_cmd_status gets represented as enum IndexCmdStatus in index.h */
+					 "index_cmd_status integer default 1,"
+					 "global_pid bigint,"
+					 "start_time timestamp WITH TIME ZONE,"
+					 "collection_id bigint not null,"
+
+	                 /* Used to enter the error encounter during execution of index_cmd */
+					 "comment %s.bson,"
+
+	                 /* current attempt counter for retrying the failed request */
+					 "attempt smallint,"
+
+	                 /* update_time shows the time when request was updated in the table */
+					 "update_time timestamp with time zone DEFAULT now(),"
+
+					 "user_oid Oid CHECK (user_oid IS NULL OR user_oid != '0'::oid)"
+
+	                 /* options column */
+					 "%s"
+
+					 ")", indexQueueTableName,
+					 cmdTypeCheck,
+					 CoreSchemaName,
+					 optionsColumn);
+
+	ExtensionExecuteQueryViaSPI(createStr->data, readOnly, SPI_OK_UTILITY,
+								&isNull);
+
+	resetStringInfo(createStr);
+	appendStringInfo(createStr,
+					 "CREATE INDEX IF NOT EXISTS %s_index_queue_indexid_cmdtype on %s (index_id, cmd_type)",
+					 ExtensionObjectPrefixV2, indexQueueTableName);
+	ExtensionExecuteQueryViaSPI(createStr->data, readOnly, SPI_OK_UTILITY,
+								&isNull);
+
+	resetStringInfo(createStr);
+	appendStringInfo(createStr,
+					 "CREATE INDEX IF NOT EXISTS %s_index_queue_cmdtype_collectionid_cmdstatus on %s (cmd_type, collection_id, index_cmd_status)",
+					 ExtensionObjectPrefixV2, indexQueueTableName);
+	ExtensionExecuteQueryViaSPI(createStr->data, readOnly, SPI_OK_UTILITY,
+								&isNull);
+
+	resetStringInfo(createStr);
+	appendStringInfo(createStr,
+					 "GRANT SELECT ON TABLE %s TO public", indexQueueTableName);
+	ExtensionExecuteQueryViaSPI(createStr->data, readOnly, SPI_OK_UTILITY,
+								&isNull);
+
+	resetStringInfo(createStr);
+	appendStringInfo(createStr,
+					 "GRANT ALL ON TABLE %s TO %s, %s",
+					 indexQueueTableName,
+					 ApiAdminRoleV2,
+					 ApiAdminRole);
+	ExtensionExecuteQueryViaSPI(createStr->data, readOnly, SPI_OK_UTILITY,
+								&isNull);
+}
+
+
 /*
  * Returns true if the index plugin vector for the key document is of the given type.
  */
@@ -2446,6 +2526,9 @@ SerializeIndexSpec(const IndexSpec *indexSpec, bool isGetIndexes,
 				}
 				else if (IsOptionsKeyOrderedIndex(keyView.string))
 				{
+					/* TODO: We should just write this if the value is != ShouldUseCompositeOpClassByDefault
+					 * but we're leaving it here during the transition period of this being enabled by default in
+					 * some cases.*/
 					bool value = BsonValueAsBool(bson_iter_value(&optionsIter));
 					PgbsonWriterAppendBool(&storageEngineOptionsWriter,
 										   "enableOrderedIndex", 18,

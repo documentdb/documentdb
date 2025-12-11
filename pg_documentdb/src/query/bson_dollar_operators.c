@@ -2795,8 +2795,9 @@ CompareBsonValueAgainstQueryCore(const pgbsonelement *element,
 		}
 
 		filterElement->pathLength = 0;
-		TraverseBson(&documentIterator, filterElement->path, state,
-					 executionFuncs);
+		StringView pathView = CreateStringViewFromString(filterElement->path);
+		TraverseBsonPathStringView(&documentIterator, &pathView, state,
+								   executionFuncs);
 		return ProcessQueryResultAndGetMatch(isQueryFilterNull, state);
 	}
 }
@@ -3369,18 +3370,18 @@ PopulateRegexState(PG_FUNCTION_ARGS, TraverseRegexValidateState *state)
 	}
 
 	/* State populated if and only if cached state is unusable */
-	RegexData localState = { 0 };
-
 	SetCachedFunctionState(regexState, RegexData, 1, PopulateRegexFromQuery,
 						   &filterElement);
 	if (regexState == NULL)
 	{
 		/* Cache not available */
-		PopulateRegexFromQuery(&localState, &filterElement);
-		regexState = &localState;
+		PopulateRegexFromQuery(&state->regexData, &filterElement);
+	}
+	else
+	{
+		state->regexData = *regexState;
 	}
 
-	state->regexData = *regexState;
 	state->traverseState.matchFunc = CompareRegexMatch;
 	return filterElement;
 }

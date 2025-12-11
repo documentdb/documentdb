@@ -37,6 +37,7 @@
  */
 #define SIZE_OF_PARENT_OF_ARRAY_FOR_BSON 7
 
+extern bool EnableOperatorVariablesInLookup;
 
 /* --------------------------------------------------------- */
 /* Type declaration */
@@ -279,6 +280,9 @@ static void SetResultArrayForDollarZip(int rowNum, ZipParseInputsResult parsedIn
 static void ProcessDollarSortArray(bson_value_t *inputValue, SortContext *sortContext,
 								   bson_value_t *result);
 
+static void RegisterOperatorVariables(ParseAggregationExpressionContext *parentContext,
+									  ParseAggregationExpressionContext *currentContext,
+									  List *operatorVariablesList);
 
 /* --------------------------------------------------------- */
 /* Parse and Handle Pre-parse functions */
@@ -806,8 +810,21 @@ ParseDollarFilter(const bson_value_t *argument, AggregationExpressionData *data,
 
 	/* TODO: optimize, if input, limit and cond are constants, we can calculate the result at this phase. */
 	ParseAggregationExpressionData(&arguments->input, &input, context);
-	ParseAggregationExpressionData(&arguments->limit, &limit, context);
-	ParseAggregationExpressionData(&arguments->cond, &cond, context);
+
+	/* Track alias variables for use during validation*/
+	List *filterVariables = list_make1(aliasValue.value.v_utf8.str);
+	ParseAggregationExpressionContext *filterContext = palloc0(
+		sizeof(ParseAggregationExpressionContext));
+	*filterContext = *context;
+	RegisterOperatorVariables(context, filterContext, filterVariables);
+
+	ParseAggregationExpressionData(&arguments->limit, &limit, filterContext);
+	ParseAggregationExpressionData(&arguments->cond, &cond, filterContext);
+
+	list_free(filterVariables);
+	hash_destroy(filterContext->operatorVariables);
+	pfree(filterContext);
+
 	data->operator.arguments = arguments;
 	data->operator.argumentsKind = AggregationExpressionArgumentsKind_Palloc;
 }
@@ -1706,7 +1723,21 @@ ParseDollarMap(const bson_value_t *argument, AggregationExpressionData *data,
 	arguments->as.value = aliasValue;
 
 	ParseAggregationExpressionData(&arguments->input, &input, context);
-	ParseAggregationExpressionData(&arguments->in, &in, context);
+
+	/* Track 'as' variables to prevent error-ing in top-level let validation for $lookup */
+	List *mapVariables = list_make1(aliasValue.value.v_utf8.str);
+
+	ParseAggregationExpressionContext *mapContext = palloc0(
+		sizeof(ParseAggregationExpressionContext));
+	*mapContext = *context;
+	RegisterOperatorVariables(context, mapContext, mapVariables);
+
+	ParseAggregationExpressionData(&arguments->in, &in, mapContext);
+
+	list_free(mapVariables);
+	hash_destroy(mapContext->operatorVariables);
+	pfree(mapContext);
+
 	data->operator.arguments = arguments;
 	data->operator.argumentsKind = AggregationExpressionArgumentsKind_Palloc;
 }
@@ -1857,10 +1888,25 @@ ParseDollarReduce(const bson_value_t *argument, AggregationExpressionData *data,
 	}
 
 	DollarReduceArguments *arguments = palloc0(sizeof(DollarReduceArguments));
-
 	ParseAggregationExpressionData(&arguments->input, &input, context);
-	ParseAggregationExpressionData(&arguments->in, &in, context);
-	ParseAggregationExpressionData(&arguments->initialValue, &initialValue, context);
+
+	/* $$this and $$value variables are available for use in $reduce.in expressions */
+	/* $$this refers to the current document */
+	/* $$value refers to the accumulated value so far */
+	List *reduceVariables = list_make2("this", "value");
+	ParseAggregationExpressionContext *reduceContext = palloc0(
+		sizeof(ParseAggregationExpressionContext));
+	*reduceContext = *context;
+	RegisterOperatorVariables(context, reduceContext, reduceVariables);
+
+	ParseAggregationExpressionData(&arguments->in, &in, reduceContext);
+	ParseAggregationExpressionData(&arguments->initialValue, &initialValue,
+								   reduceContext);
+
+	list_free(reduceVariables);
+	hash_destroy(reduceContext->operatorVariables);
+	pfree(reduceContext);
+
 	data->operator.arguments = arguments;
 	data->operator.argumentsKind = AggregationExpressionArgumentsKind_Palloc;
 }
@@ -2836,14 +2882,10 @@ ProcessDollarIn(bson_value_t *targetValue, const bson_value_t *searchArray,
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_DOLLARINREQUIRESARRAY), errmsg(
 							"Expected 'array' type for $in operator but found '%s' type",
-							searchArray->value_type == BSON_TYPE_EOD ?
-							MISSING_TYPE_NAME :
-							BsonTypeName(searchArray->value_type)),
+							BsonTypeNameExtended(searchArray->value_type)),
 						errdetail_log(
 							"Expected 'array' type for $in operator but found '%s' type",
-							searchArray->value_type == BSON_TYPE_EOD ?
-							MISSING_TYPE_NAME :
-							BsonTypeName(searchArray->value_type))));
+							BsonTypeNameExtended(searchArray->value_type))));
 	}
 
 	bool found = false;
@@ -3008,19 +3050,14 @@ ProcessDollarArrayElemAt(void *state, bson_value_t *result)
 	}
 	if (elemAtState->isArrayElemAtOperator && !BsonTypeIsNumber(indexValue.value_type))
 	{
-		bool isUndefined = IsExpressionResultUndefined(&indexValue);
 		ereport(ERROR, (errcode(
 							ERRCODE_DOCUMENTDB_DOLLARARRAYELEMATSECONDARGARGMUSTBENUMERIC),
 						errmsg(
 							"The second argument of $arrayElemAt must be a numeric type value, but it is %s instead.",
-							isUndefined ?
-							MISSING_TYPE_NAME :
-							BsonTypeName(indexValue.value_type)),
+							BsonTypeNameExtended(indexValue.value_type)),
 						errdetail_log(
 							"The second argument of $arrayElemAt must be a numeric type value, but it is %s instead.",
-							isUndefined ?
-							MISSING_TYPE_NAME :
-							BsonTypeName(indexValue.value_type))));
+							BsonTypeNameExtended(indexValue.value_type))));
 	}
 
 	bool checkFixedInteger = true;
@@ -3107,17 +3144,12 @@ ProcessDollarSize(const bson_value_t *currentValue, bson_value_t *result)
 {
 	if (currentValue->value_type != BSON_TYPE_ARRAY)
 	{
-		bool isUndefined = IsExpressionResultUndefined(currentValue);
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_DOLLARSIZEREQUIRESARRAY), errmsg(
 							"$size requires an array argument, but received a value of type: %s",
-							isUndefined ?
-							MISSING_TYPE_NAME :
-							BsonTypeName(currentValue->value_type)),
+							BsonTypeNameExtended(currentValue->value_type)),
 						errdetail_log(
 							"$size requires an array argument, but received a value of type: %s",
-							isUndefined ?
-							MISSING_TYPE_NAME :
-							BsonTypeName(currentValue->value_type))));
+							BsonTypeNameExtended(currentValue->value_type))));
 	}
 
 	int size = 0;
@@ -3765,12 +3797,13 @@ GetStartValueForDollarRange(bson_value_t *startValue)
 	bool checkFixedInteger = true;
 	if (!BsonTypeIsNumber(startValue->value_type))
 	{
+		char *typeName = BsonTypeNameExtended(startValue->value_type);
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION34443), errmsg(
 							"$range expression requires a numeric start value but encountered a value of type: %s",
-							BsonTypeName(startValue->value_type)),
+							typeName),
 						errdetail_log(
 							"$range expression requires a numeric start value but encountered a value of type: %s",
-							BsonTypeName(startValue->value_type))));
+							typeName)));
 	}
 	else if (!IsBsonValue32BitInteger(startValue, checkFixedInteger))
 	{
@@ -3799,9 +3832,10 @@ GetEndValueForDollarRange(bson_value_t *endValue)
 	bool checkFixedInteger = true;
 	if (!BsonTypeIsNumber(endValue->value_type))
 	{
+		char *typeName = BsonTypeNameExtended(endValue->value_type);
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION34445), errmsg(
 							"$range expression needs a numeric ending value, but a value of type %s was provided",
-							BsonTypeName(endValue->value_type))));
+							typeName)));
 	}
 	else if (!IsBsonValue32BitInteger(endValue, checkFixedInteger))
 	{
@@ -3826,12 +3860,13 @@ GetStepValueForDollarRange(bson_value_t *stepValue)
 	int32_t stepValInt32;
 	if (!BsonTypeIsNumber(stepValue->value_type))
 	{
+		char *typeName = BsonTypeNameExtended(stepValue->value_type);
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION34447), errmsg(
 							"Expression $range needs a numeric step value, but received a value of type: %s",
-							BsonTypeName(stepValue->value_type)),
+							typeName),
 						errdetail_log(
 							"Expression $range needs a numeric step value, but received a value of type: %s",
-							BsonTypeName(stepValue->value_type))));
+							typeName)));
 	}
 	else if (!IsBsonValue32BitInteger(stepValue, checkFixedInteger))
 	{
@@ -4357,5 +4392,45 @@ SetResultValueForDollarSumAvg(const bson_value_t *inputArgument, bson_value_t *r
 		{
 			*result = currentSum;
 		}
+	}
+}
+
+
+/*
+ * Register operator variables (like $$this and 'as' aliases) for the current operator context.
+ * These variables will be used during validation of a let variableSpec
+ */
+static void
+RegisterOperatorVariables(ParseAggregationExpressionContext *parentContext,
+						  ParseAggregationExpressionContext *currentContext,
+						  List *operatorVariablesList)
+{
+	if (!EnableOperatorVariablesInLookup)
+	{
+		return;
+	}
+
+	/* We need to override the shallow copy of the parent's variables */
+	currentContext->operatorVariables = CreateStringViewHashSet();
+	if (parentContext->operatorVariables)
+	{
+		HASH_SEQ_STATUS hashSeq;
+		StringView *key;
+		hash_seq_init(&hashSeq, parentContext->operatorVariables);
+		while ((key = (StringView *) hash_seq_search(&hashSeq)) != NULL)
+		{
+			StringView *keyCopy = palloc0(sizeof(StringView));
+			*keyCopy = *key;
+			hash_search(currentContext->operatorVariables, keyCopy, HASH_ENTER, NULL);
+		}
+	}
+
+	/* Add the entries in the current operator's variables list */
+	ListCell *lc;
+	foreach(lc, operatorVariablesList)
+	{
+		char *varName = (char *) lfirst(lc);
+		StringView varNameView = CreateStringViewFromString(varName);
+		hash_search(currentContext->operatorVariables, &varNameView, HASH_ENTER, NULL);
 	}
 }

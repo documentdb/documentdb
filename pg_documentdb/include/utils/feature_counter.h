@@ -19,13 +19,13 @@
 #include <port/atomics.h>
 
 #define MAX_FEATURE_NAME_LENGTH 255
-#define MAX_FEATURE_COUNT 333
+#define MAX_FEATURE_COUNT 351
 
 /* Internal features that are not exposed */
 #define INTERNAL_FEATURE_TYPE MAX_FEATURE_COUNT
 
 /*
- * IMP: Keep this alphabetically sorted while adding new feature types. Sorting is done for better reability.
+ * IMP: Keep this alphabetically sorted while adding new feature types. Sorting is done for better readability.
  * #CodeSync: Keep this in sync with FeatureMapping array in feature_counter.c
  *            For each FeatureType enum a FeatureMapping entry should exist.
  *
@@ -239,6 +239,7 @@ typedef enum
 	FEATURE_COMMAND_COLLMOD_TTL_UPDATE,
 	FEATURE_COMMAND_COLLMOD_INDEX_HIDDEN,
 	FEATURE_COMMAND_COLLMOD_INDEX_PREPARE_UNIQUE,
+	FEATURE_COMMAND_COLLMOD_UNIQUE,
 
 	/* Feature Connection Status*/
 	FEATURE_CONNECTION_STATUS,
@@ -386,10 +387,27 @@ typedef enum
 	FEATURE_STAGE_VECTOR_SEARCH_NATIVE,
 
 	/* Feature counter region - Update operators */
+	FEATURE_UPDATE_OPERATOR_ADDTOSET,
+	FEATURE_UPDATE_OPERATOR_BIT,
+	FEATURE_UPDATE_OPERATOR_CURRENTDATE,
 	FEATURE_UPDATE_OPERATOR_GEN_EMBEDDINGS,
+	FEATURE_UPDATE_OPERATOR_INC,
+	FEATURE_UPDATE_OPERATOR_MAX,
+	FEATURE_UPDATE_OPERATOR_MIN,
+	FEATURE_UPDATE_OPERATOR_MUL,
+	FEATURE_UPDATE_OPERATOR_POP,
+	FEATURE_UPDATE_OPERATOR_PULL,
+	FEATURE_UPDATE_OPERATOR_PULLALL,
+	FEATURE_UPDATE_OPERATOR_PUSH,
+	FEATURE_UPDATE_OPERATOR_RENAME,
+	FEATURE_UPDATE_OPERATOR_SET,
+	FEATURE_UPDATE_OPERATOR_SET_ON_INSERT,
+	FEATURE_UPDATE_OPERATOR_UNSET,
 
 	/* Feature usage stats */
 	FEATURE_USAGE_TTL_PURGER_CALLS,
+	FEATURE_USAGE_TTL_SATURATED_BATCHES,
+	FEATURE_USAGE_TTL_SLOW_BATCHES,
 
 	/* Feature mapping region - User CRUD*/
 	FEATURE_USER_CREATE,

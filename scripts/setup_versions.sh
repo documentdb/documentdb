@@ -20,13 +20,11 @@ POSTGRES_16_REF="REL_16_10"
 # This maps to REL_15_14:0ab43b548237b3791261480d6a023f6b95b53942
 POSTGRES_15_REF="REL_15_14"
 
-# this is commit b8418cc61de008a17b948005d42f63f3ccb675e7
-# This contains the fix for crashes due to Snapshot handling for
-# shard operations with the latest minor release of PG15/16/17
-# This is v12.1.9 with the fix.
-CITUS_VERSION=b8418cc61de008a17b948005d42f63f3ccb675e7
-# This is commit e8e06d8d0cc103b1150feeac7250efc488a3cd5b
-CITUS_13_VERSION=v13.2.0
+# this is commit c569f8321f4cbd431f8fa36417df4a3ae025a417
+# This contains the fix for crashes for ASAN on version handling.
+CITUS_VERSION=c569f8321f4cbd431f8fa36417df4a3ae025a417
+# This is commit 9aa1384d9d0fcecc326b6c48919d774ad8389e0f
+CITUS_13_VERSION=9aa1384d9d0fcecc326b6c48919d774ad8389e0f
 # For pg18 use an unstable main version for now
 CITUS_PG18_VERSION=b7bfe42f1a4d22db4b1ecc2636cdf83adf27c106
 # This is commit 6a065fd8dfb280680304991aa30d7f72787fdb04

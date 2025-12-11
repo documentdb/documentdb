@@ -203,13 +203,13 @@ DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_bu
 DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id)FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND documentdb_api_internal.index_spec_options_are_equivalent(index_spec, $2) AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
 DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 6000 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
 DEBUG:  executing "INSERT INTO documentdb_api_catalog.collection_indexes (collection_id, index_spec, index_is_valid) VALUES ($1, $2, $3) RETURNING index_id" via SPI
-DEBUG:  executing "CREATE INDEX  documents_rum_index_6016 ON documentdb_data.documents_6000 USING documentdb_rum ( document documentdb_api_catalog.bson_rum_single_path_ops(path='x.y.z',tl=2699)) " via SPI
+DEBUG:  executing "CREATE INDEX  documents_rum_index_6016 ON documentdb_data.documents_6000 USING documentdb_rum ( document documentdb_api_internal.bson_rum_composite_path_ops(pathspec='[ "x.y.z" ]',tl=2691)) " via SPI
 DEBUG:  building index "documents_rum_index_6016" on table "documents_6000" serially
 DEBUG:  executing "INSERT INTO documentdb_api_catalog.collection_indexes (collection_id, index_spec, index_is_valid) VALUES ($1, $2, $3) RETURNING index_id" via SPI
-DEBUG:  executing "CREATE INDEX  documents_rum_index_6017 ON documentdb_data.documents_6000 USING documentdb_rum ( document documentdb_api_catalog.bson_rum_single_path_ops(path='c.d.e',tl=2699)) " via SPI
+DEBUG:  executing "CREATE INDEX  documents_rum_index_6017 ON documentdb_data.documents_6000 USING documentdb_rum ( document documentdb_api_internal.bson_rum_composite_path_ops(pathspec='[ "c.d.e" ]',tl=2691)) " via SPI
 DEBUG:  building index "documents_rum_index_6017" on table "documents_6000" serially
 DEBUG:  executing "INSERT INTO documentdb_api_catalog.collection_indexes (collection_id, index_spec, index_is_valid) VALUES ($1, $2, $3) RETURNING index_id" via SPI
-DEBUG:  executing "CREATE INDEX  documents_rum_index_6018 ON documentdb_data.documents_6000 USING documentdb_rum ( document documentdb_api_catalog.bson_rum_single_path_ops(path='x.y',tl=2699)) " via SPI
+DEBUG:  executing "CREATE INDEX  documents_rum_index_6018 ON documentdb_data.documents_6000 USING documentdb_rum ( document documentdb_api_internal.bson_rum_composite_path_ops(pathspec='[ "x.y" ]',tl=2691)) " via SPI
 DEBUG:  building index "documents_rum_index_6018" on table "documents_6000" serially
 DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 6000 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
                                                                                                     create_indexes_non_concurrently                                                                                                     
@@ -220,27 +220,27 @@ DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexe
 RESET client_min_messages;
 -- show that we didn't leave any invalid collection indexes behind
 SELECT * FROM documentdb_test_helpers.get_collection_indexes('db', 'collection_1') ORDER BY collection_id, index_id;
- collection_id | index_id |                                                             index_spec_as_bson                                                              | index_is_valid 
----------------+----------+---------------------------------------------------------------------------------------------------------------------------------------------+----------------
-          6000 |     6000 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }                                               | t
-          6000 |     6001 | { "v" : { "$numberInt" : "2" }, "key" : { "a$**foo" : { "$numberInt" : "1" } }, "name" : "my_idx_1" }                                       | t
-          6000 |     6002 | { "v" : { "$numberInt" : "2" }, "key" : { "a$**" : { "$numberInt" : "1" } }, "name" : "my_idx_3" }                                          | t
-          6000 |     6003 | { "v" : { "$numberInt" : "2" }, "key" : { "asparse" : { "$numberInt" : "1" } }, "name" : "my_sparse_idx1", "sparse" : true }                | t
-          6000 |     6004 | { "v" : { "$numberInt" : "2" }, "key" : { "asparse_num" : { "$numberInt" : "1" } }, "name" : "my_sparse_num_idx1", "sparse" : true }        | t
-          6000 |     6005 | { "v" : { "$numberInt" : "2" }, "key" : { "asparse_num" : { "$numberInt" : "1" } }, "name" : "my_non_sparse_num_idx1", "sparse" : false }   | t
-          6000 |     6006 | { "v" : { "$numberInt" : "2" }, "key" : { "a.sparse.double" : { "$numberInt" : "1" } }, "name" : "my_sparse_double_idx1", "sparse" : true } | t
-          6000 |     6007 | { "v" : { "$numberInt" : "2" }, "key" : { "bsparse" : { "$numberInt" : "1" } }, "name" : "my_non_sparse_idx1", "sparse" : false }           | t
-          6000 |     6008 | { "v" : { "$numberInt" : "2" }, "key" : { "cs.$**" : { "$numberInt" : "1" } }, "name" : "my_wildcard_non_sparse_idx1", "sparse" : false }   | t
-          6000 |     6009 | { "v" : { "$numberInt" : "2" }, "key" : { "a.sparse.b" : { "$numberInt" : "1" } }, "name" : "my_sparse_a_b_idx", "sparse" : true }          | t
-          6000 |     6010 | { "v" : { "$numberInt" : "2" }, "key" : { "a.sparse.b" : { "$numberInt" : "1" } }, "name" : "my_non_sparse_a_b_idx", "sparse" : false }     | t
-          6000 |     6011 | { "v" : { "$numberInt" : "2" }, "key" : { "a" : "hashed" }, "name" : "my_idx_hashed" }                                                      | t
-          6000 |     6012 | { "v" : { "$numberInt" : "2" }, "key" : { "a" : "hashed", "b" : { "$numberInt" : "1" } }, "name" : "my_idx_hashed_compound" }               | t
-          6000 |     6013 | { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" }, "b" : "hashed" }, "name" : "my_idx_hashed_compound_hash" }          | t
-          6000 |     6014 | { "v" : { "$numberInt" : "2" }, "key" : { "a$**" : "hashed" }, "name" : "my_idx_dollar_name_1" }                                            | t
-          6000 |     6015 | { "v" : { "$numberInt" : "2" }, "key" : { "a.c$" : "hashed" }, "name" : "my_idx_dollar_name_2" }                                            | t
-          6000 |     6016 | { "v" : { "$numberInt" : "2" }, "key" : { "x.y.z" : { "$numberInt" : "1" } }, "name" : "valid_index_1" }                                    | t
-          6000 |     6017 | { "v" : { "$numberInt" : "2" }, "key" : { "c.d.e" : { "$numberInt" : "1" } }, "name" : "my_idx_5" }                                         | t
-          6000 |     6018 | { "v" : { "$numberInt" : "2" }, "key" : { "x.y" : { "$numberInt" : "1" } }, "name" : "valid_index_2" }                                      | t
+ collection_id | index_id |                                                                                       index_spec_as_bson                                                                                       | index_is_valid 
+---------------+----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------
+          6000 |     6000 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }                                                                                                  | t
+          6000 |     6001 | { "v" : { "$numberInt" : "2" }, "key" : { "a$**foo" : { "$numberInt" : "1" } }, "name" : "my_idx_1", "storageEngine" : { "enableOrderedIndex" : true } }                                       | t
+          6000 |     6002 | { "v" : { "$numberInt" : "2" }, "key" : { "a$**" : { "$numberInt" : "1" } }, "name" : "my_idx_3", "storageEngine" : { "enableOrderedIndex" : true } }                                          | t
+          6000 |     6003 | { "v" : { "$numberInt" : "2" }, "key" : { "asparse" : { "$numberInt" : "1" } }, "name" : "my_sparse_idx1", "sparse" : true, "storageEngine" : { "enableOrderedIndex" : true } }                | t
+          6000 |     6004 | { "v" : { "$numberInt" : "2" }, "key" : { "asparse_num" : { "$numberInt" : "1" } }, "name" : "my_sparse_num_idx1", "sparse" : true, "storageEngine" : { "enableOrderedIndex" : true } }        | t
+          6000 |     6005 | { "v" : { "$numberInt" : "2" }, "key" : { "asparse_num" : { "$numberInt" : "1" } }, "name" : "my_non_sparse_num_idx1", "sparse" : false, "storageEngine" : { "enableOrderedIndex" : true } }   | t
+          6000 |     6006 | { "v" : { "$numberInt" : "2" }, "key" : { "a.sparse.double" : { "$numberInt" : "1" } }, "name" : "my_sparse_double_idx1", "sparse" : true, "storageEngine" : { "enableOrderedIndex" : true } } | t
+          6000 |     6007 | { "v" : { "$numberInt" : "2" }, "key" : { "bsparse" : { "$numberInt" : "1" } }, "name" : "my_non_sparse_idx1", "sparse" : false, "storageEngine" : { "enableOrderedIndex" : true } }           | t
+          6000 |     6008 | { "v" : { "$numberInt" : "2" }, "key" : { "cs.$**" : { "$numberInt" : "1" } }, "name" : "my_wildcard_non_sparse_idx1", "sparse" : false }                                                      | t
+          6000 |     6009 | { "v" : { "$numberInt" : "2" }, "key" : { "a.sparse.b" : { "$numberInt" : "1" } }, "name" : "my_sparse_a_b_idx", "sparse" : true, "storageEngine" : { "enableOrderedIndex" : true } }          | t
+          6000 |     6010 | { "v" : { "$numberInt" : "2" }, "key" : { "a.sparse.b" : { "$numberInt" : "1" } }, "name" : "my_non_sparse_a_b_idx", "sparse" : false, "storageEngine" : { "enableOrderedIndex" : true } }     | t
+          6000 |     6011 | { "v" : { "$numberInt" : "2" }, "key" : { "a" : "hashed" }, "name" : "my_idx_hashed" }                                                                                                         | t
+          6000 |     6012 | { "v" : { "$numberInt" : "2" }, "key" : { "a" : "hashed", "b" : { "$numberInt" : "1" } }, "name" : "my_idx_hashed_compound" }                                                                  | t
+          6000 |     6013 | { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" }, "b" : "hashed" }, "name" : "my_idx_hashed_compound_hash" }                                                             | t
+          6000 |     6014 | { "v" : { "$numberInt" : "2" }, "key" : { "a$**" : "hashed" }, "name" : "my_idx_dollar_name_1" }                                                                                               | t
+          6000 |     6015 | { "v" : { "$numberInt" : "2" }, "key" : { "a.c$" : "hashed" }, "name" : "my_idx_dollar_name_2" }                                                                                               | t
+          6000 |     6016 | { "v" : { "$numberInt" : "2" }, "key" : { "x.y.z" : { "$numberInt" : "1" } }, "name" : "valid_index_1", "storageEngine" : { "enableOrderedIndex" : true } }                                    | t
+          6000 |     6017 | { "v" : { "$numberInt" : "2" }, "key" : { "c.d.e" : { "$numberInt" : "1" } }, "name" : "my_idx_5", "storageEngine" : { "enableOrderedIndex" : true } }                                         | t
+          6000 |     6018 | { "v" : { "$numberInt" : "2" }, "key" : { "x.y" : { "$numberInt" : "1" } }, "name" : "valid_index_2", "storageEngine" : { "enableOrderedIndex" : true } }                                      | t
 (19 rows)
 
 -- also show that we didn't leave any invalid pg indexes behind
@@ -301,27 +301,27 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIn
 ERROR:  Error in specification { "key" : { "a." : 1 }, "name" : "my_idx_12" }:Index keys are not allowed to include any fields that are empty.
 -- show that we didn't leave any invalid collection indexes behind
 SELECT * FROM documentdb_test_helpers.get_collection_indexes('db', 'collection_1') ORDER BY collection_id, index_id;
- collection_id | index_id |                                                             index_spec_as_bson                                                              | index_is_valid 
----------------+----------+---------------------------------------------------------------------------------------------------------------------------------------------+----------------
-          6000 |     6000 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }                                               | t
-          6000 |     6001 | { "v" : { "$numberInt" : "2" }, "key" : { "a$**foo" : { "$numberInt" : "1" } }, "name" : "my_idx_1" }                                       | t
-          6000 |     6002 | { "v" : { "$numberInt" : "2" }, "key" : { "a$**" : { "$numberInt" : "1" } }, "name" : "my_idx_3" }                                          | t
-          6000 |     6003 | { "v" : { "$numberInt" : "2" }, "key" : { "asparse" : { "$numberInt" : "1" } }, "name" : "my_sparse_idx1", "sparse" : true }                | t
-          6000 |     6004 | { "v" : { "$numberInt" : "2" }, "key" : { "asparse_num" : { "$numberInt" : "1" } }, "name" : "my_sparse_num_idx1", "sparse" : true }        | t
-          6000 |     6005 | { "v" : { "$numberInt" : "2" }, "key" : { "asparse_num" : { "$numberInt" : "1" } }, "name" : "my_non_sparse_num_idx1", "sparse" : false }   | t
-          6000 |     6006 | { "v" : { "$numberInt" : "2" }, "key" : { "a.sparse.double" : { "$numberInt" : "1" } }, "name" : "my_sparse_double_idx1", "sparse" : true } | t
-          6000 |     6007 | { "v" : { "$numberInt" : "2" }, "key" : { "bsparse" : { "$numberInt" : "1" } }, "name" : "my_non_sparse_idx1", "sparse" : false }           | t
-          6000 |     6008 | { "v" : { "$numberInt" : "2" }, "key" : { "cs.$**" : { "$numberInt" : "1" } }, "name" : "my_wildcard_non_sparse_idx1", "sparse" : false }   | t
-          6000 |     6009 | { "v" : { "$numberInt" : "2" }, "key" : { "a.sparse.b" : { "$numberInt" : "1" } }, "name" : "my_sparse_a_b_idx", "sparse" : true }          | t
-          6000 |     6010 | { "v" : { "$numberInt" : "2" }, "key" : { "a.sparse.b" : { "$numberInt" : "1" } }, "name" : "my_non_sparse_a_b_idx", "sparse" : false }     | t
-          6000 |     6011 | { "v" : { "$numberInt" : "2" }, "key" : { "a" : "hashed" }, "name" : "my_idx_hashed" }                                                      | t
-          6000 |     6012 | { "v" : { "$numberInt" : "2" }, "key" : { "a" : "hashed", "b" : { "$numberInt" : "1" } }, "name" : "my_idx_hashed_compound" }               | t
-          6000 |     6013 | { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" }, "b" : "hashed" }, "name" : "my_idx_hashed_compound_hash" }          | t
-          6000 |     6014 | { "v" : { "$numberInt" : "2" }, "key" : { "a$**" : "hashed" }, "name" : "my_idx_dollar_name_1" }                                            | t
-          6000 |     6015 | { "v" : { "$numberInt" : "2" }, "key" : { "a.c$" : "hashed" }, "name" : "my_idx_dollar_name_2" }                                            | t
-          6000 |     6016 | { "v" : { "$numberInt" : "2" }, "key" : { "x.y.z" : { "$numberInt" : "1" } }, "name" : "valid_index_1" }                                    | t
-          6000 |     6017 | { "v" : { "$numberInt" : "2" }, "key" : { "c.d.e" : { "$numberInt" : "1" } }, "name" : "my_idx_5" }                                         | t
-          6000 |     6018 | { "v" : { "$numberInt" : "2" }, "key" : { "x.y" : { "$numberInt" : "1" } }, "name" : "valid_index_2" }                                      | t
+ collection_id | index_id |                                                                                       index_spec_as_bson                                                                                       | index_is_valid 
+---------------+----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------
+          6000 |     6000 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }                                                                                                  | t
+          6000 |     6001 | { "v" : { "$numberInt" : "2" }, "key" : { "a$**foo" : { "$numberInt" : "1" } }, "name" : "my_idx_1", "storageEngine" : { "enableOrderedIndex" : true } }                                       | t
+          6000 |     6002 | { "v" : { "$numberInt" : "2" }, "key" : { "a$**" : { "$numberInt" : "1" } }, "name" : "my_idx_3", "storageEngine" : { "enableOrderedIndex" : true } }                                          | t
+          6000 |     6003 | { "v" : { "$numberInt" : "2" }, "key" : { "asparse" : { "$numberInt" : "1" } }, "name" : "my_sparse_idx1", "sparse" : true, "storageEngine" : { "enableOrderedIndex" : true } }                | t
+          6000 |     6004 | { "v" : { "$numberInt" : "2" }, "key" : { "asparse_num" : { "$numberInt" : "1" } }, "name" : "my_sparse_num_idx1", "sparse" : true, "storageEngine" : { "enableOrderedIndex" : true } }        | t
+          6000 |     6005 | { "v" : { "$numberInt" : "2" }, "key" : { "asparse_num" : { "$numberInt" : "1" } }, "name" : "my_non_sparse_num_idx1", "sparse" : false, "storageEngine" : { "enableOrderedIndex" : true } }   | t
+          6000 |     6006 | { "v" : { "$numberInt" : "2" }, "key" : { "a.sparse.double" : { "$numberInt" : "1" } }, "name" : "my_sparse_double_idx1", "sparse" : true, "storageEngine" : { "enableOrderedIndex" : true } } | t
+          6000 |     6007 | { "v" : { "$numberInt" : "2" }, "key" : { "bsparse" : { "$numberInt" : "1" } }, "name" : "my_non_sparse_idx1", "sparse" : false, "storageEngine" : { "enableOrderedIndex" : true } }           | t
+          6000 |     6008 | { "v" : { "$numberInt" : "2" }, "key" : { "cs.$**" : { "$numberInt" : "1" } }, "name" : "my_wildcard_non_sparse_idx1", "sparse" : false }                                                      | t
+          6000 |     6009 | { "v" : { "$numberInt" : "2" }, "key" : { "a.sparse.b" : { "$numberInt" : "1" } }, "name" : "my_sparse_a_b_idx", "sparse" : true, "storageEngine" : { "enableOrderedIndex" : true } }          | t
+          6000 |     6010 | { "v" : { "$numberInt" : "2" }, "key" : { "a.sparse.b" : { "$numberInt" : "1" } }, "name" : "my_non_sparse_a_b_idx", "sparse" : false, "storageEngine" : { "enableOrderedIndex" : true } }     | t
+          6000 |     6011 | { "v" : { "$numberInt" : "2" }, "key" : { "a" : "hashed" }, "name" : "my_idx_hashed" }                                                                                                         | t
+          6000 |     6012 | { "v" : { "$numberInt" : "2" }, "key" : { "a" : "hashed", "b" : { "$numberInt" : "1" } }, "name" : "my_idx_hashed_compound" }                                                                  | t
+          6000 |     6013 | { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" }, "b" : "hashed" }, "name" : "my_idx_hashed_compound_hash" }                                                             | t
+          6000 |     6014 | { "v" : { "$numberInt" : "2" }, "key" : { "a$**" : "hashed" }, "name" : "my_idx_dollar_name_1" }                                                                                               | t
+          6000 |     6015 | { "v" : { "$numberInt" : "2" }, "key" : { "a.c$" : "hashed" }, "name" : "my_idx_dollar_name_2" }                                                                                               | t
+          6000 |     6016 | { "v" : { "$numberInt" : "2" }, "key" : { "x.y.z" : { "$numberInt" : "1" } }, "name" : "valid_index_1", "storageEngine" : { "enableOrderedIndex" : true } }                                    | t
+          6000 |     6017 | { "v" : { "$numberInt" : "2" }, "key" : { "c.d.e" : { "$numberInt" : "1" } }, "name" : "my_idx_5", "storageEngine" : { "enableOrderedIndex" : true } }                                         | t
+          6000 |     6018 | { "v" : { "$numberInt" : "2" }, "key" : { "x.y" : { "$numberInt" : "1" } }, "name" : "valid_index_2", "storageEngine" : { "enableOrderedIndex" : true } }                                      | t
 (19 rows)
 
 -- also show that we didn't leave any invalid pg indexes behind

@@ -37,7 +37,7 @@ PG_MODULE_MAGIC;
 void _PG_init(void);
 
 PG_FUNCTION_INFO_V1(documentdb_rumhandler);
-extern PGDLLEXPORT void InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
+extern PGDLLIMPORT void InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 													   char *documentDBRumGucPrefix);
 
 static char * rumbuildphasename(int64 phasenum);
@@ -58,10 +58,10 @@ _PG_init(void)
 #define RUM_GUC_PREFIX "documentdb_rum"
 #define DOCUMENTDB_RUM_GUC_PREFIX "documentdb_rum"
 
-
+	/* Assert things about the storage format */
 	StaticAssertExpr(offsetof(RumPageOpaqueData, dataPageMaxoff) == sizeof(uint64_t),
 					 "maxoff must be the 3rd field with a specific offset");
-	StaticAssertExpr(offsetof(RumPageOpaqueData, entryPageCycleId) == sizeof(uint64_t),
+	StaticAssertExpr(offsetof(RumPageOpaqueData, entryPageUnused) == sizeof(uint64_t),
 					 "entryPageCycleId must be the 3rd field with a specific offset");
 	StaticAssertExpr(offsetof(RumPageOpaqueData, dataPageFreespace) == sizeof(uint64_t) +
 					 sizeof(uint16_t),
@@ -69,9 +69,16 @@ _PG_init(void)
 	StaticAssertExpr(offsetof(RumPageOpaqueData, flags) == sizeof(uint64_t) +
 					 sizeof(uint32_t),
 					 "flags must be the 3rd field with a specific offset");
+
+	StaticAssertExpr(offsetof(RumPageOpaqueData, cycleId) == sizeof(uint64_t) +
+					 sizeof(uint32_t) + sizeof(uint16_t),
+					 "cycleId must be the 4th field with a specific offset");
 	StaticAssertExpr(sizeof(RumPageOpaqueData) == sizeof(uint64_t) + sizeof(uint64_t),
 					 "RumPageOpaqueData must be the 2 bigint fields worth");
 
+	StaticAssertExpr(sizeof(RumItem) == 16 && MAXALIGN(sizeof(RumItem)) == 16,
+					 "rum item aligned should be 16 bytes");
+	StaticAssertExpr(sizeof(RumDataLeafItemIndex) == 24, "LeafItemIndex is 24 bytes");
 
 	if (!process_shared_preload_libraries_in_progress)
 	{
@@ -136,9 +143,14 @@ documentdb_rumhandler(PG_FUNCTION_ARGS)
 	amroutine->amstorage = true;
 	amroutine->amclusterable = false;
 	amroutine->ampredlocks = true;
-#if PG_VERSION_NUM >= 100000
+
+	/* Since not every rum index can support this
+	 * Set this to false. Specific indexes can override
+	 * it in the planner as needed.
+	 * TODO: After more confidence is built up, we can enable this more
+	 * globally.
+	 */
 	amroutine->amcanparallel = false;
-#endif
 
 #if PG_VERSION_NUM >= 170000
 	amroutine->amcanbuildparallel = RumEnableParallelIndexBuild;
@@ -170,11 +182,9 @@ documentdb_rumhandler(PG_FUNCTION_ARGS)
 	amroutine->ambuildphasename = rumbuildphasename;
 	amroutine->ammarkpos = NULL;
 	amroutine->amrestrpos = NULL;
-#if PG_VERSION_NUM >= 100000
-	amroutine->amestimateparallelscan = NULL;
-	amroutine->aminitparallelscan = NULL;
-	amroutine->amparallelrescan = NULL;
-#endif
+	amroutine->amestimateparallelscan = rumestimateparallelscan;
+	amroutine->aminitparallelscan = ruminitparallelscan;
+	amroutine->amparallelrescan = rumparallelrescan;
 
 	/* Allow operator classes to define custom opclass-options */
 	amroutine->amoptsprocnum = RUM_INDEX_CONFIG_PROC;

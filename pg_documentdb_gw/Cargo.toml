@@ -38,13 +38,12 @@ tokio-postgres = { version = "0.7.10", features = [
 ] }
 serde = { version = "1.0.125", features = ["derive", "rc"] }
 uuid = { version = "1.12.1", features = ["v4"] }
-
-[dev-dependencies]
 mongodb = { version = "3.2.0", default-features = false, features = [
     "dns-resolver",
     "openssl-tls",
     "compat-3-0-0",
 ] }
+futures = "0.3.31"
 
 [lints.clippy]
 complexity = { level = "warn", priority = -1 }

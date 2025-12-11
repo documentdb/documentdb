@@ -23,8 +23,7 @@ pub const OK_FAILED: f64 = 0.0;
 
 pub fn extract_database_and_collection_names(path: &str) -> Result<(&str, &str)> {
     let pos = path.find('.').ok_or(DocumentDBError::bad_value(format!(
-        "Collection path {} does not contain a '.'",
-        path
+        "Collection path {path} does not contain a '.'"
     )))?;
     let db = &path[0..pos];
     let coll = &path[pos + 1..];

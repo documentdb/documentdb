@@ -18,6 +18,7 @@
 #include <math.h>
 #include <nodes/pg_list.h>
 
+#include "aggregation/bson_aggregate.h"
 #include "utils/documentdb_errors.h"
 #include "types/decimal128.h"
 
@@ -108,7 +109,7 @@ bool ParseInputWeightForExpMovingAvg(const bson_value_t *opValue,
 									 bson_value_t *weightExpression,
 									 bson_value_t *decimalWeightValue);
 
-static bytea * AllocateBsonCovarianceOrVarianceAggState(void);
+static MaxAlignedVarlena * AllocateBsonCovarianceOrVarianceAggState(void);
 static void CalculateCombineFuncForCovarianceOrVarianceWithYCAlgr(const
 																  BsonCovarianceAndVarianceAggState
 																  *leftState, const
@@ -129,7 +130,7 @@ static void CalculateSFuncForCovarianceOrVarianceWithYCAlgr(const bson_value_t *
 static void CalculateExpMovingAvg(bson_value_t *currentValue, bson_value_t *perValue,
 								  bson_value_t *weightValue, bool isAlpha,
 								  bson_value_t *resultValue);
-static bytea * AllocateBsonIntegralAndDerivativeAggState(void);
+static MaxAlignedVarlena * AllocateBsonIntegralAndDerivativeAggState(void);
 
 static void HandleIntegralDerivative(bson_value_t *xBsonValue, bson_value_t *yBsonValue,
 									 long timeUnitInMs,
@@ -188,7 +189,7 @@ PG_FUNCTION_INFO_V1(bson_std_dev_samp_winfunc_final);
 Datum
 bson_covariance_pop_samp_transition(PG_FUNCTION_ARGS)
 {
-	bytea *bytes;
+	MaxAlignedVarlena *bytes;
 	BsonCovarianceAndVarianceAggState *currentState;
 
 	/* If the intermediate state has never been initialized, create it */
@@ -206,7 +207,7 @@ bson_covariance_pop_samp_transition(PG_FUNCTION_ARGS)
 
 		bytes = AllocateBsonCovarianceOrVarianceAggState();
 
-		currentState = (BsonCovarianceAndVarianceAggState *) VARDATA(bytes);
+		currentState = (BsonCovarianceAndVarianceAggState *) bytes->state;
 		currentState->sx.value_type = BSON_TYPE_DOUBLE;
 		currentState->sx.value.v_double = 0.0;
 		currentState->sy.value_type = BSON_TYPE_DOUBLE;
@@ -220,8 +221,8 @@ bson_covariance_pop_samp_transition(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		bytes = PG_GETARG_BYTEA_P(0);
-		currentState = (BsonCovarianceAndVarianceAggState *) VARDATA_ANY(bytes);
+		bytes = GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		currentState = (BsonCovarianceAndVarianceAggState *) bytes->state;
 	}
 
 	pgbson *currentXValue = PG_GETARG_MAYBE_NULL_PGBSON(1);
@@ -270,9 +271,9 @@ bson_covariance_pop_samp_combine(PG_FUNCTION_ARGS)
 	/* Create the aggregate state in the aggregate context. */
 	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
 
-	bytea *combinedStateBytes = AllocateBsonCovarianceOrVarianceAggState();
+	MaxAlignedVarlena *combinedStateBytes = AllocateBsonCovarianceOrVarianceAggState();
 	BsonCovarianceAndVarianceAggState *currentState =
-		(BsonCovarianceAndVarianceAggState *) VARDATA_ANY(combinedStateBytes);
+		(BsonCovarianceAndVarianceAggState *) combinedStateBytes->state;
 
 	MemoryContextSwitchTo(oldContext);
 
@@ -296,7 +297,9 @@ bson_covariance_pop_samp_combine(PG_FUNCTION_ARGS)
 		{
 			PG_RETURN_NULL();
 		}
-		memcpy(VARDATA(combinedStateBytes), VARDATA_ANY(PG_GETARG_BYTEA_P(1)),
+		MaxAlignedVarlena *rightBytes =
+			GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(1));
+		memcpy(combinedStateBytes->state, rightBytes->state,
 			   sizeof(BsonCovarianceAndVarianceAggState));
 	}
 	else if (PG_ARGISNULL(1))
@@ -305,16 +308,21 @@ bson_covariance_pop_samp_combine(PG_FUNCTION_ARGS)
 		{
 			PG_RETURN_NULL();
 		}
-		memcpy(VARDATA(combinedStateBytes), VARDATA_ANY(PG_GETARG_BYTEA_P(0)),
+		MaxAlignedVarlena *leftBytes =
+			GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		memcpy(combinedStateBytes->state, leftBytes->state,
 			   sizeof(BsonCovarianceAndVarianceAggState));
 	}
 	else
 	{
+		MaxAlignedVarlena *leftBytes =
+			GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		MaxAlignedVarlena *rightBytes =
+			GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(1));
 		BsonCovarianceAndVarianceAggState *leftState =
-			(BsonCovarianceAndVarianceAggState *) VARDATA_ANY(PG_GETARG_BYTEA_P(0));
+			(BsonCovarianceAndVarianceAggState *) leftBytes->state;
 		BsonCovarianceAndVarianceAggState *rightState =
-			(BsonCovarianceAndVarianceAggState *) VARDATA_ANY(PG_GETARG_BYTEA_P(1));
-
+			(BsonCovarianceAndVarianceAggState *) rightBytes->state;
 		CalculateCombineFuncForCovarianceOrVarianceWithYCAlgr(leftState, rightState,
 															  currentState);
 	}
@@ -338,7 +346,7 @@ bson_covariance_pop_samp_invtransition(PG_FUNCTION_ARGS)
 					"window aggregate function called in non-window-aggregate context"));
 	}
 
-	bytea *bytes;
+	MaxAlignedVarlena *bytes;
 	BsonCovarianceAndVarianceAggState *currentState;
 
 	if (PG_ARGISNULL(0))
@@ -347,8 +355,8 @@ bson_covariance_pop_samp_invtransition(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		bytes = PG_GETARG_BYTEA_P(0);
-		currentState = (BsonCovarianceAndVarianceAggState *) VARDATA_ANY(bytes);
+		bytes = GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		currentState = (BsonCovarianceAndVarianceAggState *) bytes->state;
 	}
 
 	pgbson *currentXValue = PG_GETARG_MAYBE_NULL_PGBSON(1);
@@ -400,7 +408,8 @@ bson_covariance_pop_samp_invtransition(PG_FUNCTION_ARGS)
 Datum
 bson_covariance_pop_final(PG_FUNCTION_ARGS)
 {
-	bytea *covarianceIntermediateState = PG_ARGISNULL(0) ? NULL : PG_GETARG_BYTEA_P(0);
+	MaxAlignedVarlena *covarianceIntermediateState =
+		PG_ARGISNULL(0) ? NULL : GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
 
 	pgbsonelement finalValue;
 	finalValue.path = "";
@@ -409,8 +418,7 @@ bson_covariance_pop_final(PG_FUNCTION_ARGS)
 	{
 		bson_value_t bsonResult = { 0 };
 		BsonCovarianceAndVarianceAggState *covarianceState =
-			(BsonCovarianceAndVarianceAggState *) VARDATA_ANY(
-				covarianceIntermediateState);
+			(BsonCovarianceAndVarianceAggState *) covarianceIntermediateState->state;
 
 		if (IsBsonValueNaN(&covarianceState->sxy) ||
 			IsBsonValueInfinity(&covarianceState->sxy) != 0)
@@ -480,7 +488,8 @@ bson_covariance_pop_final(PG_FUNCTION_ARGS)
 Datum
 bson_covariance_samp_final(PG_FUNCTION_ARGS)
 {
-	bytea *covarianceIntermediateState = PG_ARGISNULL(0) ? NULL : PG_GETARG_BYTEA_P(0);
+	MaxAlignedVarlena *covarianceIntermediateState =
+		PG_ARGISNULL(0) ? NULL : GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
 
 	pgbsonelement finalValue;
 	finalValue.path = "";
@@ -489,8 +498,7 @@ bson_covariance_samp_final(PG_FUNCTION_ARGS)
 	{
 		bson_value_t bsonResult = { 0 };
 		BsonCovarianceAndVarianceAggState *covarianceState =
-			(BsonCovarianceAndVarianceAggState *) VARDATA_ANY(
-				covarianceIntermediateState);
+			(BsonCovarianceAndVarianceAggState *) covarianceIntermediateState->state;
 
 		if (IsBsonValueNaN(&covarianceState->sxy) ||
 			IsBsonValueInfinity(&covarianceState->sxy))
@@ -550,7 +558,7 @@ bson_covariance_samp_final(PG_FUNCTION_ARGS)
 Datum
 bson_std_dev_pop_samp_transition(PG_FUNCTION_ARGS)
 {
-	bytea *bytes;
+	MaxAlignedVarlena *bytes;
 	BsonCovarianceAndVarianceAggState *currentState;
 
 	/* If the intermediate state has never been initialized, create it */
@@ -568,7 +576,7 @@ bson_std_dev_pop_samp_transition(PG_FUNCTION_ARGS)
 
 		bytes = AllocateBsonCovarianceOrVarianceAggState();
 
-		currentState = (BsonCovarianceAndVarianceAggState *) VARDATA(bytes);
+		currentState = (BsonCovarianceAndVarianceAggState *) bytes->state;
 		currentState->sx.value_type = BSON_TYPE_DOUBLE;
 		currentState->sx.value.v_double = 0.0;
 		currentState->sy.value_type = BSON_TYPE_DOUBLE;
@@ -582,8 +590,8 @@ bson_std_dev_pop_samp_transition(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		bytes = PG_GETARG_BYTEA_P(0);
-		currentState = (BsonCovarianceAndVarianceAggState *) VARDATA_ANY(bytes);
+		bytes = GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		currentState = (BsonCovarianceAndVarianceAggState *) bytes->state;
 	}
 	pgbson *currentValue = PG_GETARG_MAYBE_NULL_PGBSON(1);
 
@@ -626,9 +634,9 @@ bson_std_dev_pop_samp_combine(PG_FUNCTION_ARGS)
 	/* Create the aggregate state in the aggregate context. */
 	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
 
-	bytea *combinedStateBytes = AllocateBsonCovarianceOrVarianceAggState();
+	MaxAlignedVarlena *combinedStateBytes = AllocateBsonCovarianceOrVarianceAggState();
 	BsonCovarianceAndVarianceAggState *currentState =
-		(BsonCovarianceAndVarianceAggState *) VARDATA_ANY(combinedStateBytes);
+		(BsonCovarianceAndVarianceAggState *) combinedStateBytes->state;
 
 	MemoryContextSwitchTo(oldContext);
 
@@ -662,7 +670,9 @@ bson_std_dev_pop_samp_combine(PG_FUNCTION_ARGS)
 		{
 			PG_RETURN_NULL();
 		}
-		memcpy(VARDATA(combinedStateBytes), VARDATA_ANY(PG_GETARG_BYTEA_P(1)),
+		MaxAlignedVarlena *rightStateBytes =
+			GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(1));
+		memcpy(combinedStateBytes->state, rightStateBytes->state,
 			   sizeof(BsonCovarianceAndVarianceAggState));
 	}
 	else if (PG_ARGISNULL(1))
@@ -671,17 +681,21 @@ bson_std_dev_pop_samp_combine(PG_FUNCTION_ARGS)
 		{
 			PG_RETURN_NULL();
 		}
-		memcpy(VARDATA(combinedStateBytes), VARDATA_ANY(PG_GETARG_BYTEA_P(0)),
+		MaxAlignedVarlena *leftStateBytes =
+			GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		memcpy(combinedStateBytes->state, leftStateBytes->state,
 			   sizeof(BsonCovarianceAndVarianceAggState));
 	}
 	else
 	{
+		MaxAlignedVarlena *leftStateBytes =
+			GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		MaxAlignedVarlena *rightStateBytes =
+			GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(1));
 		BsonCovarianceAndVarianceAggState *leftState =
-			(BsonCovarianceAndVarianceAggState *) VARDATA_ANY(
-				PG_GETARG_BYTEA_P(0));
+			(BsonCovarianceAndVarianceAggState *) leftStateBytes->state;
 		BsonCovarianceAndVarianceAggState *rightState =
-			(BsonCovarianceAndVarianceAggState *) VARDATA_ANY(
-				PG_GETARG_BYTEA_P(1));
+			(BsonCovarianceAndVarianceAggState *) rightStateBytes->state;
 
 		CalculateCombineFuncForCovarianceOrVarianceWithYCAlgr(leftState, rightState,
 															  currentState);
@@ -699,7 +713,8 @@ bson_std_dev_pop_samp_combine(PG_FUNCTION_ARGS)
 Datum
 bson_std_dev_pop_final(PG_FUNCTION_ARGS)
 {
-	bytea *stdDevIntermediateState = PG_ARGISNULL(0) ? NULL : PG_GETARG_BYTEA_P(0);
+	MaxAlignedVarlena *stdDevIntermediateState =
+		PG_ARGISNULL(0) ? NULL : GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
 
 	pgbsonelement finalValue;
 	finalValue.path = "";
@@ -707,7 +722,7 @@ bson_std_dev_pop_final(PG_FUNCTION_ARGS)
 	if (stdDevIntermediateState != NULL)
 	{
 		BsonCovarianceAndVarianceAggState *stdDevState =
-			(BsonCovarianceAndVarianceAggState *) VARDATA_ANY(stdDevIntermediateState);
+			(BsonCovarianceAndVarianceAggState *) stdDevIntermediateState->state;
 
 		if (IsBsonValueNaN(&stdDevState->sxy) ||
 			IsBsonValueInfinity(&stdDevState->sxy))
@@ -760,7 +775,8 @@ bson_std_dev_pop_final(PG_FUNCTION_ARGS)
 Datum
 bson_std_dev_samp_final(PG_FUNCTION_ARGS)
 {
-	bytea *stdDevIntermediateState = PG_ARGISNULL(0) ? NULL : PG_GETARG_BYTEA_P(0);
+	MaxAlignedVarlena *stdDevIntermediateState =
+		PG_ARGISNULL(0) ? NULL : GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
 
 	pgbsonelement finalValue;
 	finalValue.path = "";
@@ -768,7 +784,7 @@ bson_std_dev_samp_final(PG_FUNCTION_ARGS)
 	if (stdDevIntermediateState != NULL)
 	{
 		BsonCovarianceAndVarianceAggState *stdDevState =
-			(BsonCovarianceAndVarianceAggState *) VARDATA_ANY(stdDevIntermediateState);
+			(BsonCovarianceAndVarianceAggState *) stdDevIntermediateState->state;
 
 		if (stdDevState->count == 0 ||
 			stdDevState->count == 1)
@@ -927,7 +943,7 @@ bson_exp_moving_avg(PG_FUNCTION_ARGS)
 Datum
 bson_integral_transition(PG_FUNCTION_ARGS)
 {
-	bytea *bytes;
+	MaxAlignedVarlena *bytes;
 	bool isIntegral = true;
 	BsonIntegralAndDerivativeAggState *currentState;
 
@@ -957,8 +973,9 @@ bson_integral_transition(PG_FUNCTION_ARGS)
 		MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
 
 		bytes = AllocateBsonIntegralAndDerivativeAggState();
-		currentState = (BsonIntegralAndDerivativeAggState *) VARDATA(bytes);
+		currentState = (BsonIntegralAndDerivativeAggState *) bytes->state;
 		currentState->result.value_type = BSON_TYPE_DOUBLE;
+		currentState->result.value.v_double = 0.0;
 
 		/* update the anchor point with current document in window */
 		currentState->anchorX = xValueElement.bsonValue;
@@ -976,8 +993,8 @@ bson_integral_transition(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		bytes = PG_GETARG_BYTEA_P(0);
-		currentState = (BsonIntegralAndDerivativeAggState *) VARDATA_ANY(bytes);
+		bytes = GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		currentState = (BsonIntegralAndDerivativeAggState *) bytes->state;
 	}
 	HandleIntegralDerivative(&xValueElement.bsonValue, &yValueElement.bsonValue,
 							 timeUnitInt64,
@@ -1011,7 +1028,7 @@ bson_derivative_transition(PG_FUNCTION_ARGS)
 	PgbsonToSinglePgbsonElement(xValue, &xValueElement);
 	PgbsonToSinglePgbsonElement(yValue, &yValueElement);
 
-	bytea *bytes;
+	MaxAlignedVarlena *bytes;
 	bool isIntegral = false;
 	BsonIntegralAndDerivativeAggState *currentState;
 	if (IsPgbsonEmptyDocument(xValue) || IsPgbsonEmptyDocument(yValue))
@@ -1034,7 +1051,7 @@ bson_derivative_transition(PG_FUNCTION_ARGS)
 		MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
 
 		bytes = AllocateBsonIntegralAndDerivativeAggState();
-		currentState = (BsonIntegralAndDerivativeAggState *) VARDATA(bytes);
+		currentState = (BsonIntegralAndDerivativeAggState *) bytes->state;
 		currentState->result.value_type = BSON_TYPE_NULL;
 
 		/* anchor points are always the first document in the window for $derivative*/
@@ -1067,8 +1084,8 @@ bson_derivative_transition(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		bytes = PG_GETARG_BYTEA_P(0);
-		currentState = (BsonIntegralAndDerivativeAggState *) VARDATA_ANY(bytes);
+		bytes = GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		currentState = (BsonIntegralAndDerivativeAggState *) bytes->state;
 	}
 	if (IsPgbsonEmptyDocument(xValue) || IsPgbsonEmptyDocument(yValue))
 	{
@@ -1088,7 +1105,8 @@ bson_derivative_transition(PG_FUNCTION_ARGS)
 Datum
 bson_integral_derivative_final(PG_FUNCTION_ARGS)
 {
-	bytea *currentState = PG_ARGISNULL(0) ? NULL : PG_GETARG_BYTEA_P(0);
+	MaxAlignedVarlena *currentState =
+		PG_ARGISNULL(0) ? NULL : GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
 	pgbsonelement finalValue;
 	finalValue.path = "";
 	finalValue.pathLength = 0;
@@ -1096,8 +1114,7 @@ bson_integral_derivative_final(PG_FUNCTION_ARGS)
 	if (currentState != NULL)
 	{
 		BsonIntegralAndDerivativeAggState *state =
-			(BsonIntegralAndDerivativeAggState *) VARDATA_ANY(
-				currentState);
+			(BsonIntegralAndDerivativeAggState *) currentState->state;
 		if (state->result.value_type != BSON_TYPE_NULL)
 		{
 			finalValue.bsonValue = state->result;
@@ -1123,7 +1140,8 @@ bson_integral_derivative_final(PG_FUNCTION_ARGS)
 Datum
 bson_std_dev_pop_winfunc_final(PG_FUNCTION_ARGS)
 {
-	bytea *stdDevIntermediateState = PG_ARGISNULL(0) ? NULL : PG_GETARG_BYTEA_P(0);
+	MaxAlignedVarlena *stdDevIntermediateState =
+		PG_ARGISNULL(0) ? NULL : GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
 
 	pgbsonelement finalValue;
 	finalValue.path = "";
@@ -1131,7 +1149,7 @@ bson_std_dev_pop_winfunc_final(PG_FUNCTION_ARGS)
 	if (stdDevIntermediateState != NULL)
 	{
 		BsonCovarianceAndVarianceAggState *stdDevState =
-			(BsonCovarianceAndVarianceAggState *) VARDATA_ANY(stdDevIntermediateState);
+			(BsonCovarianceAndVarianceAggState *) stdDevIntermediateState->state;
 
 		if (IsBsonValueNaN(&stdDevState->sxy) ||
 			IsBsonValueInfinity(&stdDevState->sxy) != 0)
@@ -1188,7 +1206,8 @@ bson_std_dev_pop_winfunc_final(PG_FUNCTION_ARGS)
 Datum
 bson_std_dev_samp_winfunc_final(PG_FUNCTION_ARGS)
 {
-	bytea *stdDevIntermediateState = PG_ARGISNULL(0) ? NULL : PG_GETARG_BYTEA_P(0);
+	MaxAlignedVarlena *stdDevIntermediateState =
+		PG_ARGISNULL(0) ? NULL : GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
 
 	pgbsonelement finalValue;
 	finalValue.path = "";
@@ -1196,7 +1215,7 @@ bson_std_dev_samp_winfunc_final(PG_FUNCTION_ARGS)
 	if (stdDevIntermediateState != NULL)
 	{
 		BsonCovarianceAndVarianceAggState *stdDevState =
-			(BsonCovarianceAndVarianceAggState *) VARDATA_ANY(stdDevIntermediateState);
+			(BsonCovarianceAndVarianceAggState *) stdDevIntermediateState->state;
 
 		if (IsBsonValueNaN(&stdDevState->sxy) ||
 			IsBsonValueInfinity(&stdDevState->sxy))
@@ -1253,7 +1272,7 @@ bson_std_dev_pop_samp_winfunc_invtransition(PG_FUNCTION_ARGS)
 					"window aggregate function called in non-window-aggregate context"));
 	}
 
-	bytea *bytes;
+	MaxAlignedVarlena *bytes;
 	BsonCovarianceAndVarianceAggState *currentState;
 
 	if (PG_ARGISNULL(0))
@@ -1262,8 +1281,8 @@ bson_std_dev_pop_samp_winfunc_invtransition(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		bytes = PG_GETARG_BYTEA_P(0);
-		currentState = (BsonCovarianceAndVarianceAggState *) VARDATA_ANY(bytes);
+		bytes = GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		currentState = (BsonCovarianceAndVarianceAggState *) bytes->state;
 	}
 
 	pgbson *currentValue = PG_GETARG_MAYBE_NULL_PGBSON(1);
@@ -1304,24 +1323,21 @@ bson_std_dev_pop_samp_winfunc_invtransition(PG_FUNCTION_ARGS)
 /* Private helper methods */
 /* --------------------------------------------------------- */
 
-static bytea *
+static MaxAlignedVarlena *
 AllocateBsonCovarianceOrVarianceAggState()
 {
-	int bson_size = sizeof(BsonCovarianceAndVarianceAggState) + VARHDRSZ;
-	bytea *combinedStateBytes = (bytea *) palloc0(bson_size);
-	SET_VARSIZE(combinedStateBytes, bson_size);
+	MaxAlignedVarlena *combinedStateBytes =
+		AllocateMaxAlignedVarlena(sizeof(BsonCovarianceAndVarianceAggState));
 
 	return combinedStateBytes;
 }
 
 
-static bytea *
+static MaxAlignedVarlena *
 AllocateBsonIntegralAndDerivativeAggState()
 {
-	int bson_size = sizeof(BsonIntegralAndDerivativeAggState) + VARHDRSZ;
-	bytea *combinedStateBytes = (bytea *) palloc0(bson_size);
-	SET_VARSIZE(combinedStateBytes, bson_size);
-
+	MaxAlignedVarlena *combinedStateBytes =
+		AllocateMaxAlignedVarlena(sizeof(BsonIntegralAndDerivativeAggState));
 	return combinedStateBytes;
 }
 

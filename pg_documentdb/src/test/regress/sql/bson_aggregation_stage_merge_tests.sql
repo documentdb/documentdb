@@ -619,3 +619,25 @@ select documentdb_api.insert_one('documentdb','patient', '{ "patient_id": "P002"
 SELECT cursorpage FROM documentdb_api.aggregate_cursor_first_page('documentdb', '{ "aggregate": "patient", "pipeline": [ {"$merge": "patient2"} ], "cursor": { "batchSize": 3 } }');
 
 SELECT count(document) FROM documentdb_api.collection('documentdb','patient2'); 
+
+reset documentdb.enableNativeColocation;
+
+-- test merge index pushdown
+SELECT COUNT(documentdb_api.insert_one('mrgedb', 'merge_idx_src', FORMAT('{ "_id": %s, "a": %s, "b" : %s, "content": [ %s, %s, %s] }',
+                                                                              i + 10, i + 100, i + 100, i + 100, i + 200, i + 300)::bson)) FROM generate_series(1, 100) i;
+SELECT COUNT(documentdb_api.insert_one('mrgedb', 'merge_idx_dest', FORMAT('{ "_id": %s, "a": %s, "b" : %s, "content": [ %s, %s, %s] }',
+                                                                              i + 10, i + 100, i + 100, i + 100, i + 200, i + 300)::bson)) FROM generate_series(1, 100) i;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('mrgedb', '{ "createIndexes": "merge_idx_dest", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableOrderedIndex": true, "unique": true } ]}', TRUE);
+
+ANALYZE documentdb_data.documents_780079;
+
+-- update seq cost for tiny tables.
+set seq_page_cost to 100;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('mrgedb', '{ "aggregate": "merge_idx_src", "pipeline": [ { "$merge": { "into": "merge_idx_dest" , "on": "a" } } ] }');
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('mrgedb', '{ "createIndexes": "merge_idx_dest", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": true, "unique": true } ]}', TRUE);
+
+ANALYZE documentdb_data.documents_780079;
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('mrgedb', '{ "aggregate": "merge_idx_src", "pipeline": [ { "$merge": { "into": "merge_idx_dest" , "on": [ "a", "b" ] } } ] }');

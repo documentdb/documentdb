@@ -315,24 +315,24 @@ SELECT document FROM documentdb_api.collection('db', 'cursors_basic') WHERE docu
 (5 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'cursors_basic') WHERE documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount": 5 }') AND document @@ '{ "_id": { "$gt": "10" } }';
-                                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                                
+                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_6700_6700003 collection WHERE (documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount" : { "$numberInt" : "5" } }'::documentdb_core.bson) AND ((document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : "10" }'::documentdb_core.bsonquery) AND (object_id OPERATOR(documentdb_core.>) '{ "" : "10" }'::documentdb_core.bson)) AND (shard_key_value OPERATOR(pg_catalog.=) '6700'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_6700_6700003 collection WHERE (documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount" : { "$numberInt" : "5" } }'::documentdb_core.bson) AND ((document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : "10" }'::documentdb_core.bsonquery) AND ((object_id OPERATOR(documentdb_core.>) '{ "" : "10" }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson))) AND (shard_key_value OPERATOR(pg_catalog.=) '6700'::bigint))
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: document
                Page Row Count: 5 rows
                ->  Bitmap Heap Scan on documentdb_data.documents_6700_6700003 collection
                      Output: shard_key_value, object_id, document
-                     Recheck Cond: ((collection.shard_key_value = '6700'::bigint) AND (collection.object_id OPERATOR(documentdb_core.>) '{ "" : "10" }'::documentdb_core.bson))
+                     Recheck Cond: ((collection.shard_key_value = '6700'::bigint) AND (collection.object_id OPERATOR(documentdb_core.>) '{ "" : "10" }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson))
                      Filter: (documentdb_api_internal.cursor_state(collection.document, '{ "getpage_batchCount" : { "$numberInt" : "5" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "_id" : "10" }'::documentdb_core.bson))
                      ->  Bitmap Index Scan on _id_
-                           Index Cond: ((collection.shard_key_value = '6700'::bigint) AND (collection.object_id OPERATOR(documentdb_core.>) '{ "" : "10" }'::documentdb_core.bson))
+                           Index Cond: ((collection.shard_key_value = '6700'::bigint) AND (collection.object_id OPERATOR(documentdb_core.>) '{ "" : "10" }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson))
 (16 rows)
 
 -- do a primary key lookup

@@ -3,6 +3,7 @@ ErrorMapping,ErrorName
 2,BadValue
 5,GraphContainsCycle
 9,FailedToParse
+13,Unauthorized
 14,TypeMismatch
 15,Overflow
 16,InvalidLength
@@ -362,6 +363,7 @@ ErrorMapping,ErrorName
 50752,Location50752
 50759,Location50759
 50989,Location50989
+51002,Location51002
 51003,Location51003
 51024,Location51024
 51044,Location51044

@@ -6,21 +6,22 @@
  *-------------------------------------------------------------------------
  */
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::time::{Duration, Instant};
+use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use bson::{rawbson, RawBson};
 use serde::Deserialize;
-use tokio::sync::RwLock;
+use tokio::{
+    sync::RwLock,
+    time::{Duration, Instant},
+};
 
-use super::dynamic::{DynamicConfiguration, POSTGRES_RECOVERY_KEY};
-use super::SetupConfiguration;
-use crate::error::{DocumentDBError, Result};
-use crate::postgres::{Connection, ConnectionPool};
-use crate::requests::request_tracker::RequestTracker;
-use crate::QueryCatalog;
+use crate::{
+    configuration::{dynamic::POSTGRES_RECOVERY_KEY, DynamicConfiguration, SetupConfiguration},
+    error::{DocumentDBError, Result},
+    postgres::{Connection, ConnectionPool, QueryCatalog},
+    requests::request_tracker::RequestTracker,
+};
 
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(rename_all = "PascalCase")]
@@ -31,134 +32,38 @@ pub struct HostConfig {
     send_shutdown_responses: String,
 }
 
-#[derive(Debug)]
-pub struct PgConfiguration {
-    values: RwLock<HashMap<String, String>>,
-    last_update_at: RwLock<Instant>,
+/// Inner struct that holds the dependencies needed for loading configurations.
+#[derive(Debug, Clone)]
+struct PgConfigurationInner {
+    query_catalog: QueryCatalog,
+    dynamic_config_file: String,
+    settings_prefixes: Vec<String>,
+    system_requests_pool: Arc<ConnectionPool>,
 }
 
-impl PgConfiguration {
-    pub fn start_dynamic_configuration_refresh_thread(
-        configuration: Arc<PgConfiguration>,
-        system_requests_pool: Arc<ConnectionPool>,
-        query_catalog: &QueryCatalog,
-        dynamic_config_file: String,
-        refresh_interval: u32,
-        settings_prefixes: Vec<String>,
-    ) {
-        let query_catalog_clone = query_catalog.clone();
-        let dynamic_config_file_clone = dynamic_config_file.clone();
-
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(refresh_interval as u64));
-            interval.tick().await;
-
-            loop {
-                interval.tick().await;
-
-                match system_requests_pool.get_inner_connection().await {
-                    Ok(inner_conn) => {
-                        match PgConfiguration::load_configurations(
-                            &query_catalog_clone,
-                            &dynamic_config_file_clone,
-                            &Connection::new(inner_conn, false),
-                            &settings_prefixes,
-                        )
-                        .await
-                        {
-                            Ok(new_config) => {
-                                let mut config_self_writable = configuration.values.write().await;
-                                *config_self_writable = new_config;
-                                let mut last_update = configuration.last_update_at.write().await;
-                                *last_update = Instant::now();
-                            }
-                            Err(e) => log::error!("Failed to refresh configuration: {}", e),
-                        }
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "Failed to acquire postgres connection to refresh configuration: {}",
-                            e
-                        )
-                    }
-                }
-            }
-        });
-    }
-
-    pub async fn new(
-        query_catalog: &QueryCatalog,
-        setup_configuration: &dyn SetupConfiguration,
-        system_requests_pool: &Arc<ConnectionPool>,
-        settings_prefixes: Vec<String>,
-    ) -> Result<Arc<Self>> {
-        let conn = Connection::new(system_requests_pool.get_inner_connection().await?, false);
-        let dynamic_config_file = setup_configuration.dynamic_configuration_file();
-        let values = RwLock::new(
-            PgConfiguration::load_configurations(
-                query_catalog,
-                &dynamic_config_file,
-                &conn,
-                &settings_prefixes,
-            )
-            .await?,
-        );
-        let configuration = Arc::new(PgConfiguration {
-            values,
-            last_update_at: RwLock::new(Instant::now()),
-        });
-
-        let refresh_interval = setup_configuration.dynamic_configuration_refresh_interval_secs();
-        Self::start_dynamic_configuration_refresh_thread(
-            configuration.clone(),
-            system_requests_pool.clone(),
-            query_catalog,
-            dynamic_config_file,
-            refresh_interval,
-            settings_prefixes,
-        );
-
-        Ok(configuration)
-    }
-
-    pub async fn last_update_at(&self) -> Instant {
-        *self.last_update_at.read().await
-    }
-
-    async fn load_host_config(dynamic_config_file: &str) -> Result<HostConfig> {
-        let config: HostConfig =
-            serde_json::from_str(&tokio::fs::read_to_string(dynamic_config_file).await?).map_err(
-                |e| DocumentDBError::internal_error(format!("Failed to read config file: {}", e)),
-            )?;
-        Ok(config)
-    }
-
-    async fn load_configurations(
-        query_catalog: &QueryCatalog,
-        dynamic_config_file: &str,
-        conn: &Connection,
-        settings_prefixes: &Vec<String>,
-    ) -> Result<HashMap<String, String>> {
+impl PgConfigurationInner {
+    /// Loads configurations from the database and config file using the provided connection.
+    pub async fn load_configurations(&self, conn: &Connection) -> Result<HashMap<String, String>> {
         let mut configs = HashMap::new();
 
-        match Self::load_host_config(dynamic_config_file).await {
+        match Self::load_host_config(&self.dynamic_config_file).await {
             Ok(host_config) => {
                 configs.insert(
-                    "IsPrimary".to_owned(),
+                    "IsPrimary".to_string(),
                     host_config.is_primary.to_lowercase(),
                 );
                 configs.insert(
-                    "SendShutdownResponses".to_owned(),
+                    "SendShutdownResponses".to_string(),
                     host_config.send_shutdown_responses.to_lowercase(),
                 );
             }
-            Err(e) => log::warn!("Host Config file not able to be loaded: {}", e),
+            Err(e) => log::warn!("Host Config file not able to be loaded: {e}"),
         }
 
         let mut request_tracker = RequestTracker::new();
         let pg_config_rows = conn
             .query(
-                query_catalog.pg_settings(),
+                self.query_catalog.pg_settings(),
                 &[],
                 &[],
                 None,
@@ -168,7 +73,7 @@ impl PgConfiguration {
         for pg_config in pg_config_rows {
             let mut key = pg_config.get::<_, String>(0);
 
-            for settings_prefix in settings_prefixes {
+            for settings_prefix in &self.settings_prefixes {
                 if key.starts_with(settings_prefix) {
                     key = key[settings_prefix.len()..].to_string();
                     break;
@@ -186,7 +91,7 @@ impl PgConfiguration {
 
         let pg_is_in_recovery_row = conn
             .query(
-                query_catalog.pg_is_in_recovery(),
+                self.query_catalog.pg_is_in_recovery(),
                 &[],
                 &[],
                 None,
@@ -196,8 +101,117 @@ impl PgConfiguration {
         let in_recovery: bool = pg_is_in_recovery_row.first().is_some_and(|row| row.get(0));
         configs.insert(POSTGRES_RECOVERY_KEY.to_string(), in_recovery.to_string());
 
-        log::info!("Dynamic configurations loaded: {:?}", configs);
+        log::info!("Dynamic configurations loaded: {configs:?}");
         Ok(configs)
+    }
+
+    async fn load_host_config(dynamic_config_file: &str) -> Result<HostConfig> {
+        let config: HostConfig = serde_json::from_str(
+            &tokio::fs::read_to_string(dynamic_config_file).await?,
+        )
+        .map_err(|e| DocumentDBError::internal_error(format!("Failed to read config file: {e}")))?;
+        Ok(config)
+    }
+}
+
+#[derive(Debug)]
+pub struct PgConfiguration {
+    inner: PgConfigurationInner,
+    values: RwLock<HashMap<String, String>>,
+    last_update_at: RwLock<Instant>,
+}
+
+impl PgConfiguration {
+    fn start_dynamic_configuration_refresh_thread(
+        configuration: Arc<PgConfiguration>,
+        refresh_interval: u32,
+    ) {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(refresh_interval as u64));
+            interval.tick().await;
+
+            loop {
+                interval.tick().await;
+
+                match configuration
+                    .inner
+                    .system_requests_pool
+                    .acquire_connection()
+                    .await
+                {
+                    Ok(inner_conn) => {
+                        let connection = Connection::new(inner_conn, false);
+                        if let Err(e) = configuration
+                            .reload_configuration_with_connection(&connection)
+                            .await
+                        {
+                            log::error!("Failed to refresh configuration: {e}");
+                        }
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to acquire postgres connection to refresh configuration: {e}"
+                        )
+                    }
+                }
+            }
+        });
+    }
+
+    pub async fn new(
+        query_catalog: &QueryCatalog,
+        setup_configuration: &dyn SetupConfiguration,
+        system_requests_pool: &Arc<ConnectionPool>,
+        settings_prefixes: Vec<String>,
+    ) -> Result<Arc<Self>> {
+        let connection = Connection::new(system_requests_pool.acquire_connection().await?, false);
+        let dynamic_config_file = setup_configuration.dynamic_configuration_file();
+
+        let inner = PgConfigurationInner {
+            query_catalog: query_catalog.clone(),
+            dynamic_config_file,
+            settings_prefixes,
+            system_requests_pool: system_requests_pool.clone(),
+        };
+
+        let values = RwLock::new(inner.load_configurations(&connection).await?);
+
+        let configuration = Arc::new(PgConfiguration {
+            inner,
+            values,
+            last_update_at: RwLock::new(Instant::now()),
+        });
+
+        let refresh_interval = setup_configuration.dynamic_configuration_refresh_interval_secs();
+        Self::start_dynamic_configuration_refresh_thread(configuration.clone(), refresh_interval);
+
+        Ok(configuration)
+    }
+
+    pub async fn last_update_at(&self) -> Instant {
+        *self.last_update_at.read().await
+    }
+
+    pub async fn reload_configuration_with_connection(&self, conn: &Connection) -> Result<()> {
+        let new_config = match self.inner.load_configurations(conn).await {
+            Ok(config) => config,
+            Err(e) => {
+                log::error!("Failed to reload configuration: {e}");
+                return Err(e);
+            }
+        };
+
+        {
+            let mut config_writable = self.values.write().await;
+            *config_writable = new_config;
+        }
+
+        {
+            let mut last_update = self.last_update_at.write().await;
+            *last_update = Instant::now();
+        }
+
+        Ok(())
     }
 }
 
@@ -259,6 +273,10 @@ impl DynamicConfiguration for PgConfiguration {
             }
             n => n as usize,
         }
+    }
+
+    async fn allow_transaction_snapshot(&self) -> bool {
+        self.get_bool("mongoAllowTransactionSnapshot", false).await
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

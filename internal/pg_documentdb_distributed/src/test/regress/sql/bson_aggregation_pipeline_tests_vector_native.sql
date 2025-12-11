@@ -40,7 +40,7 @@ SELECT documentdb_api.insert_one('db', 'aggregation_pipeline_native_vector_filte
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "aggregation_pipeline_native_vector_filter", "indexes": [ { "key": { "v": "cosmosSearch" }, "name": "hnsw_index", "cosmosSearchOptions": { "kind": "vector-hnsw", "m": 4, "efConstruction": 16, "similarity": "L2", "dimensions": 3 } } ] }', true);
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline_native_vector_filter", "pipeline": [ { "$vectorSearch": { "queryVector": [ 3.0, 4.9, 1.0 ], "limit": 2, "path": "v", "filter": {"a": "some sentence"} } } ], "cursor": {} }');
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline_native_vector_filter", "pipeline": [ { "$vectorSearch": { "queryVector": [ 3.0, 4.9, 1.0 ], "limit": 1, "path": "v", "filter": {}  } } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline_native_vector_filter", "pipeline": [ { "$vectorSearch": { "queryVector": [ 3.0, 4.9, 1.0 ], "limit": 1, "path": "v", "filter": {}  } }, { "$addFields": { "__cosmos_meta__": { "$ceil": { "$multiply": [ "$__cosmos_meta__.score", 1000 ] } } } } ], "cursor": {} }');
 
 set documentdb.enableVectorPreFilter = on;
 

@@ -11,14 +11,14 @@ use std::{env, path::PathBuf, sync::Arc};
 
 use documentdb_gateway::{
     configuration::{DocumentDBSetupConfiguration, PgConfiguration, SetupConfiguration},
-    postgres::{create_query_catalog, DocumentDBDataClient},
+    postgres::{
+        create_query_catalog, DocumentDBDataClient, AUTHENTICATION_MAX_CONNECTIONS,
+        SYSTEM_REQUESTS_MAX_CONNECTIONS,
+    },
     run_gateway,
     service::TlsProvider,
     shutdown_controller::SHUTDOWN_CONTROLLER,
-    startup::{
-        create_postgres_object, get_service_context, get_system_connection_pool,
-        AUTHENTICATION_MAX_CONNECTIONS, SYSTEM_REQUESTS_MAX_CONNECTIONS,
-    },
+    startup::{create_postgres_object, get_service_context, get_system_connection_pool},
 };
 
 use tokio::signal;
@@ -42,10 +42,7 @@ fn main() {
         .init()
         .expect("Failed to start logger");
 
-    log::info!(
-        "Starting server with configuration: {:?}",
-        setup_configuration
-    );
+    log::info!("Starting server with configuration: {setup_configuration:?}");
 
     // Create Tokio runtime with configured worker threads
     let async_runtime_worker_threads = setup_configuration.async_runtime_worker_threads();
@@ -55,10 +52,7 @@ fn main() {
         .build()
         .expect("Failed to create Tokio runtime");
 
-    log::info!(
-        "Created Tokio runtime with {} worker threads",
-        async_runtime_worker_threads
-    );
+    log::info!("Created Tokio runtime with {async_runtime_worker_threads} worker threads");
 
     // Run the async main logic
     runtime.block_on(start_gateway(setup_configuration));

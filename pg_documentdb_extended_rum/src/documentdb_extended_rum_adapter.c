@@ -45,6 +45,10 @@ static Oid DocumentDBExtendedRumCompositePathOpFamilyOid(void);
 static const char * GetDocumentDBCatalogSchema(void);
 static void LoadBaseIndexAmRoutine(void);
 
+extern PGDLLIMPORT void try_explain_documentdb_rum_index(IndexScanDesc scan, struct
+														 ExplainState *es);
+extern PGDLLIMPORT bool can_documentdb_rum_index_scan_ordered(IndexScanDesc scan);
+extern PGDLLIMPORT Datum documentdb_rumhandler(PG_FUNCTION_ARGS);
 extern PGDLLEXPORT bool documentdb_rum_get_multi_key_status(Relation indexRelation);
 extern PGDLLEXPORT void documentdb_rum_update_multi_key_status(Relation indexRelation);
 
@@ -59,6 +63,7 @@ static BsonIndexAmEntry DocumentDBIndexAmEntry = {
 	.is_order_by_supported = true,
 	.is_backwards_scan_supported = true,
 	.is_index_only_scan_supported = true,
+	.can_support_parallel_scans = true,
 	.get_am_oid = DocumentDBExtendedRumIndexAmId,
 	.get_single_path_op_family_oid = DocumentDBExtendedRumSinglePathOpFamilyOid,
 	.get_composite_path_op_family_oid = DocumentDBExtendedRumCompositePathOpFamilyOid,

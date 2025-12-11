@@ -42,9 +42,11 @@
 #include "background_worker/background_worker_job.h"
 #include "commands/connection_management.h"
 #include "infrastructure/job_management.h"
+#include "infrastructure/bgworker_job_logger.h"
 #include "metadata/metadata_cache.h"
 #include "utils/error_utils.h"
 #include "utils/index_utils.h"
+#include "utils/version_utils.h"
 
 #define ONE_SEC_IN_MS 1000L
 
@@ -66,6 +68,7 @@ extern char *LocalhostConnectionString;
 
 extern int LatchTimeOutSec;
 extern int BackgroundWorkerJobTimeoutThresholdSec;
+extern bool PopulateBackgroundWorkerJobsTable;
 
 static bool BackgroundWorkerReloadConfig = false;
 
@@ -87,11 +90,32 @@ static char ExtensionBackgroundWorkerLeaderName[50];
  */
 typedef enum
 {
-	/* Job is not executing and is waiting to start. */
-	JOB_IDLE = 0,
+	/* Job has never run, or a prior run did not complete. */
+	EXEC_STATE_IDLING,
 
-	/* Connection was established and query is executing. */
-	JOB_RUNNING = 1,
+	/* Job is ready to be scheduled. */
+	EXEC_STATE_READY,
+
+	/* Job has an available connection to begin execution. */
+	EXEC_STATE_CONN_AVAILABLE,
+
+	/* Job query was dispatched successfully on the connection. */
+	EXEC_STATE_QUERY_DISPATCHED,
+
+	/* Job completed successfully. */
+	EXEC_STATE_COMPLETED,
+
+	/* Job did not finish within the time budget. */
+	EXEC_STATE_TIMEOUT,
+
+	/* Failed to acquire a connection to execute the job on. */
+	EXEC_STATE_FAILED_BAD_CONNECTION,
+
+	/* Failed to dispatch the job command on an available connection. */
+	EXEC_STATE_FAILED_DISPATCH_FAILED,
+
+	/* Catch all: mark unknown failure if we land in PG_CATCH(). */
+	EXEC_STATE_FAILED_UNKNOWN_FAILURE,
 } BackgroundWorkerJobState;
 
 /*
@@ -125,6 +149,9 @@ typedef struct
 
 	/* Job state. */
 	BackgroundWorkerJobState state;
+
+	/* Unique job execution instance ID (for telemetry). */
+	uint32_t jobInstanceId;
 } BackgroundWorkerJobExecution;
 
 extern void RegisterBackgroundWorkerJobAllowedCommand(BackgroundWorkerJobCommand command);
@@ -144,6 +171,9 @@ static bool CheckIfJobCommandIsAllowed(BackgroundWorkerJobCommand command);
 static bool CanExecuteJob(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTime);
 static bool CheckIfRoleExists(const char *roleName);
 static List * GenerateJobExecutions(void);
+static void AddJobInJobTable(int jobId, int scheduleIntervalSec, const char *command, int
+							 timeoutSec,
+							 bool executeOnCoordinatorOnly);
 static BackgroundWorkerJobExecution * CreateJobExecutionObj(BackgroundWorkerJob job);
 static char * GenerateCommandQuery(BackgroundWorkerJob job, MemoryContext stableContext);
 static void CancelJobIfTimeIsUp(BackgroundWorkerJobExecution *jobExec, TimestampTz
@@ -174,6 +204,52 @@ inline static int
 GetDefaultScheduleIntervalInSeconds(void)
 {
 	return 60;
+}
+
+
+/* Check if a job is being executed. */
+inline static bool
+IsJobRunning(BackgroundWorkerJobExecution *jobExec)
+{
+	return jobExec->state == EXEC_STATE_QUERY_DISPATCHED;
+}
+
+
+/* Check if a previous job execution failed or timed out. */
+inline static bool
+DidJobFailOrTimeout(BackgroundWorkerJobExecution *jobExec)
+{
+	return jobExec->state == EXEC_STATE_FAILED_BAD_CONNECTION ||
+		   jobExec->state == EXEC_STATE_FAILED_DISPATCH_FAILED ||
+		   jobExec->state == EXEC_STATE_FAILED_UNKNOWN_FAILURE ||
+		   jobExec->state == EXEC_STATE_TIMEOUT;
+}
+
+
+/* Create a job execution telemetry event with instance ID. */
+inline static BgWorkerJobExecutionEvent
+CreateJobExecutionEvent(BackgroundWorkerJobExecution *jobExec)
+{
+	/* Hash the pointer and jobInstanceId into a 24-bit unsigned integer */
+	uintptr_t ptr = (uintptr_t) jobExec;
+	uint32_t hash = (uint32_t) (((ptr >> 24) ^ ptr ^ jobExec->jobInstanceId) & 0xFFFFFF);
+	BgWorkerJobExecutionEvent event = {
+		.eventTime = GetCurrentTimestamp(),
+		.jobId = jobExec->job.jobId,
+		.instanceId = hash,
+		.state = jobExec->state,
+		.message = NULL
+	};
+	return event;
+}
+
+
+/* Check if a job is idling or completed. */
+inline static bool
+IsJobIdlingOrCompleted(BackgroundWorkerJobExecution *jobExec)
+{
+	return jobExec->state == EXEC_STATE_IDLING ||
+		   jobExec->state == EXEC_STATE_COMPLETED;
 }
 
 
@@ -437,10 +513,29 @@ CanExecuteJob(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTime)
 	 * We are assuming that job schedule intervals are a multiple of LatchTimeoutSec, therefore we do
 	 * not have to handle odd intervals such as LatchTimeoutSec of 10 seconds and job interval of 15 seconds.
 	 */
-	return jobExec->state == JOB_IDLE &&
-		   scheduleIntervalInSeconds > 0 &&
-		   TimestampDifferenceExceeds(jobExec->lastStartTime, currentTime,
-									  scheduleIntervalInSeconds * ONE_SEC_IN_MS);
+	bool canExecuteJob = IsJobIdlingOrCompleted(jobExec) &&
+						 scheduleIntervalInSeconds > 0 &&
+						 TimestampDifferenceExceeds(
+		jobExec->lastStartTime,
+		currentTime,
+		scheduleIntervalInSeconds * ONE_SEC_IN_MS);
+
+	/*
+	 * If the job failed, wait for one interval before it becomes eligible for execution again.
+	 * If the job is not eligible to be picked up for execution yet, we keep it in idling state.
+	 */
+	if (DidJobFailOrTimeout(jobExec) || !canExecuteJob)
+	{
+		/* Emit the event only on a state transition. */
+		if (jobExec->state != EXEC_STATE_IDLING)
+		{
+			jobExec->state = EXEC_STATE_IDLING;
+			BgWorkerJobExecutionEvent event = CreateJobExecutionEvent(jobExec);
+			RecordBgWorkerEvent(event);
+		}
+	}
+
+	return canExecuteJob;
 }
 
 
@@ -452,7 +547,7 @@ static void
 CheckJobCompletion(BackgroundWorkerJobExecution *jobExec)
 {
 	PGconn *conn = jobExec->connection;
-	if (jobExec->state == JOB_IDLE)
+	if (!IsJobRunning(jobExec))
 	{
 		return;
 	}
@@ -469,7 +564,10 @@ CheckJobCompletion(BackgroundWorkerJobExecution *jobExec)
 		{
 			PQfinish(conn);
 			jobExec->connection = NULL;
-			jobExec->state = JOB_IDLE;
+			jobExec->state = EXEC_STATE_COMPLETED;
+
+			BgWorkerJobExecutionEvent event = CreateJobExecutionEvent(jobExec);
+			RecordBgWorkerEvent(event);
 		}
 	}
 	PG_CATCH();
@@ -482,7 +580,10 @@ CheckJobCompletion(BackgroundWorkerJobExecution *jobExec)
 
 		/* Set state to idle so it can run in the next iteration. */
 		jobExec->connection = NULL;
-		jobExec->state = JOB_IDLE;
+		jobExec->state = EXEC_STATE_FAILED_UNKNOWN_FAILURE;
+
+		BgWorkerJobExecutionEvent event = CreateJobExecutionEvent(jobExec);
+		RecordBgWorkerEvent(event);
 
 		ereport(WARNING, (errmsg(
 							  "Failed to execute background worker job %s with id %d. Could not consume input from the connection.",
@@ -545,6 +646,11 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 {
 	PGconn *conn = NULL;
 	StringInfo localhostConnStr = makeStringInfo();
+	jobExec->state = EXEC_STATE_READY;
+	jobExec->jobInstanceId++;
+
+	BgWorkerJobExecutionEvent event = CreateJobExecutionEvent(jobExec);
+	RecordBgWorkerEvent(event);
 
 	/*
 	 * The job execution consists of creating a LibPQ connection an sending its
@@ -565,6 +671,8 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 		conn = PQconnectStart(connStr);
 		if (conn == NULL)
 		{
+			jobExec->state = EXEC_STATE_FAILED_BAD_CONNECTION;
+
 			/*
 			 * We don't expect PQconnectStart to return NULL unless OOM happened.
 			 */
@@ -580,8 +688,15 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 
 		if (PQstatus(conn) != CONNECTION_OK)
 		{
+			jobExec->state = EXEC_STATE_FAILED_BAD_CONNECTION;
+			event = CreateJobExecutionEvent(jobExec);
+			RecordBgWorkerEvent(event);
 			PGConnReportError(conn, NULL, ERROR);
 		}
+
+		jobExec->state = EXEC_STATE_CONN_AVAILABLE;
+		event = CreateJobExecutionEvent(jobExec);
+		RecordBgWorkerEvent(event);
 
 		const char *query = jobExec->commandQuery;
 
@@ -598,13 +713,19 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 							   NULL,
 							   resultFormat))
 		{
+			jobExec->state = EXEC_STATE_FAILED_DISPATCH_FAILED;
+			event = CreateJobExecutionEvent(jobExec);
+			RecordBgWorkerEvent(event);
 			PGConnReportError(conn, NULL, ERROR);
 		}
 
 		/* Query was sent successfuly. Assign connection to job. */
+		/* QUERY_DISPATCHED */
 		jobExec->connection = conn;
-		jobExec->state = JOB_RUNNING;
+		jobExec->state = EXEC_STATE_QUERY_DISPATCHED;
 		jobExec->lastStartTime = currentTime;
+		event = CreateJobExecutionEvent(jobExec);
+		RecordBgWorkerEvent(event);
 	}
 	PG_CATCH();
 	{
@@ -618,7 +739,9 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 		}
 
 		/* Set state to idle so it can run in the next iteration. */
-		jobExec->state = JOB_IDLE;
+		jobExec->state = EXEC_STATE_FAILED_UNKNOWN_FAILURE;
+		event = CreateJobExecutionEvent(jobExec);
+		RecordBgWorkerEvent(event);
 
 		ereport(WARNING, (errmsg(
 							  "Failed to execute background worker job id %d. Could not establish connection and send query.",
@@ -639,7 +762,7 @@ CancelJobIfTimeIsUp(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTi
 {
 	int timeoutInSeconds = jobExec->job.timeoutInSeconds;
 	PGconn *conn = jobExec->connection;
-	if (jobExec->state == JOB_IDLE ||
+	if (!IsJobRunning(jobExec) ||
 		timeoutInSeconds <= 0)
 	{
 		return;
@@ -657,7 +780,10 @@ CancelJobIfTimeIsUp(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTi
 
 		PQfinish(conn);
 		jobExec->connection = NULL;
-		jobExec->state = JOB_IDLE;
+		jobExec->state = EXEC_STATE_TIMEOUT;
+
+		BgWorkerJobExecutionEvent event = CreateJobExecutionEvent(jobExec);
+		RecordBgWorkerEvent(event);
 
 		ereport(LOG, (errmsg(
 						  "Canceled background worker job %s with id %d because of connection timeout of %d seconds.",
@@ -773,7 +899,8 @@ GenerateJobExecutions(void)
 
 	for (int i = 0; i < JobEntries; i++)
 	{
-		BackgroundWorkerJobExecution *jobExec = CreateJobExecutionObj(JobRegistry[i]);
+		BackgroundWorkerJob job = JobRegistry[i];
+		BackgroundWorkerJobExecution *jobExec = CreateJobExecutionObj(job);
 
 		/*
 		 * Check for nullity. NULL is returned if an error happened while creating
@@ -783,15 +910,115 @@ GenerateJobExecutions(void)
 		{
 			ereport(WARNING, (errmsg(
 								  "Skipping background worker job %s with id %d because an execution instance could not be generated.",
-								  JobRegistry[i].jobName, JobRegistry[i].jobId)));
+								  job.jobName, job.jobId)));
 		}
 		else
 		{
+			/* Add the job in the job queue. This call is idempotent, adding the job
+			 * in the queue only if it does not exist. Do this only after we have a valid
+			 * job execution object.
+			 */
+			StringInfo jobName = makeStringInfo();
+			appendStringInfo(jobName, "%s.%s", job.command.schema, job.command.name);
+
+			AddJobInJobTable(job.jobId,
+							 job.get_schedule_interval_in_seconds_hook(),
+							 jobName->data,
+							 job.timeoutInSeconds,
+							 job.toBeExecutedOnMetadataCoordinatorOnly);
+
 			jobExecutions = lappend(jobExecutions, jobExec);
+
+			pfree(jobName->data);
+			pfree(jobName);
 		}
 	}
 
 	return jobExecutions;
+}
+
+
+/*
+ * AddJobInJobTable inserts a record into ApiCatalogSchemaNameV2.{ExtensionObjectPrefixV2}_background_jobs
+ * for given job using SPI if it doesn't already exist.
+ * The function is idempotent - it only adds the job if it doesn't already exist.
+ */
+static void
+AddJobInJobTable(int jobId, int scheduleIntervalSec, const char *command, int timeoutSec,
+				 bool executeOnCoordinatorOnly)
+{
+	/* Bail early if populating background worker jobs table is disabled.
+	 */
+	if (!PopulateBackgroundWorkerJobsTable)
+	{
+		return;
+	}
+
+	SetCurrentStatementStartTimestamp();
+	PopAllActiveSnapshots();
+	StartTransactionCommand();
+	PushActiveSnapshot(GetTransactionSnapshot());
+
+	/* Adding to the table is only supported with schema 109-0 that adds
+	 * the {ExtensionObjectPrefix}_background_jobs table.
+	 */
+	if (IsClusterVersionAtleast(DocDB_V0, 109, 0))
+	{
+		PG_TRY();
+		{
+			StringInfo cmdStr = makeStringInfo();
+			appendStringInfo(cmdStr,
+							 "INSERT INTO %s.%s_background_jobs (jobid, schedule_sec, command, timeout_sec, exec_on_coordinator_only) "
+							 "VALUES ($1, $2, $3, $4, $5) ON CONFLICT (jobid) DO NOTHING",
+							 ApiCatalogSchemaNameV2,
+							 ExtensionObjectPrefixV2);
+
+			int argCount = 5;
+			Oid argTypes[5];
+			Datum argValues[5];
+			char argNulls[5] = { ' ', ' ', ' ', ' ', ' ' };
+
+			argTypes[0] = INT4OID;
+			argValues[0] = Int32GetDatum(jobId);
+
+			argTypes[1] = INT4OID;
+			argValues[1] = Int32GetDatum(scheduleIntervalSec);
+
+			argTypes[2] = TEXTOID;
+			argValues[2] = PointerGetDatum(cstring_to_text(command));
+
+			argTypes[3] = INT4OID;
+			argValues[3] = Int32GetDatum(timeoutSec);
+
+			argTypes[4] = BOOLOID;
+			argValues[4] = BoolGetDatum(executeOnCoordinatorOnly);
+
+			bool isNull = true;
+			bool readOnly = false;
+
+			ExtensionExecuteQueryWithArgsViaSPI(cmdStr->data, argCount, argTypes,
+												argValues, argNulls, readOnly,
+												SPI_OK_INSERT,
+												&isNull);
+
+			PopActiveSnapshot();
+			CommitTransactionCommand();
+		}
+		PG_CATCH();
+		{
+			ereport(WARNING, errmsg("could not add job in background jobs table"));
+			PopAllActiveSnapshots();
+			AbortCurrentTransaction();
+		}
+		PG_END_TRY();
+	}
+	else
+	{
+		ereport(LOG, errmsg(
+					"Skipping adding job in background jobs table because the cluster version is less than 108-0"));
+		PopActiveSnapshot();
+		CommitTransactionCommand();
+	}
 }
 
 
@@ -816,7 +1043,8 @@ CreateJobExecutionObj(BackgroundWorkerJob job)
 	jobExec->job = job;
 	jobExec->connection = NULL;
 	jobExec->commandQuery = commandQuery;
-	jobExec->state = JOB_IDLE;
+	jobExec->jobInstanceId = 0;
+	jobExec->state = EXEC_STATE_IDLING;
 
 	return jobExec;
 }

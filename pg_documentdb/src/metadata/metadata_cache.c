@@ -128,6 +128,7 @@ PGDLLEXPORT char *ApiAdminRoleV2 = "documentdb_admin_role";
 PGDLLEXPORT char *ApiBgWorkerRole = "documentdb_bg_worker_role";
 PGDLLEXPORT char *ApiReadOnlyRole = "documentdb_readonly_role";
 PGDLLEXPORT char *ApiReadWriteRole = "documentdb_readwrite_role";
+PGDLLEXPORT char *ApiReplicationRole = "";
 PGDLLEXPORT char *ApiRootInternalRole = "documentdb_root_role";
 PGDLLEXPORT char *ApiRootRole = "documentdb_root_role";
 PGDLLEXPORT char *ApiUserAdminRole = "documentdb_user_admin_role";
@@ -714,6 +715,12 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the bson_aggregation_distinct function */
 	Oid ApiCatalogAggregationDistinctFunctionId;
 
+	/* OID of the bson_aggregation_getmore function */
+	Oid ApiCatalogAggregationGetMoreFunctionId;
+
+	/* OID of the cursor_get_more function */
+	Oid CursorGetMoreFunctionOid;
+
 	/* OID of the BSONCOVARIANCEPOP aggregate function */
 	Oid ApiCatalogBsonCovariancePopAggregateFunctionOid;
 
@@ -812,6 +819,12 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OID of the BSONSUM aggregate function */
 	Oid ApiCatalogBsonSumAggregateFunctionOid;
+
+	/* OID of the BSONCOMMANDCOUNT aggregate function */
+	Oid ApiCatalogBsonCommandCountAggregateFunctionOid;
+
+	/* OID of the BSONCOUNT aggregate function */
+	Oid ApiCatalogBsonCountAggregateFunctionOid;
 
 	/* OID of the bson_linear_fill window function */
 	Oid ApiCatalogBsonLinearFillFunctionOid;
@@ -3407,6 +3420,36 @@ ApiCatalogAggregationDistinctFunctionId(void)
 
 
 Oid
+ApiCatalogAggregationGetMoreFunctionId(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (Cache.ApiCatalogAggregationGetMoreFunctionId == InvalidOid)
+	{
+		List *functionNameList = list_make2(makeString(ApiCatalogSchemaName),
+											makeString("bson_aggregation_getmore"));
+		Oid paramOids[3] = { TEXTOID, BsonTypeId(), BsonTypeId() };
+		bool missingOK = true;
+
+		Cache.ApiCatalogAggregationGetMoreFunctionId =
+			LookupFuncName(functionNameList, 3, paramOids, missingOK);
+	}
+
+	return Cache.ApiCatalogAggregationGetMoreFunctionId;
+}
+
+
+Oid
+CursorGetMoreFunctionOid(void)
+{
+	return GetOperatorFunctionIdThreeArgs(
+		&Cache.CursorGetMoreFunctionOid, ApiSchemaNameV2, "cursor_get_more", TEXTOID,
+		DocumentDBCoreBsonTypeId(),
+		DocumentDBCoreBsonTypeId());
+}
+
+
+Oid
 BsonDollarAddFieldsFunctionOid(void)
 {
 	return GetBinaryOperatorFunctionId(&Cache.ApiCatalogBsonDollarAddFieldsFunctionOid,
@@ -3879,6 +3922,23 @@ BsonSumAggregateFunctionOid(void)
 {
 	return GetAggregateFunctionByName(&Cache.ApiCatalogBsonSumAggregateFunctionOid,
 									  ApiCatalogSchemaName, "bsonsum");
+}
+
+
+Oid
+BsonCommandCountAggregateFunctionOid(void)
+{
+	return GetAggregateFunctionByName(
+		&Cache.ApiCatalogBsonCommandCountAggregateFunctionOid,
+		ApiInternalSchemaNameV2, "bsoncommandcount");
+}
+
+
+Oid
+BsonCountAggregateFunctionOid(void)
+{
+	return GetAggregateFunctionByName(&Cache.ApiCatalogBsonCountAggregateFunctionOid,
+									  ApiInternalSchemaNameV2, "bsoncount");
 }
 
 

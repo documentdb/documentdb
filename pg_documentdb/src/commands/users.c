@@ -560,8 +560,7 @@ ParseDropUserSpec(pgbson *dropSpec)
 			}
 
 			if (ContainsReservedPgRoleNamePrefix(dropUser) ||
-				(EnableUsernamePasswordConstraints &&
-				 !IsUsernameValid(dropUser)))
+				IS_SYSTEM_LOGIN_ROLE(dropUser))
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg("Invalid username.")));
@@ -1541,12 +1540,13 @@ GetAllUsersInfo(void)
 		"  JOIN pg_auth_members am ON parent.oid = am.roleid "
 		"  JOIN pg_roles child ON am.member = child.oid "
 		"  WHERE child.rolcanlogin = true "
-		"    AND child.rolname NOT IN ('%s', '%s')"
+		"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s') "
 		") "
 		"SELECT ARRAY_AGG(%s.row_get_bson(r) ORDER BY r.child_role, r.parent_role) "
 		"FROM r;",
 		ApiRootInternalRole, ApiRootRole,
-		ApiAdminRole, ApiAdminRoleV2, CoreSchemaName);
+		ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole,
+		CoreSchemaName);
 
 	bool readOnly = true;
 	bool isNull = false;
@@ -1584,10 +1584,13 @@ GetSingleUserInfo(const char *userName, bool returnDocuments)
 			"  JOIN pg_roles child ON am.member = child.oid "
 			"  WHERE child.rolcanlogin = true "
 			"    AND child.rolname = $1"
+			"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s') "
 			") "
 			"SELECT ARRAY_AGG(%s.row_get_bson(r) ORDER BY r.parent_role) "
 			"FROM r;",
-			ApiRootInternalRole, ApiRootRole, CoreSchemaName);
+			ApiRootInternalRole, ApiRootRole,
+			ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole,
+			CoreSchemaName);
 	}
 	else
 	{
@@ -1601,9 +1604,11 @@ GetSingleUserInfo(const char *userName, bool returnDocuments)
 			"JOIN pg_roles child ON am.member = child.oid "
 			"WHERE child.rolcanlogin = true "
 			"  AND child.rolname = $1 "
+			"  AND child.rolname NOT IN ('%s', '%s', '%s', '%s') "
 			"ORDER BY parent.rolname "
 			"LIMIT 1;",
-			ApiRootInternalRole, ApiRootRole);
+			ApiRootInternalRole, ApiRootRole,
+			ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole);
 	}
 
 	int argCount = 1;

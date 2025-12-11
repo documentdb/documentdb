@@ -60,12 +60,12 @@ SELECT documentdb_api.insert_one('db','agg_facet_group_exp','{ "_id": 9, "a": { 
 
 -- test non projection for const expressions
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group_exp", "pipeline": [ { "$group": { "_id": "1", "c": { "$count": 1 }}}]}');
-                                                   QUERY PLAN                                                   
-----------------------------------------------------------------------------------------------------------------
+                                             QUERY PLAN                                             
+----------------------------------------------------------------------------------------------------
  Subquery Scan on agg_stage_0
    Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
    ->  GroupAggregate
-         Output: '_id'::text, '{ "" : "1" }'::bson, 'c'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)
+         Output: '_id'::text, '{ "" : "1" }'::bson, 'c'::text, documentdb_api_internal.bsoncount(1)
          ->  Bitmap Heap Scan on documentdb_data.documents_6700 collection
                Recheck Cond: (collection.shard_key_value = '6700'::bigint)
                ->  Bitmap Index Scan on _id_
@@ -114,12 +114,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 (9 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group_exp", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": 1 }}}]}');
-                                                                                                                            QUERY PLAN                                                                                                                            
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                      QUERY PLAN                                                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Subquery Scan on agg_stage_0
    Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
    ->  GroupAggregate
-         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'c'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)
+         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'c'::text, documentdb_api_internal.bsoncount(1)
          Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
          ->  Sort
                Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))

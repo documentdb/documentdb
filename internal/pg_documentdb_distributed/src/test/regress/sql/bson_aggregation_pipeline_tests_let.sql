@@ -1,8 +1,8 @@
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 
-SET citus.next_shard_id TO 413000;
-SET documentdb.next_collection_id TO 4130;
-SET documentdb.next_collection_index_id TO 4130;
+SET citus.next_shard_id TO 4173000;
+SET documentdb.next_collection_id TO 41730;
+SET documentdb.next_collection_index_id TO 41730;
 
 
 SELECT documentdb_api.insert_one('db','aggregation_pipeline_let','{"_id":"1", "int": 10, "a" : { "b" : [ "x", 1, 2.0, true ] } }', NULL);
@@ -848,3 +848,1341 @@ SELECT document FROM bson_aggregation_pipeline('db', $spec$
     "let": { "pointRef": [5, 5], "dist1": 0, "dist2": 2}
 }
 $spec$);
+
+-- $lookup with operator variables
+SELECT documentdb_api.insert_one('db','sharedFieldCatalog','{ "_id": 1, "name": "Computer Science", "IsActive": true }', NULL);
+SELECT documentdb_api.insert_one('db','sharedFieldCatalog','{ "_id": 2, "name": "Algorithms", "IsActive": true }', NULL);
+SELECT documentdb_api.insert_one('db','sharedFieldCatalog','{ "_id": 3, "name": "Mathematics", "IsActive": false }', NULL);
+SELECT documentdb_api.insert_one('db','sharedFieldCatalog','{ "_id": 4, "name": "STEM Core", "IsActive": true }', NULL);
+
+SELECT documentdb_api.insert_one('db','courses','{ "_id": 101, "name": "Distributed Systems", "school": "School A", "SharedFieldRefs": [{ "_id": 1 }, { "_id": 2 }] }', NULL);
+SELECT documentdb_api.insert_one('db','courses','{ "_id": 102, "name": "Data Structures", "school": "School A", "SharedFieldRefs": [{ "_id": 2 }, { "_id": 3 }] }', NULL);
+SELECT documentdb_api.insert_one('db','courses','{ "_id": 201, "name": "Calculus I", "school": "School B", "SharedFieldRefs": [{ "_id": 3 }, { "_id": 4 }] }', NULL);
+
+-- error; disable GUC EnableOperatorVariablesInLookup
+SET documentdb.EnableOperatorVariablesInLookup TO off;
+
+SELECT document FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "courses",
+    "pipeline": [
+      {
+        "$lookup": {
+          "from": "sharedFieldCatalog",
+          "let": {
+            "sharedFieldIds": {
+              "$map": {
+                "input": { "$ifNull": ["$SharedFieldRefs", []] },
+                "in": "$$this._id"
+              }
+            }
+          },
+          "pipeline": [
+            {
+              "$match": {
+                "$expr": {
+                  "$and": [
+                    { "$in": ["$_id", "$$sharedFieldIds"] },
+                    { "$eq": ["$IsActive", true] }
+                  ]
+                }
+              }
+            }
+          ],
+          "as": "SharedFields"
+        }
+      }
+    ]
+  }'
+);
+
+SET documentdb.EnableOperatorVariablesInLookup TO on;
+SELECT document FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "courses",
+    "pipeline": [
+      {
+        "$lookup": {
+          "from": "sharedFieldCatalog",
+          "let": {
+            "sharedFieldIds": {
+              "$map": {
+                "input": { "$ifNull": ["$SharedFieldRefs", []] },
+                "as": "fieldRef",
+                "in": "$$fieldRef._id"
+              }
+            }
+          },
+          "pipeline": [
+            {
+              "$match": {
+                "$expr": {
+                  "$and": [
+                    { "$in": ["$_id", "$$sharedFieldIds"] },
+                    { "$eq": ["$IsActive", true] }
+                  ]
+                }
+              }
+            }
+          ],
+          "as": "SharedFields"
+        }
+      }
+    ]
+  }'
+);
+
+
+-- error (1): Should not reference other let variables in the definition of a let variable
+SELECT document FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "courses",
+    "pipeline": [
+      {
+        "$lookup": {
+          "from": "sharedFieldCatalog",
+          "let": {
+            "firstField": -1,
+            "sharedFieldIds": "$$firstField"
+          },
+          "pipeline": [
+            {
+              "$match": {
+                "$expr": {
+                  "$and": [
+                    { "$in": ["$_id", "$$sharedFieldIds"] },
+                    { "$eq": ["$IsActive", true] }
+                  ]
+                }
+              }
+            }
+          ],
+          "as": "SharedFields"
+        }
+      }
+    ]
+  }'
+);
+
+-- $lookup with $$NOW
+SELECT document FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "courses",
+    "pipeline": [
+      {
+        "$lookup": {
+          "from": "sharedFieldCatalog",
+          "let": {
+            "firstField": -1,
+            "sharedFieldIds": ["$$NOW"]
+          },
+          "pipeline": [
+            {
+              "$match": {
+                "$expr": {
+                  "$and": [
+                    { "$in": ["$_id", "$$sharedFieldIds"] },
+                    { "$eq": ["$IsActive", true] }
+                  ]
+                }
+              }
+            }
+          ],
+          "as": "SharedFields"
+        }
+      }
+    ]
+  }'
+);
+
+-- $map
+-- error: Should not reference other let variables in the definition of a let variable
+SELECT document FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "courses",
+    "pipeline": [
+      {
+        "$lookup": {
+          "from": "sharedFieldCatalog",
+          "let": {
+            "firstField": -1,
+            "sharedFieldIds": {
+              "$map": {
+                "input": { "$ifNull": ["$SharedFieldRefs", []] },
+                "in": ["$$this._id", "$$firstField"]
+              }
+            }
+          },
+          "pipeline": [
+            {
+              "$match": {
+                "$expr": {
+                  "$and": [
+                    { "$in": ["$_id", "$$sharedFieldIds"] },
+                    { "$eq": ["$IsActive", true] }
+                  ]
+                }
+              }
+            }
+          ],
+          "as": "SharedFields"
+        }
+      }
+    ]
+  }'
+);
+
+
+-- $map 'as' variable defaults to 'this' if not specified
+SELECT document FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "courses",
+    "pipeline": [
+      {
+        "$lookup": {
+          "from": "sharedFieldCatalog",
+          "let": {
+            "sharedFieldIds": {
+              "$map": {
+                "input": { "$ifNull": ["$SharedFieldRefs", []] },
+                "in": "$$this._id"
+              }
+            }
+          },
+          "pipeline": [
+            {
+              "$match": {
+                "$expr": {
+                  "$and": [
+                    { "$in": ["$_id", "$$sharedFieldIds"] },
+                    { "$eq": ["$IsActive", true] }
+                  ]
+                }
+              }
+            }
+          ],
+          "as": "SharedFields"
+        }
+      }
+    ]
+  }'
+);
+
+-- $map 'as' variable specified explicitly
+SELECT document FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "courses",
+    "pipeline": [
+      {
+        "$lookup": {
+          "from": "sharedFieldCatalog",
+          "let": {
+            "sharedFieldIds": {
+              "$map": {
+                "input": { "$ifNull": ["$SharedFieldRefs", []] },
+                "as": "fieldRef",
+                "in": "$$fieldRef._id"
+              }
+            }
+          },
+          "pipeline": [
+            {
+              "$match": {
+                "$expr": {
+                  "$and": [
+                    { "$in": ["$_id", "$$sharedFieldIds"] },
+                    { "$eq": ["$IsActive", true] }
+                  ]
+                }
+              }
+            }
+          ],
+          "as": "SharedFields"
+        }
+      }
+    ]
+  }'
+);
+
+SELECT documentdb_api.drop_collection('db', 'sharedFieldCatalog');
+SELECT documentdb_api.drop_collection('db', 'courses');
+
+SELECT documentdb_api.insert_one('db','courses','{
+  "_id": 1,
+  "name": "Physics",
+  "topicRefs": [
+    { "id": 101, "tags": ["motion", "energy"] },
+    { "id": 102, "tags": ["atoms", "reactions"] }
+  ]
+}', NULL);
+
+SELECT documentdb_api.insert_one('db','courses','{
+  "_id": 2,
+  "name": "Chemistry",
+  "topicRefs": [
+    { "id": 103, "tags": ["bonds", "elements"] }
+  ]
+}', NULL);
+
+SELECT documentdb_api.insert_one('db','TopicCatalog','{
+  "_id": 101,
+  "name": "Motion & Force"
+}', NULL);
+
+SELECT documentdb_api.insert_one('db','TopicCatalog','{
+  "_id": 102,
+  "name": "Atomic Structure"
+}', NULL);
+
+SELECT documentdb_api.insert_one('db','TopicCatalog','{
+  "_id": 103,
+  "name": "Chemical Bonds"
+}', NULL);
+
+SELECT document FROM bson_aggregation_pipeline('db', '{
+  "aggregate": "courses",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "TopicCatalog",
+        "let": {
+          "transformedTopics": {
+            "$map": {
+              "input": "$topicRefs",
+              "as": "topic",
+              "in": [
+                "$$topic",
+                {
+                  "$map": {
+                    "input": "$$topic.tags",
+                    "as": "tag",
+                    "in": { "$toUpper": "$$tag" }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": [
+                  "$_id",
+                  {
+                    "$map": {
+                      "input": "$$transformedTopics",
+                      "as": "t",
+                      "in": { "$arrayElemAt": ["$$t", 0] }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "$project": {
+              "_id": 1,
+              "name": 1
+            }
+          }
+        ],
+        "as": "topics"
+      }
+    },
+    {
+      "$project": {
+        "_id": 1,
+        "name": 1,
+        "topics": 1,
+        "transformedTags": 1
+      }
+    }
+  ]
+}');
+
+-- $lookup with nested $map in let: complex `in` expression
+-- error: disable GUC EnableOperatorVariablesInLookup
+SET documentdb.EnableOperatorVariablesInLookup TO off;
+
+SELECT document FROM bson_aggregation_pipeline('db', '{
+  "aggregate": "courses",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "TopicCatalog",
+        "let": {
+          "transformedTopics": {
+            "$map": {
+              "input": "$topicRefs",
+              "as": "topic",
+              "in": {
+                "id": "$$topic.id",
+                "upperTags": {
+                  "$map": {
+                    "input": "$$topic.tags",
+                    "as": "tag",
+                    "in": { "$toUpper": "$$tag" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": [ "$_id", { "$map": { "input": "$$transformedTopics", "as": "t", "in": "$$t.id" } } ]
+              }
+            }
+          },
+          {
+            "$project": {
+              "_id": 1,
+              "name": 1
+            }
+          }
+        ],
+        "as": "topics"
+      }
+    },
+    {
+      "$project": {
+        "_id": 1,
+        "name": 1,
+        "topics": 1,
+        "transformedTags": 1
+      }
+    }
+  ]
+}');
+
+-- enable GUC EnableOperatorVariablesInLookup
+SET documentdb.EnableOperatorVariablesInLookup TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{
+  "aggregate": "courses",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "TopicCatalog",
+        "let": {
+          "transformedTopics": {
+            "$map": {
+              "input": "$topicRefs",
+              "as": "topic",
+              "in": {
+                "id": "$$topic.id",
+                "upperTags": {
+                  "$map": {
+                    "input": "$$topic.tags",
+                    "as": "tag",
+                    "in": { "$toUpper": "$$tag" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": [ "$_id", { "$map": { "input": "$$transformedTopics", "as": "t", "in": "$$t.id" } } ]
+              }
+            }
+          },
+          {
+            "$project": {
+              "_id": 1,
+              "name": 1
+            }
+          }
+        ],
+        "as": "topics"
+      }
+    },
+    {
+      "$project": {
+        "_id": 1,
+        "name": 1,
+        "topics": 1,
+        "transformedTags": 1
+      }
+    }
+  ]
+}');
+
+-- $lookup with nested $map in let: complex `in` expression (2)
+SELECT document FROM bson_aggregation_pipeline('db', '{
+  "aggregate": "courses",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "TopicCatalog",
+        "let": {
+          "transformedTopics": {
+            "$map": {
+              "input": "$topicRefs",
+              "as": "topic",
+              "in": 
+                {
+                  "$map": {
+                    "input": "$$topic.tags",
+                    "as": "tag",
+                    "in": {
+                      "outerId": "$$topic.id",
+                      "upperTag": { "$toUpper": "$$tag" }
+                    }
+                  }
+                }
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": [
+                  "$_id",
+                  {
+                    "$map": {
+                      "input": "$$transformedTopics",
+                      "as": "t",
+                      "in": { "$getField": { "field": "id", "input": { "$arrayElemAt": ["$$t", 0] } } }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "$project": {
+              "_id": 1,
+              "name": 1
+            }
+          }
+        ],
+        "as": "topics"
+      }
+    },
+    {
+      "$project": {
+        "_id": 1,
+        "name": 1,
+        "topics": 1,
+        "transformedTags": 1
+      }
+    }
+  ]
+}');
+
+-- $lookup with let with $filter
+SELECT documentdb_api.insert_one('db', 'orders', '{
+  "_id": 1,
+  "customer": "Alice",
+  "flags": ["new", "", null, "sale"]
+}', NULL);
+
+SELECT documentdb_api.insert_one('db', 'products', '{
+  "_id": 101,
+  "name": "Red Shirt",
+  "tag": "new"
+}', NULL);
+
+SELECT documentdb_api.insert_one('db', 'products', '{
+  "_id": 102,
+  "name": "Blue Jeans",
+  "tag": "sale"
+}', NULL);
+
+SELECT documentdb_api.insert_one('db', 'products', '{
+  "_id": 103,
+  "name": "Green Hat",
+  "tag": "clearance"
+}', NULL);
+
+-- error: $lookup with let with $filter, acces undefined variable
+SELECT document FROM bson_aggregation_pipeline('db', '
+{
+  "aggregate": "orders",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "products",
+        "let": {
+          "activeFlags": {
+            "$filter": {
+              "input": "$flags",
+              "cond": "$$undefinedVar"
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": ["$tag", "$$activeFlags"]
+              }
+            }
+          }
+        ],
+        "as": "matchedProducts"
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "customer": 1,
+        "matchedProducts": 1
+      }
+    }
+  ]
+}');
+
+-- $lookup with let with $filter, explicit 'as' variable
+SELECT document FROM bson_aggregation_pipeline('db', '
+{
+  "aggregate": "orders",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "products",
+        "let": {
+          "activeFlags": {
+            "$filter": {
+              "input": "$flags",
+              "as": "flag",
+              "cond": "$$flag"
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": ["$tag", "$$activeFlags"]
+              }
+            }
+          }
+        ],
+        "as": "matchedProducts"
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "customer": 1,
+        "matchedProducts": 1
+      }
+    }
+  ]
+}');
+
+-- $lookup with let with $filter, $$this default alias
+SELECT document FROM bson_aggregation_pipeline('db', '
+{
+  "aggregate": "orders",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "products",
+        "let": {
+          "activeFlags": {
+            "$filter": {
+              "input": "$flags",
+              "cond": "$$this"
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": ["$tag", "$$activeFlags"]
+              }
+            }
+          }
+        ],
+        "as": "matchedProducts"
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "customer": 1,
+        "matchedProducts": 1
+      }
+    }
+  ]
+}');
+
+-- $lookup with let and $filter and $map at same level
+SELECT document FROM bson_aggregation_pipeline('db', '
+{
+  "aggregate": "orders",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "products",
+        "let": {
+          "varMapped": {
+            "$map": {
+              "input": "$flags",
+              "as": "f",
+              "in": { "$toLower": "$$f" }
+            }
+          },
+          "varFiltered": {
+            "$filter": {
+              "input": "$flags",
+              "as": "f",
+              "cond": { "$and": [
+                { "$ne": ["$$f", ""] },
+                { "$ne": ["$$f", null] }
+              ]}
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": ["$tag", "$$varFiltered"]
+              }
+            }
+          }
+        ],
+        "as": "matchedProducts"
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "customer": 1,
+        "matchedProducts": 1,
+        "rawFlags": "$flags"
+      }
+    }
+  ]
+}');
+
+SELECT document FROM bson_aggregation_pipeline('db', '
+{
+  "aggregate": "orders",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "products",
+        "let": {
+          "finalTags": {
+            "$setUnion": [
+              {
+                "$map": {
+                  "input": "$flags",
+                  "as": "f",
+                  "in": { "$toLower": "$$f" }
+                }
+              },
+              {
+                "$filter": {
+                  "input": "$flags",
+                  "as": "f",
+                  "cond": {
+                    "$and": [
+                      { "$ne": ["$$f", ""] },
+                      { "$ne": ["$$f", null] }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": ["$tag", "$$finalTags"]
+              }
+            }
+          }
+        ],
+        "as": "matchedProducts"
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "customer": 1,
+        "matchedProducts": 1
+      }
+    }
+  ]
+}');
+
+-- $lookup with let and $filter and $map at same level
+-- error with undefined mapF in $filter cond
+SELECT document FROM bson_aggregation_pipeline('db', '
+{
+  "aggregate": "orders",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "products",
+        "let": {
+          "finalTags": {
+            "$setUnion": [
+              {
+                "$map": {
+                  "input": "$flags",
+                  "as": "mapF",
+                  "in": { "$toLower": "$$mapF" }
+                }
+              },
+              {
+                "$filter": {
+                  "input": "$flags",
+                  "as": "filterF",
+                  "cond": {
+                    "$and": [
+                      { "$ne": ["$$mapF", ""] },
+                      { "$ne": ["$$filterF", null] }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": ["$tag", "$$finalTags"]
+              }
+            }
+          }
+        ],
+        "as": "matchedProducts"
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "customer": 1,
+        "matchedProducts": 1
+      }
+    }
+  ]
+}');
+
+-- $lookup with let with $filter: nested $filter
+SELECT document FROM bson_aggregation_pipeline('db', '
+{
+  "aggregate": "orders",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "products",
+        "let": {
+          "nestedFilteredFlags": {
+            "$filter": {
+              "input": {
+                "$filter": {
+                  "input": "$flags",
+                  "as": "f1",
+                  "cond": { "$and": [
+                    { "$ne": ["$$f1", ""] },
+                    { "$ne": ["$$f1", null] }
+                  ]}
+                }
+              },
+              "as": "f2",
+              "cond": {
+                "$gt": [{ "$strLenCP": "$$f2" }, 2]
+              }
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": ["$tag", "$$nestedFilteredFlags"]
+              }
+            }
+          }
+        ],
+        "as": "matchedProducts"
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "customer": 1,
+        "matchedProducts": 1
+      }
+    }
+  ]
+}');
+
+-- drop collections
+SELECT documentdb_api.drop_collection('db', 'users1');
+SELECT documentdb_api.drop_collection('db', 'tags1');
+
+-- $lookup with let with $filter and $map
+-- error: disable GUC EnableOperatorVariablesInLookup
+SET documentdb.EnableOperatorVariablesInLookup TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '
+{
+  "aggregate": "orders",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "products",
+        "let": {
+          "processedFlags": {
+            "$map": {
+              "input": "$flags",
+              "as": "flag",
+              "in": {
+                "$first": {
+                  "$filter": {
+                    "input": ["$$flag"],
+                    "as": "f",
+                    "cond": {
+                      "$and": [
+                        { "$ne": ["$$f", ""] },
+                        { "$ne": ["$$f", null] },
+                        { "$gt": [{ "$strLenCP": "$$f" }, 2] }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": ["$tag", "$$processedFlags"]
+              }
+            }
+          }
+        ],
+        "as": "matchedProducts"
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "customer": 1,
+        "matchedProducts": 1
+      }
+    }
+  ]
+}');
+
+-- enable GUC EnableOperatorVariablesInLookup
+SET documentdb.EnableOperatorVariablesInLookup TO on;
+
+SELECT document FROM bson_aggregation_pipeline('db', '
+{
+  "aggregate": "orders",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "products",
+        "let": {
+          "processedFlags": {
+            "$map": {
+              "input": "$flags",
+              "as": "flag",
+              "in": {
+                "$first": {
+                  "$filter": {
+                    "input": ["$$flag"],
+                    "as": "f",
+                    "cond": {
+                      "$and": [
+                        { "$ne": ["$$f", ""] },
+                        { "$ne": ["$$f", null] },
+                        { "$gt": [{ "$strLenCP": "$$f" }, 2] }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": ["$tag", "$$processedFlags"]
+              }
+            }
+          }
+        ],
+        "as": "matchedProducts"
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "customer": 1,
+        "matchedProducts": 1
+      }
+    }
+  ]
+}');
+
+-- $lookup with let and $reduce
+SELECT documentdb_api.insert_one('db', 'users2', '{
+  "_id": 1,
+  "username": "alice",
+  "groups": [
+    { "name": "sports", "tags": ["fun", "active"] },
+    { "name": "news", "tags": ["daily", "breaking"] }
+  ]
+}', NULL);
+
+SELECT documentdb_api.insert_one('db', 'tags2', '{
+  "_id": 1,
+  "label": "fun"
+}', NULL);
+
+SELECT documentdb_api.insert_one('db', 'tags2', '{
+  "_id": 2,
+  "label": "breaking"
+}', NULL);
+
+SELECT documentdb_api.insert_one('db', 'tags2', '{
+  "_id": 3,
+  "label": "quiet"
+}', NULL);
+
+-- $lookup with let with $reduce; access only $$this
+SELECT document FROM bson_aggregation_pipeline('db', '
+{
+  "aggregate": "users2",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "tags2",
+        "let": {
+          "allTags": {
+            "$reduce": {
+              "input": "$groups",
+              "initialValue": [],
+              "in": "$$this.tags"
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": ["$label", "$$allTags"]
+              }
+            }
+          }
+        ],
+        "as": "matchedTags"
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "username": 1,
+        "matchedTags": 1
+      }
+    }
+  ]
+}');
+
+-- $lookup with let with $reduce; access only $$value
+SELECT document FROM bson_aggregation_pipeline('db', '
+{
+  "aggregate": "users2",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "tags2",
+        "let": {
+          "allTags": {
+            "$reduce": {
+              "input": "$groups",
+              "initialValue": [],
+              "in": "$$value"
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": ["$label", "$$allTags"]
+              }
+            }
+          }
+        ],
+        "as": "matchedTags"
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "username": 1,
+        "matchedTags": 1
+      }
+    }
+  ]
+}');
+
+-- $lookup with let with $reduce; access both $$this and $$value
+SELECT document FROM bson_aggregation_pipeline('db', '
+{
+  "aggregate": "users2",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "tags2",
+        "let": {
+          "allTags": {
+            "$reduce": {
+              "input": "$groups",
+              "initialValue": [],
+              "in": { "$concatArrays": ["$$value", "$$this.tags"] }
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": ["$label", "$$allTags"]
+              }
+            }
+          }
+        ],
+        "as": "matchedTags"
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "username": 1,
+        "matchedTags": 1
+      }
+    }
+  ]
+}');
+
+-- $lookup with let with $reduce: nested $reduce
+SELECT documentdb_api.insert_one('db', 'users3', '{
+  "_id": 1,
+  "username": "alice",
+  "groups": [
+    { "name": "sports", "tags": ["fun", "active"] },
+    { "name": "news", "tags": ["daily", "breaking"] }
+  ]
+}', NULL);
+
+SELECT documentdb_api.insert_one('db', 'tags3', '{
+  "_id": 1,
+  "label": "fun"
+}', NULL);
+
+SELECT documentdb_api.insert_one('db', 'tags3', '{
+  "_id": 2,
+  "label": "breaking"
+}', NULL);
+
+SELECT documentdb_api.insert_one('db', 'tags3', '{
+  "_id": 3,
+  "label": "quiet"
+}', NULL);
+
+SELECT document FROM bson_aggregation_pipeline('db', '
+{
+  "aggregate": "users3",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "tags3",
+        "let": {
+          "flattenedTags": {
+            "$reduce": {
+              "input": "$groups",
+              "initialValue": [],
+              "in": {
+                "$reduce": {
+                  "input": "$$this.tags",
+                  "initialValue": "$$value",
+                  "in": { "$concatArrays": ["$$value", ["$$this"]] }
+                }
+              }
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": ["$label", "$$flattenedTags"]
+              }
+            }
+          }
+        ],
+        "as": "matchedTags"
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "username": 1,
+        "matchedTags": 1
+      }
+    }
+  ]
+}');
+
+-- $lookup with let with $reduce, $map and $filter
+-- error: disable GUC EnableOperatorVariablesInLookup
+SET documentdb.EnableOperatorVariablesInLookup TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '
+{
+  "aggregate": "orders",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "products",
+        "let": {
+          "cleanedFlags": {
+            "$reduce": {
+              "input": {
+                "$map": {
+                  "input": "$flags",
+                  "as": "flag",
+                  "in": {
+                    "$filter": {
+                      "input": ["$$flag"],
+                      "as": "f",
+                      "cond": {
+                        "$and": [
+                          { "$ne": ["$$f", ""] },
+                          { "$ne": ["$$f", null] },
+                          { "$gt": [{ "$strLenCP": "$$f" }, 2] }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              "initialValue": [],
+              "in": { "$concatArrays": ["$$value", "$$this"] }
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": ["$tag", "$$cleanedFlags"]
+              }
+            }
+          }
+        ],
+        "as": "matchedProducts"
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "customer": 1,
+        "matchedProducts": 1
+      }
+    }
+  ]
+}');
+
+-- enable GUC EnableOperatorVariablesInLookup
+SET documentdb.EnableOperatorVariablesInLookup TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '
+{
+  "aggregate": "orders",
+  "pipeline": [
+    {
+      "$lookup": {
+        "from": "products",
+        "let": {
+          "cleanedFlags": {
+            "$reduce": {
+              "input": {
+                "$map": {
+                  "input": "$flags",
+                  "as": "flag",
+                  "in": {
+                    "$filter": {
+                      "input": ["$$flag"],
+                      "as": "f",
+                      "cond": {
+                        "$and": [
+                          { "$ne": ["$$f", ""] },
+                          { "$ne": ["$$f", null] },
+                          { "$gt": [{ "$strLenCP": "$$f" }, 2] }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              "initialValue": [],
+              "in": { "$concatArrays": ["$$value", "$$this"] }
+            }
+          }
+        },
+        "pipeline": [
+          {
+            "$match": {
+              "$expr": {
+                "$in": ["$tag", "$$cleanedFlags"]
+              }
+            }
+          }
+        ],
+        "as": "matchedProducts"
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "customer": 1,
+        "matchedProducts": 1
+      }
+    }
+  ]
+}');
+
+-- drop collections
+SELECT documentdb_api.drop_collection('db', 'users2');
+SELECT documentdb_api.drop_collection('db', 'tags2');
+SELECT documentdb_api.drop_collection('db', 'users3');
+SELECT documentdb_api.drop_collection('db', 'tags3');
+SELECT documentdb_api.drop_collection('db', 'orders');
+SELECT documentdb_api.drop_collection('db', 'products');
+
+--disable GUC EnableOperatorVariablesInLookup
+SET documentdb.EnableOperatorVariablesInLookup TO off;

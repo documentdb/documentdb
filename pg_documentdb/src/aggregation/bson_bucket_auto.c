@@ -25,8 +25,6 @@
 
 #include "aggregation/bson_bucket_auto.h"
 
-extern bool EnableBucketAutoStage;
-
 /*
  * Structure for $bucketAuto specs.
  */
@@ -274,12 +272,6 @@ Query *
 HandleBucketAuto(const bson_value_t *existingValue, Query *query,
 				 AggregationPipelineBuildContext *context)
 {
-	if (!(EnableBucketAutoStage))
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-						errmsg("$bucketAuto aggregation stage is not supported yet.")));
-	}
-
 	ReportFeatureUsage(FEATURE_STAGE_BUCKET_AUTO);
 
 	if (existingValue->value_type != BSON_TYPE_DOCUMENT)

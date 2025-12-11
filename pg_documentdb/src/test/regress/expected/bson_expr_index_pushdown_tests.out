@@ -232,8 +232,9 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "fin
 (5 rows)
 
 set documentdb.enableExtendedExplainPlans to on;
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$lt": [ "$$myvar", "$a" ] } }, "let": { "myvar": 3 } }');
-                                                                                                                         QUERY PLAN                                                                                                                         
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$lt": [ "$$myvar", "$a" ] } }, "let": { "myvar": 3 } }') $cmd$);
+                                                                                                                    run_explain_and_trim                                                                                                                    
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=997 loops=1)
    indexName: a_1
@@ -262,9 +263,10 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('exprdb', '{ "cre
 (1 row)
 
 -- standard lookup
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('exprdb',
-    '{ "aggregate": "exprcoll", "pipeline":[ { "$match": { "$expr": { "$gte": [ "$a", 10 ] } } }, { "$lookup": { "from": "exprcollright", "as": "res", "localField": "a", "foreignField": "a" } } ] }');
-                                                                                                        QUERY PLAN                                                                                                         
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('exprdb',
+        '{ "aggregate": "exprcoll", "pipeline":[ { "$match": { "$expr": { "$gte": [ "$a", 10 ] } } }, { "$lookup": { "from": "exprcollright", "as": "res", "localField": "a", "foreignField": "a" } } ] }') $cmd$);
+                                                                                                   run_explain_and_trim                                                                                                    
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Nested Loop (actual rows=991 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=991 loops=1)
@@ -289,9 +291,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT doc
 (20 rows)
 
 -- lookup with let
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('exprdb',
-    '{ "aggregate": "exprcoll", "pipeline":[ { "$match": { "$expr": { "$gte": [ "$a", 10 ] } } }, { "$lookup": { "from": "exprcollright", "as": "res", "let": { "myvar": "$a" }, "pipeline": [ { "$match": { "$expr": { "$eq": [ "$a", "$$myvar" ] } } } ] } } ] }');
-                                                                                                                                                                QUERY PLAN                                                                                                                                                                 
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('exprdb',
+        '{ "aggregate": "exprcoll", "pipeline":[ { "$match": { "$expr": { "$gte": [ "$a", 10 ] } } }, { "$lookup": { "from": "exprcollright", "as": "res", "let": { "myvar": "$a" }, "pipeline": [ { "$match": { "$expr": { "$eq": [ "$a", "$$myvar" ] } } } ] } } ] }') $cmd$);
+                                                                                                                                                           run_explain_and_trim                                                                                                                                                            
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Nested Loop (actual rows=991 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=991 loops=1)

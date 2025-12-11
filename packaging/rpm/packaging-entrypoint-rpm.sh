@@ -29,7 +29,7 @@ sed -i '/internal/d' Makefile
 mkdir -p ~/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
 
 # Get the package version from the spec file
-PACKAGE_VERSION=$(grep "^Version:" rpm/documentdb.spec | awk '{print $2}')
+PACKAGE_VERSION=$(grep "^Version:" rpm/documentdb.spec | awk '{print $2}' | tr -d '\r')
 
 # Construct the package name
 PACKAGE_NAME="postgresql${POSTGRES_VERSION}-documentdb"
@@ -43,6 +43,14 @@ echo "Package version: $PACKAGE_VERSION"
 echo "PostgreSQL version: $POSTGRES_VERSION"
 
 # Copy spec file to the SPECS directory
+# If building for PG >= 18, remove the rum Requires line so the produced RPM
+# won't require the distro 'rum' package (we provide documentdb_extended_rum for PG18+)
+if [ "${POSTGRES_VERSION}" -ge 18 ]; then
+    echo "POSTGRES_VERSION=${POSTGRES_VERSION} >= 18; removing rum Requires from rpm/documentdb.spec"
+    # Delete the Requires line for rum
+    sed -i '/^Requires:[[:space:]]*rum_%{pg_version}/d' rpm/documentdb.spec || true
+fi
+
 cp rpm/documentdb.spec ~/rpmbuild/SPECS/
 
 # Prepare the source directory

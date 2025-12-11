@@ -607,7 +607,7 @@ FlushBuffer(CursorFileState *cursorFileState)
  * returns NULL if the cursor is complete.
  */
 bytea *
-CursorFileStateClose(CursorFileState *cursorFileState)
+CursorFileStateClose(CursorFileState *cursorFileState, MemoryContext writerContext)
 {
 	if (cursorFileState->isReadWrite)
 	{
@@ -634,7 +634,8 @@ CursorFileStateClose(CursorFileState *cursorFileState)
 	}
 
 	/* Write the state for getMore */
-	bytea *serializedSpec = palloc(sizeof(SerializedCursorState) + VARHDRSZ);
+	bytea *serializedSpec = MemoryContextAlloc(writerContext,
+											   sizeof(SerializedCursorState) + VARHDRSZ);
 	SET_VARSIZE(serializedSpec, sizeof(SerializedCursorState) + VARHDRSZ);
 	memcpy(VARDATA(serializedSpec), &cursorFileState->cursorState,
 		   sizeof(SerializedCursorState));

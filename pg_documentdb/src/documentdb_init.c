@@ -27,6 +27,7 @@
 #include "commands/commands_common.h"
 #include "configs/config_initialization.h"
 #include "index_am/documentdb_rum.h"
+#include "infrastructure/bgworker_job_logger.h"
 #include "infrastructure/cursor_store.h"
 #include "background_worker/background_worker_job.h"
 #include "index_am/roaring_bitmap_adapter.h"
@@ -209,6 +210,7 @@ DocumentDBSharedMemoryRequest(void)
 	RequestAddinShmemSpace(SharedFeatureCounterShmemSize());
 	RequestAddinShmemSpace(VersionCacheShmemSize());
 	RequestAddinShmemSpace(FileCursorShmemSize());
+	RequestAddinShmemSpace(BgWorkerJobLoggerShmemSize());
 }
 
 
@@ -219,6 +221,7 @@ DocumentDBSharedMemoryInit(void)
 	SharedFeatureCounterShmemInit();
 	InitializeVersionCache();
 	InitializeFileCursorShmem();
+	InitializeBgWorkerJobLoggerShmem();
 
 	if (prev_shmem_startup_hook != NULL)
 	{

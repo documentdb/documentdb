@@ -14,7 +14,7 @@ function show_help {
     echo ""
     echo "Mandatory Arguments:"
     echo "  --os                 OS to build packages for. Possible values: [deb11, deb12, ubuntu22.04, ubuntu24.04, rhel8, rhel9]"
-    echo "  --pg                 PG version to build packages for. Possible values: [15, 16, 17]"
+    echo "  --pg                 PG version to build packages for. Possible values: [15, 16, 17, 18]"
     echo ""
     echo "Optional Arguments:"
     echo "  --version            The version of documentdb to build. Examples: [0.100.0, 0.101.0]"
@@ -55,11 +55,11 @@ while [[ $# -gt 0 ]]; do
         --pg)
             shift
             case $1 in
-                15|16|17)
+                15|16|17|18)
                     PG=$1
                     ;;
                 *)
-                    echo "Invalid --pg value. Allowed values are [15, 16, 17]"
+                    echo "Invalid --pg value. Allowed values are [15, 16, 17, 18]"
                     exit 1
                     ;;
             esac

@@ -148,11 +148,13 @@ extern bool CurrentOpAddSqlCommand;
 
 /* Single node scenario - the global_pid can be assumed to be just the one for the coordinator */
 char *DistributedOperationsQuery =
-	"SELECT *, (10000000000 + pid)::int8 as global_pid, FALSE as worker_query, 0 AS groupid FROM pg_stat_activity";
+	"SELECT *, (" SINGLE_NODE_ID_STR
+	" + pid)::int8 as global_pid, FALSE as worker_query, 0 AS groupid FROM pg_stat_activity";
 
 /* Similar in logic to the distributed node-id calculation */
 const char *FirstLockingPidQuery =
-	"SELECT array_agg( (($2 / 10000000000) * 10000000000) + pid::integer) FROM unnest(pg_blocking_pids($1::integer)) pid LIMIT 1";
+	"SELECT array_agg( (($2 / " SINGLE_NODE_ID_STR ") * " SINGLE_NODE_ID_STR
+	") + pid::integer) FROM unnest(pg_blocking_pids($1::integer)) pid LIMIT 1";
 
 
 /* Application name of any distributed operation schedulers. */
@@ -514,7 +516,7 @@ WorkerGetBaseActivities()
 							 DistributedApplicationNamePrefix);
 		}
 
-		appendStringInfo(queryInfo, ") ");
+		appendStringInfoString(queryInfo, ") ");
 	}
 
 	List *workerActivities = NIL;
@@ -1537,23 +1539,25 @@ WriteIndexBuildProgressAndGetMessage(SingleWorkerActivity *activity,
 	StringInfo str = makeStringInfo();
 
 	/* NULLIF(blocks_total) ensures that "Progress" is NULL if blocks_total is 0 so we don't get div by zero errors and row_get_bson skips the field. */
-	appendStringInfo(str,
-					 "WITH c1 AS (SELECT phase, command LIKE '%%CONCURRENTLY%%' AS concurrent, blocks_done, blocks_total, (blocks_done * 100.0 / NULLIF(blocks_total, 0)) AS \"Progress\", "
-					 " tuples_done AS \"terms_done\", tuples_total AS \"terms_total\", "
-					 " (tuples_done * 100.0 / NULLIF(tuples_total, 0)) AS \"terms_progress\", ");
+	appendStringInfoString(str,
+						   "WITH c1 AS (SELECT phase, command LIKE '%%CONCURRENTLY%%' AS concurrent, blocks_done, blocks_total, (blocks_done * 100.0 / NULLIF(blocks_total, 0)) AS \"Progress\", "
+						   " tuples_done AS \"terms_done\", tuples_total AS \"terms_total\", "
+						   " (tuples_done * 100.0 / NULLIF(tuples_total, 0)) AS \"terms_progress\", ");
 
 	if (DefaultInlineWriteOperations)
 	{
 		/* Match the distributed set up to say a single node has a global pid of node 1 + PID (Similar to citus logic) */
-		appendStringInfo(str,
-						 " (10000000000 + current_locker_pid)::int8 AS AS \"Waiting on op_prefix\""
-						 " FROM pg_stat_progress_create_index WHERE (10000000000 + current_locker_pid)::int8 = $1), ");
+		appendStringInfoString(str,
+							   " (" SINGLE_NODE_ID_STR
+							   " + current_locker_pid)::int8 AS \"Waiting on op_prefix\""
+							   " FROM pg_stat_progress_create_index WHERE ("
+							   SINGLE_NODE_ID_STR " + current_locker_pid)::int8 = $1), ");
 	}
 	else
 	{
-		appendStringInfo(str,
-						 " pg_catalog.citus_calculate_gpid(pg_catalog.citus_nodeid_for_gpid($1), current_locker_pid::integer) AS \"Waiting on op_prefix\""
-						 " FROM pg_stat_progress_create_index WHERE pid IN (SELECT process_id FROM pg_catalog.get_all_active_transactions() WHERE global_pid = $1)), ");
+		appendStringInfoString(str,
+							   " pg_catalog.citus_calculate_gpid(pg_catalog.citus_nodeid_for_gpid($1), current_locker_pid::integer) AS \"Waiting on op_prefix\""
+							   " FROM pg_stat_progress_create_index WHERE pid IN (SELECT process_id FROM pg_catalog.get_all_active_transactions() WHERE global_pid = $1)), ");
 	}
 
 	appendStringInfo(str,

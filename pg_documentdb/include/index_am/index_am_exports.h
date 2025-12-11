@@ -38,6 +38,7 @@ typedef struct
 	bool is_order_by_supported;
 	bool is_backwards_scan_supported;
 	bool is_index_only_scan_supported;
+	bool can_support_parallel_scans;
 	Oid (*get_am_oid)(void);
 	Oid (*get_single_path_op_family_oid)(void);
 	Oid (*get_composite_path_op_family_oid)(void);

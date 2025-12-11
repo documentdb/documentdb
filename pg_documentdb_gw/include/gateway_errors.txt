@@ -1,7 +1,6 @@
 ErrorName,ErrorCode,ExternalError
 Ok,00000,0
 UserNotFound,42704,11
-Unauthorized,00000,13
 AuthenticationFailed,00000,18
 LockTimeout,00000,24
 ExceededTimeLimit,00000,50

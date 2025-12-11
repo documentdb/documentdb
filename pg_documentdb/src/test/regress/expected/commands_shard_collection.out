@@ -61,7 +61,7 @@ WHERE collection_name = 'reshard' AND database_name = 'db' \gset
 Indexes:
     "collection_pk_5000" PRIMARY KEY, btree (shard_key_value, object_id)
     "documents_rum_index_5001" documentdb_rum (document bson_rum_single_path_ops (path='a.b.c', iswildcard='true', tl='2699'))
-    "documents_rum_index_5002" documentdb_rum (document bson_rum_single_path_ops (path=z, tl='2699'))
+    "documents_rum_index_5002" documentdb_rum (document documentdb_api_internal.bson_rum_composite_path_ops (pathspec='[ "z" ]', tl='2691'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '5000'::bigint)
 
@@ -86,7 +86,7 @@ Indexes:
     "collection_pk_5000" PRIMARY KEY, btree (shard_key_value, object_id)
     "documents_rum_index_5003" documentdb_rum (document bson_rum_single_path_ops (path=_id, tl='2699'))
     "documents_rum_index_5004" documentdb_rum (document bson_rum_single_path_ops (path='a.b.c', iswildcard='true', tl='2699'))
-    "documents_rum_index_5005" documentdb_rum (document bson_rum_single_path_ops (path=z, tl='2699'))
+    "documents_rum_index_5005" documentdb_rum (document documentdb_api_internal.bson_rum_composite_path_ops (pathspec='[ "z" ]', tl='2691'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = documentdb_api_internal.get_shard_key_value('{ "value" : "hashed" }'::bson, 5000::bigint, document))
 
@@ -94,11 +94,11 @@ SELECT 'documentdb_data.documents_' || collection_id AS db_shard_data_table_name
 -- make plans (more) deterministic
 VACUUM (ANALYZE) :db_shard_data_table_name;
 SELECT * FROM documentdb_test_helpers.get_collection_indexes('db', 'reshard') ORDER BY index_id;
- collection_id | index_id |                                          index_spec_as_bson                                          | index_is_valid 
----------------+----------+------------------------------------------------------------------------------------------------------+----------------
-          5000 |     5003 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }        | t
-          5000 |     5004 | { "v" : { "$numberInt" : "2" }, "key" : { "a.b.c.$**" : { "$numberInt" : "1" } }, "name" : "idx_1" } | t
-          5000 |     5005 | { "v" : { "$numberInt" : "2" }, "key" : { "z" : { "$numberInt" : "1" } }, "name" : "idx_2" }         | t
+ collection_id | index_id |                                                               index_spec_as_bson                                                                | index_is_valid 
+---------------+----------+-------------------------------------------------------------------------------------------------------------------------------------------------+----------------
+          5000 |     5003 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }                                                   | t
+          5000 |     5004 | { "v" : { "$numberInt" : "2" }, "key" : { "a.b.c.$**" : { "$numberInt" : "1" } }, "name" : "idx_1" }                                            | t
+          5000 |     5005 | { "v" : { "$numberInt" : "2" }, "key" : { "z" : { "$numberInt" : "1" } }, "name" : "idx_2", "storageEngine" : { "enableOrderedIndex" : true } } | t
 (3 rows)
 
 SELECT documentdb_api.insert_one('db','reshard','{"value":{"$numberLong" : "134311"}, "_id":"2" }');
@@ -497,11 +497,11 @@ SELECT collection_id AS reshard_collection_id FROM documentdb_api_catalog.collec
 WHERE collection_name = 'reshardwithindexes2' AND database_name = 'db' \gset
 set local documentdb_core.bsonUseEJson to true;
 SELECT index_spec from documentdb_api_catalog.collection_indexes WHERE collection_id = :reshard_collection_id order by index_id ASC;
-                            index_spec                             
--------------------------------------------------------------------
+                                                         index_spec                                                         
+----------------------------------------------------------------------------------------------------------------------------
  (_id_,"{ ""_id"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,)
- (idx1,"{ ""value"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,)
- (idx2,"{ ""otherValue"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,)
+ (idx1,"{ ""value"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""1"" } }")
+ (idx2,"{ ""otherValue"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""1"" } }")
 (3 rows)
 
 SELECT database_name, collection_name, shard_key from documentdb_api_catalog.collections WHERE collection_id = :reshard_collection_id;

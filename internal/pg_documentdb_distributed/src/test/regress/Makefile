@@ -45,5 +45,16 @@ generate_version_schedule:
 	@cp basic_schedule_core log/basic_schedule_$(pg_major_version)
 	@./mutate_schedule.sh log/basic_schedule_$(pg_major_version) $(pg_major_version)
 
+INSTALL_PG_PORT ?= 5432
+
+define install_check_common
+	$(top_builddir)/src/test/regress/pg_regress --port $(INSTALL_PG_PORT) --encoding=UTF8 --dlpath=$(BASEPATH) --use-existing --dbname=postgres $(1) $(2) || (cat regression.diffs && false)
+endef
+
+installcheck: generate_version_schedule
+	$(call install_check_common,--schedule=./install_schedule --schedule=./log/basic_schedule_$(pg_major_version))
+
+installcheck-minimal:
+	$(call install_check_common,--schedule=./install_schedule, $(EXTRA_TESTS))
 
 all: check-basic check-test-output

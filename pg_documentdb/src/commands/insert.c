@@ -154,7 +154,7 @@ bool EnableCreateCollectionOnInsert = true;
 extern bool UseLocalExecutionShardQueries;
 extern bool EnableBypassDocumentValidation;
 extern bool EnableSchemaValidation;
-extern bool EnableInsertCustomPlan;
+extern bool EnableUpdateBsonDocument;
 
 /*
  * command_insert handles the insert command invocation through a PostgreSQL function.
@@ -600,7 +600,7 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts, Oi
 		paramListInfo->numParams = paramIndex;
 
 		uint64_t rowsProcessed = 0;
-		if (!EnableInsertCustomPlan || shardOid == InvalidOid)
+		if (shardOid == InvalidOid)
 		{
 			Query *query = CreateInsertQuery(collection, shardOid,
 											 valuesList);
@@ -644,27 +644,21 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts, Oi
 		}
 
 		int errorCode = errorData->sqlerrcode;
-		const char *errorCodeStr = unpack_sql_state(errorCode);
 		if (EreportCodeIsDocumentDBError(errorCode))
 		{
 			/*
 			 * TODO: Since there is no mapping from PG error to mongo error today in engine,
 			 * we can't deduce the mongo specific error code.
 			 */
-			ereport(LOG, (
-						errmsg(
-							"Optimistic Batch Insert failed. Retrying with single insert. documentDB errorCode %s",
-							errorCodeStr)));
+			elog_unredacted(
+				"Optimistic Batch Insert failed. Retrying with single insert. documentDB errorCode %d",
+				errorCode);
 		}
 		else
 		{
-			ereport(LOG, (
-						errmsg(
-							"Optimistic Batch Insert failed. Retrying with single insert. SQL Error %s",
-							errorCodeStr),
-						errdetail_log(
-							"Optimistic Batch Insert failed. Retrying with single insert. SQL Error %s",
-							errorCodeStr)));
+			elog_unredacted(
+				"Optimistic Batch Insert failed. Retrying with single insert. SQL Error %d",
+				errorCode);
 		}
 	}
 	PG_END_TRY();
@@ -917,7 +911,7 @@ ProcessInsertion(MongoCollection *collection,
 													 collection->
 													 mongoDataCreationTimeVarAttrNumber);
 
-		if (!EnableInsertCustomPlan || optionalInsertShardOid == InvalidOid)
+		if (optionalInsertShardOid == InvalidOid)
 		{
 			Query *query = CreateInsertQuery(collection, optionalInsertShardOid,
 											 list_make1(
@@ -1249,6 +1243,7 @@ InsertOrReplaceDocument(uint64 collectionId, const char *shardTableName, int64
 	Oid argTypes[4];
 	Datum argValues[4];
 	int spiStatus PG_USED_FOR_ASSERTS_ONLY = 0;
+	uint64 planId;
 
 	SPI_connect();
 
@@ -1271,26 +1266,70 @@ InsertOrReplaceDocument(uint64 collectionId, const char *shardTableName, int64
 							 "%s.bson_from_bytea($3))",
 					 CoreSchemaName, CoreSchemaName);
 
-	if (shardTableName != NULL && shardTableName[0] != '\0')
+	if (EnableUpdateBsonDocument && IsClusterVersionAtleast(DocDB_V0, 109, 0))
 	{
-		/* Direct shard - we need to extract tableId_shardId as a suffix */
-		/* Prefix length is the length of documents_ */
-		const int prefixLength = 10;
-		const char *shardSuffix = shardTableName + prefixLength;
-		appendStringInfo(&query, " ON CONFLICT ON CONSTRAINT collection_pk_%s"
-								 " DO UPDATE set document = ( %s.bson_update_document(%s.documents_%s.document, %s.bson_from_bytea($4), '{}'::%s.bson)).newDocument",
-						 shardSuffix, ApiInternalSchemaName, ApiDataSchemaName,
-						 shardSuffix, CoreSchemaName, CoreSchemaName);
+		planId = QUERY_ID_INSERT_OR_REPLACE_NEW;
+
+		if (shardTableName != NULL && shardTableName[0] != '\0')
+		{
+			/* Direct shard - we need to extract tableId_shardId as a suffix */
+			/* Prefix length is the length of documents_ */
+			const int prefixLength = 10;
+			const char *shardSuffix = shardTableName + prefixLength;
+			appendStringInfo(&query, " ON CONFLICT ON CONSTRAINT collection_pk_%s"
+									 " DO UPDATE SET document ="
+									 " COALESCE(%s.update_bson_document("
+									 " %s.documents_%s.document, %s.bson_from_bytea($4), '{}'::%s.bson, NULL::%s.bson, NULL::%s.bson, NULL::TEXT),"
+									 " %s.documents_%s.document)",
+							 shardSuffix, ApiInternalSchemaNameV2, ApiDataSchemaName,
+							 shardSuffix, CoreSchemaName, CoreSchemaName, CoreSchemaName,
+							 CoreSchemaName, ApiDataSchemaName,
+							 shardSuffix);
+		}
+		else
+		{
+			appendStringInfo(&query,
+							 " ON CONFLICT ON CONSTRAINT collection_pk_" UINT64_FORMAT
+							 " DO UPDATE SET document ="
+							 " COALESCE(%s.update_bson_document(%s.documents_"UINT64_FORMAT
+							 ".document, %s.bson_from_bytea($4), '{}'::%s.bson, NULL::%s.bson, NULL::%s.bson, NULL::TEXT),"
+							 " %s.documents_"UINT64_FORMAT ".document)",
+							 collectionId, ApiInternalSchemaNameV2, ApiDataSchemaName,
+							 collectionId,
+							 CoreSchemaName, CoreSchemaName, CoreSchemaName,
+							 CoreSchemaName, ApiDataSchemaName, collectionId);
+		}
 	}
 	else
 	{
-		appendStringInfo(&query, " ON CONFLICT ON CONSTRAINT collection_pk_" UINT64_FORMAT
-						 " DO UPDATE set document = (%s.bson_update_document(%s.documents_"
-						 UINT64_FORMAT
-						 ".document, %s.bson_from_bytea($4), '{}'::%s.bson)).newDocument",
-						 collectionId, ApiInternalSchemaName, ApiDataSchemaName,
-						 collectionId,
-						 CoreSchemaName, CoreSchemaName);
+		planId = QUERY_ID_INSERT_OR_REPLACE;
+
+		if (shardTableName != NULL && shardTableName[0] != '\0')
+		{
+			/* Direct shard - we need to extract tableId_shardId as a suffix */
+			/* Prefix length is the length of documents_ */
+			const int prefixLength = 10;
+			const char *shardSuffix = shardTableName + prefixLength;
+			appendStringInfo(&query, " ON CONFLICT ON CONSTRAINT collection_pk_%s"
+									 " DO UPDATE set document = COALESCE( (%s.bson_update_document(%s.documents_%s.document, %s.bson_from_bytea($4), '{}'::%s.bson)).newDocument, %s.documents_%s.document)",
+							 shardSuffix, ApiInternalSchemaName, ApiDataSchemaName,
+							 shardSuffix, CoreSchemaName, CoreSchemaName,
+							 ApiDataSchemaName,
+							 shardSuffix);
+		}
+		else
+		{
+			appendStringInfo(&query,
+							 " ON CONFLICT ON CONSTRAINT collection_pk_" UINT64_FORMAT
+							 " DO UPDATE set document = COALESCE( (%s.bson_update_document(%s.documents_"
+							 UINT64_FORMAT
+							 ".document, %s.bson_from_bytea($4), '{}'::%s.bson)).newDocument, %s.documents_"UINT64_FORMAT
+							 ".document)",
+							 collectionId, ApiInternalSchemaName, ApiDataSchemaName,
+							 collectionId,
+							 CoreSchemaName, CoreSchemaName, ApiDataSchemaName,
+							 collectionId);
+		}
 	}
 
 	argTypes[0] = INT8OID;
@@ -1303,8 +1342,7 @@ InsertOrReplaceDocument(uint64 collectionId, const char *shardTableName, int64
 	argValues[3] = PointerGetDatum(CastPgbsonToBytea(updateSpecDoc));
 
 	SPIPlanPtr plan = GetSPIQueryPlanWithLocalShard(collectionId, shardTableName,
-													QUERY_ID_INSERT_OR_REPLACE,
-													query.data, argTypes,
+													planId, query.data, argTypes,
 													argCount);
 
 	spiStatus = SPI_execute_plan(plan, argValues, NULL, false, 1);

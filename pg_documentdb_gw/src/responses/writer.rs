@@ -103,9 +103,11 @@ pub async fn write_error(
     header: &Header,
     err: DocumentDBError,
     stream: &mut GwStream,
+    activity_id: &str,
 ) -> Result<()> {
-    let response = to_raw_document_buf(&CommandError::from_error(connection_context, &err).await)
-        .map_err(|e| DocumentDBError::internal_error(bson_serialize_error_message(e)))?;
+    let response =
+        to_raw_document_buf(&CommandError::from_error(connection_context, &err, activity_id).await)
+            .map_err(|e| DocumentDBError::internal_error(bson_serialize_error_message(e)))?;
 
     write_and_flush(header, &response, stream).await?;
 
@@ -116,9 +118,11 @@ pub async fn write_error_without_header(
     connection_context: &ConnectionContext,
     err: DocumentDBError,
     stream: &mut GwStream,
+    activity_id: &str,
 ) -> Result<()> {
-    let response = to_raw_document_buf(&CommandError::from_error(connection_context, &err).await)
-        .map_err(|e| DocumentDBError::internal_error(bson_serialize_error_message(e)))?;
+    let response =
+        to_raw_document_buf(&CommandError::from_error(connection_context, &err, activity_id).await)
+            .map_err(|e| DocumentDBError::internal_error(bson_serialize_error_message(e)))?;
 
     let header = Header {
         length: (response.as_bytes().len() + 1) as i32,

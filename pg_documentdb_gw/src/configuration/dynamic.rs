@@ -11,9 +11,7 @@ use std::fmt::Debug;
 use async_trait::async_trait;
 use bson::RawBson;
 
-use crate::startup::{AUTHENTICATION_MAX_CONNECTIONS, SYSTEM_REQUESTS_MAX_CONNECTIONS};
-
-use super::version::Version;
+use crate::{configuration::Version, postgres};
 
 pub const POSTGRES_RECOVERY_KEY: &str = "IsPostgresInRecovery";
 
@@ -27,6 +25,7 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     fn topology(&self) -> RawBson;
     async fn enable_developer_explain(&self) -> bool;
     async fn max_connections(&self) -> usize;
+    async fn allow_transaction_snapshot(&self) -> bool;
 
     // Needed to downcast to concrete type
     fn as_any(&self) -> &dyn std::any::Any;
@@ -85,8 +84,8 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     }
 
     async fn system_connection_budget(&self) -> usize {
-        let min_system_connections =
-            (SYSTEM_REQUESTS_MAX_CONNECTIONS + AUTHENTICATION_MAX_CONNECTIONS) as i32;
+        let min_system_connections = (postgres::SYSTEM_REQUESTS_MAX_CONNECTIONS
+            + postgres::AUTHENTICATION_MAX_CONNECTIONS) as i32;
         let system_connection_budget = self
             .get_i32("systemConnectionBudget", min_system_connections)
             .await;

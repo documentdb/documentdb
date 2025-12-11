@@ -10,14 +10,14 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bson::{RawDocument, RawDocumentBuf};
-use tokio_postgres::{types::Type, Row};
+use tokio_postgres::{error::SqlState, types::Type, Row};
 
 use crate::{
     auth::AuthState,
     context::{ConnectionContext, Cursor, RequestContext, ServiceContext},
     error::{DocumentDBError, Result},
     explain::Verbosity,
-    postgres::{connection::InnerConnection, PgDataClient},
+    postgres::{PgDataClient, PoolConnection},
     responses::{PgResponse, Response},
 };
 
@@ -28,13 +28,13 @@ pub struct DocumentDBDataClient {
 }
 
 impl DocumentDBDataClient {
-    async fn pull_inner_connection(&self) -> Result<InnerConnection> {
+    async fn acquire_pool_connection(&self) -> Result<PoolConnection> {
         self.connection_pool
             .as_ref()
             .ok_or(DocumentDBError::internal_error(
                 "Acquiring connection to postgres on unauthorized data client".to_string(),
             ))?
-            .get_inner_connection()
+            .acquire_connection()
             .await
     }
 }
@@ -52,7 +52,12 @@ impl PgDataClient for DocumentDBDataClient {
             .ok_or(DocumentDBError::internal_error(
                 "Password is missing on pg data pool acquisition".to_string(),
             ))?;
-        let connection_pool = Some(service_context.get_data_pool(user, pass).await?);
+        let connection_pool = Some(
+            service_context
+                .connection_pool_manager()
+                .get_data_pool(user, pass)
+                .await?,
+        );
 
         Ok(DocumentDBDataClient { connection_pool })
     }
@@ -64,9 +69,9 @@ impl PgDataClient for DocumentDBDataClient {
     }
 
     async fn pull_connection_with_transaction(&self, in_transaction: bool) -> Result<Connection> {
-        let inner_connection = self.pull_inner_connection().await?;
+        let pool_connection = self.acquire_pool_connection().await?;
 
-        Ok(Connection::new(inner_connection, in_transaction))
+        Ok(Connection::new(pool_connection, in_transaction))
     }
 
     async fn execute_aggregate(
@@ -370,40 +375,49 @@ impl PgDataClient for DocumentDBDataClient {
             .query_catalog()
             .explain(analyze, query_base);
 
-        let explain_rows = if matches!(
-            verbosity,
-            Verbosity::AllShardsQueryPlan | Verbosity::AllShardsExecution
-        ) {
-            let mut inner_connection = self.pull_inner_connection().await?;
-            let transaction = inner_connection.transaction().await?;
-            let explain_config_query = connection_context
-                .service_context
-                .query_catalog()
-                .set_explain_all_tasks_true();
-            if !explain_config_query.is_empty() {
-                transaction.batch_execute(explain_config_query).await?;
+        let explain_rows = match verbosity {
+            Verbosity::AllShardsQueryPlan
+            | Verbosity::AllShardsExecution
+            | Verbosity::AllPlansExecution => {
+                let mut pool_connection = self.acquire_pool_connection().await?;
+                let transaction = pool_connection.transaction().await?;
+                let explain_config_query = match verbosity {
+                    Verbosity::AllPlansExecution => connection_context
+                        .service_context
+                        .query_catalog()
+                        .set_explain_all_plans_true(),
+                    _ => connection_context
+                        .service_context
+                        .query_catalog()
+                        .set_explain_all_tasks_true(),
+                };
+                if !explain_config_query.is_empty() {
+                    transaction.batch_execute(explain_config_query).await?;
+                }
+                let explain_prepared_stmt = transaction
+                    .prepare_typed_cached(&explain_query, &[Type::TEXT, Type::BYTEA])
+                    .await?;
+                transaction
+                    .query(
+                        &explain_prepared_stmt,
+                        &[&request_info.db()?, &PgDocument(request.document())],
+                    )
+                    .await?
             }
-            let explain_prepared_stmt = transaction
-                .prepare_typed_cached(&explain_query, &[Type::TEXT, Type::BYTEA])
-                .await?;
-            transaction
-                .query(
-                    &explain_prepared_stmt,
-                    &[&request_info.db()?, &PgDocument(request.document())],
-                )
-                .await?
-        } else {
-            #[allow(clippy::unnecessary_to_owned)]
-            self.pull_connection(connection_context)
-                .await?
-                .query_db_bson(
-                    &explain_query,
-                    &request_info.db()?.to_string(),
-                    &PgDocument(request.document()),
-                    Timeout::transaction(request_info.max_time_ms),
-                    request_tracker,
-                )
-                .await?
+            _ =>
+            {
+                #[allow(clippy::unnecessary_to_owned)]
+                self.pull_connection(connection_context)
+                    .await?
+                    .query_db_bson(
+                        &explain_query,
+                        &request_info.db()?.to_string(),
+                        &PgDocument(request.document()),
+                        Timeout::transaction(request_info.max_time_ms),
+                        request_tracker,
+                    )
+                    .await?
+            }
         };
 
         let explain_response = match explain_rows.first() {
@@ -783,6 +797,28 @@ impl PgDataClient for DocumentDBDataClient {
         Ok(Response::Pg(PgResponse::new(current_op_rows)))
     }
 
+    async fn execute_kill_op(
+        &self,
+        request_context: &mut RequestContext<'_>,
+        _: &str,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response> {
+        let (request, request_info, request_tracker) = request_context.get_components();
+        let kill_op_rows = self
+            .pull_connection(connection_context)
+            .await?
+            .query(
+                connection_context.service_context.query_catalog().kill_op(),
+                &[Type::BYTEA],
+                &[&PgDocument(request.document())],
+                Timeout::transaction(request_info.max_time_ms),
+                request_tracker,
+            )
+            .await?;
+
+        Ok(Response::Pg(PgResponse::new(kill_op_rows)))
+    }
+
     async fn execute_coll_mod(
         &self,
         request_context: &mut RequestContext<'_>,
@@ -915,7 +951,19 @@ impl PgDataClient for DocumentDBDataClient {
                 Timeout::transaction(request_info.max_time_ms),
                 request_tracker,
             )
-            .await?;
+            .await
+            .map_err(|e| {
+                if let DocumentDBError::PostgresError(pg_error, _) = &e {
+                    if let Some(code) = pg_error.code() {
+                        if code == &SqlState::DUPLICATE_OBJECT {
+                            return DocumentDBError::duplicate_user(
+                                "The specified user already exists.".to_string(),
+                            );
+                        }
+                    }
+                }
+                e
+            })?;
 
         Ok(Response::Pg(PgResponse::new(create_user_rows)))
     }
@@ -939,7 +987,19 @@ impl PgDataClient for DocumentDBDataClient {
                 Timeout::transaction(request_info.max_time_ms),
                 request_tracker,
             )
-            .await?;
+            .await
+            .map_err(|e| {
+                if let DocumentDBError::PostgresError(pg_error, _) = &e {
+                    if let Some(code) = pg_error.code() {
+                        if code == &SqlState::UNDEFINED_OBJECT {
+                            return DocumentDBError::user_not_found(
+                                "The specified user does not exist.".to_string(),
+                            );
+                        }
+                    }
+                }
+                e
+            })?;
 
         Ok(Response::Pg(PgResponse::new(drop_user_rows)))
     }
@@ -963,7 +1023,19 @@ impl PgDataClient for DocumentDBDataClient {
                 Timeout::transaction(request_info.max_time_ms),
                 request_tracker,
             )
-            .await?;
+            .await
+            .map_err(|e| {
+                if let DocumentDBError::PostgresError(pg_error, _) = &e {
+                    if let Some(code) = pg_error.code() {
+                        if code == &SqlState::UNDEFINED_OBJECT {
+                            return DocumentDBError::user_not_found(
+                                "The specified user does not exist.".to_string(),
+                            );
+                        }
+                    }
+                }
+                e
+            })?;
 
         Ok(Response::Pg(PgResponse::new(update_user_rows)))
     }
@@ -1062,6 +1134,30 @@ impl PgDataClient for DocumentDBDataClient {
         Ok(Response::Pg(PgResponse::new(compact_rows)))
     }
 
+    async fn execute_kill_cursors(
+        &self,
+        request_context: &mut RequestContext<'_>,
+        connection_context: &ConnectionContext,
+        cursor_ids: &[i64],
+    ) -> Result<Response> {
+        let (_, request_info, request_tracker) = request_context.get_components();
+        let kill_cursors_rows = self
+            .pull_connection(connection_context)
+            .await?
+            .query(
+                connection_context
+                    .service_context
+                    .query_catalog()
+                    .kill_cursors(),
+                &[Type::INT8_ARRAY],
+                &[&cursor_ids],
+                Timeout::command(request_info.max_time_ms),
+                request_tracker,
+            )
+            .await?;
+        Ok(Response::Pg(PgResponse::new(kill_cursors_rows)))
+    }
+
     async fn execute_create_role(
         &self,
         request_context: &mut RequestContext<'_>,
@@ -1081,7 +1177,19 @@ impl PgDataClient for DocumentDBDataClient {
                 Timeout::command(request_info.max_time_ms),
                 request_tracker,
             )
-            .await?;
+            .await
+            .map_err(|e| {
+                if let DocumentDBError::PostgresError(pg_error, _) = &e {
+                    if let Some(code) = pg_error.code() {
+                        if code == &SqlState::DUPLICATE_OBJECT {
+                            return DocumentDBError::duplicate_role(
+                                "The specified role already exists.".to_string(),
+                            );
+                        }
+                    }
+                }
+                e
+            })?;
         Ok(Response::Pg(PgResponse::new(create_role_rows)))
     }
 
@@ -1104,7 +1212,19 @@ impl PgDataClient for DocumentDBDataClient {
                 Timeout::command(request_info.max_time_ms),
                 request_tracker,
             )
-            .await?;
+            .await
+            .map_err(|e| {
+                if let DocumentDBError::PostgresError(pg_error, _) = &e {
+                    if let Some(code) = pg_error.code() {
+                        if code == &SqlState::UNDEFINED_OBJECT {
+                            return DocumentDBError::role_not_found(
+                                "The specified role does not exist.".to_string(),
+                            );
+                        }
+                    }
+                }
+                e
+            })?;
         Ok(Response::Pg(PgResponse::new(update_role_rows)))
     }
 
@@ -1127,7 +1247,19 @@ impl PgDataClient for DocumentDBDataClient {
                 Timeout::command(request_info.max_time_ms),
                 request_tracker,
             )
-            .await?;
+            .await
+            .map_err(|e| {
+                if let DocumentDBError::PostgresError(pg_error, _) = &e {
+                    if let Some(code) = pg_error.code() {
+                        if code == &SqlState::UNDEFINED_OBJECT {
+                            return DocumentDBError::role_not_found(
+                                "The specified role does not exist.".to_string(),
+                            );
+                        }
+                    }
+                }
+                e
+            })?;
         Ok(Response::Pg(PgResponse::new(drop_role_rows)))
     }
 

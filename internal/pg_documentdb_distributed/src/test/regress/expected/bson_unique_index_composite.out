@@ -165,7 +165,7 @@ SELECT documentdb_api.insert_one('db','queryuniquecomposite','{"_id":"10", "a": 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "queryuniquecomposite", "indexes": [ { "key" : { "a.b": 1 }, "name": "rumConstraint1", "unique": 1, "sparse": 1, "enableCompositeTerm": true }] }', true);
 ERROR:  could not create exclusion constraint "documents_rum_index_5622_562002"
 DETAIL:  Key (document, generate_unique_shard_document(document, shard_key_value, '{ "a.b" : { "$numberInt" : "1" } }'::bson, true))=({ "_id" : "1", "a" : { "b" : { "$numberInt" : "1" } } }, { "$shard_key_value" : { "$numberLong" : "5620" }, "$numTerms" : { "$numberInt" : "1" }, "$numPaths" : { "$numberInt" : "1" }, "a.b" : [ { "$numberInt" : "1" } ] }) conflicts with key (document, generate_unique_shard_document(document, shard_key_value, '{ "a.b" : { "$numberInt" : "1" } }'::bson, true))=({ "_id" : "9", "a" : { "b" : { "$numberInt" : "1" } } }, { "$shard_key_value" : { "$numberLong" : "5620" }, "$numTerms" : { "$numberInt" : "1" }, "$numPaths" : { "$numberInt" : "1" }, "a.b" : [ { "$numberInt" : "1" } ] }).
-CONTEXT:  SQL statement "ALTER TABLE documentdb_data.documents_5620 ADD CONSTRAINT documents_rum_index_5622 EXCLUDE USING documentdb_rum ( document documentdb_api_internal.bson_rum_composite_path_ops(pathspec='[ "a.b" ]',tl=2691) WITH OPERATOR(documentdb_api_catalog.=?=),documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, 'BSONHEX0e00000010612e62000100000000'::documentdb_core.bson, true) documentdb_api_internal.bson_rum_unique_shard_path_ops  WITH OPERATOR(documentdb_api_internal.=#=)) "
+CONTEXT:  SQL statement "ALTER TABLE documentdb_data.documents_5620 ADD CONSTRAINT documents_rum_index_5622 EXCLUDE USING documentdb_rum ( document documentdb_api_internal.bson_rum_composite_path_ops(pathspec='[ "a.b" ]',tl=2691) WITH OPERATOR(documentdb_api_catalog.=?=),documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, 'BSONHEX0e00000010612e62000100000000'::documentdb_core.bson, true) documentdb_api_internal.bson_rum_unique_shard_path_ops(cmp=true)  WITH OPERATOR(documentdb_api_internal.=#=)) "
 -- create a unique index with the same name ( should be fine since we dropped it )
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "queryuniquecomposite", "indexes": [ { "key" : { "c": 1 }, "name": "rumConstraint1", "unique": 1, "sparse": 1 , "enableCompositeTerm": true}] }', true);
                                                                                                    create_indexes_non_concurrently                                                                                                    
@@ -358,8 +358,8 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_5620" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_5627" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "e" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "e" : { "$numberInt" : "1" } }'::bson, true) bson_rum_unique_shard_path_ops WITH =#=)
-    "documents_rum_index_5628" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "e", "f" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "e" : { "$numberInt" : "1" }, "f" : { "$numberInt" : "1" } }'::bson, true) bson_rum_unique_shard_path_ops WITH =#=)
+    "documents_rum_index_5627" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "e" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "e" : { "$numberInt" : "1" } }'::bson, true) bson_rum_unique_shard_path_ops (cmp='true') WITH =#=)
+    "documents_rum_index_5628" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "e", "f" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "e" : { "$numberInt" : "1" }, "f" : { "$numberInt" : "1" } }'::bson, true) bson_rum_unique_shard_path_ops (cmp='true') WITH =#=)
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '5620'::bigint)
 
@@ -510,7 +510,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_5620" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_5630" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "key1", "key2" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "key1" : { "$numberInt" : "1" }, "key2" : { "$numberInt" : "1" } }'::bson, true) bson_rum_unique_shard_path_ops WITH =#=)
+    "documents_rum_index_5630" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "key1", "key2" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "key1" : { "$numberInt" : "1" }, "key2" : { "$numberInt" : "1" } }'::bson, true) bson_rum_unique_shard_path_ops (cmp='true') WITH =#=)
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '5620'::bigint)
 
@@ -750,7 +750,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
  document        | bson   |           | not null |         | extended |              | 
 Indexes:
     "collection_pk_5620" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_5631" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "key1", "key2" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "key1" : { "$numberInt" : "1" }, "key2" : { "$numberInt" : "1" } }'::bson, false) bson_rum_unique_shard_path_ops WITH =#=)
+    "documents_rum_index_5631" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "key1", "key2" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "key1" : { "$numberInt" : "1" }, "key2" : { "$numberInt" : "1" } }'::bson, false) bson_rum_unique_shard_path_ops (cmp='true') WITH =#=)
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '5620'::bigint)
 
@@ -868,7 +868,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_5620" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_5632" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "a", "b", "c" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }'::bson, true) bson_rum_unique_shard_path_ops WITH =#=)
+    "documents_rum_index_5632" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "a", "b", "c" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }'::bson, true) bson_rum_unique_shard_path_ops (cmp='true') WITH =#=)
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '5620'::bigint)
 
@@ -960,7 +960,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_5620" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_5633" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "a", "b", "c" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }'::bson, false) bson_rum_unique_shard_path_ops WITH =#=)
+    "documents_rum_index_5633" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "a", "b", "c" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }'::bson, false) bson_rum_unique_shard_path_ops (cmp='true') WITH =#=)
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '5620'::bigint)
 
@@ -1053,7 +1053,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_5620" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_5634" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "a", "b" ]', tl='60') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } }'::bson, false) bson_rum_unique_shard_path_ops WITH =#=)
+    "documents_rum_index_5634" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "a", "b" ]', tl='60') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } }'::bson, false) bson_rum_unique_shard_path_ops (cmp='true') WITH =#=)
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '5620'::bigint)
 
@@ -1140,7 +1140,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_5620" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_5635" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "a", "b" ]', tl='60') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } }'::bson, false) bson_rum_unique_shard_path_ops WITH =#=)
+    "documents_rum_index_5635" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "a", "b" ]', tl='60') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } }'::bson, false) bson_rum_unique_shard_path_ops (cmp='true') WITH =#=)
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '5620'::bigint)
 

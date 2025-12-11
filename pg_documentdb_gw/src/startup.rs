@@ -6,49 +6,45 @@
  *-------------------------------------------------------------------------
  */
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
-use log::warn;
+use tokio::time::{sleep, Duration, Instant};
 
 use crate::{
     configuration::{DynamicConfiguration, SetupConfiguration},
     context::ServiceContext,
     error::Result,
-    postgres::ConnectionPool,
+    postgres::{self, ConnectionPool, PoolManager, QueryCatalog},
     service::TlsProvider,
-    QueryCatalog,
 };
-
-pub const SYSTEM_REQUESTS_MAX_CONNECTIONS: usize = 2;
-pub const AUTHENTICATION_MAX_CONNECTIONS: usize = 5;
 
 pub fn get_service_context(
     setup_configuration: Box<dyn SetupConfiguration>,
-    dynamic: Arc<dyn DynamicConfiguration>,
+    dynamic_configuration: Arc<dyn DynamicConfiguration>,
     query_catalog: QueryCatalog,
     system_requests_pool: Arc<ConnectionPool>,
     authentication_pool: ConnectionPool,
     tls_provider: TlsProvider,
 ) -> ServiceContext {
+    log::info!("Initial dynamic configuration: {dynamic_configuration:?}");
+
+    let connection_pool_manager = PoolManager::new(
+        query_catalog.clone(),
+        setup_configuration.clone(),
+        Arc::clone(&dynamic_configuration),
+        system_requests_pool,
+        authentication_pool,
+    );
+
     let service_context = ServiceContext::new(
         setup_configuration.clone(),
-        Arc::clone(&dynamic),
+        Arc::clone(&dynamic_configuration),
         query_catalog.clone(),
-        Arc::clone(&system_requests_pool),
-        authentication_pool,
+        connection_pool_manager,
         tls_provider,
     );
 
-    let service_context_clone = service_context.clone();
-
-    tokio::spawn(async move {
-        let mut cleanup_interval = tokio::time::interval(Duration::from_secs(300));
-        let max_age = Duration::from_secs(7200);
-        loop {
-            cleanup_interval.tick().await;
-            service_context_clone.clean_unused_pools(max_age).await;
-        }
-    });
+    postgres::clean_unused_pools(service_context.clone());
 
     service_context
 }
@@ -89,7 +85,7 @@ where
 {
     let max_time = Duration::from_secs(setup_configuration.postgres_startup_wait_time_seconds());
     let wait_time = Duration::from_secs(10);
-    let start = tokio::time::Instant::now();
+    let start = Instant::now();
 
     loop {
         match create_func().await {
@@ -98,14 +94,11 @@ where
             }
             Err(e) => {
                 if start.elapsed() < max_time {
-                    warn!("Exception when creating postgres object {:?}", e);
-                    tokio::time::sleep(wait_time).await;
+                    log::warn!("Exception when creating postgres object {e:?}");
+                    sleep(wait_time).await;
                     continue;
                 } else {
-                    panic!(
-                        "Failed to create postgres object after {:?}: {}",
-                        max_time, e
-                    );
+                    panic!("Failed to create postgres object after {max_time:?}: {e}");
                 }
             }
         }

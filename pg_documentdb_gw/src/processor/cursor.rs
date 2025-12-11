@@ -44,6 +44,7 @@ pub async fn save_cursor(
 pub async fn process_kill_cursors(
     request_context: &mut RequestContext<'_>,
     connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
     let request = request_context.payload;
 
@@ -73,8 +74,19 @@ pub async fn process_kill_cursors(
     }
     let (removed_cursors, missing_cursors) = connection_context
         .service_context
-        .kill_cursors(connection_context.auth_state.username()?, &cursor_ids)
+        .cursor_store()
+        .kill_cursors(
+            connection_context.auth_state.username()?.to_string(),
+            &cursor_ids,
+        )
         .await;
+
+    if !removed_cursors.is_empty() {
+        pg_data_client
+            .execute_kill_cursors(request_context, connection_context, &removed_cursors)
+            .await?;
+    }
+
     let mut removed_cursor_buf = RawArrayBuf::new();
     for cursor in removed_cursors {
         removed_cursor_buf.push(cursor);

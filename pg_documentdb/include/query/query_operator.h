@@ -136,6 +136,10 @@ Expr * CreateShardKeyFiltersForQuery(const bson_value_t *queryDocument, pgbson *
 Expr * CreateIdFilterForQuery(List *existingQuals,
 							  Index collectionVarno, bool *isCollationAware,
 							  bool *isPointRead);
+Expr * MakeSimpleIdExpr(const bson_value_t *filterValue, Index collectionVarno, Oid
+						operatorId);
+Expr * MakeLowerBoundIdExpr(const bson_value_t *filterValue, Index collectionVarno);
+Expr * MakeUpperBoundIdExpr(const bson_value_t *filterValue, Index collectionVarno);
 
 bool ValidateOrderbyExpressionAndGetIsAscending(pgbson *orderby);
 

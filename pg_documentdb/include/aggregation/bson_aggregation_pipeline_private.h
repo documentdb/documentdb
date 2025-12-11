@@ -108,8 +108,11 @@ typedef struct
 	/* Whether the query should retain an expanded target list*/
 	bool expandTargetList;
 
-	/* Whether or not the query is a streamable cursor */
+	/* Whether or not the query requires a persisted cursor */
 	bool requiresPersistentCursor;
+
+	/* Whether or not the stage can handle a single batch cursor */
+	bool isSingleRowResult;
 
 	/* The namespace 'db.coll' associated with this query */
 	const char *namespaceName;

@@ -1574,7 +1574,7 @@ RunPrepareUniqueForCollectionIndexes(const char *databaseName, const char *colle
 }
 
 
-static void
+void
 ParseNamespaceName(const char *namespacePath, char **databaseName, char **collectionName)
 {
 	StringView strView = CreateStringViewFromString(namespacePath);

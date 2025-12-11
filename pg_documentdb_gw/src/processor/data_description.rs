@@ -52,6 +52,7 @@ pub async fn process_drop_database(
     // Invalidate cursors
     connection_context
         .service_context
+        .cursor_store()
         .invalidate_cursors_by_database(&db)
         .await;
 
@@ -87,6 +88,7 @@ pub async fn process_drop_collection(
     // Invalidate cursors
     connection_context
         .service_context
+        .cursor_store()
         .invalidate_cursors_by_collection(db_str, coll_str)
         .await;
 

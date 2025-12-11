@@ -170,6 +170,12 @@ SELECT documentdb_api.drop_user('{"dropUser":"documentdb_user", "$db":"admin"}')
 --Drop non-existent user
 SELECT documentdb_api.drop_user('{"dropUser":"nonexistent_user", "$db":"admin"}');
 
+--Drop a system user
+SELECT documentdb_api.drop_user('{"dropUser":"documentdb_bg_worker_role", "$db":"admin"}');
+
+--Drop a built-in user
+SELECT documentdb_api.drop_user('{"dropUser":"documentdb_admin_role", "$db":"admin"}');
+
 --Drop with disallowed parameter
 SELECT documentdb_api.drop_user('{"user":"test_user", "$db":"admin"}');
 
@@ -212,7 +218,7 @@ SELECT documentdb_api.users_info('{"usersInfo":"adminUser", "showPrivileges":tru
 RESET documentdb.enableUsersInfoPrivileges;
 
 -- switch to read only user
-\c regression readOnlyUser
+\c - readOnlyUser
 
 --Create without privileges
 SELECT documentdb_api.create_user('{"createUser":"newUser", "pwd":"test_password", "roles":[{"role":"readAnyDatabase","db":"admin"}], "$db":"admin"}');
@@ -221,7 +227,7 @@ SELECT documentdb_api.create_user('{"createUser":"newUser", "pwd":"test_password
 SELECT documentdb_api.drop_user('{"dropUser":"test_user", "$db":"admin"}');
 
 -- switch to admin user
-\c regression adminUser
+\c - adminUser
 
 -- Test connectionStatus command without showPrivileges parameter
 SELECT documentdb_api.connection_status('{"connectionStatus": 1, "$db":"admin"}');
@@ -265,7 +271,7 @@ SELECT documentdb_api.update_user('{"updateUser":"test_user", "pwd":"new_passwor
 SELECT documentdb_api.drop_user('{"dropUser":"test_user5", "$db":"admin"}');
 
 -- switch back to original user
-\c regression :original_user
+\c - :original_user
 
 --set Feature flag for user crud
 SET documentdb.enableUserCrud TO ON;

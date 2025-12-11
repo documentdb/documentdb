@@ -1,1 +1,0 @@
-\i sql/bson_expr_index_pushdown_tests.sql

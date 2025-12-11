@@ -5,8 +5,9 @@
 #include "fmgr.h"
 
 /* Macro to check if a role is a system role */
-#define IS_SYSTEM_ROLE(roleName) \
-	(strcmp((roleName), ApiBgWorkerRole) == 0)
+#define IS_SYSTEM_LOGIN_ROLE(roleName) \
+	(strcmp((roleName), ApiBgWorkerRole) == 0 || \
+	 strcmp((roleName), ApiReplicationRole) == 0)
 
 /* Macro to check if a role is a customer facing built-in role */
 #define IS_BUILTIN_ROLE(roleName) \

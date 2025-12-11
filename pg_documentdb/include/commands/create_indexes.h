@@ -49,6 +49,9 @@ typedef struct IndexDefKeyPath
 
 typedef struct
 {
+	/* whether or not it's the _id style index */
+	bool isIdIndex;
+
 	/* Whether or not the index path has a wildcard */
 	bool isWildcard;
 

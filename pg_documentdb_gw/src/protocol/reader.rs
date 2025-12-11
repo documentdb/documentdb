@@ -82,7 +82,7 @@ pub async fn parse_request<'a>(
 }
 
 /// Parse a OP_QUERY message
-async fn parse_query(message: &[u8]) -> Result<Request> {
+async fn parse_query<'a>(message: &'a [u8]) -> Result<Request<'a>> {
     let mut reader = Cursor::new(message);
 
     let _flags = reader.read_u32_le().await?;
@@ -197,7 +197,7 @@ async fn parse_cmd<'a>(command: &'a RawDocument, extra: Option<&'a [u8]>) -> Res
 }
 
 // TODO: Should not need to clone the documents and create a new RawDocumentBuf
-async fn parse_insert(message: &RequestMessage) -> Result<Request> {
+async fn parse_insert<'a>(message: &'a RequestMessage) -> Result<Request<'a>> {
     let mut reader = Cursor::new(&message.request);
     let flags = reader.read_i32_le().await?;
 

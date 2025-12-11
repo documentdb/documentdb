@@ -20,6 +20,7 @@ A curated collection of guides to help you understand what DocumentDB is, why it
 - [Aggregation](v1/aggregation.md)
 - [Joins](v1/joins.md)
 - [Packaging](v1/packaging.md)
+- [Data Initialization](v1/data-initialization.md)
 
 ---
 

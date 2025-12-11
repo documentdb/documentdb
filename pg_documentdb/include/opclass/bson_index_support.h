@@ -86,6 +86,9 @@ typedef struct
 {
 	/* Equality on shardKey if available */
 	RestrictInfo *shardKeyEqualityExpr;
+
+	/* Whether this is an unsharded equality */
+	bool isShardKeyEqualityOnUnsharded;
 } PlannerQueryOrderByData;
 
 
@@ -140,10 +143,17 @@ void ReplaceExtensionFunctionOperatorsInPaths(PlannerInfo *root, RelOptInfo *rel
 Path * ForceIndexForQueryOperators(PlannerInfo *root, RelOptInfo *rel,
 								   ReplaceExtensionFunctionContext *context);
 
-void ConsiderIndexOrderByPushdown(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
-								  Index rti, ReplaceExtensionFunctionContext *context);
+void ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel,
+									   RangeTblEntry *rte,
+									   Index rti,
+									   ReplaceExtensionFunctionContext *context);
 void ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 						   Index rti, ReplaceExtensionFunctionContext *context);
+bool IsOpExprShardKeyForUnshardedCollections(Expr *expr, uint64 collectionId);
+
+IndexPath * TrimIndexRestrictInfoForBtreePath(PlannerInfo *root,
+											  IndexPath *indexPath,
+											  bool *hasNonIdClauses);
 
 void WalkPathsForIndexOperations(List *pathsList,
 								 ReplaceExtensionFunctionContext *context);
@@ -157,4 +167,9 @@ bool InMatchIsEquvalentTo(ScalarArrayOpExpr *opExpr, const bson_value_t *arrayVa
 OpExpr * GetOpExprClauseFromIndexOperator(const
 										  MongoIndexOperatorInfo *operator, List *args,
 										  bytea *indexOptions);
+
+void documentdb_btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
+							   Cost *indexStartupCost, Cost *indexTotalCost,
+							   Selectivity *indexSelectivity, double *indexCorrelation,
+							   double *indexPages);
 #endif

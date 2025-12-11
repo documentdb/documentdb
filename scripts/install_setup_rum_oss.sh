@@ -20,6 +20,13 @@ echo "scriptDir: $scriptDir"
 . $scriptDir/setup_versions.sh
 RUM_REF=$(GetRumVersion)
 
+# If PGVERSION is set and is >= 18, we don't need to install the public RUM
+# since the repository provides documentdb_extended_rum for pg18 and later.
+if [ "${PGVERSION:-0}" -ge 18 ]; then
+    echo "PGVERSION=${PGVERSION} >= 18; skipping public RUM installation (using documentdb_extended_rum)"
+    exit 0
+fi
+
 . $scriptDir/utils.sh
 if [ "${PGVERSION:-}" != "" ]; then
     pgPath=$(GetPostgresPath $PGVERSION)

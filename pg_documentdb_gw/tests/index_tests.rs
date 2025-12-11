@@ -70,8 +70,7 @@ async fn create_index_with_long_name_should_fail() {
             let msg = e.to_string();
             assert!(
                 msg.contains("The index path or expression is too long"),
-                "Expected error containing 'The index path or expression is too long', got: {}",
-                msg
+                "Expected error containing 'The index path or expression is too long', got: {msg}"
             );
         }
         Ok(_) => panic!("Expected error but got success"),

@@ -12,7 +12,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipelin
 ERROR:  $currentOp must be executed on the 'admin' database with parameter {aggregate: 1}
 SELECT document FROM bson_aggregation_pipeline('admin', '{ "aggregate": "coll", "pipeline": [ { "$currentOp": {} }] }');
 ERROR:  $currentOp must be executed on the 'admin' database with parameter {aggregate: 1}
-SELECT document FROM bson_aggregation_pipeline('admin', '{ "aggregate": 1, "pipeline": [ { "$currentOp": {} }, { "$project": { "opid": 0, "op_prefix": 0, "currentOpTime": 0, "secs_running": 0 }}] }');
+SELECT document FROM bson_aggregation_pipeline('admin', '{ "aggregate": 1, "pipeline": [ { "$currentOp": {} }, { "$project": { "opid": 0, "op_prefix": 0, "currentOpTime": 0, "secs_running": 0 }}, { "$limit": 1 }] }');
                                                        document                                                        
 -----------------------------------------------------------------------------------------------------------------------
  { "shard" : "shard_0", "active" : true, "type" : "op", "command" : {  }, "op" : "command", "waitingForLock" : false }

@@ -6,6 +6,8 @@
  *-------------------------------------------------------------------------
  */
 
+pub mod read_concern;
+pub mod read_preference;
 pub mod request_tracker;
 
 use std::{
@@ -14,6 +16,8 @@ use std::{
 };
 
 use bson::{spec::ElementType, Document, RawBsonRef, RawDocument, RawDocumentBuf};
+use read_concern::ReadConcern;
+use read_preference::ReadPreference;
 use tokio_postgres::IsolationLevel;
 
 use crate::{
@@ -47,6 +51,7 @@ pub struct RequestInfo<'a> {
     db: Option<&'a str>,
     collection: Option<&'a str>,
     pub session_id: Option<&'a [u8]>,
+    read_concern: ReadConcern,
 }
 
 impl RequestInfo<'_> {
@@ -57,6 +62,7 @@ impl RequestInfo<'_> {
             db: None,
             collection: None,
             session_id: None,
+            read_concern: ReadConcern::default(),
         }
     }
 
@@ -71,6 +77,10 @@ impl RequestInfo<'_> {
         self.db.ok_or(DocumentDBError::bad_value(
             "Expected $db to be present".to_string(),
         ))
+    }
+
+    pub fn read_concern(&self) -> &ReadConcern {
+        &self.read_concern
     }
 }
 
@@ -114,6 +124,7 @@ pub enum RequestType {
     IsDBGrid,
     IsMaster,
     KillCursors,
+    KillOp,
     ListCollections,
     ListCommands,
     ListDatabases,
@@ -200,6 +211,7 @@ impl FromStr for RequestType {
             "ismaster" => Ok(RequestType::IsMaster),
             "isMaster" => Ok(RequestType::IsMaster),
             "killCursors" => Ok(RequestType::KillCursors),
+            "killOp" => Ok(RequestType::KillOp),
             "listCollections" => Ok(RequestType::ListCollections),
             "listCommands" => Ok(RequestType::ListCommands),
             "listDatabases" => Ok(RequestType::ListDatabases),
@@ -224,7 +236,7 @@ impl FromStr for RequestType {
             "whatsmyuri" => Ok(RequestType::WhatsMyUri),
             _ => Err(DocumentDBError::documentdb_error(
                 ErrorCode::CommandNotSupported,
-                format!("Unknown request received: {}", cmd_name),
+                format!("Unknown request received: {cmd_name}"),
             )),
         }
     }
@@ -232,7 +244,7 @@ impl FromStr for RequestType {
 
 impl fmt::Display for RequestType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -294,11 +306,14 @@ impl<'a> Request<'a> {
         }
     }
 
-    pub fn extract_common(&self) -> Result<RequestInfo> {
+    pub fn extract_common(&'a self) -> Result<RequestInfo<'a>> {
         self.extract_fields_and_common(|_, _| Ok(()))
     }
 
-    pub fn extract_coll_and_common(&self, collection_key: &str) -> Result<(String, RequestInfo)> {
+    pub fn extract_coll_and_common(
+        &'a self,
+        collection_key: &str,
+    ) -> Result<(String, RequestInfo<'a>)> {
         let mut collection = None;
         let request_info = self.extract_fields_and_common(|k, v| {
             if k == collection_key {
@@ -315,14 +330,13 @@ impl<'a> Request<'a> {
         })?;
         Ok((
             collection.ok_or(DocumentDBError::bad_value(format!(
-                "{} should be present",
-                collection_key
+                "{collection_key} should be present"
             )))?,
             request_info,
         ))
     }
 
-    pub fn extract_fields_and_common<F>(&self, mut coll_extractor: F) -> Result<RequestInfo>
+    pub fn extract_fields_and_common<F>(&'a self, mut coll_extractor: F) -> Result<RequestInfo<'a>>
     where
         F: FnMut(&str, RawBsonRef) -> Result<()>,
     {
@@ -334,6 +348,7 @@ impl<'a> Request<'a> {
         let mut start_transaction = false;
         let mut isolation_level = None;
         let mut collection = None;
+        let mut read_concern = ReadConcern::default();
 
         let collection_field = self.collection_field();
         for entry in self.document() {
@@ -378,18 +393,20 @@ impl<'a> Request<'a> {
                     )))?;
                 }
                 "readConcern" => {
-                    if v.as_document()
+                    let level = v
+                        .as_document()
                         .ok_or(DocumentDBError::bad_value(format!(
                             "Expected readConcern to be a document but got {:?}",
                             v.element_type()
                         )))?
                         .get_str("level")
-                        .unwrap_or("")
-                        == "snapshot"
-                    {
+                        .unwrap_or("");
+                    read_concern = ReadConcern::from_str(level).unwrap_or(ReadConcern::default());
+                    if let ReadConcern::Snapshot = read_concern {
                         isolation_level = Some(IsolationLevel::RepeatableRead)
                     }
                 }
+                "$readPreference" => ReadPreference::parse(v.as_document())?,
                 key if collection_field.contains(&key) => {
                     // Aggregate needs special handling because having '1' as a collection is valid
                     collection = if collection_field[0] == "aggregate" {
@@ -425,6 +442,7 @@ impl<'a> Request<'a> {
             session_id,
             transaction_info,
             db,
+            read_concern,
         })
     }
 

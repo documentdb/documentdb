@@ -8,9 +8,12 @@ RETURNS bson
 LANGUAGE c
 AS '$libdir/pg_documentdb', 'gin_bson_index_term_to_bson';
 
+CREATE FUNCTION value_ordered_test_schema.gin_bson_get_composite_path_generated_terms(documentdb_core.bson, text, int4, bool)
+    RETURNS SETOF documentdb_core.bson LANGUAGE C IMMUTABLE PARALLEL SAFE STRICT AS '$libdir/pg_documentdb',
+$$gin_bson_get_composite_path_generated_terms$$;
 
 -- debug function to read index pages
-CREATE OR REPLACE FUNCTION value_ordered_test_schema.documentdb_rum_page_get_entries(page bytea, firstEntryType Oid)
+CREATE OR REPLACE FUNCTION value_ordered_test_schema.documentdb_rum_page_get_entries(page bytea, indexRelId Oid)
 RETURNS SETOF jsonb
 LANGUAGE c
 AS '$libdir/pg_documentdb_extended_rum_core', 'documentdb_rum_page_get_entries';
@@ -34,11 +37,11 @@ SELECT COUNT(documentdb_api.insert_one('comp_odb', 'comp_value_ordering', bson_b
 -- now walk the index terms and assert that they're ordered correctly and every odd term is value only
 SELECT entry->> 'offset',
     value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea)
-        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_302', 1), 'bytea'::regtype) entry;
+        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_302', 1), 'documentdb_data.documents_rum_index_302'::regclass) entry;
 
 SELECT entry->> 'offset',
     value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea)
-        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_303', 1), 'bytea'::regtype) entry;
+        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_303', 1), 'documentdb_data.documents_rum_index_303'::regclass) entry;
 
 -- note that the terms are co-comparable - adding even values again does not add new terms
 set documentdb.enableValueOnlyIndexTerms to on;
@@ -49,11 +52,11 @@ SELECT COUNT(*) FROM documentdb_api.collection('comp_odb', 'comp_value_ordering'
 
 SELECT entry->> 'offset',
     value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea)
-        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_302', 1), 'bytea'::regtype) entry;
+        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_302', 1), 'documentdb_data.documents_rum_index_302'::regclass) entry;
 
 SELECT entry->> 'offset',
     value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea)
-        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_303', 1), 'bytea'::regtype) entry;
+        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_303', 1), 'documentdb_data.documents_rum_index_303'::regclass) entry;
 
 -- same is true when factoring in truncation.
 TRUNCATE documentdb_data.documents_301;
@@ -91,10 +94,33 @@ SELECT entry->> 'offset',
     value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$flags',
     length(value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea)::bytea),
     SUBSTRING(value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$', 0, 15)
-        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_302', 1), 'bytea'::regtype) entry;
+        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_302', 1), 'documentdb_data.documents_rum_index_302'::regclass) entry;
 
 SELECT entry->> 'offset',
     value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$flags',
     length(value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea)::bytea),
     SUBSTRING(value_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$', 0, 15)
-        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_303', 1), 'bytea'::regtype) entry;
+        FROM value_ordered_test_schema.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_303', 1), 'documentdb_data.documents_rum_index_303'::regclass) entry;
+
+-- ensure value only truncation works the same with > 16 paths
+set documentdb.enableValueOnlyIndexTerms to off;
+SELECT * FROM
+    value_ordered_test_schema.gin_bson_get_composite_path_generated_terms(
+        '{ "a1": "aaaaaaaaaaaaaaa", "a2": "aaaaaaaaaaaaaaa", "a3": "aaaaaaaaaaaaaaa", "a4": "aaaaaaaaaaaaaaa", "a5": "aaaaaaaaaaaaaaa", "a6": "aaaaaaaaaaaaaaa", "a7": "aaaaaaaaaaaaaaa", "a8": "aaaaaaaaaaaaaaa", "a9": "aaaaaaaaaaaaaaa", "a10": "aaaaaaaaaaaaaaa", "a11": "aaaaaaaaaaaaaaa", "a12": "aaaaaaaaaaaaaaa", "a13": "aaaaaaaaaaaaaaa", "a14": "aaaaaaaaaaaaaaa", "a15": "aaaaaaaaaaaaaaa", "a16": "aaaaaaaaaaaaaaa", "a17": "aaaaaaaaaaaaaaa" }',
+        '[ "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10", "a11", "a12", "a13", "a14", "a15", "a16", "a17" ]', 350, true);
+
+SELECT * FROM
+    value_ordered_test_schema.gin_bson_get_composite_path_generated_terms(
+        '{ "a1": "aaaaaaaaaaaaaaa", "a2": "aaaaaaaaaaaaaaa", "a3": "aaaaaaaaaaaaaaa", "a4": "aaaaaaaaaaaaaaa", "a5": "aaaaaaaaaaaaaaa", "a6": "aaaaaaaaaaaaaaa", "a7": "aaaaaaaaaaaaaaa", "a8": "aaaaaaaaaaaaaaa", "a9": "aaaaaaaaaaaaaaa", "a10": "aaaaaaaaaaaaaaa", "a11": "aaaaaaaaaaaaaaa", "a12": "aaaaaaaaaaaaaaa", "a13": "aaaaaaaaaaaaaaa", "a14": "aaaaaaaaaaaaaaa", "a15": "aaaaaaaaaaaaaaa", "a16": "aaaaaaaaaaaaaaa", "a17": "aaaaaaaaaaaaaaa" }',
+        '[ "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10", "a11", "a12", "a13", "a14", "a15", "a16", "a17" ]', 306, true);
+
+set documentdb.enableValueOnlyIndexTerms to on;
+SELECT * FROM
+    value_ordered_test_schema.gin_bson_get_composite_path_generated_terms(
+        '{ "a1": "aaaaaaaaaaaaaaa", "a2": "aaaaaaaaaaaaaaa", "a3": "aaaaaaaaaaaaaaa", "a4": "aaaaaaaaaaaaaaa", "a5": "aaaaaaaaaaaaaaa", "a6": "aaaaaaaaaaaaaaa", "a7": "aaaaaaaaaaaaaaa", "a8": "aaaaaaaaaaaaaaa", "a9": "aaaaaaaaaaaaaaa", "a10": "aaaaaaaaaaaaaaa", "a11": "aaaaaaaaaaaaaaa", "a12": "aaaaaaaaaaaaaaa", "a13": "aaaaaaaaaaaaaaa", "a14": "aaaaaaaaaaaaaaa", "a15": "aaaaaaaaaaaaaaa", "a16": "aaaaaaaaaaaaaaa", "a17": "aaaaaaaaaaaaaaa" }',
+        '[ "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10", "a11", "a12", "a13", "a14", "a15", "a16", "a17" ]', 350, true);
+
+SELECT * FROM
+    value_ordered_test_schema.gin_bson_get_composite_path_generated_terms(
+        '{ "a1": "aaaaaaaaaaaaaaa", "a2": "aaaaaaaaaaaaaaa", "a3": "aaaaaaaaaaaaaaa", "a4": "aaaaaaaaaaaaaaa", "a5": "aaaaaaaaaaaaaaa", "a6": "aaaaaaaaaaaaaaa", "a7": "aaaaaaaaaaaaaaa", "a8": "aaaaaaaaaaaaaaa", "a9": "aaaaaaaaaaaaaaa", "a10": "aaaaaaaaaaaaaaa", "a11": "aaaaaaaaaaaaaaa", "a12": "aaaaaaaaaaaaaaa", "a13": "aaaaaaaaaaaaaaa", "a14": "aaaaaaaaaaaaaaa", "a15": "aaaaaaaaaaaaaaa", "a16": "aaaaaaaaaaaaaaa", "a17": "aaaaaaaaaaaaaaa" }',
+        '[ "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10", "a11", "a12", "a13", "a14", "a15", "a16", "a17" ]', 306, true);

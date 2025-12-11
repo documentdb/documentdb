@@ -980,14 +980,6 @@ BEGIN;
 SET client_min_messages TO LOG;
 SET LOCAL documentdb.logTTLProgressActivity to on;
 CALL documentdb_api_internal.delete_expired_rows(100);
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
 RESET client_min_messages;
 END;
 BEGIN;
@@ -995,14 +987,6 @@ SET client_min_messages TO LOG;
 SET LOCAL documentdb.useIndexHintsForTTLTask to off;
 SET LOCAL documentdb.logTTLProgressActivity to on;
 CALL documentdb_api_internal.delete_expired_rows(100);
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
 RESET client_min_messages;
 END;
 --  Check what documents are left after purging
@@ -1141,14 +1125,6 @@ SET LOCAL documentdb.logTTLProgressActivity to on;
 SET LOCAL documentdb.enableTTLDescSort to on;
 SET LOCAL documentdb.enableIndexOrderbyPushdown to on;
 CALL documentdb_api_internal.delete_expired_rows(100);
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
-LOG:  TTL job elapsed time:<redacted> limit: 20000ms
 RESET client_min_messages;
 END;
 SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlCompositeOrderedScan') order by object_id) as a;

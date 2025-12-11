@@ -535,7 +535,7 @@ SET LOCAL enable_seqscan TO off;
 set local documentdb.enableIndexOrderbyPushdown to on;
 EXPLAIN(costs off) SELECT document from bson_aggregation_pipeline('compdb', 
   '{ "aggregate": "menu", "pipeline": [ { "$lookup": { "from": "establishments", "pipeline": [ { "$match": { "order_quantity": { "$gt": 110 } }}, { "$sort": { "establishment_name": 1 }}], "as": "matched_docs", "localField": "establishment_name", "foreignField": "establishment_name" }} ], "cursor": {} }');
-                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                       
+                                                                                                                                                QUERY PLAN                                                                                                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -548,11 +548,12 @@ EXPLAIN(costs off) SELECT document from bson_aggregation_pipeline('compdb',
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (shard_key_value = '9519'::bigint)
                ->  Aggregate
-                     ->  Index Scan using idx_establishments_establishment_name_order_quantity on documents_9518_951024 collection_0_1
-                           Index Cond: ((document OPERATOR(documentdb_api_catalog.@>) '{ "order_quantity" : { "$numberInt" : "110" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@*=) documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "establishment_name" : "establishment_name" }'::documentdb_core.bson)))
-                           Order By: (document OPERATOR(documentdb_api_catalog.|-<>) '{ "establishment_name" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-                           Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "establishment_name" : "establishment_name" }'::documentdb_core.bson), 'establishment_name'::text)
-(15 rows)
+                     ->  Sort
+                           Sort Key: (documentdb_api_catalog.bson_orderby(collection_0_1.document, '{ "establishment_name" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
+                           ->  Index Scan using idx_establishments_order_quantity on documents_9518_951024 collection_0_1
+                                 Index Cond: (document OPERATOR(documentdb_api_catalog.@>) '{ "order_quantity" : { "$numberInt" : "110" } }'::documentdb_core.bson)
+                                 Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "establishment_name" : "establishment_name" }'::documentdb_core.bson), 'establishment_name'::text)
+(16 rows)
 
 ROLLBACK;
 BEGIN;

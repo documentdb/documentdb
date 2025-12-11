@@ -57,6 +57,8 @@ const int MaximumLookupPipelineDepth = 20;
 extern bool EnableLookupIdJoinOptimizationOnCollation;
 extern bool EnableNowSystemVariable;
 extern bool EnableLookupInnerJoin;
+extern bool EnableOperatorVariablesInLookup;
+extern bool EnableUseForeignKeyLookupInline;
 
 /*
  * Struct having parsed view of the
@@ -286,7 +288,8 @@ static Query * BuildRecursiveGraphLookupQuery(QuerySource parentSource,
 											  CommonTableExpr *baseCteExpr, int levelsUp);
 static void ValidateUnionWithPipeline(const bson_value_t *pipeline, bool hasCollection);
 
-static void ValidateLetHasNoVariables(AggregationExpressionData *parsedData);
+static void ValidateVariableIsDefined(AggregationExpressionData *parsedData,
+									  HTAB *operatorVariables);
 static void WalkQueryAndSetLevelsUp(Query *query, Var *varToCheck,
 									int varLevelsUpBase);
 static void WalkQueryAndSetCteLevelsUp(Query *query, const char *cteName,
@@ -2032,7 +2035,7 @@ OptimizeLookup(LookupArgs *lookupArgs,
 			ExpressionVariableContext *nullContext = NULL;
 
 			ParseAggregationExpressionContext parseContext = {
-				.validateParsedExpressionFunc = &ValidateLetHasNoVariables,
+				.validateParsedExpressionFunc = &ValidateVariableIsDefined,
 			};
 
 			ParseVariableSpec(&varsValue, nullContext, &parseContext);
@@ -2051,7 +2054,7 @@ OptimizeLookup(LookupArgs *lookupArgs,
 				ExpressionVariableContext *nullContext = NULL;
 
 				ParseAggregationExpressionContext parseContext = {
-					.validateParsedExpressionFunc = &ValidateLetHasNoVariables,
+					.validateParsedExpressionFunc = &ValidateVariableIsDefined,
 				};
 
 				GetTimeSystemVariablesFromVariableSpec(specBson,
@@ -2204,19 +2207,25 @@ OptimizeLookup(LookupArgs *lookupArgs,
 	}
 	else
 	{
-		StringView localFieldValue = lookupArgs->localField;
+		StringView lookupJoinPipelineField = lookupArgs->localField;
 
-		StringView prefix = StringViewFindPrefix(&localFieldValue, '.');
+		/* This fix is controlled by a GUC so we can safely falback to existing path by disabling it */
+		if (EnableUseForeignKeyLookupInline)
+		{
+			lookupJoinPipelineField = lookupArgs->foreignField;
+		}
+
+		StringView prefix = StringViewFindPrefix(&lookupJoinPipelineField, '.');
 		if (prefix.length != 0)
 		{
-			localFieldValue = prefix;
+			lookupJoinPipelineField = prefix;
 		}
 
 		bool isPipelineValid = false;
 		pgbson *inlinedPipeline = NULL;
 		pgbson *nonInlinedPipeline = NULL;
 		bool canInlinePipelineCore =
-			CanInlineLookupPipeline(&lookupArgs->pipeline, &localFieldValue,
+			CanInlineLookupPipeline(&lookupArgs->pipeline, &lookupJoinPipelineField,
 									optimizationArgs->hasLet,
 									&inlinedPipeline, &nonInlinedPipeline,
 									&isPipelineValid);
@@ -4166,19 +4175,52 @@ WalkQueryAndSetCteLevelsUp(Query *rightQuery, const char *cteName,
 }
 
 
-/* Function that is passed down to the expression tree when a let expression is found under a lookup to validate no variables are used to define other variables,
+/* Function that is passed down to the expression tree when a let expression is found under a lookup.
+ * It validates to ensure no let variables are used to define other variables,
+ * Operator variables (aliases) are allowed.
  * We only do this if it is the first level let on lookup.
  */
 static void
-ValidateLetHasNoVariables(AggregationExpressionData *parsedExpression)
+ValidateVariableIsDefined(AggregationExpressionData *parsedExpression,
+						  HTAB *operatorVariables)
 {
-	/* Only variables are disallowed in the variable spec, system variables are valid and should be considered at runtime
-	 * if it is available or not, i.e SEARCH_META is only available if a $search stage was defined. */
-	if (parsedExpression->kind == AggregationExpressionKind_Variable)
+	if (parsedExpression->kind != AggregationExpressionKind_Variable)
 	{
-		const char *nameWithoutPrefix = parsedExpression->value.value.v_utf8.str + 2;
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION17276),
-						errmsg("Attempting to use an undefined variable: %s",
-							   nameWithoutPrefix)));
+		return;
 	}
+
+	/* Certain variables are disallowed in the variable spec, system variables are valid and should be considered at runtime
+	 * if it is available or not, i.e SEARCH_META is only available if a $search stage was defined.
+	 * Operator variables are also allowed. Example: $$this and 'as' alias in $map and $filter
+	 * All others are disallowed */
+	const bson_value_t parsedVarName = parsedExpression->value;
+	const char *nameWithoutPrefix = parsedVarName.value.v_utf8.str + 2;
+
+	if (EnableOperatorVariablesInLookup && operatorVariables)
+	{
+		/* Get the actual variable name and verify if it's an operator variable alias*/
+		StringView variableName =
+			CreateStringViewFromStringWithLength(nameWithoutPrefix,
+												 parsedVarName.value.v_utf8.len - 2);
+		StringView actualVariableName = StringViewFindPrefix(&variableName, '.');
+
+		/* actualVariableName is empty when no '.' was found in the variable name */
+		if (actualVariableName.length == 0)
+		{
+			actualVariableName = variableName;
+		}
+
+		bool found = false;
+		hash_search(operatorVariables, &actualVariableName,
+					HASH_FIND, &found);
+
+		if (found)
+		{
+			return;
+		}
+	}
+
+	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION17276),
+					errmsg("Attempting to use an undefined variable: %s",
+						   nameWithoutPrefix)));
 }

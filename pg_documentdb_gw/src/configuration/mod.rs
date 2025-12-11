@@ -78,6 +78,9 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
     /// Returns the number of worker threads for the async runtime.
     fn async_runtime_worker_threads(&self) -> usize;
 
+    /// Returns the timeout duration (in minutes) for PostgreSQL connections
+    fn postgres_idle_connection_timeout_minutes(&self) -> u64;
+
     /// Provides a way to downcast the trait object to a concrete type.
     fn as_any(&self) -> &dyn std::any::Any;
 }

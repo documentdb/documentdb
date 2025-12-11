@@ -185,7 +185,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 (11 rows)
 
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('vector_db', '{ "aggregate": "agg_vector_hnsw_planner", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "v", "efSearch": 1, "filter": { "_id": { "$lt": 5 }} }  } } ], "cursor": {} }');
-                                                                                                                                 QUERY PLAN                                                                                                                                 
+                                                                                                                                                                    QUERY PLAN                                                                                                                                                                    
 ---------------------------------------------------------------------
  Sort (actual rows=0 loops=1)
    Sort Key: (((public.vector(bson_extract_vector(agg_stage_0.document, 'v'::text), 3, true) OPERATOR(public.<=>) '[3,4.9,1]'::public.vector) + '0'::double precision))
@@ -196,7 +196,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
                      CosmosSearch Custom Params: { "efSearch" : 1, "iterativeScan" : "relaxed_order" }
                      ->  Index Scan using foo_1 on documents_8401_8400002 collection (actual rows=0 loops=1)
                            Order By: (public.vector(bson_extract_vector(document, 'v'::text), 3, true) OPERATOR(public.<=>) '[3,4.9,1]'::public.vector)
-                           Filter: ((document @< '{ "_id" : { "$numberInt" : "5" } }'::bson) AND (object_id < '{ "" : { "$numberInt" : "5" } }'::bson) AND bson_search_param(document, '{ "efSearch" : { "$numberInt" : "1" }, "iterativeScan" : "relaxed_order" }'::bson))
+                           Filter: ((document @< '{ "_id" : { "$numberInt" : "5" } }'::bson) AND (object_id < '{ "" : { "$numberInt" : "5" } }'::bson) AND (object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson) AND bson_search_param(document, '{ "efSearch" : { "$numberInt" : "1" }, "iterativeScan" : "relaxed_order" }'::bson))
                            Rows Removed by Filter: 102
 (11 rows)
 

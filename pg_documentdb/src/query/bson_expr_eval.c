@@ -459,7 +459,7 @@ ExpressionEval(ExprEvalState *exprEvalState, const pgbsonelement *element)
  * Evaluates an expression given the expression evaluation state against a target
  * value in the pgbson and returns the Datum that is returned by the expression.
  */
-static Datum
+static pg_attribute_no_sanitize_alignment() Datum
 ExpressionEvalForBson(ExprEvalState *exprEvalState, const pgbson *bson)
 {
 	bool isNull = false;

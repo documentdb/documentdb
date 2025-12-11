@@ -102,7 +102,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 188_1
+   ->  Distributed Subplan 42_1
          ->  Limit
                Output: remote_scan.document, remote_scan."?sort?"
                ->  Sort
@@ -127,11 +127,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_document_add_score_field(document, ('1'::double precision OPERATOR(pg_catalog.-) (public.vector(documentdb_api_internal.bson_extract_vector(document, 'v'::text), 3, true) OPERATOR(public.<=>) public.vector(documentdb_api_internal.bson_extract_vector('{ "vector" : [ { "$numberDouble" : "3.0" }, { "$numberDouble" : "4.0" }, { "$numberDouble" : "1.0" } ], "k" : { "$numberInt" : "2" }, "path" : "v", "efSearch" : { "$numberInt" : "100" } }'::documentdb_core.bson, 'vector'::text), 3, true)))) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('188_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_api_internal.bson_document_add_score_field(document, ('1'::double precision OPERATOR(pg_catalog.-) (public.vector(documentdb_api_internal.bson_extract_vector(document, 'v'::text), 3, true) OPERATOR(public.<=>) public.vector(documentdb_api_internal.bson_extract_vector('{ "vector" : [ { "$numberDouble" : "3.0" }, { "$numberDouble" : "4.0" }, { "$numberDouble" : "1.0" } ], "k" : { "$numberInt" : "2" }, "path" : "v", "efSearch" : { "$numberInt" : "100" } }'::documentdb_core.bson, 'vector'::text), 3, true)))) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('42_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_api_internal.bson_document_add_score_field(intermediate_result.document, ('1'::double precision - (vector(documentdb_api_internal.bson_extract_vector(intermediate_result.document, 'v'::text), 3, true) <=> '[3,4,1]'::vector)))
-               Function Call: read_intermediate_result('188_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('42_1'::text, 'binary'::citus_copy_format)
 (32 rows)
 
 ROLLBACK;
@@ -176,10 +176,10 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline_native_vector_filter", "pipeline": [ { "$vectorSearch": { "queryVector": [ 3.0, 4.9, 1.0 ], "limit": 2, "path": "v", "filter": {"a": "some sentence"} } } ], "cursor": {} }');
 ERROR:  The index for filter path 'a' was not found, please check whether the index is created.
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline_native_vector_filter", "pipeline": [ { "$vectorSearch": { "queryVector": [ 3.0, 4.9, 1.0 ], "limit": 1, "path": "v", "filter": {}  } } ], "cursor": {} }');
-                                                                                                                                                       document                                                                                                                                                        
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline_native_vector_filter", "pipeline": [ { "$vectorSearch": { "queryVector": [ 3.0, 4.9, 1.0 ], "limit": 1, "path": "v", "filter": {}  } }, { "$addFields": { "__cosmos_meta__": { "$ceil": { "$multiply": [ "$__cosmos_meta__.score", 1000 ] } } } } ], "cursor": {} }');
+                                                                                                                                        document                                                                                                                                        
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "6" }, "meta" : { "a" : "some sentence", "b" : { "$numberInt" : "1" } }, "c" : true, "v" : [ { "$numberDouble" : "3.0" }, { "$numberDouble" : "5.0" }, { "$numberDouble" : "1.1000000000000000888" } ], "__cosmos_meta__" : { "score" : { "$numberDouble" : "0.14142130855867909855" } } }
+ { "_id" : { "$numberInt" : "6" }, "meta" : { "a" : "some sentence", "b" : { "$numberInt" : "1" } }, "c" : true, "v" : [ { "$numberDouble" : "3.0" }, { "$numberDouble" : "5.0" }, { "$numberDouble" : "1.1000000000000000888" } ], "__cosmos_meta__" : { "$numberDouble" : "142.0" } }
 (1 row)
 
 set documentdb.enableVectorPreFilter = on;

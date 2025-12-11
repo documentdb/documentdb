@@ -44,8 +44,10 @@ RUN echo "deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg m
     rm -rf /var/lib/apt/lists/*
 
 # install mongosh
-RUN curl https://downloads.mongodb.com/compass/mongodb-mongosh_2.5.6_amd64.deb -o mongodb-mongosh_2.5.6_amd64.deb \
-         && dpkg -i mongodb-mongosh_2.5.6_amd64.deb && rm mongodb-mongosh_2.5.6_amd64.deb
+RUN ARCH=$(dpkg --print-architecture) && \
+    curl https://downloads.mongodb.com/compass/mongodb-mongosh_2.5.6_${ARCH}.deb -o mongodb-mongosh_2.5.6_${ARCH}.deb && \
+    dpkg -i mongodb-mongosh_2.5.6_${ARCH}.deb && \
+    rm mongodb-mongosh_2.5.6_${ARCH}.deb
 
 # Prepare for running install scripts
 ENV CLEANUP_SETUP=1
@@ -66,9 +68,9 @@ COPY scripts/utils.sh /tmp/install_setup/
 COPY scripts/install_setup_postgres.sh /tmp/install_setup/
 RUN [ "bin/bash", "-c", "/tmp/install_setup/install_setup_postgres.sh -d \"/usr/lib/postgresql/${PG_VERSION}\" $POSTGRES_INSTALL_ARG -v ${PG_VERSION}" ]
 
-# Install RUM from source
+# Install RUM from source (only for PG versions < 18)
 COPY scripts/install_setup_rum_oss.sh /tmp/install_setup/
-RUN [ "bin/bash", "-c", "PGVERSION=$PG_VERSION /tmp/install_setup/install_setup_rum_oss.sh" ]
+RUN [ "bin/bash", "-c", "if [ \"${PG_VERSION:-0}\" -lt 18 ]; then PGVERSION=$PG_VERSION /tmp/install_setup/install_setup_rum_oss.sh; else echo 'Skipping public RUM install for PG_VERSION' ${PG_VERSION}; fi" ]
 
 # Install citus
 COPY scripts/install_setup_citus_core_oss.sh /tmp/install_setup/

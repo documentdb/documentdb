@@ -1089,8 +1089,8 @@ ParseAndSetFrameOption(const bson_value_t *value, WindowClause *windowClause,
 	const char *frameName = isDocumentFrame ? "documents" : "range";
 
 	uint32 index = 0;
-	bson_value_t boundsInterval[2] = {
-		{ 0 }, { 0 }
+	bson_value_t boundsInterval[3] = {
+		{ 0 }, { 0 }, { 0 }
 	};
 	while (bson_iter_next(&frameIter))
 	{

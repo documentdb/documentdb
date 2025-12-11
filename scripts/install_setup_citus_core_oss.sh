@@ -21,8 +21,9 @@ scriptDir="$( cd -P "$( dirname "$source" )" && pwd )"
 . $scriptDir/setup_versions.sh
 CITUS_REF=$(GetCitusVersion $citusVersion)
 
+# todo: remove this check once we have a stable Citus version for PG18
 if [ "${PGVERSION:-}" == "18" ]; then
-    echo "Skipping Citus install for PG18"
+    echo "Skipping Citus install for PG18, also need to skip distributed tests for now."
     exit 0
 fi
 

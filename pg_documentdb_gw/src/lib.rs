@@ -44,8 +44,10 @@ use crate::{
     protocol::header::Header,
     requests::{request_tracker::RequestTracker, Request, RequestIntervalKind},
     responses::{CommandError, Response},
-    telemetry::client_info::parse_client_info,
-    telemetry::TelemetryProvider,
+    telemetry::{
+        client_info::parse_client_info, error_code_to_status_code, event_id::EventId,
+        TelemetryProvider,
+    },
 };
 
 // TCP keepalive configuration constants
@@ -162,7 +164,7 @@ where
     let (tcp_stream, peer_address) = stream_and_address?;
 
     let connection_id = Uuid::new_v4();
-    log::info!(activity_id = connection_id.to_string().as_str(); "New TCP connection established");
+    log::info!(activity_id = connection_id.to_string().as_str(); "Accepted new TCP connection");
 
     // Configure TCP stream
     tcp_stream.set_nodelay(true)?;
@@ -197,7 +199,12 @@ where
         }
     };
 
-    let conn_ctx = ConnectionContext::new(
+    log::info!(
+        activity_id = connection_id.to_string().as_str();
+        "TCP connection established - Connection Id {connection_id}, client IP {ip_address}"
+    );
+
+    let connection_context = ConnectionContext::new(
         service_context,
         telemetry,
         ip_address.to_string(),
@@ -212,7 +219,7 @@ where
         tls_stream,
     );
 
-    handle_stream::<T>(buffered_stream, conn_ctx).await;
+    handle_stream::<T>(buffered_stream, connection_context).await;
     Ok(())
 }
 
@@ -265,6 +272,7 @@ where
                     &connection_context,
                     e,
                     &mut stream,
+                    connection_activity_id_as_str,
                 )
                 .await
                 {
@@ -283,11 +291,20 @@ async fn get_response<T>(
 where
     T: PgDataClient,
 {
-    if !connection_context.auth_state.authorized
-        || request_context.payload.request_type().handle_with_auth()
-    {
+    if request_context.payload.request_type().handle_with_auth() {
         let response = auth::process::<T>(connection_context, request_context).await?;
         return Ok(response);
+    }
+
+    if !*connection_context.auth_state.is_authorized().read().await {
+        if *connection_context.auth_state.auth_kind() == Some(auth::AuthKind::ExternalIdentity) {
+            return Err(DocumentDBError::reauthentication_required(
+                "External identity token has expired.".to_string(),
+            ));
+        } else {
+            let response = auth::process::<T>(connection_context, request_context).await?;
+            return Ok(response);
+        }
     }
 
     // Once authorized, make sure that there is a pool of pg clients for the user/password.
@@ -326,9 +343,6 @@ where
         .send_shutdown_responses()
         .await
     {
-        // Log duration before returning
-        log_verbose_latency(connection_context, &request_tracker, activity_id).await;
-
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::ShutdownInProgress,
             "Graceful shutdown requested".to_string(),
@@ -350,7 +364,7 @@ where
     };
 
     let mut collection = String::new();
-    let result = handle_request::<T>(
+    let request_result = handle_request::<T>(
         connection_context,
         header,
         &mut request_context,
@@ -360,12 +374,10 @@ where
     )
     .await;
 
-    log_verbose_latency(connection_context, request_context.tracker, activity_id).await;
-
     // Errors in request handling are handled explicitly so that telemetry can have access to the request
     // Returns Ok afterwards so that higher level error telemetry is not invoked.
-    if let Err(e) = result {
-        if let Err(e) = log_and_write_error(
+    let command_error = if let Err(e) = request_result {
+        match log_and_write_error(
             connection_context,
             header,
             &e,
@@ -377,8 +389,22 @@ where
         )
         .await
         {
-            log::error!(activity_id = activity_id; "Couldn't reply with error {e:?}.");
+            Ok(command_error) => Some(command_error),
+            Err(write_err) => {
+                log::error!(activity_id = activity_id; "Couldn't reply with error {write_err:?}.");
+                None
+            }
         }
+    } else {
+        None
+    };
+
+    if connection_context
+        .dynamic_configuration()
+        .enable_verbose_logging_in_gateway()
+        .await
+    {
+        log_verbose_latency(connection_context, &request_context, command_error.as_ref()).await;
     }
 
     Ok(())
@@ -451,12 +477,13 @@ async fn log_and_write_error(
     collection: Option<String>,
     request_tracker: &mut RequestTracker,
     activity_id: &str,
-) -> Result<()> {
-    let error_response = CommandError::from_error(connection_context, e).await;
-    let response = error_response.to_raw_document_buf()?;
+) -> Result<CommandError> {
+    let command_error = CommandError::from_error(connection_context, e, activity_id).await;
+    let response = command_error.to_raw_document_buf()?;
 
     responses::writer::write_and_flush(header, &response, stream).await?;
 
+    // telemetry can block so do it after write and flush.
     log::error!(activity_id = activity_id; "Request failure: {e}");
 
     if let Some(telemetry) = connection_context.telemetry_provider.as_ref() {
@@ -465,7 +492,7 @@ async fn log_and_write_error(
                 connection_context,
                 header,
                 request,
-                Right((&error_response, response.as_bytes().len())),
+                Right((&command_error, response.as_bytes().len())),
                 collection.unwrap_or_default(),
                 request_tracker,
                 activity_id,
@@ -474,30 +501,44 @@ async fn log_and_write_error(
             .await;
     }
 
-    Ok(())
+    Ok(command_error)
 }
 
 async fn log_verbose_latency(
     connection_context: &mut ConnectionContext,
-    request_tracker: &RequestTracker,
-    activity_id: &str,
+    request_context: &RequestContext<'_>,
+    e: Option<&CommandError>,
 ) {
-    if connection_context
-        .dynamic_configuration()
-        .enable_verbose_logging_in_gateway()
-        .await
-    {
-        log::info!(
-            activity_id = activity_id;
-            "Latency for Mongo Request. BufferRead={}ns, HandleRequest={}ns, FormatRequest={}ns, ProcessRequest={}ns, PostgresBeginTransaction={}ns, PostgresSetStatementTimeout={}ns, PostgresTransactionCommit={}ns, FormatResponse={}ns",
-            request_tracker.get_interval_elapsed_time(RequestIntervalKind::BufferRead),
-            request_tracker.get_interval_elapsed_time(RequestIntervalKind::HandleRequest),
-            request_tracker.get_interval_elapsed_time(RequestIntervalKind::FormatRequest),
-            request_tracker.get_interval_elapsed_time(RequestIntervalKind::ProcessRequest),
-            request_tracker.get_interval_elapsed_time(RequestIntervalKind::PostgresBeginTransaction),
-            request_tracker.get_interval_elapsed_time(RequestIntervalKind::PostgresSetStatementTimeout),
-            request_tracker.get_interval_elapsed_time(RequestIntervalKind::PostgresTransactionCommit),
-            request_tracker.get_interval_elapsed_time(RequestIntervalKind::FormatResponse)
-        );
-    }
+    let database_name = request_context.info.db().unwrap_or_default();
+    let collection_name = request_context.info.collection().unwrap_or_default();
+    let request_type = request_context.payload.request_type().to_string();
+
+    let (status_code, error_code) = if let Some(error) = e {
+        let code = error.code;
+        (error_code_to_status_code(code), code)
+    } else {
+        (200, 0)
+    };
+
+    log::info!(
+        activity_id = request_context.activity_id,
+        event_id = EventId::RequestTrace;
+        "Latency for Mongo Request with interval timings (ns): BufferRead={}, HandleRequest={}, FormatRequest={}, ProcessRequest={}, PostgresBeginTransaction={}, PostgresSetStatementTimeout={}, PostgresTransactionCommit={}, FormatResponse={}, Address={}, TransportProtocol={}, DatabaseName={}, CollectionName={}, OperationName={}, StatusCode={}, SubStatusCode={}, ErrorCode={}",
+        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::BufferRead),
+        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::HandleRequest),
+        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::FormatRequest),
+        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::ProcessRequest),
+        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::PostgresBeginTransaction),
+        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::PostgresSetStatementTimeout),
+        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::PostgresTransactionCommit),
+        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::FormatResponse),
+        connection_context.ip_address,
+        connection_context.transport_protocol(),
+        database_name,
+        collection_name,
+        request_type,
+        status_code,
+        0, // SubStatusCode is not used currently in Rust
+        error_code
+    );
 }

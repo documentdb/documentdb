@@ -436,7 +436,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pa
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }, { "$limit": 1 }, { "$addFields": { "c": "$a" }}]}');
                                                                                                 filtereddoc                                                                                                | docsize | continuationfiltered | persistconnection 
 ---------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.get_aggregation_cursor_test" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "3" } ] } | 1200131 |                      | t
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.get_aggregation_cursor_test" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "3" } ] } | 1200131 |                      | f
                                                                                                                                                                                                            |         |                      | f
 (2 rows)
 

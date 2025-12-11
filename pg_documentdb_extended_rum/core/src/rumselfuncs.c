@@ -25,8 +25,6 @@
 
 #include "pg_documentdb_rum.h"
 
-PGDLLEXPORT bool RumEnableCustomCostEstimate = RUM_DEFAULT_ENABLE_CUSTOM_COST_ESTIMATE;
-
 #define DEFAULT_PAGE_CPU_MULTIPLIER 50.0
 
 typedef struct

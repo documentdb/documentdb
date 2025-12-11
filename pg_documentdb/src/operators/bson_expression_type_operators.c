@@ -1050,8 +1050,7 @@ ProcessDollarType(const bson_value_t *currentValue, bson_value_t *result)
 
 	/* We need to cover the case where the expression is a field path and it doesn't exist, for compatibility, the expected behavior is to return 'missing'.
 	 * However, 'missing' is not a valid type name for other ops, so we cover here rather than in the common BsonTypeName method. */
-	char *name = type == BSON_TYPE_EOD ?
-				 MISSING_TYPE_NAME : BsonTypeName(type);
+	char *name = BsonTypeNameExtended(type);
 
 	result->value_type = BSON_TYPE_UTF8;
 	result->value.v_utf8.str = name;
@@ -2192,12 +2191,11 @@ pg_attribute_noreturn()
 ThrowInvalidConversionError(bson_type_t sourceType, bson_type_t targetType)
 {
 	/* Only target type name can be "missing". */
-	const char *targetTypeName = targetType == BSON_TYPE_EOD ?
-								 MISSING_TYPE_NAME : BsonTypeName(targetType);
+	const char *targetTypeName = BsonTypeNameExtended(targetType);
 
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CONVERSIONFAILURE), errmsg(
 						"Unsupported conversion from %s to %s in $convert with no onError value",
-						BsonTypeName(sourceType), targetTypeName)));
+						BsonTypeNameExtended(sourceType), targetTypeName)));
 }
 
 

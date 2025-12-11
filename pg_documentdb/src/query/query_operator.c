@@ -40,6 +40,7 @@
 #include "types/decimal128.h"
 #include "utils/documentdb_errors.h"
 #include "commands/defrem.h"
+#include "opclass/bson_gin_index_types_core.h"
 #include "geospatial/bson_geospatial_common.h"
 #include "geospatial/bson_geospatial_geonear.h"
 #include "geospatial/bson_geospatial_shape_operators.h"
@@ -111,6 +112,7 @@ typedef struct IdFilterWalkerContext
 extern bool EnableCollation;
 extern bool EnableLetAndCollationForQueryMatch;
 extern bool EnableVariablesSupportForWriteCommands;
+extern bool EnableIdIndexPushdown;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -3179,7 +3181,7 @@ CreateNonShardedShardKeyValueFilter(int collectionVarno, const
 /*
  * Creates a basic object_id <op> <value> op_expr for a given collection var.
  */
-static Expr *
+Expr *
 MakeSimpleIdExpr(const bson_value_t *filterValue, Index collectionVarno, Oid operatorId)
 {
 	pgbson *qualValue = BsonValueToDocumentPgbson(filterValue);
@@ -3198,6 +3200,47 @@ MakeSimpleIdExpr(const bson_value_t *filterValue, Index collectionVarno, Oid ope
 										   (Expr *) documentIdConst, InvalidOid,
 										   InvalidOid);
 	return documentIdFilter;
+}
+
+
+Expr *
+MakeLowerBoundIdExpr(const bson_value_t *filterValue, Index collectionVarno)
+{
+	bson_value_t minBound = { 0 };
+
+	if (filterValue->value_type == BSON_TYPE_MAXKEY)
+	{
+		minBound.value_type = BSON_TYPE_MINKEY;
+	}
+	else
+	{
+		minBound = GetLowerBound(filterValue->value_type);
+	}
+
+	return MakeSimpleIdExpr(&minBound, collectionVarno,
+							BsonGreaterThanEqualOperatorId());
+}
+
+
+Expr *
+MakeUpperBoundIdExpr(const bson_value_t *filterValue, Index collectionVarno)
+{
+	/* Since btree doesn't do type bracketing - apply type bracketing here */
+	bool isUpperBoundInclusive = false;
+	bson_value_t maxBound = { 0 };
+	if (filterValue->value_type == BSON_TYPE_MINKEY)
+	{
+		isUpperBoundInclusive = true;
+		maxBound.value_type = BSON_TYPE_MAXKEY;
+	}
+	else
+	{
+		maxBound = GetUpperBound(filterValue->value_type,
+								 &isUpperBoundInclusive);
+	}
+	return MakeSimpleIdExpr(&maxBound, collectionVarno,
+							isUpperBoundInclusive ?
+							BsonLessThanEqualOperatorId() : BsonLessThanOperatorId());
 }
 
 
@@ -3288,6 +3331,16 @@ CheckAndAddIdFilter(List *opArgs, IdFilterWalkerContext *context,
 														  context->collectionVarno,
 														  BsonGreaterThanOperatorId());
 				context->idQuals = lappend(context->idQuals, documentIdFilter);
+
+				/* Since btree doesn't do type bracketing - apply type bracketing here */
+				if (EnableIdIndexPushdown)
+				{
+					documentIdFilter =
+						MakeUpperBoundIdExpr(&qualElement.bsonValue,
+											 context->collectionVarno);
+					context->idQuals = lappend(context->idQuals, documentIdFilter);
+				}
+
 				return;
 			}
 
@@ -3297,6 +3350,14 @@ CheckAndAddIdFilter(List *opArgs, IdFilterWalkerContext *context,
 														  context->collectionVarno,
 														  BsonLessThanOperatorId());
 				context->idQuals = lappend(context->idQuals, documentIdFilter);
+
+				/* Since btree doesn't do type bracketing - apply type bracketing here */
+				if (EnableIdIndexPushdown)
+				{
+					documentIdFilter = MakeLowerBoundIdExpr(&qualElement.bsonValue,
+															context->collectionVarno);
+					context->idQuals = lappend(context->idQuals, documentIdFilter);
+				}
 				return;
 			}
 
@@ -3307,6 +3368,16 @@ CheckAndAddIdFilter(List *opArgs, IdFilterWalkerContext *context,
 														  context->collectionVarno,
 														  BsonGreaterThanEqualOperatorId());
 				context->idQuals = lappend(context->idQuals, documentIdFilter);
+
+				/* Since btree doesn't do type bracketing - apply type bracketing here */
+				if (EnableIdIndexPushdown)
+				{
+					documentIdFilter =
+						MakeUpperBoundIdExpr(&qualElement.bsonValue,
+											 context->collectionVarno);
+					context->idQuals = lappend(context->idQuals, documentIdFilter);
+				}
+
 				return;
 			}
 
@@ -3316,6 +3387,15 @@ CheckAndAddIdFilter(List *opArgs, IdFilterWalkerContext *context,
 														  context->collectionVarno,
 														  BsonLessThanEqualOperatorId());
 				context->idQuals = lappend(context->idQuals, documentIdFilter);
+
+				/* Since btree doesn't do type bracketing - apply type bracketing here */
+				if (EnableIdIndexPushdown)
+				{
+					documentIdFilter = MakeLowerBoundIdExpr(&qualElement.bsonValue,
+															context->collectionVarno);
+					context->idQuals = lappend(context->idQuals, documentIdFilter);
+				}
+
 				return;
 			}
 

@@ -24,8 +24,6 @@
 #include "utils/storage_utils.h"
 #include "utils/version_utils.h"
 
-extern bool EnableCompact;
-
 typedef struct CompactArgs
 {
 	/* The name of the database */
@@ -96,13 +94,6 @@ command_compact(PG_FUNCTION_ARGS)
 	}
 
 	ReportFeatureUsage(FEATURE_COMMAND_COMPACT);
-
-	if (!EnableCompact)
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-						errmsg(
-							"Compact command functionality is currently unsupported")));
-	}
 
 	CompactArgs args;
 	memset(&args, 0, sizeof(CompactArgs));

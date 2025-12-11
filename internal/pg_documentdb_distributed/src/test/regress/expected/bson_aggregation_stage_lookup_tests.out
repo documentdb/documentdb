@@ -2191,3 +2191,1172 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                        Function Call: bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'lookup_count'::text)
 (25 rows)
 
+SELECT documentdb_api.create_collection('db', 'tenantCollection');
+psql:sql/bson_aggregation_stage_lookup_tests_core.sql:746: NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.create_collection('db', 'candidateRequest');
+psql:sql/bson_aggregation_stage_lookup_tests_core.sql:747: NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert('db','{ "insert" : "tenantCollection",  
+"documents" : [
+{"_id": 1, "name": "Tenant 1", "archived": false },
+{"_id": 2, "name": "Tenant 2", "archived": false },
+{"_id": 3, "name": "Tenant 3", "archived": false },
+{"_id": 4, "name": "Tenant 4", "archived": false },
+{"_id": 5, "name": "Tenant 5", "archived": false },
+{"_id": 6, "name": "Tenant 6", "archived": false },
+{"_id": 7, "name": "Tenant 7", "archived": false },
+{"_id": 8, "name": "Tenant 8", "archived": false },
+{"_id": 9, "name": "Tenant 9", "archived": false },
+{"_id": 10, "name": "Tenant 10", "archived": false }
+]}');
+                                         insert                                          
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""10"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT documentdb_api.insert('db','{ "insert" : "candidateRequest",  
+"documents" : [
+{ "_id": 101, "tenantId": 1, "candidateId": 201, "status": "closed", "createdAt": "2025-08-14T21:50:54.099Z" },
+{ "_id": 102, "tenantId": 2, "candidateId": 202, "status": "open", "createdAt": "2025-08-15T10:15:22.399Z" },
+{ "_id": 103, "tenantId": 3, "candidateId": 203, "status": "closed", "createdAt": "2025-08-16T08:20:14.221Z" },
+{ "_id": 104, "tenantId": 4, "candidateId": 204, "status": "closed", "createdAt": "2025-08-17T12:47:11.912Z" },
+{ "_id": 105, "tenantId": 5, "candidateId": 205, "status": "open", "createdAt": "2025-08-18T09:32:44.511Z" },
+{ "_id": 106, "tenantId": 6, "candidateId": 206, "status": "closed", "createdAt": "2025-08-19T14:05:31.742Z" },
+{ "_id": 107, "tenantId": 7, "candidateId": 207, "status": "closed", "createdAt": "2025-08-20T11:18:58.287Z" },
+{ "_id": 108, "tenantId": 8, "candidateId": 208, "status": "open", "createdAt": "2025-08-21T07:44:21.663Z" },
+{ "_id": 109, "tenantId": 9, "candidateId": 209, "status": "closed", "createdAt": "2025-08-22T16:13:49.984Z" },
+{ "_id": 110, "tenantId": 10, "candidateId": 210, "status": "closed", "createdAt": "2025-08-23T19:28:33.527Z" }
+]}');
+                                         insert                                          
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""10"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{
+     "createIndexes": "candidateRequest",
+     "indexes": [
+       {"key": {"tenantId": 1}, "name": "idx_candidateRequest_tenantId"}
+     ]
+   }',
+   true
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- This Transaction shows buggy output we will remove this GUC soon and will remove this test as well
+BEGIN;
+SET LOCAL documentdb.enableUseLookupNewProjectInlineMethod TO off;
+SELECT document FROM bson_aggregation_pipeline(
+    'db',
+    '{
+      "aggregate": "tenantCollection",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "candidateRequest",
+            "localField": "_id",
+            "foreignField": "tenantId",
+            "as": "requests",
+            "pipeline": [
+              { "$match": { "status": { "$ne": "unopened" } } },
+              { "$project": { "status": 1, "candidateId": 1 } }
+            ]
+          }
+        }
+      ]
+    }'
+);
+                                             document                                             
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "name" : "Tenant 1", "archived" : false, "requests" : [  ] }
+ { "_id" : { "$numberInt" : "2" }, "name" : "Tenant 2", "archived" : false, "requests" : [  ] }
+ { "_id" : { "$numberInt" : "3" }, "name" : "Tenant 3", "archived" : false, "requests" : [  ] }
+ { "_id" : { "$numberInt" : "4" }, "name" : "Tenant 4", "archived" : false, "requests" : [  ] }
+ { "_id" : { "$numberInt" : "5" }, "name" : "Tenant 5", "archived" : false, "requests" : [  ] }
+ { "_id" : { "$numberInt" : "6" }, "name" : "Tenant 6", "archived" : false, "requests" : [  ] }
+ { "_id" : { "$numberInt" : "7" }, "name" : "Tenant 7", "archived" : false, "requests" : [  ] }
+ { "_id" : { "$numberInt" : "8" }, "name" : "Tenant 8", "archived" : false, "requests" : [  ] }
+ { "_id" : { "$numberInt" : "9" }, "name" : "Tenant 9", "archived" : false, "requests" : [  ] }
+ { "_id" : { "$numberInt" : "10" }, "name" : "Tenant 10", "archived" : false, "requests" : [  ] }
+(10 rows)
+
+ROLLBACK;
+BEGIN;
+SET LOCAL  documentdb.enableUseLookupNewProjectInlineMethod TO on;
+SET LOCAL enable_seqscan TO off;
+SELECT document FROM bson_aggregation_pipeline(
+    'db',
+    '{
+      "aggregate": "tenantCollection",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "candidateRequest",
+            "localField": "_id",
+            "foreignField": "tenantId",
+            "as": "requests",
+            "pipeline": [
+              { "$match": { "status": { "$ne": "unopened" } } },
+              { "$project": { "status": 1, "candidateId": 1 } }
+            ]
+          }
+        }
+      ]
+    }'
+);
+                                                                                              document                                                                                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "name" : "Tenant 1", "archived" : false, "requests" : [ { "_id" : { "$numberInt" : "101" }, "candidateId" : { "$numberInt" : "201" }, "status" : "closed" } ] }
+ { "_id" : { "$numberInt" : "2" }, "name" : "Tenant 2", "archived" : false, "requests" : [ { "_id" : { "$numberInt" : "102" }, "candidateId" : { "$numberInt" : "202" }, "status" : "open" } ] }
+ { "_id" : { "$numberInt" : "3" }, "name" : "Tenant 3", "archived" : false, "requests" : [ { "_id" : { "$numberInt" : "103" }, "candidateId" : { "$numberInt" : "203" }, "status" : "closed" } ] }
+ { "_id" : { "$numberInt" : "4" }, "name" : "Tenant 4", "archived" : false, "requests" : [ { "_id" : { "$numberInt" : "104" }, "candidateId" : { "$numberInt" : "204" }, "status" : "closed" } ] }
+ { "_id" : { "$numberInt" : "5" }, "name" : "Tenant 5", "archived" : false, "requests" : [ { "_id" : { "$numberInt" : "105" }, "candidateId" : { "$numberInt" : "205" }, "status" : "open" } ] }
+ { "_id" : { "$numberInt" : "6" }, "name" : "Tenant 6", "archived" : false, "requests" : [ { "_id" : { "$numberInt" : "106" }, "candidateId" : { "$numberInt" : "206" }, "status" : "closed" } ] }
+ { "_id" : { "$numberInt" : "7" }, "name" : "Tenant 7", "archived" : false, "requests" : [ { "_id" : { "$numberInt" : "107" }, "candidateId" : { "$numberInt" : "207" }, "status" : "closed" } ] }
+ { "_id" : { "$numberInt" : "8" }, "name" : "Tenant 8", "archived" : false, "requests" : [ { "_id" : { "$numberInt" : "108" }, "candidateId" : { "$numberInt" : "208" }, "status" : "open" } ] }
+ { "_id" : { "$numberInt" : "9" }, "name" : "Tenant 9", "archived" : false, "requests" : [ { "_id" : { "$numberInt" : "109" }, "candidateId" : { "$numberInt" : "209" }, "status" : "closed" } ] }
+ { "_id" : { "$numberInt" : "10" }, "name" : "Tenant 10", "archived" : false, "requests" : [ { "_id" : { "$numberInt" : "110" }, "candidateId" : { "$numberInt" : "210" }, "status" : "closed" } ] }
+(10 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline(
+    'db',
+    '{
+      "aggregate": "tenantCollection",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "candidateRequest",
+            "localField": "_id",
+            "foreignField": "tenantId",
+            "as": "requests",
+            "pipeline": [
+              { "$match": { "status": { "$ne": "unopened" } } },
+              { "$project": { "status": 1, "candidateId": 1 } }
+            ]
+          }
+        }
+      ]
+    }'
+);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents("left", (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "status" : { "$numberInt" : "1" }, "candidateId" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requests'::text), '{ "requests" : [  ] }'::documentdb_core.bson) AS "funcName" FROM documentdb_api_catalog.bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'requests'::text) lookup_subpipeline_substage_0(lookup_unwind)), true) AS document FROM (SELECT lookup_stage_1.document AS "left", "lookupRight_stage_1".document AS "right" FROM ((SELECT collection.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "tenantId" : "_id" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6024_60401 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '6024'::bigint)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'requests'::text), '{ "requests" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT collection_0_1.document FROM documentdb_data.documents_6025_60418 collection_0_1 WHERE (documentdb_api_catalog.bson_dollar_ne(collection_0_1.document, '{ "status" : "unopened" }'::documentdb_core.bson) AND (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '6025'::bigint))) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_0.document, lookup_stage_1.lookup_filter, 'tenantId'::text)) "lookupRight_stage_1" ON (true))) lookup_non_inlined_stage_1
+         Node: host=localhost port=58070 dbname=regression
+         ->  Nested Loop
+               Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (SubPlan 1), true)
+               ->  Bitmap Heap Scan on documentdb_data.documents_6024_60401 collection
+                     Output: collection.shard_key_value, collection.object_id, collection.document
+                     Recheck Cond: (collection.shard_key_value = '6024'::bigint)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection.shard_key_value = '6024'::bigint)
+               ->  Aggregate
+                     Output: COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_1.document, 'requests'::text), '{ "requests" : [  ] }'::documentdb_core.bson)
+                     ->  Index Scan using "idx_candidateRequest_tenantId" on documentdb_data.documents_6025_60418 collection_0_1
+                           Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                           Index Cond: (collection_0_1.document OPERATOR(documentdb_api_catalog.@*=) documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "tenantId" : "_id" }'::documentdb_core.bson))
+                           Filter: ((collection_0_1.document OPERATOR(documentdb_api_catalog.@!=) '{ "status" : "unopened" }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "tenantId" : "_id" }'::documentdb_core.bson), 'tenantId'::text))
+               SubPlan 1
+                 ->  Aggregate
+                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "status" : { "$numberInt" : "1" }, "candidateId" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requests'::text), '{ "requests" : [  ] }'::documentdb_core.bson)
+                       ->  Function Scan on documentdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
+                             Output: lookup_subpipeline_substage_0.lookup_unwind
+                             Function Call: documentdb_api_catalog.bson_lookup_unwind((COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_1.document, 'requests'::text), '{ "requests" : [  ] }'::documentdb_core.bson)), 'requests'::text)
+(26 rows)
+
+ROLLBACK;
+-- Test nested lookup with multiple levels
+SELECT documentdb_api.insert_one('db','users','{ "_id" : 1, "customerCode": "C100", "name": "Nimisha Doshi" }', NULL);
+psql:sql/bson_aggregation_stage_lookup_tests_core.sql:860: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','users','{ "_id" : 2, "customerCode": "C101", "name": "Parag Jain" }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','orders','{ "_id" : 1,  "orderId": 1, "customerCode": "C100", "productCode": "P200" }', NULL);
+psql:sql/bson_aggregation_stage_lookup_tests_core.sql:863: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','orders','{ "_id" : 2, "orderId": 2, "customerCode": "C100", "productCode": "P201" }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','orders','{ "_id" : 3, "orderId": 3, "customerCode": "C101", "productCode": "P200" }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','products','{ "_id" : 1, "productCode": "P200", "title": "Laptop", "price": 55000 }', NULL);
+psql:sql/bson_aggregation_stage_lookup_tests_core.sql:867: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','products','{ "_id" : 2, "productCode": "P201", "title": "Headphones", "price": 2000 }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Create indexes
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{
+     "createIndexes": "users",
+     "indexes": [
+       {"key": {"customerCode": 1}, "name": "idx_users_customerCode"}
+     ]
+   }',
+   true
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{
+     "createIndexes": "orders",
+     "indexes": [
+       {"key": {"customerCode": 1}, "name": "idx_orders_customerCode"},
+       {"key": {"productCode": 1}, "name": "idx_orders_productCode"}
+     ]
+   }',
+   true
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{
+     "createIndexes": "products",
+     "indexes": [
+       {"key": {"productCode": 1}, "name": "idx_products_productCode"}
+     ]
+   }',
+   true
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Execute nested lookup aggregation
+SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "productCode": 1
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+                                                                                                            document                                                                                                             
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "customerCode" : "C100", "name" : "Nimisha Doshi", "requested" : [ { "_id" : { "$numberInt" : "1" }, "productCode" : "P200" }, { "_id" : { "$numberInt" : "2" }, "productCode" : "P201" } ] }
+ { "_id" : { "$numberInt" : "2" }, "customerCode" : "C101", "name" : "Parag Jain", "requested" : [ { "_id" : { "$numberInt" : "3" }, "productCode" : "P200" } ] }
+(2 rows)
+
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+-- Now run explain verbose to check that if projection is modifying or removing doc we don't pushdown
+-- 1. when join field is in inclusion projection, should pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "customerCode": 1
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1.document, "lookupRight_stage_1".document, true) AS document FROM ((SELECT collection.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "customerCode" : "customerCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6026_60433 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '6026'::bigint)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_api_internal.bson_dollar_project(agg_stage_sub_1_2.document, '{ "customerCode" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1_1.document, "lookupRight_stage_sub_1_1".document, true) AS document FROM ((SELECT collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6027_60450 collection_0_1 WHERE ((documentdb_api_catalog.bson_dollar_in(collection_0_1.document, '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson) AND (collection_0_1.document OPERATOR(documentdb_api_internal.##=) ANY (ARRAY['{ "customerCode" : "C100" }'::documentdb_api_internal.bsonindexbounds, '{ "customerCode" : "C101" }'::documentdb_api_internal.bsonindexbounds]))) AND (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '6027'::bigint))) lookup_stage_1_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_1.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT collection_0_2.document FROM documentdb_data.documents_6028_60466 collection_0_2 WHERE (collection_0_2.shard_key_value OPERATOR(pg_catalog.=) '6028'::bigint)) lookup_right_query_stage_1 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_1.document, lookup_stage_1_1.lookup_filter, 'productCode'::text)) "lookupRight_stage_sub_1_1" ON (true))) agg_stage_sub_1_2) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_0.document, lookup_stage_1.lookup_filter, 'customerCode'::text)) "lookupRight_stage_1" ON (true))
+         Node: host=localhost port=58070 dbname=regression
+         ->  Nested Loop
+               Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), '{ "customerCode" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)), true)
+               ->  Index Scan using _id_ on documentdb_data.documents_6026_60433 collection
+                     Output: collection.shard_key_value, collection.object_id, collection.document
+                     Index Cond: (collection.shard_key_value = '6026'::bigint)
+               ->  Aggregate
+                     Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), '{ "customerCode" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                     ->  Nested Loop
+                           Output: collection_0_1.document, "lookupRight_stage_sub_1_1".document
+                           Inner Unique: true
+                           ->  Index Scan using "idx_orders_customerCode" on documentdb_data.documents_6027_60450 collection_0_1
+                                 Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                                 Index Cond: (collection_0_1.document OPERATOR(documentdb_api_catalog.@*=) '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson)
+                           ->  Subquery Scan on "lookupRight_stage_sub_1_1"
+                                 Output: "lookupRight_stage_sub_1_1".document
+                                 Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), '{ "customerCode" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "customerCode" : "customerCode" }'::documentdb_core.bson), 'customerCode'::text)
+                                 ->  Aggregate
+                                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_2.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson)
+                                       ->  Index Scan using "idx_products_productCode" on documentdb_data.documents_6028_60466 collection_0_2
+                                             Output: collection_0_2.shard_key_value, collection_0_2.object_id, collection_0_2.document
+                                             Index Cond: (collection_0_2.document OPERATOR(documentdb_api_catalog.@*=) documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson))
+                                             Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson), 'productCode'::text)
+(29 rows)
+
+-- 2. when join field is in exclusion projection, should not pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "customerCode": 0
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents("left", (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "customerCode" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS "funcName" FROM documentdb_api_catalog.bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'requested'::text) lookup_subpipeline_substage_0(lookup_unwind)), true) AS document FROM (SELECT lookup_stage_1.document AS "left", "lookupRight_stage_1".document AS "right" FROM ((SELECT collection.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "customerCode" : "customerCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6026_60433 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '6026'::bigint)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT agg_stage_sub_1_2.document FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1_1.document, "lookupRight_stage_sub_1_1".document, true) AS document FROM ((SELECT collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6027_60450 collection_0_1 WHERE ((documentdb_api_catalog.bson_dollar_in(collection_0_1.document, '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson) AND (collection_0_1.document OPERATOR(documentdb_api_internal.##=) ANY (ARRAY['{ "customerCode" : "C100" }'::documentdb_api_internal.bsonindexbounds, '{ "customerCode" : "C101" }'::documentdb_api_internal.bsonindexbounds]))) AND (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '6027'::bigint))) lookup_stage_1_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_1.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT collection_0_2.document FROM documentdb_data.documents_6028_60466 collection_0_2 WHERE (collection_0_2.shard_key_value OPERATOR(pg_catalog.=) '6028'::bigint)) lookup_right_query_stage_1 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_1.document, lookup_stage_1_1.lookup_filter, 'productCode'::text)) "lookupRight_stage_sub_1_1" ON (true))) agg_stage_sub_1_2) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_0.document, lookup_stage_1.lookup_filter, 'customerCode'::text)) "lookupRight_stage_1" ON (true))) lookup_non_inlined_stage_1
+         Node: host=localhost port=58070 dbname=regression
+         ->  Nested Loop
+               Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (SubPlan 1), true)
+               ->  Index Scan using _id_ on documentdb_data.documents_6026_60433 collection
+                     Output: collection.shard_key_value, collection.object_id, collection.document
+                     Index Cond: (collection.shard_key_value = '6026'::bigint)
+               ->  Aggregate
+                     Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                     ->  Nested Loop
+                           Output: collection_0_1.document, "lookupRight_stage_sub_1_1".document
+                           Inner Unique: true
+                           ->  Index Scan using "idx_orders_customerCode" on documentdb_data.documents_6027_60450 collection_0_1
+                                 Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                                 Index Cond: (collection_0_1.document OPERATOR(documentdb_api_catalog.@*=) '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson)
+                           ->  Subquery Scan on "lookupRight_stage_sub_1_1"
+                                 Output: "lookupRight_stage_sub_1_1".document
+                                 Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "customerCode" : "customerCode" }'::documentdb_core.bson), 'customerCode'::text)
+                                 ->  Aggregate
+                                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_2.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson)
+                                       ->  Index Scan using "idx_products_productCode" on documentdb_data.documents_6028_60466 collection_0_2
+                                             Output: collection_0_2.shard_key_value, collection_0_2.object_id, collection_0_2.document
+                                             Index Cond: (collection_0_2.document OPERATOR(documentdb_api_catalog.@*=) documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson))
+                                             Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson), 'productCode'::text)
+               SubPlan 1
+                 ->  Aggregate
+                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "customerCode" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                       ->  Function Scan on documentdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
+                             Output: lookup_subpipeline_substage_0.lookup_unwind
+                             Function Call: documentdb_api_catalog.bson_lookup_unwind((COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)), 'requested'::text)
+(35 rows)
+
+-- 3. when join field is modified in projection, should not pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "customerCode": "someOtherValue"
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents("left", (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "customerCode" : "someOtherValue" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS "funcName" FROM documentdb_api_catalog.bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'requested'::text) lookup_subpipeline_substage_0(lookup_unwind)), true) AS document FROM (SELECT lookup_stage_1.document AS "left", "lookupRight_stage_1".document AS "right" FROM ((SELECT collection.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "customerCode" : "customerCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6026_60433 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '6026'::bigint)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT agg_stage_sub_1_2.document FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1_1.document, "lookupRight_stage_sub_1_1".document, true) AS document FROM ((SELECT collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6027_60450 collection_0_1 WHERE ((documentdb_api_catalog.bson_dollar_in(collection_0_1.document, '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson) AND (collection_0_1.document OPERATOR(documentdb_api_internal.##=) ANY (ARRAY['{ "customerCode" : "C100" }'::documentdb_api_internal.bsonindexbounds, '{ "customerCode" : "C101" }'::documentdb_api_internal.bsonindexbounds]))) AND (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '6027'::bigint))) lookup_stage_1_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_1.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT collection_0_2.document FROM documentdb_data.documents_6028_60466 collection_0_2 WHERE (collection_0_2.shard_key_value OPERATOR(pg_catalog.=) '6028'::bigint)) lookup_right_query_stage_1 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_1.document, lookup_stage_1_1.lookup_filter, 'productCode'::text)) "lookupRight_stage_sub_1_1" ON (true))) agg_stage_sub_1_2) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_0.document, lookup_stage_1.lookup_filter, 'customerCode'::text)) "lookupRight_stage_1" ON (true))) lookup_non_inlined_stage_1
+         Node: host=localhost port=58070 dbname=regression
+         ->  Nested Loop
+               Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (SubPlan 1), true)
+               ->  Index Scan using _id_ on documentdb_data.documents_6026_60433 collection
+                     Output: collection.shard_key_value, collection.object_id, collection.document
+                     Index Cond: (collection.shard_key_value = '6026'::bigint)
+               ->  Aggregate
+                     Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                     ->  Nested Loop
+                           Output: collection_0_1.document, "lookupRight_stage_sub_1_1".document
+                           Inner Unique: true
+                           ->  Index Scan using "idx_orders_customerCode" on documentdb_data.documents_6027_60450 collection_0_1
+                                 Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                                 Index Cond: (collection_0_1.document OPERATOR(documentdb_api_catalog.@*=) '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson)
+                           ->  Subquery Scan on "lookupRight_stage_sub_1_1"
+                                 Output: "lookupRight_stage_sub_1_1".document
+                                 Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "customerCode" : "customerCode" }'::documentdb_core.bson), 'customerCode'::text)
+                                 ->  Aggregate
+                                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_2.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson)
+                                       ->  Index Scan using "idx_products_productCode" on documentdb_data.documents_6028_60466 collection_0_2
+                                             Output: collection_0_2.shard_key_value, collection_0_2.object_id, collection_0_2.document
+                                             Index Cond: (collection_0_2.document OPERATOR(documentdb_api_catalog.@*=) documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson))
+                                             Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson), 'productCode'::text)
+               SubPlan 1
+                 ->  Aggregate
+                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "customerCode" : "someOtherValue" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                       ->  Function Scan on documentdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
+                             Output: lookup_subpipeline_substage_0.lookup_unwind
+                             Function Call: documentdb_api_catalog.bson_lookup_unwind((COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)), 'requested'::text)
+(35 rows)
+
+-- 4. when there is mix inclusion and exclusion projection, should not pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "customerCode": 1,
+                "productCode": 0
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents("left", (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "customerCode" : { "$numberInt" : "1" }, "productCode" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS "funcName" FROM documentdb_api_catalog.bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'requested'::text) lookup_subpipeline_substage_0(lookup_unwind)), true) AS document FROM (SELECT lookup_stage_1.document AS "left", "lookupRight_stage_1".document AS "right" FROM ((SELECT collection.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "customerCode" : "customerCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6026_60433 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '6026'::bigint)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT agg_stage_sub_1_2.document FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1_1.document, "lookupRight_stage_sub_1_1".document, true) AS document FROM ((SELECT collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6027_60450 collection_0_1 WHERE ((documentdb_api_catalog.bson_dollar_in(collection_0_1.document, '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson) AND (collection_0_1.document OPERATOR(documentdb_api_internal.##=) ANY (ARRAY['{ "customerCode" : "C100" }'::documentdb_api_internal.bsonindexbounds, '{ "customerCode" : "C101" }'::documentdb_api_internal.bsonindexbounds]))) AND (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '6027'::bigint))) lookup_stage_1_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_1.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT collection_0_2.document FROM documentdb_data.documents_6028_60466 collection_0_2 WHERE (collection_0_2.shard_key_value OPERATOR(pg_catalog.=) '6028'::bigint)) lookup_right_query_stage_1 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_1.document, lookup_stage_1_1.lookup_filter, 'productCode'::text)) "lookupRight_stage_sub_1_1" ON (true))) agg_stage_sub_1_2) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_0.document, lookup_stage_1.lookup_filter, 'customerCode'::text)) "lookupRight_stage_1" ON (true))) lookup_non_inlined_stage_1
+         Node: host=localhost port=58070 dbname=regression
+         ->  Nested Loop
+               Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (SubPlan 1), true)
+               ->  Index Scan using _id_ on documentdb_data.documents_6026_60433 collection
+                     Output: collection.shard_key_value, collection.object_id, collection.document
+                     Index Cond: (collection.shard_key_value = '6026'::bigint)
+               ->  Aggregate
+                     Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                     ->  Nested Loop
+                           Output: collection_0_1.document, "lookupRight_stage_sub_1_1".document
+                           Inner Unique: true
+                           ->  Index Scan using "idx_orders_customerCode" on documentdb_data.documents_6027_60450 collection_0_1
+                                 Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                                 Index Cond: (collection_0_1.document OPERATOR(documentdb_api_catalog.@*=) '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson)
+                           ->  Subquery Scan on "lookupRight_stage_sub_1_1"
+                                 Output: "lookupRight_stage_sub_1_1".document
+                                 Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "customerCode" : "customerCode" }'::documentdb_core.bson), 'customerCode'::text)
+                                 ->  Aggregate
+                                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_2.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson)
+                                       ->  Index Scan using "idx_products_productCode" on documentdb_data.documents_6028_60466 collection_0_2
+                                             Output: collection_0_2.shard_key_value, collection_0_2.object_id, collection_0_2.document
+                                             Index Cond: (collection_0_2.document OPERATOR(documentdb_api_catalog.@*=) documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson))
+                                             Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson), 'productCode'::text)
+               SubPlan 1
+                 ->  Aggregate
+                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "customerCode" : { "$numberInt" : "1" }, "productCode" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                       ->  Function Scan on documentdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
+                             Output: lookup_subpipeline_substage_0.lookup_unwind
+                             Function Call: documentdb_api_catalog.bson_lookup_unwind((COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)), 'requested'::text)
+(35 rows)
+
+-- 5. when there is inclusion but join field not included, should not pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "productCode": 1
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents("left", (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "productCode" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS "funcName" FROM documentdb_api_catalog.bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'requested'::text) lookup_subpipeline_substage_0(lookup_unwind)), true) AS document FROM (SELECT lookup_stage_1.document AS "left", "lookupRight_stage_1".document AS "right" FROM ((SELECT collection.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "customerCode" : "customerCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6026_60433 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '6026'::bigint)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT agg_stage_sub_1_2.document FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1_1.document, "lookupRight_stage_sub_1_1".document, true) AS document FROM ((SELECT collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6027_60450 collection_0_1 WHERE ((documentdb_api_catalog.bson_dollar_in(collection_0_1.document, '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson) AND (collection_0_1.document OPERATOR(documentdb_api_internal.##=) ANY (ARRAY['{ "customerCode" : "C100" }'::documentdb_api_internal.bsonindexbounds, '{ "customerCode" : "C101" }'::documentdb_api_internal.bsonindexbounds]))) AND (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '6027'::bigint))) lookup_stage_1_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_1.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT collection_0_2.document FROM documentdb_data.documents_6028_60466 collection_0_2 WHERE (collection_0_2.shard_key_value OPERATOR(pg_catalog.=) '6028'::bigint)) lookup_right_query_stage_1 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_1.document, lookup_stage_1_1.lookup_filter, 'productCode'::text)) "lookupRight_stage_sub_1_1" ON (true))) agg_stage_sub_1_2) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_0.document, lookup_stage_1.lookup_filter, 'customerCode'::text)) "lookupRight_stage_1" ON (true))) lookup_non_inlined_stage_1
+         Node: host=localhost port=58070 dbname=regression
+         ->  Nested Loop
+               Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (SubPlan 1), true)
+               ->  Index Scan using _id_ on documentdb_data.documents_6026_60433 collection
+                     Output: collection.shard_key_value, collection.object_id, collection.document
+                     Index Cond: (collection.shard_key_value = '6026'::bigint)
+               ->  Aggregate
+                     Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                     ->  Nested Loop
+                           Output: collection_0_1.document, "lookupRight_stage_sub_1_1".document
+                           Inner Unique: true
+                           ->  Index Scan using "idx_orders_customerCode" on documentdb_data.documents_6027_60450 collection_0_1
+                                 Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                                 Index Cond: (collection_0_1.document OPERATOR(documentdb_api_catalog.@*=) '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson)
+                           ->  Subquery Scan on "lookupRight_stage_sub_1_1"
+                                 Output: "lookupRight_stage_sub_1_1".document
+                                 Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "customerCode" : "customerCode" }'::documentdb_core.bson), 'customerCode'::text)
+                                 ->  Aggregate
+                                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_2.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson)
+                                       ->  Index Scan using "idx_products_productCode" on documentdb_data.documents_6028_60466 collection_0_2
+                                             Output: collection_0_2.shard_key_value, collection_0_2.object_id, collection_0_2.document
+                                             Index Cond: (collection_0_2.document OPERATOR(documentdb_api_catalog.@*=) documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson))
+                                             Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson), 'productCode'::text)
+               SubPlan 1
+                 ->  Aggregate
+                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "productCode" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                       ->  Function Scan on documentdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
+                             Output: lookup_subpipeline_substage_0.lookup_unwind
+                             Function Call: documentdb_api_catalog.bson_lookup_unwind((COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)), 'requested'::text)
+(35 rows)
+
+  
+-- 6. where there is exlcusion but join field not excluded, should pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "someOtherField": 0
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1.document, "lookupRight_stage_1".document, true) AS document FROM ((SELECT collection.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "customerCode" : "customerCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6026_60433 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '6026'::bigint)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_api_internal.bson_dollar_project(agg_stage_sub_1_2.document, '{ "someOtherField" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1_1.document, "lookupRight_stage_sub_1_1".document, true) AS document FROM ((SELECT collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6027_60450 collection_0_1 WHERE ((documentdb_api_catalog.bson_dollar_in(collection_0_1.document, '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson) AND (collection_0_1.document OPERATOR(documentdb_api_internal.##=) ANY (ARRAY['{ "customerCode" : "C100" }'::documentdb_api_internal.bsonindexbounds, '{ "customerCode" : "C101" }'::documentdb_api_internal.bsonindexbounds]))) AND (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '6027'::bigint))) lookup_stage_1_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_1.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT collection_0_2.document FROM documentdb_data.documents_6028_60466 collection_0_2 WHERE (collection_0_2.shard_key_value OPERATOR(pg_catalog.=) '6028'::bigint)) lookup_right_query_stage_1 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_1.document, lookup_stage_1_1.lookup_filter, 'productCode'::text)) "lookupRight_stage_sub_1_1" ON (true))) agg_stage_sub_1_2) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_0.document, lookup_stage_1.lookup_filter, 'customerCode'::text)) "lookupRight_stage_1" ON (true))
+         Node: host=localhost port=58070 dbname=regression
+         ->  Nested Loop
+               Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), '{ "someOtherField" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)), true)
+               ->  Index Scan using _id_ on documentdb_data.documents_6026_60433 collection
+                     Output: collection.shard_key_value, collection.object_id, collection.document
+                     Index Cond: (collection.shard_key_value = '6026'::bigint)
+               ->  Aggregate
+                     Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), '{ "someOtherField" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                     ->  Nested Loop
+                           Output: collection_0_1.document, "lookupRight_stage_sub_1_1".document
+                           Inner Unique: true
+                           ->  Index Scan using "idx_orders_customerCode" on documentdb_data.documents_6027_60450 collection_0_1
+                                 Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                                 Index Cond: (collection_0_1.document OPERATOR(documentdb_api_catalog.@*=) '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson)
+                           ->  Subquery Scan on "lookupRight_stage_sub_1_1"
+                                 Output: "lookupRight_stage_sub_1_1".document
+                                 Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), '{ "someOtherField" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "customerCode" : "customerCode" }'::documentdb_core.bson), 'customerCode'::text)
+                                 ->  Aggregate
+                                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_2.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson)
+                                       ->  Index Scan using "idx_products_productCode" on documentdb_data.documents_6028_60466 collection_0_2
+                                             Output: collection_0_2.shard_key_value, collection_0_2.object_id, collection_0_2.document
+                                             Index Cond: (collection_0_2.document OPERATOR(documentdb_api_catalog.@*=) documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson))
+                                             Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson), 'productCode'::text)
+(29 rows)
+
+-- 7. lookup is on _id and _id is excluded, should pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "_id",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "_id": 0
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');   
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents("left", (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(agg_stage_sub_1_2.document, '{ "_id" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1."funcName", "lookupRight_stage_sub_1_1".document, true) AS document FROM ((SELECT lookup_subpipeline_substage_0.lookup_unwind AS "funcName", documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(lookup_subpipeline_substage_0.lookup_unwind, '{ "productCode" : "productCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_api_catalog.bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'requested'::text) lookup_subpipeline_substage_0(lookup_unwind) WHERE (documentdb_api_catalog.bson_dollar_in(lookup_subpipeline_substage_0.lookup_unwind, '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson) AND (lookup_subpipeline_substage_0.lookup_unwind OPERATOR(documentdb_api_internal.##=) ANY (ARRAY['{ "customerCode" : "C100" }'::documentdb_api_internal.bsonindexbounds, '{ "customerCode" : "C101" }'::documentdb_api_internal.bsonindexbounds])))) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_1.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT collection_0_2.document FROM documentdb_data.documents_6028_60466 collection_0_2 WHERE (collection_0_2.shard_key_value OPERATOR(pg_catalog.=) '6028'::bigint)) lookup_right_query_stage_1 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_1.document, lookup_stage_1.lookup_filter, 'productCode'::text)) "lookupRight_stage_sub_1_1" ON (true))) agg_stage_sub_1_2), true) AS document FROM (SELECT lookup_stage_1.document AS "left", "lookupRight_stage_1".document AS "right" FROM ((SELECT collection.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_array(collection.document, '{ "_id" : "customerCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6026_60433 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '6026'::bigint)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT collection_0_1.document, collection_0_1.object_id AS "objectId" FROM documentdb_data.documents_6027_60450 collection_0_1 WHERE (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '6027'::bigint)) lookup_right_query_stage_0 WHERE (lookup_right_query_stage_0."objectId" OPERATOR(documentdb_core.=) ANY (lookup_stage_1.lookup_filter))) "lookupRight_stage_1" ON (true))) lookup_non_inlined_stage_1
+         Node: host=localhost port=58070 dbname=regression
+         ->  Nested Loop
+               Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (SubPlan 1), true)
+               ->  Index Scan using _id_ on documentdb_data.documents_6026_60433 collection
+                     Output: collection.shard_key_value, collection.object_id, collection.document
+                     Index Cond: (collection.shard_key_value = '6026'::bigint)
+               ->  Aggregate
+                     Output: COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_1.document, 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                     ->  Index Scan using _id_ on documentdb_data.documents_6027_60450 collection_0_1
+                           Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                           Index Cond: ((collection_0_1.shard_key_value = '6027'::bigint) AND (collection_0_1.object_id OPERATOR(documentdb_core.=) ANY (documentdb_api_internal.bson_dollar_lookup_extract_filter_array(collection.document, '{ "_id" : "customerCode" }'::documentdb_core.bson))))
+               SubPlan 1
+                 ->  Aggregate
+                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_merge_documents(lookup_subpipeline_substage_0.lookup_unwind, (COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_2.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson)), true), '{ "_id" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                       ->  Nested Loop
+                             Output: lookup_subpipeline_substage_0.lookup_unwind, (COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_2.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson))
+                             ->  Function Scan on documentdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
+                                   Output: lookup_subpipeline_substage_0.lookup_unwind
+                                   Function Call: documentdb_api_catalog.bson_lookup_unwind((COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_1.document, 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)), 'requested'::text)
+                                   Filter: (documentdb_api_catalog.bson_dollar_in(lookup_subpipeline_substage_0.lookup_unwind, '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson) AND (lookup_subpipeline_substage_0.lookup_unwind OPERATOR(documentdb_api_internal.##=) ANY ('{"{ \"customerCode\" : \"C100\" }","{ \"customerCode\" : \"C101\" }"}'::documentdb_api_internal.bsonindexbounds[])))
+                             ->  Aggregate
+                                   Output: COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_2.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson)
+                                   ->  Index Scan using "idx_products_productCode" on documentdb_data.documents_6028_60466 collection_0_2
+                                         Output: collection_0_2.shard_key_value, collection_0_2.object_id, collection_0_2.document
+                                         Index Cond: (collection_0_2.document OPERATOR(documentdb_api_catalog.@*=) documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(lookup_subpipeline_substage_0.lookup_unwind, '{ "productCode" : "productCode" }'::documentdb_core.bson))
+                                         Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(lookup_subpipeline_substage_0.lookup_unwind, '{ "productCode" : "productCode" }'::documentdb_core.bson), 'productCode'::text)
+(32 rows)
+
+-- 8. lookup is on _id and _id is included, we forcefully not inline when foreignField is _id
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "_id",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "_id": 1
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents("left", (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(agg_stage_sub_1_2.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1."funcName", "lookupRight_stage_sub_1_1".document, true) AS document FROM ((SELECT lookup_subpipeline_substage_0.lookup_unwind AS "funcName", documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(lookup_subpipeline_substage_0.lookup_unwind, '{ "productCode" : "productCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_api_catalog.bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'requested'::text) lookup_subpipeline_substage_0(lookup_unwind) WHERE (documentdb_api_catalog.bson_dollar_in(lookup_subpipeline_substage_0.lookup_unwind, '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson) AND (lookup_subpipeline_substage_0.lookup_unwind OPERATOR(documentdb_api_internal.##=) ANY (ARRAY['{ "customerCode" : "C100" }'::documentdb_api_internal.bsonindexbounds, '{ "customerCode" : "C101" }'::documentdb_api_internal.bsonindexbounds])))) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_1.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT collection_0_2.document FROM documentdb_data.documents_6028_60466 collection_0_2 WHERE (collection_0_2.shard_key_value OPERATOR(pg_catalog.=) '6028'::bigint)) lookup_right_query_stage_1 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_1.document, lookup_stage_1.lookup_filter, 'productCode'::text)) "lookupRight_stage_sub_1_1" ON (true))) agg_stage_sub_1_2), true) AS document FROM (SELECT lookup_stage_1.document AS "left", "lookupRight_stage_1".document AS "right" FROM ((SELECT collection.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_array(collection.document, '{ "_id" : "customerCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6026_60433 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '6026'::bigint)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT collection_0_1.document, collection_0_1.object_id AS "objectId" FROM documentdb_data.documents_6027_60450 collection_0_1 WHERE (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '6027'::bigint)) lookup_right_query_stage_0 WHERE (lookup_right_query_stage_0."objectId" OPERATOR(documentdb_core.=) ANY (lookup_stage_1.lookup_filter))) "lookupRight_stage_1" ON (true))) lookup_non_inlined_stage_1
+         Node: host=localhost port=58070 dbname=regression
+         ->  Nested Loop
+               Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (SubPlan 1), true)
+               ->  Index Scan using _id_ on documentdb_data.documents_6026_60433 collection
+                     Output: collection.shard_key_value, collection.object_id, collection.document
+                     Index Cond: (collection.shard_key_value = '6026'::bigint)
+               ->  Aggregate
+                     Output: COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_1.document, 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                     ->  Index Scan using _id_ on documentdb_data.documents_6027_60450 collection_0_1
+                           Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                           Index Cond: ((collection_0_1.shard_key_value = '6027'::bigint) AND (collection_0_1.object_id OPERATOR(documentdb_core.=) ANY (documentdb_api_internal.bson_dollar_lookup_extract_filter_array(collection.document, '{ "_id" : "customerCode" }'::documentdb_core.bson))))
+               SubPlan 1
+                 ->  Aggregate
+                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_merge_documents(lookup_subpipeline_substage_0.lookup_unwind, (COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_2.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson)), true), '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                       ->  Nested Loop
+                             Output: lookup_subpipeline_substage_0.lookup_unwind, (COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_2.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson))
+                             ->  Function Scan on documentdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
+                                   Output: lookup_subpipeline_substage_0.lookup_unwind
+                                   Function Call: documentdb_api_catalog.bson_lookup_unwind((COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_1.document, 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)), 'requested'::text)
+                                   Filter: (documentdb_api_catalog.bson_dollar_in(lookup_subpipeline_substage_0.lookup_unwind, '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson) AND (lookup_subpipeline_substage_0.lookup_unwind OPERATOR(documentdb_api_internal.##=) ANY ('{"{ \"customerCode\" : \"C100\" }","{ \"customerCode\" : \"C101\" }"}'::documentdb_api_internal.bsonindexbounds[])))
+                             ->  Aggregate
+                                   Output: COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_2.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson)
+                                   ->  Index Scan using "idx_products_productCode" on documentdb_data.documents_6028_60466 collection_0_2
+                                         Output: collection_0_2.shard_key_value, collection_0_2.object_id, collection_0_2.document
+                                         Index Cond: (collection_0_2.document OPERATOR(documentdb_api_catalog.@*=) documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(lookup_subpipeline_substage_0.lookup_unwind, '{ "productCode" : "productCode" }'::documentdb_core.bson))
+                                         Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(lookup_subpipeline_substage_0.lookup_unwind, '{ "productCode" : "productCode" }'::documentdb_core.bson), 'productCode'::text)
+(32 rows)
+
+-- 9. lookup is not on _id and _id is excluded but lookup is included,  we forcefully not inline when foreignField is _id
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "_id": 0, "customerCode" : 1
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1.document, "lookupRight_stage_1".document, true) AS document FROM ((SELECT collection.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "customerCode" : "customerCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6026_60433 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '6026'::bigint)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_api_internal.bson_dollar_project(agg_stage_sub_1_2.document, '{ "_id" : { "$numberInt" : "0" }, "customerCode" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1_1.document, "lookupRight_stage_sub_1_1".document, true) AS document FROM ((SELECT collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6027_60450 collection_0_1 WHERE ((documentdb_api_catalog.bson_dollar_in(collection_0_1.document, '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson) AND (collection_0_1.document OPERATOR(documentdb_api_internal.##=) ANY (ARRAY['{ "customerCode" : "C100" }'::documentdb_api_internal.bsonindexbounds, '{ "customerCode" : "C101" }'::documentdb_api_internal.bsonindexbounds]))) AND (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '6027'::bigint))) lookup_stage_1_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_1.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT collection_0_2.document FROM documentdb_data.documents_6028_60466 collection_0_2 WHERE (collection_0_2.shard_key_value OPERATOR(pg_catalog.=) '6028'::bigint)) lookup_right_query_stage_1 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_1.document, lookup_stage_1_1.lookup_filter, 'productCode'::text)) "lookupRight_stage_sub_1_1" ON (true))) agg_stage_sub_1_2) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_0.document, lookup_stage_1.lookup_filter, 'customerCode'::text)) "lookupRight_stage_1" ON (true))
+         Node: host=localhost port=58070 dbname=regression
+         ->  Nested Loop
+               Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), '{ "_id" : { "$numberInt" : "0" }, "customerCode" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)), true)
+               ->  Index Scan using _id_ on documentdb_data.documents_6026_60433 collection
+                     Output: collection.shard_key_value, collection.object_id, collection.document
+                     Index Cond: (collection.shard_key_value = '6026'::bigint)
+               ->  Aggregate
+                     Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), '{ "_id" : { "$numberInt" : "0" }, "customerCode" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                     ->  Nested Loop
+                           Output: collection_0_1.document, "lookupRight_stage_sub_1_1".document
+                           Inner Unique: true
+                           ->  Index Scan using "idx_orders_customerCode" on documentdb_data.documents_6027_60450 collection_0_1
+                                 Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                                 Index Cond: (collection_0_1.document OPERATOR(documentdb_api_catalog.@*=) '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson)
+                           ->  Subquery Scan on "lookupRight_stage_sub_1_1"
+                                 Output: "lookupRight_stage_sub_1_1".document
+                                 Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), '{ "_id" : { "$numberInt" : "0" }, "customerCode" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "customerCode" : "customerCode" }'::documentdb_core.bson), 'customerCode'::text)
+                                 ->  Aggregate
+                                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_2.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson)
+                                       ->  Index Scan using "idx_products_productCode" on documentdb_data.documents_6028_60466 collection_0_2
+                                             Output: collection_0_2.shard_key_value, collection_0_2.object_id, collection_0_2.document
+                                             Index Cond: (collection_0_2.document OPERATOR(documentdb_api_catalog.@*=) documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson))
+                                             Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson), 'productCode'::text)
+(29 rows)
+
+-- 10. lookup is not on _id and _id is included but lookup is excluded, should not pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "customerCode",
+          "foreignField": "customerCode",
+          "as": "requested",
+          "pipeline": [
+            {
+              "$match": {
+                "customerCode": { "$in": ["C100", "C101"] }
+              }
+            },
+            {
+              "$lookup": {
+                "from": "products",
+                "localField": "productCode",
+                "foreignField": "productCode",
+                "as": "Irequest"
+              }
+            },
+            {
+              "$project": {
+                "_id": 1, "customerCode" : 0
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');    
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents("left", (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "_id" : { "$numberInt" : "1" }, "customerCode" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS "funcName" FROM documentdb_api_catalog.bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'requested'::text) lookup_subpipeline_substage_0(lookup_unwind)), true) AS document FROM (SELECT lookup_stage_1.document AS "left", "lookupRight_stage_1".document AS "right" FROM ((SELECT collection.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "customerCode" : "customerCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6026_60433 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '6026'::bigint)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT agg_stage_sub_1_2.document FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1_1.document, "lookupRight_stage_sub_1_1".document, true) AS document FROM ((SELECT collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6027_60450 collection_0_1 WHERE ((documentdb_api_catalog.bson_dollar_in(collection_0_1.document, '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson) AND (collection_0_1.document OPERATOR(documentdb_api_internal.##=) ANY (ARRAY['{ "customerCode" : "C100" }'::documentdb_api_internal.bsonindexbounds, '{ "customerCode" : "C101" }'::documentdb_api_internal.bsonindexbounds]))) AND (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '6027'::bigint))) lookup_stage_1_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_1.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT collection_0_2.document FROM documentdb_data.documents_6028_60466 collection_0_2 WHERE (collection_0_2.shard_key_value OPERATOR(pg_catalog.=) '6028'::bigint)) lookup_right_query_stage_1 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_1.document, lookup_stage_1_1.lookup_filter, 'productCode'::text)) "lookupRight_stage_sub_1_1" ON (true))) agg_stage_sub_1_2) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_0.document, lookup_stage_1.lookup_filter, 'customerCode'::text)) "lookupRight_stage_1" ON (true))) lookup_non_inlined_stage_1
+         Node: host=localhost port=58070 dbname=regression
+         ->  Nested Loop
+               Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (SubPlan 1), true)
+               ->  Index Scan using _id_ on documentdb_data.documents_6026_60433 collection
+                     Output: collection.shard_key_value, collection.object_id, collection.document
+                     Index Cond: (collection.shard_key_value = '6026'::bigint)
+               ->  Aggregate
+                     Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                     ->  Nested Loop
+                           Output: collection_0_1.document, "lookupRight_stage_sub_1_1".document
+                           Inner Unique: true
+                           ->  Index Scan using "idx_orders_customerCode" on documentdb_data.documents_6027_60450 collection_0_1
+                                 Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                                 Index Cond: (collection_0_1.document OPERATOR(documentdb_api_catalog.@*=) '{ "customerCode" : [ "C100", "C101" ] }'::documentdb_core.bson)
+                           ->  Subquery Scan on "lookupRight_stage_sub_1_1"
+                                 Output: "lookupRight_stage_sub_1_1".document
+                                 Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "customerCode" : "customerCode" }'::documentdb_core.bson), 'customerCode'::text)
+                                 ->  Aggregate
+                                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_2.document, 'Irequest'::text), '{ "Irequest" : [  ] }'::documentdb_core.bson)
+                                       ->  Index Scan using "idx_products_productCode" on documentdb_data.documents_6028_60466 collection_0_2
+                                             Output: collection_0_2.shard_key_value, collection_0_2.object_id, collection_0_2.document
+                                             Index Cond: (collection_0_2.document OPERATOR(documentdb_api_catalog.@*=) documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson))
+                                             Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection_0_1.document, '{ "productCode" : "productCode" }'::documentdb_core.bson), 'productCode'::text)
+               SubPlan 1
+                 ->  Aggregate
+                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_project(lookup_subpipeline_substage_0.lookup_unwind, '{ "_id" : { "$numberInt" : "1" }, "customerCode" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)
+                       ->  Function Scan on documentdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
+                             Output: lookup_subpipeline_substage_0.lookup_unwind
+                             Function Call: documentdb_api_catalog.bson_lookup_unwind((COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_merge_documents(collection_0_1.document, "lookupRight_stage_sub_1_1".document, true), 'requested'::text), '{ "requested" : [  ] }'::documentdb_core.bson)), 'requested'::text)
+(35 rows)
+
+ROLLBACK;
+-- 11 Bug Fix 2 : Should pass foreign fields to lookupinline functions
+SELECT documentdb_api.insert_one('dbAddField','users','{ "_id": 1, "name": "user1", "age": 28 }', NULL);
+psql:sql/bson_aggregation_stage_lookup_tests_core.sql:1277: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('dbAddField','users','{ "_id": 2, "name": "user2", "age": 27 }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('dbAddField','orders','{ "_id": 101, "userId": 1, "item": "Laptop", "price": 50000 }', NULL);
+psql:sql/bson_aggregation_stage_lookup_tests_core.sql:1280: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('dbAddField','orders','{ "_id": 102, "userId": 1, "item": "Phone", "price": 20000 }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('dbAddField','orders','{ "_id": 103, "userId": 2, "item": "Watch", "price": 5000 }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'dbAddField',
+  '{
+     "createIndexes": "orders",
+     "indexes": [
+       {"key": {"userId": 1}, "name": "idx_orders_userId"}
+     ]
+   }',
+   true
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Buggy case which should fixed by enableUseForeignKeyLookupInline it on;
+BEGIN;
+SET LOCAL documentdb.enableUseForeignKeyLookupInline to off;
+-- Test $addFields modifying the foreignField in lookup pipeline
+SELECT document FROM bson_aggregation_pipeline('dbAddField', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "_id",
+          "foreignField": "userId",
+          "as": "userOrders",
+          "pipeline": [
+            {
+              "$addFields": {
+                "userId": 100
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+                                                  document                                                  
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "name" : "user1", "age" : { "$numberInt" : "28" }, "userOrders" : [  ] }
+ { "_id" : { "$numberInt" : "2" }, "name" : "user2", "age" : { "$numberInt" : "27" }, "userOrders" : [  ] }
+(2 rows)
+
+ROLLBACK;
+-- this fixes above issue
+BEGIN;
+SET LOCAL documentdb.enableUseForeignKeyLookupInline to on;
+SELECT document FROM bson_aggregation_pipeline('dbAddField', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "_id",
+          "foreignField": "userId",
+          "as": "userOrders",
+          "pipeline": [
+            {
+              "$addFields": {
+                "userId": 100
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+                                                                                                                                                                                    document                                                                                                                                                                                     
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "name" : "user1", "age" : { "$numberInt" : "28" }, "userOrders" : [ { "_id" : { "$numberInt" : "101" }, "userId" : { "$numberInt" : "100" }, "item" : "Laptop", "price" : { "$numberInt" : "50000" } }, { "_id" : { "$numberInt" : "102" }, "userId" : { "$numberInt" : "100" }, "item" : "Phone", "price" : { "$numberInt" : "20000" } } ] }
+ { "_id" : { "$numberInt" : "2" }, "name" : "user2", "age" : { "$numberInt" : "27" }, "userOrders" : [ { "_id" : { "$numberInt" : "103" }, "userId" : { "$numberInt" : "100" }, "item" : "Watch", "price" : { "$numberInt" : "5000" } } ] }
+(2 rows)
+
+ROLLBACK;
+-- Explain plan, should not pushdown as we are modifying foreignField
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "users", "pipeline": [
+      {
+        "$lookup": {
+          "from": "orders",
+          "localField": "_id",
+          "foreignField": "userId",
+          "as": "userOrders",
+          "pipeline": [
+            {
+              "$addFields": {
+                "userId": 100
+              }
+            }
+          ]
+        }
+      }
+    ], "cursor": {} }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents("left", (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_add_fields(lookup_subpipeline_substage_0.lookup_unwind, '{ "userId" : { "$numberInt" : "100" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'userOrders'::text), '{ "userOrders" : [  ] }'::documentdb_core.bson) AS "funcName" FROM documentdb_api_catalog.bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'userOrders'::text) lookup_subpipeline_substage_0(lookup_unwind)), true) AS document FROM (SELECT lookup_stage_1.document AS "left", "lookupRight_stage_1".document AS "right" FROM ((SELECT collection.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "userId" : "_id" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_6026_60433 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '6026'::bigint)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'userOrders'::text), '{ "userOrders" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT collection_0_1.document FROM documentdb_data.documents_6027_60450 collection_0_1 WHERE (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '6027'::bigint)) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_0.document, lookup_stage_1.lookup_filter, 'userId'::text)) "lookupRight_stage_1" ON (true))) lookup_non_inlined_stage_1
+         Node: host=localhost port=58070 dbname=regression
+         ->  Nested Loop
+               Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (SubPlan 1), true)
+               ->  Index Scan using _id_ on documentdb_data.documents_6026_60433 collection
+                     Output: collection.shard_key_value, collection.object_id, collection.document
+                     Index Cond: (collection.shard_key_value = '6026'::bigint)
+               ->  Aggregate
+                     Output: COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_1.document, 'userOrders'::text), '{ "userOrders" : [  ] }'::documentdb_core.bson)
+                     ->  Index Scan using _id_ on documentdb_data.documents_6027_60450 collection_0_1
+                           Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                           Index Cond: (collection_0_1.shard_key_value = '6027'::bigint)
+                           Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "userId" : "_id" }'::documentdb_core.bson), 'userId'::text)
+               SubPlan 1
+                 ->  Aggregate
+                       Output: COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_add_fields(lookup_subpipeline_substage_0.lookup_unwind, '{ "userId" : { "$numberInt" : "100" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'userOrders'::text), '{ "userOrders" : [  ] }'::documentdb_core.bson)
+                       ->  Function Scan on documentdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
+                             Output: lookup_subpipeline_substage_0.lookup_unwind
+                             Function Call: documentdb_api_catalog.bson_lookup_unwind((COALESCE(documentdb_api_catalog.bson_array_agg(collection_0_1.document, 'userOrders'::text), '{ "userOrders" : [  ] }'::documentdb_core.bson)), 'userOrders'::text)
+(24 rows)
+
+ROLLBACK;

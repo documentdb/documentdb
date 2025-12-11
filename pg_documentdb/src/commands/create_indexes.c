@@ -161,7 +161,8 @@ extern int MaxWildcardIndexKeySize;
 extern bool DefaultEnableLargeUniqueIndexKeys;
 extern bool SkipFailOnCollation;
 extern bool ForceWildcardReducedTerm;
-extern bool DefaultUseCompositeOpClass;
+extern bool EnableCompositeUniqueHash;
+extern bool EnableCompositeWildcardIndex;
 
 extern char *AlternateIndexHandler;
 
@@ -2055,9 +2056,15 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 		}
 	}
 
+	if (indexDef->enableCompositeTerm == BoolIndexOption_Undefined &&
+		indexDef->key->isIdIndex)
+	{
+		indexDef->enableCompositeTerm = BoolIndexOption_False;
+	}
+
 	if (indexDef->enableCompositeTerm == BoolIndexOption_True ||
 		(indexDef->enableCompositeTerm == BoolIndexOption_Undefined &&
-		 DefaultUseCompositeOpClass))
+		 ShouldUseCompositeOpClassByDefault()))
 	{
 		bool shouldError = indexDef->enableCompositeTerm == BoolIndexOption_True;
 
@@ -2067,13 +2074,29 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 
 		if (indexDef->key->isWildcard)
 		{
-			indexDef->key->canSupportCompositeTerm = false;
-
-			if (shouldError)
+			if (EnableCompositeWildcardIndex)
 			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
-								errmsg(
-									"enableCompositeTerm is not supported with wildcard indexes.")));
+				/* We don't yet support wildcard projection */
+				if (indexDef->wildcardProjectionTree)
+				{
+					indexDef->key->canSupportCompositeTerm = false;
+					if (shouldError)
+					{
+						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+										errmsg(
+											"enableOrderedIndex is not supported with wildcard indexes with wildcardProjectionTree.")));
+					}
+				}
+			}
+			else
+			{
+				indexDef->key->canSupportCompositeTerm = false;
+				if (shouldError)
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+									errmsg(
+										"enableOrderedIndex is not supported with wildcard indexes.")));
+				}
 			}
 		}
 
@@ -2089,11 +2112,11 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 				{
 					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 									errmsg(
-										"enableCompositeTerm is only supported with regular indexes.")));
+										"enableOrderedIndex is only supported with regular indexes.")));
 				}
 			}
 
-			if (keyPath->isWildcard)
+			if (keyPath->isWildcard && !EnableCompositeWildcardIndex)
 			{
 				indexDef->key->canSupportCompositeTerm = false;
 
@@ -2101,8 +2124,28 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 				{
 					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 									errmsg(
-										"enableCompositeTerm is not supported with wildcard indexes.")));
+										"enableOrderedIndex is not supported with wildcard indexes.")));
 				}
+			}
+		}
+
+		if (list_length(indexDef->key->keyPathList) > INDEX_MAX_KEYS)
+		{
+			/* Since we no longer have PG to enforce this limit, enforce it here. */
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION13103),
+							errmsg("Index exceeds maximum supported keys of %d",
+								   INDEX_MAX_KEYS)));
+		}
+
+		if (indexDef->key->isWildcard && list_length(indexDef->key->keyPathList) > 1)
+		{
+			/* TODO: Relax this restriction */
+			indexDef->key->canSupportCompositeTerm = false;
+			if (shouldError)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+								errmsg(
+									"enableOrderedIndex is not yet supported for multi-key wildcard indexes.")));
 			}
 		}
 
@@ -2538,6 +2581,7 @@ ParseIndexDefKeyDocument(const bson_iter_t *indexDefDocIter)
 	MongoIndexKind allindexKinds = MongoIndexKind_Unknown;
 	MongoIndexKind lastIndexKind = MongoIndexKind_Unknown;
 	MongoIndexKind wildcardIndexKind = 0;
+	bool hasIdPath = false;
 
 	bson_iter_t indexDefKeyIter;
 	bson_iter_recurse(indexDefDocIter, &indexDefKeyIter);
@@ -2673,6 +2717,8 @@ ParseIndexDefKeyDocument(const bson_iter_t *indexDefDocIter)
 								"Index keys are not allowed to be completely empty fields.")));
 		}
 
+		hasIdPath = hasIdPath || (keyPath && (strcmp(keyPath, "_id") == 0));
+
 		/*
 		 * TODO: Also need to parse value of indexDefKeyIter for the index
 		 *       ordering direction, i.e., (1 or -1), but our bson GIN/RUM operators
@@ -2735,7 +2781,7 @@ ParseIndexDefKeyDocument(const bson_iter_t *indexDefDocIter)
 									"Index key pattern values are not allowed to be zero.")));
 			}
 
-			if (isWildcardKeyPath && (doubleValue < 0))
+			if (isWildcardKeyPath && (doubleValue < 0) && !EnableCompositeWildcardIndex)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 								errmsg(
@@ -2917,6 +2963,9 @@ ParseIndexDefKeyDocument(const bson_iter_t *indexDefDocIter)
 
 		indexDefKey->isWildcard = isWildcardKeyPath;
 		indexDefKey->wildcardIndexKind = wildcardIndexKind;
+
+		/* An _id index is one that has exactly one key and has the path _id */
+		indexDefKey->isIdIndex = list_length(indexDefKey->keyPathList) == 1 && hasIdPath;
 	}
 
 	/* Check the number of types of indexes excluding the "Regular" index kind */
@@ -2949,6 +2998,13 @@ ParseIndexDefKeyDocument(const bson_iter_t *indexDefDocIter)
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 						errmsg(
 							"Only a single index field can be defined when working with cdb indexes.")));
+	}
+
+	if (list_length(indexDefKey->keyPathList) > INDEX_MAX_KEYS)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION13103),
+						errmsg("Index exceeds maximum supported keys of %d",
+							   INDEX_MAX_KEYS)));
 	}
 
 	indexDefKey->hasHashedIndexes = numHashedIndexes > 0;
@@ -4824,10 +4880,14 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 			enableLargeIndexKeys = true;
 		}
 
-		bool enableNewIndexOpClass = DefaultUseCompositeOpClass;
+		bool enableNewIndexOpClass = false;
 		if (indexDef->enableCompositeTerm != BoolIndexOption_Undefined)
 		{
 			enableNewIndexOpClass = indexDef->enableCompositeTerm == BoolIndexOption_True;
+		}
+		else
+		{
+			enableNewIndexOpClass = ShouldUseCompositeOpClassByDefault();
 		}
 
 		bool useReducedWildcardTermGeneration = false;
@@ -4967,10 +5027,14 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 								   BoolIndexOption_False;
 		}
 
-		bool enableNewIndexOpClass = DefaultUseCompositeOpClass;
+		bool enableNewIndexOpClass = false;
 		if (indexDef->enableCompositeTerm != BoolIndexOption_Undefined)
 		{
 			enableNewIndexOpClass = indexDef->enableCompositeTerm == BoolIndexOption_True;
+		}
+		else
+		{
+			enableNewIndexOpClass = ShouldUseCompositeOpClassByDefault();
 		}
 
 		bool useReducedWildcardTermGeneration = ForceWildcardReducedTerm ||
@@ -5316,17 +5380,19 @@ inline static void
 AppendUniqueColumnExpr(StringInfo indexExprStr, IndexDefKey *indexDefKey,
 					   bool sparse, const char *indexAmSuffix, const
 					   char *indexAmOpClassInternalCatalogSchema,
-					   bool firstColumnWritten, bool buildAsUnique)
+					   bool firstColumnWritten, bool buildAsUnique,
+					   bool generateCompositeHash)
 {
 	appendStringInfo(indexExprStr,
-					 "%s%s.generate_unique_shard_document(document, shard_key_value, '%s'::%s.bson, %s) %s.bson_%s_unique_shard_path_ops",
+					 "%s%s.generate_unique_shard_document(document, shard_key_value, '%s'::%s.bson, %s) %s.bson_%s_unique_shard_path_ops%s",
 					 !firstColumnWritten ? "" : ",",
 					 DocumentDBApiInternalSchemaName,
 					 GenerateUniqueProjectionSpec(indexDefKey),
 					 CoreSchemaName,
 					 sparse ? "true" : "false",
 					 indexAmOpClassInternalCatalogSchema,
-					 indexAmSuffix);
+					 indexAmSuffix,
+					 generateCompositeHash ? "(cmp=true)" : "");
 
 	if (!buildAsUnique)
 	{
@@ -5396,17 +5462,25 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 	if (usingNewUniqueIndexOpClass && !isUsingCompositeOpClass)
 	{
 		bool buildAsUniqueOverride = false;
+		bool generateCompositeHash = false;
 		AppendUniqueColumnExpr(indexExprStr, indexDefKey, sparse, indexAmSuffix,
 							   indexAmOpClassInternalCatalogSchema, firstColumnWritten,
-							   buildAsUniqueOverride);
+							   buildAsUniqueOverride, generateCompositeHash);
 		firstColumnWritten = true;
 	}
 
-	if (list_length(indexDefKey->keyPathList) == 0)
+	if (list_length(indexDefKey->keyPathList) == 0 && !isUsingCompositeOpClass)
 	{
 		if (!indexDefKey->isWildcard && list_length(indexDefKey->textPathList) == 0)
 		{
 			ereport(ERROR, (errmsg("unexpectedly got empty index key list")));
+		}
+
+		if (indexDefKey->hasDescendingIndex)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg(
+								"A numeric value in a $** index key pattern must be positive.")));
 		}
 
 		if (unique)
@@ -5536,60 +5610,131 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		pgbson_array_writer arrayWriter;
 		PgbsonWriterStartArray(&elementListWriter, "", 0, &arrayWriter);
 
-		ListCell *keyPathCell = NULL;
-		foreach(keyPathCell, indexDefKey->keyPathList)
+		int32_t wildcardTermIndex = -1;
+		if (list_length(indexDefKey->keyPathList) == 0)
 		{
-			IndexDefKeyPath *indexKeyPath = (IndexDefKeyPath *) lfirst(keyPathCell);
-			char *keyPath = (char *) indexKeyPath->path;
-
-			switch (indexKeyPath->indexKind)
+			/* root wildcard index */
+			if (!indexDefKey->hasDescendingIndex)
 			{
-				case MongoIndexKind_Regular:
+				PgbsonArrayWriterWriteUtf8(&arrayWriter, "");
+			}
+			else
+			{
+				pgbson_writer sortWriter;
+				PgbsonArrayWriterStartDocument(&arrayWriter, &sortWriter);
+				PgbsonWriterAppendInt32(&sortWriter, "", 0, -1);
+				PgbsonArrayWriterEndDocument(&arrayWriter, &sortWriter);
+			}
+
+			wildcardTermIndex = 0;
+		}
+		else
+		{
+			ListCell *keyPathCell = NULL;
+			int numPaths = 0;
+			foreach(keyPathCell, indexDefKey->keyPathList)
+			{
+				IndexDefKeyPath *indexKeyPath = (IndexDefKeyPath *) lfirst(keyPathCell);
+				char *keyPath = (char *) indexKeyPath->path;
+
+				if (indexKeyPath->isWildcard)
 				{
-					if (indexKeyPath->isWildcard)
+					if (wildcardTermIndex != -1)
 					{
-						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-											"unexpectedly got wildcard path for a "
-											"non-wildcard index or a non-root "
-											"wildcard index")));
+						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+										errmsg(
+											"Cannot specify multiple wildcard terms.")));
 					}
 
-					if (indexKeyPath->sortDirection == 1)
-					{
-						PgbsonArrayWriterWriteUtf8(&arrayWriter, keyPath);
-					}
-					else
-					{
-						pgbson_writer sortWriter;
-						PgbsonArrayWriterStartDocument(&arrayWriter, &sortWriter);
-						PgbsonWriterAppendInt32(&sortWriter, keyPath, -1,
-												indexKeyPath->sortDirection);
-						PgbsonArrayWriterEndDocument(&arrayWriter, &sortWriter);
-					}
-
-					break;
+					wildcardTermIndex = foreach_current_index(keyPathCell);
 				}
 
-				default:
+				numPaths++;
+				switch (indexKeyPath->indexKind)
 				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-									errmsg(
-										"Unsupported index kind for composite index")));
+					case MongoIndexKind_Regular:
+					{
+						if (indexKeyPath->isWildcard && !EnableCompositeWildcardIndex)
+						{
+							ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+												"unexpectedly got wildcard path for a "
+												"non-wildcard index or a non-root "
+												"wildcard index")));
+						}
+
+						if (indexKeyPath->sortDirection == 1)
+						{
+							PgbsonArrayWriterWriteUtf8(&arrayWriter, keyPath);
+						}
+						else
+						{
+							pgbson_writer sortWriter;
+							PgbsonArrayWriterStartDocument(&arrayWriter, &sortWriter);
+							PgbsonWriterAppendInt32(&sortWriter, keyPath, -1,
+													indexKeyPath->sortDirection);
+							PgbsonArrayWriterEndDocument(&arrayWriter, &sortWriter);
+						}
+
+						break;
+					}
+
+					default:
+					{
+						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+										errmsg(
+											"Unsupported index kind for composite index")));
+					}
 				}
+			}
+
+			if (numPaths > INDEX_MAX_KEYS)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION13103),
+								errmsg("Index exceeds maximum supported keys of %d",
+									   INDEX_MAX_KEYS)));
 			}
 		}
 
 		PgbsonWriterEndArray(&elementListWriter, &arrayWriter);
 		bson_value_t arrayValue = PgbsonArrayWriterGetValue(&arrayWriter);
-		sprintf(indexTermSizeLimitArg, ",tl=%u", ComputeIndexTermLimit(
-					COMPOUND_INDEX_TERM_SIZE_LIMIT));
+		pg_sprintf(indexTermSizeLimitArg, ",tl=%u", ComputeIndexTermLimit(
+					   COMPOUND_INDEX_TERM_SIZE_LIMIT));
+
+		char wildcardIndexPath[22] = { 0 };
+		char wildcardIndexTruncatedPathLimit[22] = { 0 };
+		char *wildCardIndexPathLimit = "";
+		char *wildcardIndexString = "";
+		if (wildcardTermIndex >= 0)
+		{
+			pg_sprintf(wildcardIndexPath, ",wki=%d", wildcardTermIndex);
+			wildcardIndexString = wildcardIndexPath;
+
+			pg_sprintf(wildcardIndexTruncatedPathLimit, ",wkl=%d",
+					   MaxWildcardIndexKeySize);
+			wildCardIndexPathLimit = wildcardIndexTruncatedPathLimit;
+		}
+
 		appendStringInfo(indexExprStr,
-						 "%s document %s.bson_%s_composite_path_ops(pathspec=%s%s)",
+						 "%s document %s.bson_%s_composite_path_ops(pathspec=%s%s%s%s)",
 						 firstColumnWritten ? "," : "",
 						 indexAmOpClassInternalCatalogSchema,
 						 indexAmSuffix,
 						 quote_literal_cstr(BsonValueToJsonForLogging(&arrayValue)),
-						 indexTermSizeLimitArg);
+						 indexTermSizeLimitArg,
+						 wildcardIndexString,
+						 wildCardIndexPathLimit);
+
+		if (indexExprStr->len >= MAX_INDEX_OPTIONS_LENGTH)
+		{
+			int lengthDelta = indexExprStr->len - MAX_INDEX_OPTIONS_LENGTH;
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg(
+								"The index path or expression is too long. Try a shorter path or reducing paths by %d characters.",
+								lengthDelta),
+							errdetail_log(
+								"The index path or expression is too long. Try a shorter path or reducing paths by %d characters.",
+								lengthDelta)));
+		}
 
 		if (unique)
 		{
@@ -5798,9 +5943,11 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 
 	if (usingNewUniqueIndexOpClass && isUsingCompositeOpClass)
 	{
+		bool generateCompositeHash = EnableCompositeUniqueHash && IsClusterVersionAtleast(
+			DocDB_V0, 109, 0);
 		AppendUniqueColumnExpr(indexExprStr, indexDefKey, sparse, indexAmSuffix,
 							   indexAmOpClassInternalCatalogSchema, firstColumnWritten,
-							   buildAsUnique);
+							   buildAsUnique, generateCompositeHash);
 	}
 
 	return indexExprStr->data;

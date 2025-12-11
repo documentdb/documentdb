@@ -58,8 +58,8 @@ pub fn documentdb_error_code_enum(_item: TokenStream) -> TokenStream {
         let parts: Vec<&str> = external_error.split(',').collect();
         let name = parts[0].trim();
         let code = parts[2].trim();
-        error_code_enum_entries += &format!("{} = {},", name, code);
-        from_primitive += &format!("{} => Some(ErrorCode::{}),", code, name);
+        error_code_enum_entries += &format!("{name} = {code},");
+        from_primitive += &format!("{code} => Some(ErrorCode::{name}),");
     }
 
     let gateway_error_mapping = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -71,8 +71,8 @@ pub fn documentdb_error_code_enum(_item: TokenStream) -> TokenStream {
         let parts: Vec<&str> = gateway_error.split(',').collect();
         let name = parts[0].trim();
         let code = parts[2].trim();
-        error_code_enum_entries += &format!("{} = {},", name, code);
-        from_primitive += &format!("{} => Some(ErrorCode::{}),", code, name);
+        error_code_enum_entries += &format!("{name} = {code},");
+        from_primitive += &format!("{code} => Some(ErrorCode::{name}),");
     }
 
     error_code_enum_entries += "

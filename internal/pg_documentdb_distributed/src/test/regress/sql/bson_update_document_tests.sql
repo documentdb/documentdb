@@ -146,6 +146,8 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3]}', 
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3]}', '{ "": { "$addToSet" : {"a.7": 7 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[1],[2],[3]]}', '{ "": { "$addToSet" : {"a.0.5": 7 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[1],[2],3]}', '{ "": { "$addToSet" : {"a.2.5": 7 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- same element pushed to set
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "set": [ "abc" ] }', '{ "": { "$addToSet" : {"set": "abc" }, "$set": { "x": true } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
 
 -- update scenario negative tests: $inc
 SELECT documentdb_api_internal.update_bson_document('{"_id": 5, "a": [1,2] }', '{ "": { "$inc": { "a": 30 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);

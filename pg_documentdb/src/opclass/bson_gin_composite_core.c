@@ -36,6 +36,7 @@
  #include "opclass/bson_gin_index_term.h"
  #include "opclass/bson_gin_index_types_core.h"
  #include "query/bson_compare.h"
+ #include "utils/hashset_utils.h"
  #include "utils/documentdb_errors.h"
  #include "metadata/metadata_cache.h"
  #include "collation/collation.h"
@@ -60,8 +61,11 @@ typedef struct CompositeRegexData
 /* --------------------------------------------------------- */
 static void ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 										  BsonIndexStrategy queryStrategy,
+										  const char *wildcardPath,
 										  VariableIndexBounds *indexBounds);
-static void ProcessBoundForQuery(CompositeSingleBound *bound, const
+static void ProcessBoundForQuery(CompositeSingleBound *bound,
+								 const char *termPath,
+								 uint32_t termPathLength, const
 								 IndexTermCreateMetadata *metadata);
 static void SetEqualityBound(const bson_value_t *queryValue,
 							 CompositeIndexBounds *queryBounds);
@@ -88,30 +92,36 @@ static void SetUpperBound(CompositeSingleBound *currentBoundValue, const
 static void SetLowerBound(CompositeSingleBound *currentBoundValue, const
 						  CompositeSingleBound *lowerBound);
 
-static void AddMultiBoundaryForDollarIn(int32_t indexAttribute,
+static void AddMultiBoundaryForDollarIn(int32_t indexAttribute, const char *wildcardPath,
 										pgbsonelement *queryElement,
 										VariableIndexBounds *indexBounds);
-static void AddMultiBoundaryForDollarType(int32_t indexAttribute,
+static void AddMultiBoundaryForDollarType(int32_t indexAttribute, const
+										  char *wildcardPath,
 										  pgbsonelement *queryElement,
 										  VariableIndexBounds *indexBounds);
-static void AddMultiBoundaryForDollarNotIn(int32_t indexAttribute,
+static void AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, const
+										   char *wildcardPath,
 										   pgbsonelement *queryElement,
 										   VariableIndexBounds *indexBounds);
 static void AddMultiBoundaryForBitwiseOperator(BsonIndexStrategy strategy,
-											   int32_t indexAttribute,
+											   int32_t indexAttribute, const
+											   char *wildcardPath,
 											   pgbsonelement *queryElement,
 											   VariableIndexBounds *indexBounds);
-static void AddMultiBoundaryForNotGreater(int32_t indexAttribute,
+static void AddMultiBoundaryForNotGreater(int32_t indexAttribute, const
+										  char *wildcardPath,
 										  pgbsonelement *queryElement,
 										  VariableIndexBounds *indexBounds, bool
 										  isEquals);
-static void AddMultiBoundaryForNotLess(int32_t indexAttribute,
+static void AddMultiBoundaryForNotLess(int32_t indexAttribute, const char *wildcardPath,
 									   pgbsonelement *queryElement,
 									   VariableIndexBounds *indexBounds, bool isEquals);
-static void AddMultiBoundaryForDollarRange(int32_t indexAttribute,
+static void AddMultiBoundaryForDollarRange(int32_t indexAttribute, const
+										   char *wildcardPath,
 										   pgbsonelement *queryElement,
 										   VariableIndexBounds *indexBounds);
 static CompositeIndexBoundsSet * AddMultiBoundaryForDollarRegex(int32_t indexAttribute,
+																const char *wildcardPath,
 																pgbsonelement *
 																queryElement,
 																VariableIndexBounds *
@@ -137,10 +147,27 @@ GetTypeUpperBound(bson_type_t type)
 }
 
 
+inline static const char *
+GetTermElementPath(CompositeQueryRunData *runData, int pathIndex, uint32_t *pathLength)
+{
+	if (pathIndex == runData->metaInfo->wildcardPathIndex)
+	{
+		*pathLength = strlen(runData->wildcardPath);
+		return runData->wildcardPath;
+	}
+	else
+	{
+		*pathLength = 1;
+		return "$";
+	}
+}
+
+
 bytea *
 BuildLowerBoundTermFromIndexBounds(CompositeQueryRunData *runData,
 								   IndexTermCreateMetadata *baseMetadata,
-								   bool *hasInequalityMatch, int8_t *sortOrders)
+								   bool *hasInequalityMatch, const char **indexPaths,
+								   uint32_t *indexPathLengths, int8_t *sortOrders)
 {
 	bytea *lowerBoundDatums[INDEX_MAX_KEYS] = { 0 };
 
@@ -174,14 +201,21 @@ BuildLowerBoundTermFromIndexBounds(CompositeQueryRunData *runData,
 
 		/* All possible values term to use when all values are valid for this key */
 		pgbsonelement termElement = { 0 };
-		termElement.path = "$";
-		termElement.pathLength = 1;
+		termElement.path = GetTermElementPath(runData, i, &termElement.pathLength);
 		termElement.bsonValue.value_type = BSON_TYPE_MINKEY;
 
 		IndexTermCreateMetadata termMetadata = *baseMetadata;
 
 		/* In this path, we use upper bound for descending and lower bound for ascending */
 		termMetadata.isDescending = sortOrders[i] < 0;
+		termMetadata.isWildcard = runData->wildcardPath != NULL;
+
+		if (termMetadata.isWildcard)
+		{
+			termMetadata.pathPrefix.string = indexPaths[i];
+			termMetadata.pathPrefix.length = indexPathLengths[i];
+		}
+
 		if ((sortOrders[i] < 0 && !runData->metaInfo->isBackwardScan) ||
 			(sortOrders[i] > 0 && runData->metaInfo->isBackwardScan))
 		{
@@ -282,6 +316,21 @@ UpdateRunDataForVariableBounds(CompositeQueryRunData *runData,
 								"Unable to locate scan key associated with the specified term")));
 		}
 
+		if (set->wildcardPath != NULL)
+		{
+			if (runData->wildcardPath == NULL)
+			{
+				/* Treat this rundata for the current wildcard path */
+				runData->wildcardPath = set->wildcardPath;
+			}
+			else if (strcmp(runData->wildcardPath, set->wildcardPath) != 0)
+			{
+				/* Different wildcard paths - cannot use this set */
+				ereport(ERROR, (errmsg(
+									"runData had wildcardPath already set - this is unexpected")));
+			}
+		}
+
 		/* Track the current term in the scan key */
 		runData->metaInfo->scanKeyMap[scanKeyIndex].scanIndices =
 			lappend_int(runData->metaInfo->scanKeyMap[scanKeyIndex].scanIndices,
@@ -316,8 +365,92 @@ UpdateRunDataForVariableBounds(CompositeQueryRunData *runData,
 }
 
 
+static void
+MergeBoundsForBoundsSet(CompositeIndexBoundsSet *set, CompositeIndexBounds *mergedBounds)
+{
+	CompositeIndexBounds *bound = &set->bounds[0];
+	if (bound->lowerBound.bound.value_type != BSON_TYPE_EOD)
+	{
+		SetLowerBound(&mergedBounds[set->indexAttribute].lowerBound,
+					  &bound->lowerBound);
+	}
+
+	if (bound->upperBound.bound.value_type != BSON_TYPE_EOD)
+	{
+		SetUpperBound(&mergedBounds[set->indexAttribute].upperBound,
+					  &bound->upperBound);
+	}
+
+	mergedBounds[set->indexAttribute].requiresRuntimeRecheck =
+		mergedBounds[set->indexAttribute].requiresRuntimeRecheck ||
+		set->bounds->requiresRuntimeRecheck;
+
+	if (set->bounds->indexRecheckFunctions != NIL)
+	{
+		mergedBounds[set->indexAttribute].indexRecheckFunctions =
+			list_concat(
+				mergedBounds[set->indexAttribute].indexRecheckFunctions,
+				set->bounds->indexRecheckFunctions);
+	}
+}
+
+
 List *
-MergeSingleVariableBounds(List *boundsList,
+MergeWildCardSingleVariableBounds(List *boundsList)
+{
+	/* No array paths, in this case, we merge bounds based off of the wildcard path */
+
+	HTAB *hash = CreatePgbsonElementHashSet();
+	List *mergedList = NIL;
+	ListCell *cell;
+	foreach(cell, boundsList)
+	{
+		CompositeIndexBoundsSet *set =
+			(CompositeIndexBoundsSet *) lfirst(cell);
+
+		if (set->numBounds != 1)
+		{
+			mergedList = lappend(mergedList, set);
+			continue;
+		}
+
+		pgbsonelement keyElement = { 0 };
+		keyElement.path = set->wildcardPath;
+		keyElement.pathLength = strlen(keyElement.path);
+		bool found;
+		pgbsonelement *foundElement = hash_search(hash, &keyElement, HASH_FIND, &found);
+
+		if (!found)
+		{
+			/* Net new path - register the bounds and add it to the hash map */
+			keyElement.bsonValue.value_type = BSON_TYPE_INT32;
+			keyElement.bsonValue.value.v_int32 = list_length(mergedList);
+			mergedList = lappend(mergedList, set);
+
+			hash_search(hash, &keyElement, HASH_ENTER, &found);
+		}
+		else
+		{
+			/* Current path exists in the hashset */
+			CompositeIndexBoundsSet *existingSet = list_nth(mergedList,
+															foundElement->bsonValue.value.
+															v_int32);
+
+			/* Merge the current set into the target */
+			MergeBoundsForBoundsSet(set, &(existingSet->bounds[0]));
+		}
+	}
+
+	list_free(boundsList);
+	hash_destroy(hash);
+
+	/* All paths have the same wildcard path - can merge bounds */
+	return mergedList;
+}
+
+
+List *
+MergeSingleVariableBounds(List *boundsList, const char **wildcardPath,
 						  CompositeIndexBounds *mergedBounds)
 {
 	ListCell *cell;
@@ -330,30 +463,13 @@ MergeSingleVariableBounds(List *boundsList,
 			continue;
 		}
 
-		CompositeIndexBounds *bound = &set->bounds[0];
-		if (bound->lowerBound.bound.value_type != BSON_TYPE_EOD)
+		if (set->wildcardPath != NULL)
 		{
-			SetLowerBound(&mergedBounds[set->indexAttribute].lowerBound,
-						  &bound->lowerBound);
+			ereport(ERROR, (errmsg(
+								"Unexpected, should not have wildcardPath in single variable bounds merge")));
 		}
 
-		if (bound->upperBound.bound.value_type != BSON_TYPE_EOD)
-		{
-			SetUpperBound(&mergedBounds[set->indexAttribute].upperBound,
-						  &bound->upperBound);
-		}
-
-		mergedBounds[set->indexAttribute].requiresRuntimeRecheck =
-			mergedBounds[set->indexAttribute].requiresRuntimeRecheck ||
-			set->bounds->requiresRuntimeRecheck;
-
-		if (set->bounds->indexRecheckFunctions != NIL)
-		{
-			mergedBounds[set->indexAttribute].indexRecheckFunctions =
-				list_concat(
-					mergedBounds[set->indexAttribute].indexRecheckFunctions,
-					set->bounds->indexRecheckFunctions);
-		}
+		MergeBoundsForBoundsSet(set, mergedBounds);
 
 
 		/* Postgres requires that we don't use cell or anything in foreach after
@@ -414,29 +530,44 @@ PickVariableBoundsForOrderedScan(VariableIndexBounds *variableBounds,
 
 
 bool
-UpdateBoundsForTruncation(CompositeIndexBounds *queryBounds, int32_t numPaths,
-						  IndexTermCreateMetadata *basePathMetadata, int8_t *sortOrders)
+UpdateBoundsForTruncation(CompositeQueryRunData *runData,
+						  IndexTermCreateMetadata *basePathMetadata,
+						  const char **indexPaths, uint32_t *indexPathLengths,
+						  int8_t *sortOrders)
 {
 	bool hasTruncation = false;
-	for (int i = 0; i < numPaths; i++)
+	for (int i = 0; i < runData->metaInfo->numIndexPaths; i++)
 	{
 		IndexTermCreateMetadata metadata = *basePathMetadata;
+
+		uint32_t termPathLength = 0;
+		const char *termPath = GetTermElementPath(runData, i, &termPathLength);
 		metadata.isDescending = (sortOrders[i] < 0);
-		if (queryBounds[i].lowerBound.bound.value_type != BSON_TYPE_EOD)
+		metadata.isWildcard = runData->wildcardPath != NULL;
+
+		if (metadata.isWildcard)
 		{
-			ProcessBoundForQuery(&queryBounds[i].lowerBound,
+			metadata.pathPrefix.string = indexPaths[i];
+			metadata.pathPrefix.length = indexPathLengths[i];
+		}
+
+		if (runData->indexBounds[i].lowerBound.bound.value_type != BSON_TYPE_EOD)
+		{
+			ProcessBoundForQuery(&runData->indexBounds[i].lowerBound,
+								 termPath, termPathLength,
 								 &metadata);
 			hasTruncation = hasTruncation ||
-							IsIndexTermTruncated(&queryBounds[i].lowerBound.
+							IsIndexTermTruncated(&runData->indexBounds[i].lowerBound.
 												 indexTermValue);
 		}
 
-		if (queryBounds[i].upperBound.bound.value_type != BSON_TYPE_EOD)
+		if (runData->indexBounds[i].upperBound.bound.value_type != BSON_TYPE_EOD)
 		{
-			ProcessBoundForQuery(&queryBounds[i].upperBound,
+			ProcessBoundForQuery(&runData->indexBounds[i].upperBound,
+								 termPath, termPathLength,
 								 &metadata);
 			hasTruncation = hasTruncation ||
-							IsIndexTermTruncated(&queryBounds[i].upperBound.
+							IsIndexTermTruncated(&runData->indexBounds[i].upperBound.
 												 indexTermValue);
 		}
 	}
@@ -447,7 +578,7 @@ UpdateBoundsForTruncation(CompositeIndexBounds *queryBounds, int32_t numPaths,
 
 inline static CompositeIndexBoundsSet *
 CreateAndRegisterSingleIndexBoundsSet(VariableIndexBounds *indexBounds, int
-									  indexAttribute)
+									  indexAttribute, const char *wildcardPath)
 {
 	const int numTerms = 1;
 	CompositeIndexBoundsSet *set = palloc0(offsetof(CompositeIndexBoundsSet,
@@ -455,6 +586,7 @@ CreateAndRegisterSingleIndexBoundsSet(VariableIndexBounds *indexBounds, int
 										   numTerms * sizeof(CompositeIndexBounds));
 	set->indexAttribute = indexAttribute;
 	set->numBounds = numTerms;
+	set->wildcardPath = wildcardPath;
 	indexBounds->variableBoundsList = lappend(indexBounds->variableBoundsList,
 											  set);
 	return set;
@@ -480,7 +612,8 @@ GetFirstElementFromQueryArray(const bson_value_t *arrayValue, bson_value_t *firs
 
 
 void
-ParseOperatorStrategy(const char **indexPaths, int32_t numPaths,
+ParseOperatorStrategy(const char **indexPaths, uint32_t *indexPathLengths,
+					  int32_t numPaths, int32_t wildcardIndex,
 					  pgbsonelement *queryElement,
 					  BsonIndexStrategy queryStrategy,
 					  VariableIndexBounds *indexBounds)
@@ -488,9 +621,21 @@ ParseOperatorStrategy(const char **indexPaths, int32_t numPaths,
 	/* First figure out which query path matches */
 	int32_t i = 0;
 	bool found = false;
+	const char *wildcardPath = NULL;
 	for (; i < numPaths; i++)
 	{
-		if (strcmp(indexPaths[i], queryElement->path) == 0)
+		if (i == wildcardIndex)
+		{
+			if (IsCompositePathWildcardMatchNoArrayCheck(queryElement->path,
+														 indexPaths[i],
+														 indexPathLengths[i]))
+			{
+				found = true;
+				wildcardPath = queryElement->path;
+				break;
+			}
+		}
+		else if (strcmp(indexPaths[i], queryElement->path) == 0)
 		{
 			found = true;
 			break;
@@ -504,13 +649,15 @@ ParseOperatorStrategy(const char **indexPaths, int32_t numPaths,
 							queryElement->path)));
 	}
 
-	ParseOperatorStrategyWithPath(i, queryElement, queryStrategy, indexBounds);
+	ParseOperatorStrategyWithPath(i, queryElement, queryStrategy, wildcardPath,
+								  indexBounds);
 }
 
 
 static void
 ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 							  BsonIndexStrategy queryStrategy,
+							  const char *wildcardPath,
 							  VariableIndexBounds *indexBounds)
 {
 	bool isNegationOp = false;
@@ -524,7 +671,8 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 			if (queryElement->bsonValue.value_type == BSON_TYPE_ARRAY)
 			{
 				int numterms = 2;
-				CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(numterms, i);
+				CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(numterms, i,
+																			 wildcardPath);
 				SetArrayEqualityBound(&queryElement->bsonValue, &set->bounds[0]);
 				indexBounds->variableBoundsList = lappend(indexBounds->variableBoundsList,
 														  set);
@@ -532,7 +680,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 			else
 			{
 				CompositeIndexBoundsSet *set = CreateAndRegisterSingleIndexBoundsSet(
-					indexBounds, i);
+					indexBounds, i, wildcardPath);
 				SetEqualityBound(&queryElement->bsonValue, &set->bounds[0]);
 			}
 
@@ -543,7 +691,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
 		{
 			CompositeIndexBoundsSet *set = CreateAndRegisterSingleIndexBoundsSet(
-				indexBounds, i);
+				indexBounds, i, wildcardPath);
 			SetGreaterThanBounds(&queryElement->bsonValue, queryStrategy,
 								 &set->bounds[0]);
 			break;
@@ -553,7 +701,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
 		{
 			CompositeIndexBoundsSet *set = CreateAndRegisterSingleIndexBoundsSet(
-				indexBounds, i);
+				indexBounds, i, wildcardPath);
 			SetLessThanBounds(&queryElement->bsonValue, queryStrategy, &set->bounds[0]);
 			break;
 		}
@@ -561,7 +709,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		case BSON_INDEX_STRATEGY_DOLLAR_EXISTS:
 		{
 			CompositeIndexBoundsSet *set = CreateAndRegisterSingleIndexBoundsSet(
-				indexBounds, i);
+				indexBounds, i, wildcardPath);
 			int existsValue = BsonValueAsInt32(&queryElement->bsonValue);
 			if (existsValue == 1)
 			{
@@ -597,7 +745,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		{
 			/* TODO(Composite): Push this to actually filter on the current index */
 			CompositeIndexBoundsSet *set = CreateAndRegisterSingleIndexBoundsSet(
-				indexBounds, i);
+				indexBounds, i, wildcardPath);
 			SetBoundsExistsTrue(&set->bounds[0]);
 			set->bounds[0].requiresRuntimeRecheck = true;
 			break;
@@ -610,7 +758,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 			 * to an exists query with runtime recheck.
 			 */
 			CompositeIndexBoundsSet *set = CreateAndRegisterSingleIndexBoundsSet(
-				indexBounds, i);
+				indexBounds, i, wildcardPath);
 			int sizeValue = BsonValueAsInt32(&queryElement->bsonValue);
 			if (sizeValue == 0)
 			{
@@ -632,7 +780,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		case BSON_INDEX_STRATEGY_DOLLAR_MOD:
 		{
 			CompositeIndexBoundsSet *set = CreateAndRegisterSingleIndexBoundsSet(
-				indexBounds, i);
+				indexBounds, i, wildcardPath);
 			CompositeSingleBound bounds = GetTypeLowerBound(BSON_TYPE_DOUBLE);
 			SetLowerBound(&set->bounds[0].lowerBound, &bounds);
 
@@ -652,7 +800,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_EQUAL:
 		{
 			CompositeIndexBoundsSet *set = CreateAndRegisterSingleIndexBoundsSet(
-				indexBounds, i);
+				indexBounds, i, wildcardPath);
 			SetBoundsForNotEqual(&queryElement->bsonValue, &set->bounds[0]);
 			break;
 		}
@@ -661,14 +809,14 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		{
 			if (queryElement->bsonValue.value_type == BSON_TYPE_REGEX)
 			{
-				AddMultiBoundaryForDollarRegex(i, queryElement, indexBounds,
+				AddMultiBoundaryForDollarRegex(i, wildcardPath, queryElement, indexBounds,
 											   isNegationOp);
 			}
 			else
 			{
 				/* Regex with a string - single strategy */
 				CompositeIndexBoundsSet *set = CreateAndRegisterSingleIndexBoundsSet(
-					indexBounds, i);
+					indexBounds, i, wildcardPath);
 				SetSingleBoundsDollarRegex(&queryElement->bsonValue,
 										   set->bounds,
 										   isNegationOp);
@@ -679,7 +827,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 
 		case BSON_INDEX_STRATEGY_DOLLAR_RANGE:
 		{
-			AddMultiBoundaryForDollarRange(i, queryElement, indexBounds);
+			AddMultiBoundaryForDollarRange(i, wildcardPath, queryElement, indexBounds);
 			break;
 		}
 
@@ -687,12 +835,12 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		{
 			if (queryElement->bsonValue.value_type == BSON_TYPE_ARRAY)
 			{
-				AddMultiBoundaryForDollarType(i, queryElement, indexBounds);
+				AddMultiBoundaryForDollarType(i, wildcardPath, queryElement, indexBounds);
 			}
 			else
 			{
 				CompositeIndexBoundsSet *set = CreateAndRegisterSingleIndexBoundsSet(
-					indexBounds, i);
+					indexBounds, i, wildcardPath);
 				SetSingleBoundsDollarType(&queryElement->bsonValue, set->bounds);
 			}
 
@@ -701,13 +849,13 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 
 		case BSON_INDEX_STRATEGY_DOLLAR_IN:
 		{
-			AddMultiBoundaryForDollarIn(i, queryElement, indexBounds);
+			AddMultiBoundaryForDollarIn(i, wildcardPath, queryElement, indexBounds);
 			break;
 		}
 
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_IN:
 		{
-			AddMultiBoundaryForDollarNotIn(i, queryElement, indexBounds);
+			AddMultiBoundaryForDollarNotIn(i, wildcardPath, queryElement, indexBounds);
 			break;
 		}
 
@@ -716,7 +864,8 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		case BSON_INDEX_STRATEGY_DOLLAR_BITS_ALL_SET:
 		case BSON_INDEX_STRATEGY_DOLLAR_BITS_ANY_SET:
 		{
-			AddMultiBoundaryForBitwiseOperator(queryStrategy, i, queryElement,
+			AddMultiBoundaryForBitwiseOperator(queryStrategy, i, wildcardPath,
+											   queryElement,
 											   indexBounds);
 			break;
 		}
@@ -724,28 +873,32 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_GT:
 		{
 			bool isEquals = false;
-			AddMultiBoundaryForNotGreater(i, queryElement, indexBounds, isEquals);
+			AddMultiBoundaryForNotGreater(i, wildcardPath, queryElement, indexBounds,
+										  isEquals);
 			break;
 		}
 
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_GTE:
 		{
 			bool isEquals = true;
-			AddMultiBoundaryForNotGreater(i, queryElement, indexBounds, isEquals);
+			AddMultiBoundaryForNotGreater(i, wildcardPath, queryElement, indexBounds,
+										  isEquals);
 			break;
 		}
 
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_LT:
 		{
 			bool isEquals = false;
-			AddMultiBoundaryForNotLess(i, queryElement, indexBounds, isEquals);
+			AddMultiBoundaryForNotLess(i, wildcardPath, queryElement, indexBounds,
+									   isEquals);
 			break;
 		}
 
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_LTE:
 		{
 			bool isEquals = true;
-			AddMultiBoundaryForNotLess(i, queryElement, indexBounds, isEquals);
+			AddMultiBoundaryForNotLess(i, wildcardPath, queryElement, indexBounds,
+									   isEquals);
 			break;
 		}
 
@@ -939,14 +1092,15 @@ IsValidRecheckForIndexValue(const BsonIndexTerm *compareTerm,
 
 
 static void
-ProcessBoundForQuery(CompositeSingleBound *bound, const IndexTermCreateMetadata *metadata)
+ProcessBoundForQuery(CompositeSingleBound *bound, const char *path,
+					 uint32_t pathLength, const IndexTermCreateMetadata *metadata)
 {
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
 
 	pgbsonelement termElement = { 0 };
-	termElement.path = "$";
-	termElement.pathLength = 1;
+	termElement.path = path;
+	termElement.pathLength = pathLength;
 	termElement.bsonValue = bound->bound;
 
 	BsonIndexTermSerialized serialized = SerializeBsonIndexTerm(&termElement, metadata);
@@ -1403,7 +1557,7 @@ SetSingleBoundsDollarType(const bson_value_t *queryValue,
 
 
 static void
-AddMultiBoundaryForDollarIn(int32_t indexAttribute,
+AddMultiBoundaryForDollarIn(int32_t indexAttribute, const char *wildcardPath,
 							pgbsonelement *queryElement, VariableIndexBounds *indexBounds)
 {
 	if (queryElement->bsonValue.value_type != BSON_TYPE_ARRAY)
@@ -1449,7 +1603,8 @@ AddMultiBoundaryForDollarIn(int32_t indexAttribute,
 							 queryElement->bsonValue.value.v_doc.data_len);
 
 	CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(inArraySize,
-																 indexAttribute);
+																 indexAttribute,
+																 wildcardPath);
 
 	int index = 0;
 	bool isNegationOp = false;
@@ -1469,6 +1624,7 @@ AddMultiBoundaryForDollarIn(int32_t indexAttribute,
 		if (element.bsonValue.value_type == BSON_TYPE_REGEX)
 		{
 			CompositeIndexBoundsSet *regexSet = AddMultiBoundaryForDollarRegex(index,
+																			   wildcardPath,
 																			   &element,
 																			   NULL,
 																			   isNegationOp);
@@ -1493,7 +1649,8 @@ AddMultiBoundaryForDollarIn(int32_t indexAttribute,
 
 
 static void
-AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, pgbsonelement *queryElement,
+AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, const char *wildcardPath,
+							   pgbsonelement *queryElement,
 							   VariableIndexBounds *indexBounds)
 {
 	if (queryElement->bsonValue.value_type != BSON_TYPE_ARRAY)
@@ -1534,7 +1691,8 @@ AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, pgbsonelement *queryEleme
 	{
 		/* $nin nothing is all documents */
 		CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(1,
-																	 indexAttribute);
+																	 indexAttribute,
+																	 wildcardPath);
 		SetBoundsExistsTrue(&set->bounds[0]);
 		indexBounds->variableBoundsList = lappend(indexBounds->variableBoundsList, set);
 		return;
@@ -1544,7 +1702,8 @@ AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, pgbsonelement *queryEleme
 							 queryElement->bsonValue.value.v_doc.data_len);
 
 	CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(inArraySize,
-																 indexAttribute);
+																 indexAttribute,
+																 wildcardPath);
 
 	int index = 0;
 	while (bson_iter_next(&arrayIter))
@@ -1563,6 +1722,7 @@ AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, pgbsonelement *queryEleme
 		if (element.bsonValue.value_type == BSON_TYPE_REGEX)
 		{
 			CompositeIndexBoundsSet *regexSet = AddMultiBoundaryForDollarRegex(index,
+																			   wildcardPath,
 																			   &element,
 																			   NULL,
 																			   isNegationOp);
@@ -1584,11 +1744,13 @@ AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, pgbsonelement *queryEleme
 
 
 static CompositeIndexBoundsSet *
-AddMultiBoundaryForDollarRegex(int32_t indexAttribute, pgbsonelement *queryElement,
+AddMultiBoundaryForDollarRegex(int32_t indexAttribute, const char *wildcardPath,
+							   pgbsonelement *queryElement,
 							   VariableIndexBounds *indexBounds, bool isNegationOp)
 {
 	CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(2,
-																 indexAttribute);
+																 indexAttribute,
+																 wildcardPath);
 
 	SetSingleBoundsDollarRegex(&queryElement->bsonValue, &set->bounds[0], isNegationOp);
 
@@ -1615,10 +1777,12 @@ AddMultiBoundaryForDollarRegex(int32_t indexAttribute, pgbsonelement *queryEleme
 
 static void
 AddMultiBoundaryForBitwiseOperator(BsonIndexStrategy strategy,
-								   int32_t indexAttribute, pgbsonelement *queryElement,
+								   int32_t indexAttribute, const char *wildcardPath,
+								   pgbsonelement *queryElement,
 								   VariableIndexBounds *indexBounds)
 {
-	CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(2, indexAttribute);
+	CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(2, indexAttribute,
+																 wildcardPath);
 
 	bson_value_t *modFilter = palloc(sizeof(bson_value_t));
 	*modFilter = queryElement->bsonValue;
@@ -1648,10 +1812,12 @@ AddMultiBoundaryForBitwiseOperator(BsonIndexStrategy strategy,
 
 
 static void
-AddMultiBoundaryForNotGreater(int32_t indexAttribute, pgbsonelement *queryElement,
+AddMultiBoundaryForNotGreater(int32_t indexAttribute, const char *wildcardPath,
+							  pgbsonelement *queryElement,
 							  VariableIndexBounds *indexBounds, bool isEquals)
 {
-	CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(2, indexAttribute);
+	CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(2, indexAttribute,
+																 wildcardPath);
 
 	/* Greater than is (minBound -> TypeMAX] */
 	/* The inverse set to this is [MinKey -> minBound ] || (TypeMax -> MaxKey ]*/
@@ -1696,10 +1862,12 @@ AddMultiBoundaryForNotGreater(int32_t indexAttribute, pgbsonelement *queryElemen
 
 
 static void
-AddMultiBoundaryForNotLess(int32_t indexAttribute, pgbsonelement *queryElement,
+AddMultiBoundaryForNotLess(int32_t indexAttribute, const char *wildcardPath,
+						   pgbsonelement *queryElement,
 						   VariableIndexBounds *indexBounds, bool isEquals)
 {
-	CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(2, indexAttribute);
+	CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(2, indexAttribute,
+																 wildcardPath);
 
 	/* Less than is [TypeMin -> maxBound) */
 	/* The inverse set to this is [MinKey -> TypeMin ) || [maxBound -> MaxKey ]*/
@@ -1741,7 +1909,8 @@ AddMultiBoundaryForNotLess(int32_t indexAttribute, pgbsonelement *queryElement,
 
 
 static void
-AddMultiBoundaryForDollarType(int32_t indexAttribute, pgbsonelement *queryElement,
+AddMultiBoundaryForDollarType(int32_t indexAttribute, const char *wildcardPath,
+							  pgbsonelement *queryElement,
 							  VariableIndexBounds *indexBounds)
 {
 	if (queryElement->bsonValue.value_type != BSON_TYPE_ARRAY)
@@ -1765,7 +1934,8 @@ AddMultiBoundaryForDollarType(int32_t indexAttribute, pgbsonelement *queryElemen
 							 queryElement->bsonValue.value.v_doc.data_len);
 
 	CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(typeArraySize,
-																 indexAttribute);
+																 indexAttribute,
+																 wildcardPath);
 
 	int index = 0;
 	while (bson_iter_next(&arrayIter))
@@ -1790,6 +1960,7 @@ AddMultiBoundaryForDollarType(int32_t indexAttribute, pgbsonelement *queryElemen
 
 static void
 AddMultiBoundaryForDollarRange(int32_t indexAttribute,
+							   const char *wildcardPath,
 							   pgbsonelement *queryElement,
 							   VariableIndexBounds *indexBounds)
 {
@@ -1814,6 +1985,7 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 								BsonTypeName(params->elemMatchValue.value_type))));
 		}
 
+		const char *nestedWildcardPath = NULL;
 		VariableIndexBounds localBounds = { 0 };
 		bson_iter_t elemMatchIter;
 		BsonValueInitIterator(&params->elemMatchValue, &elemMatchIter);
@@ -1858,13 +2030,15 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 				{
 					/* Top level path conditions are mergable */
 					ParseOperatorStrategyWithPath(indexAttribute, &innerElemMatchElement,
-												  queryStrategy, &localBounds);
+												  queryStrategy, wildcardPath,
+												  &localBounds);
 				}
 				else
 				{
 					/* deduced child path conditions are not mergeable */
 					ParseOperatorStrategyWithPath(indexAttribute, &innerElemMatchElement,
-												  queryStrategy, indexBounds);
+												  queryStrategy, wildcardPath,
+												  indexBounds);
 				}
 			}
 		}
@@ -1878,12 +2052,12 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 			 */
 			VariableIndexBounds finalBounds = { 0 };
 			CompositeIndexBoundsSet *singleBounds = CreateAndRegisterSingleIndexBoundsSet(
-				&finalBounds, indexAttribute);
+				&finalBounds, indexAttribute, wildcardPath);
 
 			int initialVariableBoundsCount = list_length(localBounds.variableBoundsList);
 			localBounds.variableBoundsList =
 				MergeSingleVariableBounds(localBounds.variableBoundsList,
-										  singleBounds->bounds);
+										  &nestedWildcardPath, singleBounds->bounds);
 
 			if (list_length(localBounds.variableBoundsList) == initialVariableBoundsCount)
 			{
@@ -1930,7 +2104,8 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 	if (params->minValue.value_type != BSON_TYPE_EOD)
 	{
 		CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(1,
-																	 indexAttribute);
+																	 indexAttribute,
+																	 wildcardPath);
 
 		BsonIndexStrategy queryStrategy = params->isMinInclusive ?
 										  BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL :
@@ -1946,7 +2121,8 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 	if (params->maxValue.value_type != BSON_TYPE_EOD)
 	{
 		CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(1,
-																	 indexAttribute);
+																	 indexAttribute,
+																	 wildcardPath);
 		BsonIndexStrategy queryStrategy = params->isMaxInclusive ?
 										  BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL :
 										  BSON_INDEX_STRATEGY_DOLLAR_LESS;

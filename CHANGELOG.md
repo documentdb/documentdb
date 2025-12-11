@@ -1,5 +1,14 @@
 ### documentdb v0.109-0 (Unreleased) ###
 * Support collation with find positional queries *[Feature]*
+* Short-circuit in `$cond` runtime evaluation *[Perf]*
+* Support operator variables(eg: $map.as alias) in let variable spec *[Bugfix]*
+* Support for `killOp` administrative command *[Feature]*
+* Fix `$addToSet` behavior and skip the top-level field rewrite because it's already done in the operator *[Bugfix]*
+* Performance improvements for $addToSet update operator up to ~70x for large existing and update arrays. *[Perf]*
+* Removed feature flags `documentdb.enableCompact`, `documentdb.enableBucketAutoStage` and `documentdb.enableIndexHintSupport`
+* Fix use-after-free segmentation fault in `$let` *[Bugfix]* 
+* Short-circuit in `$switch` at parse time *[Perf]*
+* Enable ordered indexes by default. Can be turned off by specifying "storageEngine": {"enableOrderedIndex": false} for a single index or by turning off the `documentdb.defaultUseCompositeOpClass` GUC.
 
 ### documentdb v0.108-0 (Unreleased) ###
 * Top-level `let` variables and `$$NOW` supported by default.

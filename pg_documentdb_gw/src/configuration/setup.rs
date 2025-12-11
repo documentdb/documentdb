@@ -6,14 +6,12 @@
  *-------------------------------------------------------------------------
  */
 
-use std::path::Path;
+use std::{fs::File, path::Path};
 
 use serde::Deserialize;
-use std::fs::File;
 
-use super::SetupConfiguration;
 use crate::{
-    configuration::CertificateOptions,
+    configuration::{CertificateOptions, SetupConfiguration},
     error::{DocumentDBError, Result},
 };
 
@@ -46,6 +44,7 @@ pub struct DocumentDBSetupConfiguration {
     pub dynamic_configuration_refresh_interval_secs: Option<u32>,
     pub postgres_command_timeout_secs: Option<u64>,
     pub postgres_startup_wait_time_seconds: Option<u64>,
+    pub postgres_idle_connection_timeout_minutes: Option<u64>,
 
     // Runtime configuration
     pub async_runtime_worker_threads: Option<usize>,
@@ -55,7 +54,7 @@ impl DocumentDBSetupConfiguration {
     pub fn new(config_path: &Path) -> Result<Self> {
         let config_file = File::open(config_path)?;
         serde_json::from_reader(config_file).map_err(|e| {
-            DocumentDBError::internal_error(format!("Failed to parse configuration file: {}", e))
+            DocumentDBError::internal_error(format!("Failed to parse configuration file: {e}"))
         })
     }
 }
@@ -141,5 +140,9 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
                 .map(|p| p.get())
                 .unwrap_or(1)
         })
+    }
+
+    fn postgres_idle_connection_timeout_minutes(&self) -> u64 {
+        self.postgres_idle_connection_timeout_minutes.unwrap_or(5)
     }
 }

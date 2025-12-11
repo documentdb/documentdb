@@ -754,7 +754,7 @@ BsonValueInitIterator(const bson_value_t *value, bson_iter_t *iterator)
 /*
  * Initializes a bson writer so that it's ready to write data
  */
-void
+pgbson_require_alignment() void
 PgbsonWriterInit(pgbson_writer *writer)
 {
 	bson_init(&(writer->innerBson));
@@ -805,7 +805,7 @@ PgbsonArrayWriterGetSize(pgbson_array_writer *writer)
 /*
  * Gets the length of the bson currently written into the heap writer.
  */
-uint32_t
+pgbson_require_alignment() uint32_t
 PgbsonHeapWriterGetSize(pgbson_heap_writer *writer)
 {
 	return writer->innerBsonRef->len;
@@ -898,7 +898,7 @@ PgbsonWriterAppendInt32(pgbson_writer *writer, const char *path, uint32_t pathLe
 /*
  * Appends given double to the writer with the specified path.
  */
-void
+pgbson_require_alignment() void
 PgbsonWriterAppendDouble(pgbson_writer *writer, const char *path, uint32_t pathLength,
 						 double value)
 {
@@ -1039,7 +1039,7 @@ PgbsonWriterAppendTimestamp(pgbson_writer *writer, const char *path, uint32_t pa
 /*
  * Appends a "start array" to the writer and returns a writer to append to the child array inserted.
  */
-void
+pgbson_require_alignment() void
 PgbsonWriterStartArray(pgbson_writer *writer, const char *path, uint32_t pathLength,
 					   pgbson_array_writer *childWriter)
 {
@@ -1078,7 +1078,7 @@ PgbsonHeapWriterStartArray(pgbson_heap_writer *writer, const char *path, uint32_
 /*
  * Finishes appending an array to the current writer.
  */
-void
+pgbson_require_alignment() void
 PgbsonWriterEndArray(pgbson_writer *writer, pgbson_array_writer *childWriter)
 {
 	if (!bson_append_array_end(&(writer->innerBson), &(childWriter->innerBson)))
@@ -1299,7 +1299,7 @@ PgbsonArrayWriterGetIndex(pgbson_array_writer *writer)
 /*
  * Writes a value to a nested array at the current index.
  */
-void
+pgbson_require_alignment() void
 PgbsonArrayWriterWriteValue(pgbson_array_writer *writer,
 							const bson_value_t *value)
 {
@@ -1335,7 +1335,7 @@ PgbsonArrayWriterWriteNull(pgbson_array_writer *writer)
 /*
  * Writes a bson document to a nested array at the current index.
  */
-void
+pgbson_require_alignment() void
 PgbsonArrayWriterWriteDocument(pgbson_array_writer *writer,
 							   const pgbson *bson)
 {
@@ -1377,7 +1377,7 @@ PgbsonWriterAppendEmptyArray(pgbson_writer *writer, const char *path, uint32_t p
 /*
  * Appends a bson value as a single element array to pgbson writer.
  */
-void
+pgbson_require_alignment() void
 PgbsonWriterAppendBsonValueAsArray(pgbson_writer *writer, const char *path, uint32_t
 								   pathLength, const bson_value_t *value)
 {
@@ -1481,8 +1481,8 @@ PgbsonHeapWriterGetValue(pgbson_heap_writer *writer)
  * Finalizes the pgbson_writer and creates a pgbson structure from the writer.
  * The writer is deemed unusable after this point.
  */
-pgbson *
-PgbsonWriterGetPgbson(pgbson_writer *writer)
+pgbson_require_alignment() pgbson *
+PgbsonWriterGetPgbson(pgbson_writer * writer)
 {
 	return CreatePgbsonfromBson_t(&(writer->innerBson), true);
 }
@@ -1772,8 +1772,8 @@ BsonValueToDocumentPgbson(const bson_value_t *value)
  * Creates a pgbson structure from a libbson bson_t type.
  * the bson_t is optionally destroyed and the memory reclaimed after conversion.
  */
-pgbson *
-CreatePgbsonfromBson_t(bson_t *document, bool destroyDocument)
+pgbson_require_alignment() pgbson *
+CreatePgbsonfromBson_t(bson_t * document, bool destroyDocument)
 {
 	pgbson *pgbsonValue = CreatePgbsonfromBsonBytes(bson_get_data(document),
 													document->len);

@@ -906,3 +906,199 @@ SELECT * FROM time_system_variables_test.drain_aggregation_query(loopCount => 4,
                                                                                                                                                                                                                                                 | t                | f
 (5 rows)
 
+-- Should be more than 1 document in collection
+SELECT documentdb_api.insert_one('db','coll001','{"_id":1,"a":1}');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','coll001','{"_id":2,"a":1}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','coll001','{"_id":3,"a":1}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001", 
+    "pipeline": [
+      {
+        "$project": {
+          "result": {
+            "$let": {
+              "vars": { "g": "ab", "u": "mb" },
+              "in":  "$$g"
+            }
+          }
+        }
+      }
+    ]
+  }'
+);
+                      document                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "result" : "ab" }
+ { "_id" : { "$numberInt" : "2" }, "result" : "ab" }
+ { "_id" : { "$numberInt" : "3" }, "result" : "ab" }
+(3 rows)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001", 
+    "pipeline": [
+      {
+        "$project": {
+          "result": {
+            "$let": {
+              "vars": { "g": "ab", "u": "mb" },
+              "in": { "$eq": ["$$g", "$$u"] }
+            }
+          }
+        }
+      }
+    ]
+  }'
+);
+                       document                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "result" : false }
+ { "_id" : { "$numberInt" : "2" }, "result" : false }
+ { "_id" : { "$numberInt" : "3" }, "result" : false }
+(3 rows)
+
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001", 
+    "pipeline": [
+      {
+        "$project": {
+          "result": {
+            "$let": {
+              "vars": { "va": "$a", "vb": "$b" },
+              "in": { "$and": ["$$va"] }
+            }
+          }
+        }
+      }
+    ]
+  }'
+);
+                      document                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "result" : true }
+ { "_id" : { "$numberInt" : "2" }, "result" : true }
+ { "_id" : { "$numberInt" : "3" }, "result" : true }
+(3 rows)
+
+-- nested $let
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001", 
+    "pipeline": [
+      {
+        "$project": {
+          "result": {
+            "$let": {
+              "vars": { "var1": "outer", "var2": "inner" },
+              "in": {
+                "$let": {
+                  "vars": { "var3": "$$var2" },
+                  "in": { "$concat": ["$$var1", "-", "$$var3"] }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }'
+);
+                           document                           
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "result" : "outer-inner" }
+ { "_id" : { "$numberInt" : "2" }, "result" : "outer-inner" }
+ { "_id" : { "$numberInt" : "3" }, "result" : "outer-inner" }
+(3 rows)
+
+--- nested $let with $map
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001", 
+    "pipeline": [
+      {
+        "$project": {
+          "result": {
+            "$let": {
+              "vars": { "prefix": "item-" },
+              "in": {
+                "$map": {
+                  "input": [1, 2, 3],
+                  "as": "num",
+                  "in": { "$concat": ["$$prefix", { "$toString": "$$num" }] }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }'
+);
+                                    document                                     
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "result" : [ "item-1", "item-2", "item-3" ] }
+ { "_id" : { "$numberInt" : "2" }, "result" : [ "item-1", "item-2", "item-3" ] }
+ { "_id" : { "$numberInt" : "3" }, "result" : [ "item-1", "item-2", "item-3" ] }
+(3 rows)
+
+--- nested $let with $filter
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001", 
+    "pipeline": [
+      {
+        "$project": {
+          "result": {
+            "$let": {
+              "vars": { "threshold": 1 },
+              "in": {
+                "$filter": {
+                  "input": [0, 1, 2, 3, 4],
+                  "as": "num",
+                  "cond": { "$gt": ["$$num", "$$threshold"] }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }'
+);  
+                                                         document                                                          
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "result" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] }
+ { "_id" : { "$numberInt" : "2" }, "result" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] }
+ { "_id" : { "$numberInt" : "3" }, "result" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] }
+(3 rows)
+

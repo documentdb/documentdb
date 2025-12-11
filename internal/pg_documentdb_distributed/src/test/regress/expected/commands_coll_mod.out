@@ -49,7 +49,7 @@ ERROR:  Must specify either index name or key pattern.
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": []}');
 ERROR:  The BSON field 'collMod.index' has an incorrect type 'array'; it should be of type 'object'.
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"name": "c_1"}}');
-ERROR:  no expireAfterSeconds, hidden or prepareUnique field
+ERROR:  no expireAfterSeconds, hidden, prepareUnique or unique field
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"name": 1}}');
 ERROR:  The BSON field 'collMod.index.name' has an incorrect type 'int'; it should be of type 'string'.
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"keyPattern": 1}}');
@@ -61,7 +61,7 @@ ERROR:  The BSON field 'collMod.index.keyPattern' has an incorrect type 'int'; i
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"keyPattern": {"c": 1}, "name": "c_1"}}');
 ERROR:  Both name and key pattern cannot be present
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"keyPattern": {"c": 1}}}');
-ERROR:  no expireAfterSeconds, hidden or prepareUnique field
+ERROR:  no expireAfterSeconds, hidden, prepareUnique or unique field
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"name": 1, "expireAfterSeconds": true}}');
 ERROR:  The BSON field 'collMod.index.name' has an incorrect type 'int'; it should be of type 'string'.
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"name": 1, "expireAfterSeconds": {}}}');

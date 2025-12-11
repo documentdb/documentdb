@@ -36,7 +36,7 @@ pub async fn process_delete(
         .await?;
 
     PgResponse::new(delete_rows)
-        .transform_write_errors(connection_context)
+        .transform_write_errors(connection_context, request_context.activity_id)
         .await
 }
 
@@ -63,7 +63,7 @@ pub async fn process_insert(
         .await?;
 
     PgResponse::new(insert_rows)
-        .transform_write_errors(connection_context)
+        .transform_write_errors(connection_context, request_context.activity_id)
         .await
 }
 
@@ -89,7 +89,7 @@ pub async fn process_update(
         .await?;
 
     PgResponse::new(update_rows)
-        .transform_write_errors(connection_context)
+        .transform_write_errors(connection_context, request_context.activity_id)
         .await
 }
 
@@ -231,6 +231,50 @@ pub async fn process_current_op(
 
     pg_data_client
         .execute_current_op(request_context, &filter, all, own_ops, connection_context)
+        .await
+}
+
+pub async fn process_kill_op(
+    request_context: &mut RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response> {
+    let (request, request_info, _) = request_context.get_components();
+
+    let mut operation_id: Option<String> = None;
+    request.extract_fields(|key, value| {
+        match key {
+            // The "op" field contains the operation ID to kill
+            "op" => {
+                if let Some(op_str) = value.as_str() {
+                    operation_id = Some(op_str.to_string());
+                } else {
+                    return Err(DocumentDBError::type_mismatch(format!(
+                        "Expected \"op\" field to be a string, but got {:?}",
+                        value.element_type()
+                    )));
+                }
+            }
+            _ => {
+                // Ignore other fields
+            }
+        }
+        Ok(())
+    })?;
+
+    let op_id = operation_id
+        .ok_or_else(|| DocumentDBError::bad_value("Did not provide \"op\" field".to_string()))?;
+
+    // Validate that the command is run against the admin database
+    if request_info.db()? != "admin" {
+        return Err(DocumentDBError::documentdb_error(
+            ErrorCode::Unauthorized,
+            "killOp may only be run against the admin database.".to_string(),
+        ));
+    }
+
+    pg_data_client
+        .execute_kill_op(request_context, &op_id, connection_context)
         .await
 }
 

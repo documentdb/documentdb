@@ -1,9 +1,9 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
- * include/planner/documentdb_plan_cache.h
+ * include/infrastructure/cursor_store.h
  *
- * Common declarations for the pg_documentdb plan cache.
+ * Common declarations for the pg_documentdb cursor store.
  *
  *-------------------------------------------------------------------------
  */
@@ -25,7 +25,8 @@ void DeleteCursorFile(const char *cursorName);
 CursorFileState * CreateCursorFile(const char *cursorName);
 void WriteToCursorFile(CursorFileState *cursorFileState, pgbson *bson);
 pgbson * ReadFromCursorFile(CursorFileState *cursorFileState);
-bytea * CursorFileStateClose(CursorFileState *cursorFileState);
+bytea * CursorFileStateClose(CursorFileState *cursorFileState, MemoryContext
+							 writerContext);
 
 CursorFileState * DeserializeFileState(bytea *cursorFileState);
 

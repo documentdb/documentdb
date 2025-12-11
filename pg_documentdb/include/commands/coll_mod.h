@@ -15,6 +15,7 @@ typedef enum IndexMetadataUpdateOperation
 	INDEX_METADATA_UPDATE_OPERATION_UNKNOWN = 0,
 	INDEX_METADATA_UPDATE_OPERATION_HIDDEN = 1,
 	INDEX_METADATA_UPDATE_OPERATION_PREPARE_UNIQUE = 2,
+	INDEX_METADATA_UPDATE_OPERATION_UNIQUE = 3,
 } IndexMetadataUpdateOperation;
 
 void UpdatePostgresIndexCore(uint64_t collectionId, int indexId,

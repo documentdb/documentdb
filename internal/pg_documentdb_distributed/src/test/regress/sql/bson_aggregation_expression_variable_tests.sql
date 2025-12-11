@@ -349,3 +349,151 @@ SELECT * FROM time_system_variables_test.drain_aggregation_query(loopCount => 12
 SELECT * FROM time_system_variables_test.drain_aggregation_query(loopCount => 12, pageSize => 1, pipeline => '{ "": [{ "$project": { "a": 1, "nowField": "$$NOW" } }]}');
 SELECT * FROM time_system_variables_test.drain_aggregation_query(loopCount => 4, pageSize => 3, pipeline => '{ "": [{ "$project": { "a": 1, "nowField": "$$NOW" } }]}', singleBatch => TRUE);
 SELECT * FROM time_system_variables_test.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$project": { "nowField": "$$NOW" } }, { "$limit": 3 }]}');
+
+
+-- Should be more than 1 document in collection
+SELECT documentdb_api.insert_one('db','coll001','{"_id":1,"a":1}');
+SELECT documentdb_api.insert_one('db','coll001','{"_id":2,"a":1}');
+SELECT documentdb_api.insert_one('db','coll001','{"_id":3,"a":1}');
+
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001", 
+    "pipeline": [
+      {
+        "$project": {
+          "result": {
+            "$let": {
+              "vars": { "g": "ab", "u": "mb" },
+              "in":  "$$g"
+            }
+          }
+        }
+      }
+    ]
+  }'
+);
+
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001", 
+    "pipeline": [
+      {
+        "$project": {
+          "result": {
+            "$let": {
+              "vars": { "g": "ab", "u": "mb" },
+              "in": { "$eq": ["$$g", "$$u"] }
+            }
+          }
+        }
+      }
+    ]
+  }'
+);
+
+
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001", 
+    "pipeline": [
+      {
+        "$project": {
+          "result": {
+            "$let": {
+              "vars": { "va": "$a", "vb": "$b" },
+              "in": { "$and": ["$$va"] }
+            }
+          }
+        }
+      }
+    ]
+  }'
+);
+
+-- nested $let
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001", 
+    "pipeline": [
+      {
+        "$project": {
+          "result": {
+            "$let": {
+              "vars": { "var1": "outer", "var2": "inner" },
+              "in": {
+                "$let": {
+                  "vars": { "var3": "$$var2" },
+                  "in": { "$concat": ["$$var1", "-", "$$var3"] }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }'
+);
+
+--- nested $let with $map
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001", 
+    "pipeline": [
+      {
+        "$project": {
+          "result": {
+            "$let": {
+              "vars": { "prefix": "item-" },
+              "in": {
+                "$map": {
+                  "input": [1, 2, 3],
+                  "as": "num",
+                  "in": { "$concat": ["$$prefix", { "$toString": "$$num" }] }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }'
+);
+
+--- nested $let with $filter
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001", 
+    "pipeline": [
+      {
+        "$project": {
+          "result": {
+            "$let": {
+              "vars": { "threshold": 1 },
+              "in": {
+                "$filter": {
+                  "input": [0, 1, 2, 3, 4],
+                  "as": "num",
+                  "cond": { "$gt": ["$$num", "$$threshold"] }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }'
+);  
+

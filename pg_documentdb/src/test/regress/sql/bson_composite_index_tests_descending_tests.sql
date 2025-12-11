@@ -4,7 +4,7 @@ SET documentdb.next_collection_id TO 7400;
 SET documentdb.next_collection_index_id TO 7400;
 
 
-CREATE FUNCTION documentdb_test_helpers.gin_bson_get_descending_composite_path_generated_terms(documentdb_core.bson, text, int4, bool)
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.gin_bson_get_descending_composite_path_generated_terms(document documentdb_core.bson, pathSpec text, termLimit int4, addMetadata bool, wildcardIndex int4 = -1)
     RETURNS SETOF documentdb_core.bson LANGUAGE C IMMUTABLE PARALLEL SAFE STRICT AS '$libdir/pg_documentdb', $$gin_bson_get_composite_path_generated_terms$$;
 
 -- test scenarios of term generation for composite path
@@ -30,11 +30,11 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
 
 -- create a regular index
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
-    'comp_db', '{ "createIndexes": "comp_collection_desc", "indexes": [ { "name": "comp_index1", "key": { "a": -1, "b": -1 } } ] }');
+    'comp_db', '{ "createIndexes": "comp_collection_desc", "indexes": [ { "name": "comp_index", "key": { "a": -1, "b": -1 } } ] }');
 
--- create a composite index with a different name and same key (works)
+-- create a non-composite index with a different name and same key (works)
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
-    'comp_db', '{ "createIndexes": "comp_collection_desc", "indexes": [ { "name": "comp_index", "key": { "a": -1, "b": -1 }, "enableCompositeTerm": true } ] }', TRUE);
+    'comp_db', '{ "createIndexes": "comp_collection_desc", "indexes": [ { "name": "comp_index1", "key": { "a": -1, "b": -1 }, "enableCompositeTerm": false } ] }', TRUE);
 
 -- check the index
 \d documentdb_data.documents_7400

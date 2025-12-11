@@ -40,6 +40,7 @@ pub async fn end_sessions(
         // Remove all cursors for the session
         context
             .service_context
+            .cursor_store()
             .invalidate_cursors_by_session(session_id)
             .await
     }

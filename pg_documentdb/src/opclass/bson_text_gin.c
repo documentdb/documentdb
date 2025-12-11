@@ -61,7 +61,8 @@ static QTNode * RewriteQueryTree(QTNode *node, bool *rewrote);
 static IndexTraverseOption GetTextIndexTraverseOption(void *contextOptions,
 													  const char *currentPath, uint32_t
 													  currentPathLength,
-													  bson_type_t bsonType);
+													  bson_type_t bsonType,
+													  int32_t *pathIndex);
 
 static Oid ExtractTsConfigFromLanguage(const StringView *stringView,
 									   bool isCreateIndex);
@@ -789,10 +790,11 @@ FormatTraverseOptionForText(IndexTraverseOption pathOption, bson_type_t bsonType
 static IndexTraverseOption
 GetTextIndexTraverseOption(void *contextOptions,
 						   const char *currentPath, uint32_t currentPathLength,
-						   bson_type_t bsonType)
+						   bson_type_t bsonType, int32_t *pathIndex)
 {
 	BsonGinTextPathOptions *indexOpts = (BsonGinTextPathOptions *) contextOptions;
 
+	*pathIndex = 0;
 	if (indexOpts->isWildcard)
 	{
 		/* Root wildcard */
@@ -1031,7 +1033,7 @@ ValidateDefaultLanguageSpec(const char *defaultLanguage)
 /*
  * Populates the language spec provided to a CREATE INDEX text search options.
  */
-static Size
+static pg_attribute_no_sanitize_alignment() Size
 FillDefaultLanguageSpec(const char *defaultLanguage, void *buffer)
 {
 	uint32_t length = defaultLanguage == NULL ? 0 : sizeof(Oid);
@@ -1058,7 +1060,7 @@ FillDefaultLanguageSpec(const char *defaultLanguage, void *buffer)
  * This includes the path and associated weights encoded as follows
  * <numPaths><Datum[4] of weights>[<pathLength><path><weightIndex>]+
  */
-static Size
+pg_attribute_no_sanitize_alignment() static Size
 FillWeightsSpec(const char *weightsSpec, void *buffer)
 {
 	/* Weights count + Weight array (for rank) */
@@ -1310,12 +1312,13 @@ GenerateTsVectorWithOptions(pgbson *document,
 							BsonGinTextPathOptions *options)
 {
 	GenerateTermsContext context = { 0 };
+	GinEntryPathData pathData = { 0 };
 	context.options = (void *) options;
 	context.traverseOptionsFunc = &GetTextIndexTraverseOption;
 	context.generateNotFoundTerm = false;
 
 	bool addRootTerm = false;
-	GenerateTerms(document, &context, addRootTerm);
+	GenerateTerms(document, &context, &pathData, addRootTerm);
 
 	/* Phase 2: Generate TSVector */
 
@@ -1341,10 +1344,10 @@ GenerateTsVectorWithOptions(pgbson *document,
 
 	StringView languagePathBuffer = { 0 };
 
-	for (int i = 0; i < context.totalTermCount; i++)
+	for (int i = 0; i < pathData.terms.index; i++)
 	{
 		BsonIndexTerm term = { 0 };
-		InitializeBsonIndexTerm(DatumGetByteaP(context.terms.entries[i]), &term);
+		InitializeBsonIndexTerm(DatumGetByteaP(pathData.terms.entries[i]), &term);
 
 		if (term.element.bsonValue.value_type == BSON_TYPE_UTF8)
 		{

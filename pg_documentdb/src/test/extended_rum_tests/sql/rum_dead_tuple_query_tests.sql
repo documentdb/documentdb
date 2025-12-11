@@ -12,7 +12,7 @@ AS '$libdir/pg_documentdb', 'gin_bson_index_term_to_bson';
 
 
 -- debug function to read index pages
-CREATE OR REPLACE FUNCTION rum_dead_tuple_test.documentdb_rum_page_get_entries(page bytea, firstEntryType Oid)
+CREATE OR REPLACE FUNCTION rum_dead_tuple_test.documentdb_rum_page_get_entries(page bytea, indexOid Oid)
 RETURNS SETOF jsonb
 LANGUAGE c
 AS '$libdir/pg_documentdb_extended_rum_core', 'documentdb_rum_page_get_entries';
@@ -84,7 +84,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
 SELECT entry->> 'offset' AS offset,
     entry->> 'entryFlags' AS flags,
     rum_dead_tuple_test.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$' AS index_value
-        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3), 'bytea'::regtype) entry
+        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3), 'documentdb_data.documents_rum_index_602'::regclass) entry
     LIMIT 20;
 
 -- update a single node and write to it. The index term is "revived"
@@ -94,7 +94,7 @@ SELECT documentdb_api.insert_one('pvacuum_db_2', 'p_dead_tup',  '{ "_id": -1, "a
 SELECT entry->> 'offset' AS offset,
     entry->> 'entryFlags' AS flags,
     rum_dead_tuple_test.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$' AS index_value
-        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3), 'bytea'::regtype) entry
+        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3), 'documentdb_data.documents_rum_index_602'::regclass) entry
     LIMIT 20;
 
 -- that row is returned properly but the count of rows is correct.
@@ -152,7 +152,7 @@ set documentdb_rum.enable_support_dead_index_items to off;
 SELECT entry->> 'offset' AS offset,
     entry->> 'entryFlags' AS flags,
     rum_dead_tuple_test.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$' AS index_value
-        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3), 'bytea'::regtype) entry
+        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3),  'documentdb_data.documents_rum_index_602'::regclass) entry
     LIMIT 20;
 
 -- update a single node and write to it. The index term is "revived"
@@ -162,7 +162,7 @@ SELECT documentdb_api.insert_one('pvacuum_db_2', 'p_dead_tup',  '{ "_id": -1, "a
 SELECT entry->> 'offset' AS offset,
     entry->> 'entryFlags' AS flags,
     rum_dead_tuple_test.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$' AS index_value
-        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3), 'bytea'::regtype) entry
+        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3),  'documentdb_data.documents_rum_index_602'::regclass) entry
     LIMIT 20;
 
 -- now revive all the tuples using the repair function
@@ -170,7 +170,7 @@ SELECT rum_dead_tuple_test.documentdb_rum_revive_index_tuples('documentdb_data.d
 
 -- check which entries are dead (should be none)
 SELECT entry->> 'offset' AS offset, entry->> 'entryFlags' AS flags
-        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3), 'bytea'::regtype) entry
+        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3),  'documentdb_data.documents_rum_index_602'::regclass) entry
     WHERE entry->> 'entryFlags' != '1' LIMIT 20;
 
 -- now repeat the scenarios above with posting trees.
@@ -192,7 +192,7 @@ SELECT entry->> 'offset' AS offset,
     entry ->> 'entryType' AS postingType,
     entry ->> 'tupleTid' AS postingTreeRoot,
     rum_dead_tuple_test.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$' AS index_value
-        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 1), 'bytea'::regtype) entry
+        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 1),  'documentdb_data.documents_rum_index_602'::regclass) entry
     LIMIT 20;
 
 -- read the posting root

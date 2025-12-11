@@ -12,7 +12,8 @@
 #define SHARDING_H
 
 #include "metadata/collection.h"
-
+void ParseNamespaceName(const char *namespacePath, char **databaseName,
+						char **collectionName);
 int64 ComputeShardKeyHashForDocument(pgbson *shardKey, uint64_t collectionId,
 									 pgbson *document);
 bool ComputeShardKeyHashForQuery(pgbson *shardKey, uint64_t collectionId, pgbson *query,
