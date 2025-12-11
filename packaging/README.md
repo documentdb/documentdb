@@ -79,6 +79,6 @@ Supported DEB/Ubuntu distributions:
 - ubuntu22.04 — Ubuntu 22.04 (jammy)
 - ubuntu24.04 — Ubuntu 24.04 (noble)
 
-Supported PG versions: 15, 16, 17
+Supported PG versions: 15, 16, 17, 18
 
 The resulting gateway packages will be placed in the output directory (default: `packaging`). You can change the output location with the `--output-dir` option.

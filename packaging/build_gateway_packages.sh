@@ -55,11 +55,11 @@ while [[ $# -gt 0 ]]; do
         --pg)
             shift
             case $1 in
-                15|16|17)
+                15|16|17|18)
                     PG=$1
                     ;;
                 *)
-                    echo "Invalid --pg value. Allowed values are [15, 16, 17]"
+                    echo "Invalid --pg value. Allowed values are [15, 16, 17, 18]"
                     exit 1
                     ;;
             esac
@@ -147,10 +147,9 @@ chmod 777 "$abs_output_dir"
 if [[ "$PACKAGE_TYPE" == "deb" ]]; then
     docker build -t "$TAG" -f "$DOCKERFILE" \
         --build-arg BASE_IMAGE="$DOCKER_IMAGE" \
-        --build-arg POSTGRES_VERSION="$PG" \
         --build-arg DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" "$script_dir"
     # Run the Docker container to build the packages
-    docker run --rm --env OS="$OS" --env POSTGRES_VERSION="$PG" --env DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" -v "$abs_output_dir:/output" "$TAG"
+    docker run --rm --env OS="$OS" --env DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" -v "$abs_output_dir:/output" "$TAG"
 elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
     echo "Building RPM packages is not yet implemented."
     # TODO: Implement RPM package building
