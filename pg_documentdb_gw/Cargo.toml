@@ -4,6 +4,14 @@ description = "A gateway component for DocumentDB."
 version = "0.1.0"
 edition = "2021"
 
+[package.metadata.deb]
+name = "documentdb_gateway"
+maintainer = "documentdb-packaging-maintainers@microsoft.com"
+depends = []
+assets = [
+ ["target/release-with-symbols/documentdb_gateway", "usr/bin/", "755"],
+]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -39,14 +47,6 @@ tokio-postgres = { version = "0.7.10", features = [
 ] }
 serde = { version = "1.0.125", features = ["derive", "rc"] }
 uuid = { version = "1.12.1", features = ["v4"] }
-
-[package.metadata.deb]
-name = "documentdb_gateway"
-maintainer = "documentdb-packaging-maintainers@microsoft.com"
-depends = []
-assets = [
- ["target/release-with-symbols/documentdb_gateway", "usr/bin/", "755"],
-]
 
 [dev-dependencies]
 mongodb = { version = "3.2.0", default-features = false, features = [
