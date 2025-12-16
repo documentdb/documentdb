@@ -97,6 +97,8 @@ Where `<scope>` describes the category of statistics being exposed. Examples inc
 
 - Columns representing **dimensions** (e.g., name, database, collection, user) should **not** use a suffix.
 
+- `stats_reset` column is required if the view contains cumulative counters. This column indicates the timestamp of the last reset.
+
 **Example** (for illustration purposes only, not an actual view):
 ```sql
 CREATE VIEW documentdb_stat_queries AS
@@ -107,7 +109,8 @@ SELECT
     query_count,        -- value (with _count suffix)
     total_seconds,      -- value (with _seconds suffix)
     avg_milliseconds,   -- value (with _milliseconds suffix)
-    cache_hit_percent   -- value (with _percent suffix)
+    cache_hit_percent,  -- value (with _percent suffix)
+    stats_reset         -- timestamp of last reset
 FROM ...
 ```
 
