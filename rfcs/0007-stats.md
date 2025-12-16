@@ -81,6 +81,12 @@ Statistcs will be exposed through views.
 __API_CATALOG_SCHEMA__.documentdb_stat_<scope>
 ```
 
+Where `<scope>` describes the category of statistics being exposed. Examples include:
+- `queries`
+- `connections`
+- `collections`
+- `indexes`
+
 **Column naming in views**
 - Columns representing a **value** must end with a unit suffix:
   - `_count`
