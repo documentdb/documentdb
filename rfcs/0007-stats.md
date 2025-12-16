@@ -97,6 +97,20 @@ Where `<scope>` describes the category of statistics being exposed. Examples inc
 
 - Columns representing **dimensions** (e.g., name, database, collection, user) should **not** use a suffix.
 
+**Example** (for illustration purposes only, not an actual view):
+```sql
+CREATE VIEW documentdb_stat_queries AS
+SELECT
+    database,           -- dimension (no suffix)
+    collection,         -- dimension (no suffix)
+    user_name,          -- dimension (no suffix)
+    query_count,        -- value (with _count suffix)
+    total_seconds,      -- value (with _seconds suffix)
+    avg_milliseconds,   -- value (with _milliseconds suffix)
+    cache_hit_percent   -- value (with _percent suffix)
+FROM ...
+```
+
 By default, all statistical views are readable by all users:
 ```
 GRANT SELECT ON __API_CATALOG_SCHEMA__.documentdb_stat_<scope> TO PUBLIC;
