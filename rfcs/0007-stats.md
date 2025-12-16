@@ -46,6 +46,7 @@ This RFC proposes a set of conventions and rules that define **how** statistics 
 
 - This RFC does **not** design or implement any specific statistics.
 - This RFC does **not** replace or modify existing PostgreSQL statistics.
+- This RFC does **not** address using statistics for query planning or optimization. The focus is solely on exposability and monitoring.
 
 ---
 
