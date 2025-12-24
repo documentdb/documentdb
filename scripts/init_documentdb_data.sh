@@ -153,10 +153,11 @@ check_init_marker() {
     
     log "Checking if database has been previously initialized..."
     
-    # Try to query the marker collection
-    local check_result=$(mongosh "localhost:${DOCUMENTDB_PORT}" -u "$USERNAME" -p "$PASSWORD" --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --quiet --eval "use('$marker_db'); db.$marker_collection.findOne({initialized: true})" 2>/dev/null || echo "")
+    # Try to query the marker collection - check if it returns any document
+    local check_result=$(mongosh "localhost:${DOCUMENTDB_PORT}" -u "$USERNAME" -p "$PASSWORD" --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --quiet --eval "use('$marker_db'); const doc = db.$marker_collection.findOne({initialized: true}); printjson(doc);" 2>/dev/null || echo "null")
     
-    if echo "$check_result" | grep -q "initialized.*true"; then
+    # Check if we got a document back (not null)
+    if echo "$check_result" | grep -q '"initialized".*true\|initialized.*:.*true'; then
         echo "Database has been previously initialized. Skipping initialization to prevent duplicate data."
         echo "To re-initialize, drop the '$marker_db' database first using:"
         echo "  mongosh --eval \"use('$marker_db'); db.dropDatabase()\""
