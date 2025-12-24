@@ -146,6 +146,43 @@ wait_for_documentdb() {
     return 1
 }
 
+# Function to check if initialization has already been performed
+check_init_marker() {
+    local marker_db="__documentdb_init_marker__"
+    local marker_collection="initialization_status"
+    
+    log "Checking if database has been previously initialized..."
+    
+    # Try to query the marker collection
+    local check_result=$(mongosh "localhost:${DOCUMENTDB_PORT}" -u "$USERNAME" -p "$PASSWORD" --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --quiet --eval "use('$marker_db'); db.$marker_collection.findOne({initialized: true})" 2>/dev/null || echo "")
+    
+    if echo "$check_result" | grep -q "initialized.*true"; then
+        echo "Database has been previously initialized. Skipping initialization to prevent duplicate data."
+        echo "To re-initialize, drop the '$marker_db' database first using:"
+        echo "  mongosh --eval \"use('$marker_db'); db.dropDatabase()\""
+        return 0
+    else
+        log "No initialization marker found. Proceeding with initialization..."
+        return 1
+    fi
+}
+
+# Function to set initialization marker
+set_init_marker() {
+    local marker_db="__documentdb_init_marker__"
+    local marker_collection="initialization_status"
+    
+    log "Setting initialization marker..."
+    
+    if mongosh "localhost:${DOCUMENTDB_PORT}" -u "$USERNAME" -p "$PASSWORD" --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --quiet --eval "use('$marker_db'); db.$marker_collection.insertOne({initialized: true, timestamp: new Date(), initDataPath: '$INIT_DATA_PATH'})" >/dev/null 2>&1; then
+        log "Initialization marker set successfully"
+        return 0
+    else
+        echo "Warning: Failed to set initialization marker"
+        return 1
+    fi
+}
+
 # Function to execute initialization scripts from a directory
 run_init_scripts() {
     local init_dir="$1"
@@ -162,6 +199,11 @@ run_init_scripts() {
     if ! command -v mongosh >/dev/null 2>&1; then
         echo "Error: mongosh not found. Please install mongosh to run initialization scripts."
         return 1
+    fi
+    
+    # Check if initialization has already been performed
+    if check_init_marker; then
+        return 0
     fi
     
     # Process .js files in alphabetical order
@@ -190,6 +232,9 @@ run_init_scripts() {
     fi
     
     echo "Processed $script_count initialization script(s)"
+    
+    # Set marker to indicate initialization is complete
+    set_init_marker
     
     # Log completion message that the test script can monitor
     echo "Sample data initialization completed!"
