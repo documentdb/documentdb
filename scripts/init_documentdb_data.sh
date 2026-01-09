@@ -27,13 +27,14 @@
 set -e
 set -u
 
-# Marker file location
-MARKER_FILE="/var/lib/postgresql/data/.documentdb_initialized"
+# Default values (INIT_DATA_PATH used for marker file naming)
+DEFAULT_INIT_DATA_PATH="/init_doc_db.d"
 
 # Cleanup function for trap
 cleanup_on_exit() {
     local exit_code=$?
-    if [ -f "$MARKER_FILE" ]; then
+    # MARKER_FILE is set after INIT_DATA_PATH is parsed
+    if [ -n "${MARKER_FILE:-}" ] && [ -f "$MARKER_FILE" ]; then
         local status=$(grep "^Status:" "$MARKER_FILE" 2>/dev/null | cut -d: -f2 | tr -d ' ')
         if [ "$status" = "in-progress" ]; then
             echo "Script interrupted. Cleaning up initialization marker..."
@@ -49,7 +50,7 @@ trap cleanup_on_exit EXIT INT TERM
 # Default values
 USERNAME="default_user"
 PASSWORD=""
-INIT_DATA_PATH="/init_doc_db.d"
+INIT_DATA_PATH="$DEFAULT_INIT_DATA_PATH"
 VERBOSE="false"
 DOCUMENTDB_PORT="10260"
 FORCE_REINIT="false"
@@ -141,6 +142,13 @@ if [ -z "$PASSWORD" ]; then
     exit 1
 fi
 
+# Generate marker file path based on INIT_DATA_PATH
+# Create a safe filename from the path by replacing / with _ and removing leading _
+MARKER_SUFFIX=$(echo "$INIT_DATA_PATH" | sed 's/\//_/g' | sed 's/^_//')
+MARKER_FILE="/var/lib/postgresql/data/.documentdb_initialized_${MARKER_SUFFIX}"
+
+log "Using marker file: $MARKER_FILE"
+
 # Verbose logging function
 log() {
     if [ "$VERBOSE" = "true" ]; then
@@ -199,7 +207,7 @@ wait_for_documentdb() {
 }
 
 # Function to check if initialization has already been performed
-check_init_marker() {
+is_already_initialized() {
     log "Checking if database has been previously initialized..."
     
     # Check if force re-initialization is requested
@@ -271,10 +279,11 @@ check_init_marker() {
     fi
     
     if [ "$db_check_failed" = "true" ]; then
-        echo "Warning: Failed to check database for existing data."
-        echo "This could indicate a connection issue. Proceeding with caution..."
-        # Don't proceed if we can't verify database state
-        return 1
+        echo "Error: Failed to check database for existing data."
+        echo "This indicates an unexpected connection issue after initial connection succeeded."
+        echo "Cannot safely proceed with initialization without verifying database state."
+        echo "Please check the DocumentDB service and try again."
+        exit 1
     fi
     
     if [ "$db_count" != "0" ] && [ -n "$db_count" ]; then
@@ -293,6 +302,12 @@ check_init_marker() {
 # Function to set initialization marker
 set_init_marker() {
     local status="$1"  # "in-progress" or "complete"
+    
+    # Validate status parameter
+    if [ "$status" != "in-progress" ] && [ "$status" != "complete" ]; then
+        echo "Error: Invalid status '$status'. Must be 'in-progress' or 'complete'."
+        return 1
+    fi
     
     if [ "$status" = "in-progress" ]; then
         log "Setting initialization status to: in-progress"
@@ -332,12 +347,15 @@ run_init_scripts() {
     fi
     
     # Check if initialization has already been performed
-    if check_init_marker; then
+    if is_already_initialized; then
         return 0
     fi
     
     # Set marker to "in-progress" state
-    set_init_marker "in-progress"
+    if ! set_init_marker "in-progress"; then
+        echo "Error: Failed to set initialization marker. Cannot proceed safely."
+        return 1
+    fi
     
     # Process .js files in alphabetical order
     for init_file in "$init_dir"/*.js; do
@@ -372,7 +390,9 @@ run_init_scripts() {
     echo "Processed $script_count initialization script(s)"
     
     # Set marker to "complete" state
-    set_init_marker "complete"
+    if ! set_init_marker "complete"; then
+        echo "Warning: Failed to set completion marker. Initialization succeeded but status may not be properly tracked."
+    fi
     
     # Log completion message that the test script can monitor
     echo "Sample data initialization completed!"
