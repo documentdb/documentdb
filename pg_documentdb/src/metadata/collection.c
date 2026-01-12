@@ -576,6 +576,8 @@ TrySetCollectionShard(MongoCollection *collection)
 
 	int savedGUCLevel = NewGUCNestLevel();
 	SetGUCLocally("client_min_messages", "WARNING");
+
+	/* Get shard table name (distributed) or original tableName (single node) */
 	const char *shardName = TryGetShardNameForUnshardedCollection(
 		collection->relationId, collection->collectionId, collection->tableName);
 	RollbackGUCChange(savedGUCLevel);
