@@ -177,6 +177,11 @@ pub async fn process_request(
                     request_context,
                     connection_context,
                     &pg_data_client,
+                    dynamic_config.enable_write_procedures().await,
+                    dynamic_config
+                        .enable_write_procedures_with_batch_commit()
+                        .await,
+                    dynamic_config.enable_backend_timeout().await,
                 )
                 .await
             }
@@ -221,6 +226,11 @@ pub async fn process_request(
                     request_context,
                     connection_context,
                     &pg_data_client,
+                    dynamic_config.enable_write_procedures().await,
+                    dynamic_config
+                        .enable_write_procedures_with_batch_commit()
+                        .await,
+                    dynamic_config.enable_backend_timeout().await,
                 )
                 .await
             }
@@ -441,6 +451,14 @@ async fn retry_policy(
     error: &tokio_postgres::Error,
     request_type: &RequestType,
 ) -> Retry {
+    if (request_type == &RequestType::Insert || request_type == &RequestType::Update)
+        && dynamic_config
+            .enable_write_procedures_with_batch_commit()
+            .await
+    {
+        // When batch commit are enabled, do not retry on any errors.
+        return Retry::None;
+    }
     if error.is_closed() {
         return Retry::Short;
     }
