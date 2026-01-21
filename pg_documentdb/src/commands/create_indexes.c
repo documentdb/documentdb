@@ -421,8 +421,19 @@ IsWildCardIndex(IndexDef *indexDef)
 		return false;
 	}
 
-	return indexDef->wildcardProjectionTree != NULL || indexDef->key->isWildcard ||
-		   indexDef->wildcardProjectionDocument != NULL;
+	return indexDef->key->isWildcard && indexDef->wildcardProjectionTree == NULL;
+}
+
+
+inline static bool
+IsWildCardProjectionIndex(IndexDef *indexDef)
+{
+	if (IsTextIndex(indexDef))
+	{
+		return false;
+	}
+
+	return indexDef->wildcardProjectionTree != NULL;
 }
 
 
@@ -448,12 +459,19 @@ GetIndexAmHandlerByName(IndexDef *indexDef)
 		const BsonIndexAmEntry *indexAm = GetBsonIndexAmByIndexAmName(
 			AlternateIndexHandler);
 
-		if ((IsUniqueIndex(indexDef) && indexAm->is_unique_index_supported) ||
-			(IsWildCardIndex(indexDef) && indexAm->is_wild_card_supported) ||
-			(IsSinglePathIndex(indexDef) && indexAm->is_single_path_index_supported) ||
-			(IsCompositePathIndex(indexDef) && indexAm->is_composite_index_supported) ||
-			(IsTextIndex(indexDef) && indexAm->is_text_index_supported) ||
-			(IsHashIndex(indexDef) && indexAm->is_hashed_index_supported))
+		if ((IsUniqueIndex(indexDef) && indexAm->get_unique_path_op_family_oid == NULL) ||
+			(IsWildCardIndex(indexDef) && !indexAm->is_wild_card_supported) ||
+			(IsWildCardProjectionIndex(indexDef) &&
+			 !indexAm->is_wild_card_projection_supported) ||
+			(IsSinglePathIndex(indexDef) && !indexAm->is_single_path_index_supported) ||
+			(IsCompositePathIndex(indexDef) &&
+			 indexAm->get_composite_path_op_family_oid == NULL) ||
+			(IsTextIndex(indexDef) && indexAm->get_text_path_op_family_oid == NULL) ||
+			(IsHashIndex(indexDef) && indexAm->get_hashed_path_op_family_oid == NULL))
+		{
+			return GetBsonIndexAmByIndexAmName("rum");
+		}
+		else
 		{
 			ReportFeatureUsage(FEATURE_CREATE_INDEX_ALTERNATE_AM);
 			return indexAm;
