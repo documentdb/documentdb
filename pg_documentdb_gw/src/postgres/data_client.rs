@@ -160,6 +160,9 @@ pub trait PgDataClient: Send + Sync {
         &self,
         request_context: &mut RequestContext<'_>,
         connection_context: &ConnectionContext,
+        enable_write_procedures: bool,
+        enable_write_procedures_with_batch_commit: bool,
+        enable_backend_timeout: bool,
     ) -> Result<Vec<Row>>;
 
     async fn execute_list_collections(
@@ -184,6 +187,9 @@ pub trait PgDataClient: Send + Sync {
         &self,
         request_context: &mut RequestContext<'_>,
         connection_context: &ConnectionContext,
+        enable_write_procedures: bool,
+        enable_write_procedures_with_batch_commit: bool,
+        enable_backend_timeout: bool,
     ) -> Result<Vec<Row>>;
 
     async fn execute_validate(

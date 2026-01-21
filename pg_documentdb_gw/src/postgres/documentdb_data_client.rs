@@ -519,13 +519,34 @@ impl PgDataClient for DocumentDBDataClient {
         &self,
         request_context: &mut RequestContext<'_>,
         connection_context: &ConnectionContext,
+        enable_write_procedures: bool,
+        enable_write_procedures_with_batch_commit: bool,
+        enable_backend_timeout: bool,
     ) -> Result<Vec<Row>> {
         let (request, request_info, request_tracker) = request_context.get_components();
+
+        let mut query_str: &str = connection_context.service_context.query_catalog().insert();
+
+        if enable_write_procedures_with_batch_commit
+            && connection_context.transaction.is_none()
+            && enable_backend_timeout
+        {
+            query_str = connection_context
+                .service_context
+                .query_catalog()
+                .insert_bulk();
+        } else if enable_write_procedures {
+            query_str = connection_context
+                .service_context
+                .query_catalog()
+                .insert_txn_proc();
+        }
+
         let insert_rows = self
             .pull_connection(connection_context)
             .await?
             .query(
-                connection_context.service_context.query_catalog().insert(),
+                query_str,
                 &[Type::TEXT, Type::BYTEA, Type::BYTEA],
                 &[
                     &request_info.db()?.to_string(),
@@ -638,16 +659,34 @@ impl PgDataClient for DocumentDBDataClient {
         &self,
         request_context: &mut RequestContext<'_>,
         connection_context: &ConnectionContext,
+        enable_write_procedures: bool,
+        enable_write_procedures_with_batch_commit: bool,
+        enable_backend_timeout: bool,
     ) -> Result<Vec<Row>> {
         let (request, request_info, request_tracker) = request_context.get_components();
+
+        let mut query_str: &str = connection_context.service_context.query_catalog().insert();
+
+        if enable_write_procedures_with_batch_commit
+            && connection_context.transaction.is_none()
+            && enable_backend_timeout
+        {
+            query_str = connection_context
+                .service_context
+                .query_catalog()
+                .update_bulk();
+        } else if enable_write_procedures {
+            query_str = connection_context
+                .service_context
+                .query_catalog()
+                .update_txn_proc();
+        }
+
         let update_rows = self
             .pull_connection(connection_context)
             .await?
             .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .process_update(),
+                query_str,
                 &[Type::TEXT, Type::BYTEA, Type::BYTEA],
                 &[
                     &request_info.db()?.to_string(),

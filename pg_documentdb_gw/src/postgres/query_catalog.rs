@@ -68,8 +68,12 @@ pub struct QueryCatalog {
     pub delete: String,
     pub find_cursor_first_page: String,
     pub insert: String,
+    pub insert_txn_proc: String,
+    pub insert_bulk: String,
     pub aggregate_cursor_first_page: String,
     pub process_update: String,
+    pub update_txn_proc: String,
+    pub update_bulk: String,
     pub list_databases: String, // Has 1 param
     pub list_collections: String,
     pub validate: String,
@@ -277,12 +281,28 @@ impl QueryCatalog {
         &self.insert
     }
 
+    pub fn insert_txn_proc(&self) -> &str {
+        &self.insert_txn_proc
+    }
+
+    pub fn insert_bulk(&self) -> &str {
+        &self.insert_bulk
+    }
+
     pub fn aggregate_cursor_first_page(&self) -> &str {
         &self.aggregate_cursor_first_page
     }
 
     pub fn process_update(&self) -> &str {
         &self.process_update
+    }
+
+    pub fn update_txn_proc(&self) -> &str {
+        &self.update_txn_proc
+    }
+
+    pub fn update_bulk(&self) -> &str {
+        &self.update_bulk
     }
 
     pub fn list_databases(&self, filter_string: &str) -> String {
@@ -457,8 +477,12 @@ pub fn create_query_catalog() -> QueryCatalog {
             delete: "SELECT * FROM documentdb_api.delete($1, $2, $3, NULL)".to_string(),
             find_cursor_first_page: "SELECT cursorPage, continuation, persistConnection, cursorId FROM documentdb_api.find_cursor_first_page($1, $2)".to_string(),
             insert: "SELECT * FROM documentdb_api.insert($1, $2, $3, NULL)".to_string(),
+            insert_txn_proc: "CALL documentdb_api.insert_txn_proc($1, $2, $3, NULL)".to_string(),
+            insert_bulk: "CALL documentdb_api.insert_bulk($1, $2, $3, NULL)".to_string(),
             aggregate_cursor_first_page: "SELECT cursorPage, continuation, persistConnection, cursorId FROM documentdb_api.aggregate_cursor_first_page($1, $2)".to_string(),
             process_update: "SELECT * FROM documentdb_api.update($1, $2, $3, NULL)".to_string(),
+            update_txn_proc: "CALL documentdb_api.update_txn_proc($1, $2, $3, NULL)".to_string(),
+            update_bulk: "CALL documentdb_api.update_bulk($1, $2, $3, NULL)".to_string(),
             list_databases: "WITH r1 AS (SELECT DISTINCT database_name AS name
                                 FROM documentdb_api_catalog.collections),
                              r2 AS (SELECT documentdb_core.row_get_bson(r1) AS document FROM r1),

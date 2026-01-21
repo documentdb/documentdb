@@ -35,6 +35,19 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         self.get_bool("enableChangeStreams", false).await
     }
 
+    async fn enable_backend_timeout(&self) -> bool {
+        self.get_bool("enableStatementTimeout", false).await
+    }
+
+    async fn enable_write_procedures(&self) -> bool {
+        self.get_bool("enableWriteProcedures", false).await
+    }
+
+    async fn enable_write_procedures_with_batch_commit(&self) -> bool {
+        self.get_bool("enableWriteProceduresWithBatchCommit", false)
+            .await
+    }
+
     async fn enable_connection_status(&self) -> bool {
         self.get_bool("enableConnectionStatus", false).await
     }

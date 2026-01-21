@@ -57,9 +57,18 @@ pub async fn process_insert(
     request_context: &mut RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
+    enable_write_procedures: bool,
+    enable_write_procedures_with_batch_commit: bool,
+    enable_backend_timeout: bool,
 ) -> Result<Response> {
     let insert_rows = pg_data_client
-        .execute_insert(request_context, connection_context)
+        .execute_insert(
+            request_context,
+            connection_context,
+            enable_write_procedures,
+            enable_write_procedures_with_batch_commit,
+            enable_backend_timeout,
+        )
         .await?;
 
     PgResponse::new(insert_rows)
@@ -83,9 +92,18 @@ pub async fn process_update(
     request_context: &mut RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
+    enable_write_procedures: bool,
+    enable_write_procedures_with_batch_commit: bool,
+    enable_backend_timeout: bool,
 ) -> Result<Response> {
     let update_rows = pg_data_client
-        .execute_update(request_context, connection_context)
+        .execute_update(
+            request_context,
+            connection_context,
+            enable_write_procedures,
+            enable_write_procedures_with_batch_commit,
+            enable_backend_timeout,
+        )
         .await?;
 
     PgResponse::new(update_rows)
