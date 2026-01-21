@@ -26,11 +26,8 @@ static const char * GetRumInternalSchemaV2(void);
 /* Left non-static for internal use */
 BsonIndexAmEntry RumIndexAmEntry = {
 	.is_single_path_index_supported = true,
-	.is_unique_index_supported = true,
 	.is_wild_card_supported = true,
-	.is_composite_index_supported = true,
-	.is_text_index_supported = true,
-	.is_hashed_index_supported = true,
+	.is_wild_card_projection_supported = true,
 	.is_order_by_supported = false,
 	.is_backwards_scan_supported = false,
 	.is_index_only_scan_supported = false,
@@ -246,7 +243,7 @@ IsUniqueCheckOpFamilyOid(Oid relam, Oid opFamilyOid)
 		return false;
 	}
 
-	return amEntry->is_unique_index_supported &&
+	return amEntry->get_unique_path_op_family_oid != NULL &&
 		   opFamilyOid == amEntry->get_unique_path_op_family_oid();
 }
 
@@ -260,7 +257,7 @@ IsHashedPathOpFamilyOid(Oid relam, Oid opFamilyOid)
 		return false;
 	}
 
-	return amEntry->is_hashed_index_supported &&
+	return amEntry->get_hashed_path_op_family_oid != NULL &&
 		   opFamilyOid == amEntry->get_hashed_path_op_family_oid();
 }
 
