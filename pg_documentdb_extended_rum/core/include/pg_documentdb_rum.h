@@ -453,6 +453,8 @@ typedef struct RumConfig
 		StrategyNumber strategy;
 		ScanDirection direction;
 	}       strategyInfo[MAX_STRATEGIES];
+
+	bool skipGenerateEmptyEntries;
 }   RumConfig;
 
 /*
@@ -512,6 +514,8 @@ typedef struct RumState
 
 	/* Collations to pass to the support functions */
 	Oid supportCollation[INDEX_MAX_KEYS];
+
+	bool skipGenerateEmptyEntries[INDEX_MAX_KEYS];
 }   RumState;
 
 /* Accessor for the i'th attribute of tupdesc. */

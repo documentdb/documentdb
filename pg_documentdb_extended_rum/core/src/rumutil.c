@@ -201,6 +201,7 @@ initRumState(RumState *state, Relation index)
 		Form_pg_attribute origAttr = RumTupleDescAttr(origTupdesc, i);
 
 		rumConfig->addInfoTypeOid = InvalidOid;
+		rumConfig->skipGenerateEmptyEntries = false;
 
 		if (index_getprocid(index, i + 1, RUM_CONFIG_PROC) != InvalidOid)
 		{
@@ -810,6 +811,15 @@ rumExtractEntries(RumState *rumstate, OffsetNumber attnum,
 	 */
 	if (entries == NULL || *nentries <= 0)
 	{
+		if (rumstate->rumConfig[attnum - 1].skipGenerateEmptyEntries)
+		{
+			*nentries = 0;
+			*categories = NULL;
+			*addInfo = NULL;
+			*addInfoIsNull = NULL;
+			return NULL;
+		}
+
 		*nentries = 1;
 		entries = (Datum *) palloc(sizeof(Datum));
 		entries[0] = (Datum) 0;

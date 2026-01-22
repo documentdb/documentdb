@@ -134,6 +134,10 @@ bool EnableUniqueCompositeReducedCorrelatedTerms =
 #define DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS true
 bool EnableCompositeShardDocumentTerms = DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS;
 
+#define DEFAULT_ENABLE_COMPOSITE_WILDCARD_SKIP_EMPTY_ENTRIES true
+bool EnableCompositeWildcardSkipEmptyEntries =
+	DEFAULT_ENABLE_COMPOSITE_WILDCARD_SKIP_EMPTY_ENTRIES;
+
 /*
  * SECTION: Planner feature flags
  */
@@ -732,6 +736,15 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable shard hash term generation for composite indexes (specially for null handling)."),
 		NULL, &EnableCompositeShardDocumentTerms,
 		DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCompositeWildcardSkipEmptyEntries", newGucPrefix),
+		gettext_noop(
+			"Whether to enable skipping empty entries for composite wildcard indexes."),
+		NULL, &EnableCompositeWildcardSkipEmptyEntries,
+		DEFAULT_ENABLE_COMPOSITE_WILDCARD_SKIP_EMPTY_ENTRIES,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

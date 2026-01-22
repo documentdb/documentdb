@@ -381,6 +381,12 @@ rumFillScanKey(RumScanOpaque so, OffsetNumber attnum,
 			{
 				case GIN_SEARCH_MODE_INCLUDE_EMPTY:
 				{
+					if (rumstate->rumConfig[attnum - 1].skipGenerateEmptyEntries)
+					{
+						ereport(ERROR, (errmsg(
+											"cannot use INCLUDE_EMPTY search mode when index is built with skipGenerateEmptyEntries option")));
+					}
+
 					queryCategory = RUM_CAT_EMPTY_ITEM;
 					break;
 				}

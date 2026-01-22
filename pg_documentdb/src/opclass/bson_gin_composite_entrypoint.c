@@ -84,6 +84,20 @@ typedef struct
 	int32_t numTerms[INDEX_MAX_KEYS];
 } MergedTermSet;
 
+#define MAX_STRATEGIES (8)
+PGDLLIMPORT typedef struct RumConfig
+{
+	Oid addInfoTypeOid;
+
+	struct
+	{
+		StrategyNumber strategy;
+		ScanDirection direction;
+	}       strategyInfo[MAX_STRATEGIES];
+
+	bool skipGenerateEmptyEntries;
+}   RumConfig;
+
 /* --------------------------------------------------------- */
 /* Top level exports */
 /* --------------------------------------------------------- */
@@ -95,12 +109,14 @@ PG_FUNCTION_INFO_V1(gin_bson_composite_path_options);
 PG_FUNCTION_INFO_V1(gin_bson_get_composite_path_generated_terms);
 PG_FUNCTION_INFO_V1(gin_bson_composite_ordering_transform);
 PG_FUNCTION_INFO_V1(gin_bson_composite_index_term_transform);
+PG_FUNCTION_INFO_V1(gin_bson_composite_rum_config);
 
 extern bool EnableCollation;
 extern bool RumHasMultiKeyPaths;
 extern bool RumUseNewCompositeTermGeneration;
 extern bool EnableCompositeWildcardIndex;
 extern int MaxWildcardIndexKeySize;
+extern bool EnableCompositeWildcardSkipEmptyEntries;
 
 static void ValidateCompositePathSpec(const char *prefix);
 static Size FillCompositePathSpec(const char *prefix, void *buffer);
@@ -1306,6 +1322,19 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 																		 ->numIndexPaths);
 	PG_FREE_IF_COPY(compareKeyValue, 0);
 	PG_RETURN_POINTER(serialized.indexTermVal);
+}
+
+
+Datum
+gin_bson_composite_rum_config(PG_FUNCTION_ARGS)
+{
+	if (EnableCompositeWildcardSkipEmptyEntries)
+	{
+		RumConfig *config = (RumConfig *) PG_GETARG_POINTER(0);
+		config->skipGenerateEmptyEntries = true;
+	}
+
+	PG_RETURN_VOID();
 }
 
 
