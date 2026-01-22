@@ -103,6 +103,60 @@ process_files() {
         
         files_processed=$((files_processed + 1))
         log_verbose "Processing: $file_path"
+
+        # Check if there's a regression.diffs in the parent directory
+        local diffs_file="$(dirname "$file_path")/../regression.diffs"
+        declare -A diffs_map
+        if [[ -f "$diffs_file" ]]; then
+            log_verbose "Found diffs file: $diffs_file"
+            
+            # Parse regression.diffs file and build a map of test_name -> diff_output
+            # Format: diff -dU10 /path/to/expected/TESTNAME.out /path/to/results/TESTNAME.out
+            local current_test=""
+            local current_diff=""
+            
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                # Check if this is a new diff header line
+                if [[ "$line" =~ ^diff[[:space:]]+-dU[0-9]+[[:space:]]+.*/expected/([^/]+)\.out ]]; then
+                    # Save previous test's diff if we had one
+                    if [[ -n "$current_test" && -n "$current_diff" ]]; then
+                        diffs_map["$current_test"]="$current_diff"
+                        log_verbose "Stored diff for test: $current_test (${#current_diff} chars)"
+                    fi
+                    
+                    # Extract test name from the path (remove .out.modified if present)
+                    current_test="${BASH_REMATCH[1]}"
+                    current_test="${current_test%.modified}"
+                    current_diff="$line"
+                    log_verbose "Found diff for test: $current_test"
+                elif [[ -n "$current_test" ]]; then
+                    # Append line to current diff (limit size to avoid memory issues)
+                    if [[ ${#current_diff} -lt 10000 ]]; then
+                        current_diff+=$'\n'"$line"
+                    elif [[ ${#current_diff} -eq 10000 ]]; then
+                        current_diff+=$'\n'"... (diff truncated)"
+                    fi
+                fi
+            done < "$diffs_file"
+            
+            # Don't forget to save the last test's diff
+            if [[ -n "$current_test" && -n "$current_diff" ]]; then
+                diffs_map["$current_test"]="$current_diff"
+                log_verbose "Stored diff for test: $current_test (${#current_diff} chars)"
+            fi
+            
+            log_verbose "Parsed ${#diffs_map[@]} test diffs from $diffs_file"
+        fi
+        
+        # Write diffs_map to a temp file for awk to read
+        # Format: test_name<TAB>base64_encoded_diff
+        local diffs_temp_file=$(mktemp)
+        for test_name in "${!diffs_map[@]}"; do
+            # Base64 encode the diff to handle special characters and newlines
+            local encoded_diff
+            encoded_diff=$(echo "${diffs_map[$test_name]}" | base64 -w 0)
+            printf '%s\t%s\n' "$test_name" "$encoded_diff" >> "$diffs_temp_file"
+        done
         
         # Debug: Show file info and sample content
         if [[ $DEBUG -eq 1 ]]; then
@@ -117,13 +171,23 @@ process_files() {
         fi
 
         # Use awk to parse the file
-        awk -v file_path="$file_path" -v verbose="$VERBOSE" -v debug="$DEBUG" '
+        awk -v file_path="$file_path" -v verbose="$VERBOSE" -v debug="$DEBUG" -v diffs_file="$diffs_temp_file" '
         BEGIN {
             file_tests = 0
             file_failures = 0
             file_time = 0
             total_lines = 0
             matched_lines = 0
+            
+            # Load diffs map from temp file (test_name<TAB>base64_encoded_diff)
+            while ((getline diff_line < diffs_file) > 0) {
+                split(diff_line, diff_parts, "\t")
+                diffs[diff_parts[1]] = diff_parts[2]
+                if (debug == 1) {
+                    printf "DEBUG: Loaded diff for test: %s\n", diff_parts[1] > "/dev/stderr"
+                }
+            }
+            close(diffs_file)
         }
         
         {
@@ -173,9 +237,19 @@ process_files() {
             if (debug == 1) {
                 printf "DEBUG: Parsed - name:[%s] status:[%s] duration:[%s] duration_sec:[%.3f]\n", test_name, status, duration, duration_sec > "/dev/stderr"
             }
+
+            # Look up diff output from diffs map (base64 encoded)
+            if (test_name in diffs) {
+                diff_output = diffs[test_name]
+                if (debug == 1) {
+                    printf "DEBUG: Found diff for test: %s\n", test_name > "/dev/stderr"
+                }
+            } else {
+                diff_output = ""
+            }
             
             # Output in pipe-separated format for later processing
-            printf "%s|%s|%.3f|%d|%s\n", test_name, status, duration_sec, duration, file_path
+            printf "%s|%s|%.3f|%d|%s|%s\n", test_name, status, duration_sec, duration, file_path, diff_output
             
             if (verbose == 1) {
                 printf "  Found test: %s (%s, %dms)\n", test_name, status, duration > "/dev/stderr"
@@ -221,9 +295,19 @@ process_files() {
             if (debug == 1) {
                 printf "DEBUG: TAP format - name:[%s] status:[%s] duration:[%s] duration_sec:[%.3f]\n", test_name, status, duration, duration_sec > "/dev/stderr"
             }
+
+            # Look up diff output from diffs map (base64 encoded)
+            if (test_name in diffs) {
+                diff_output = diffs[test_name]
+                if (debug == 1) {
+                    printf "DEBUG: Found diff for test: %s\n", test_name > "/dev/stderr"
+                }
+            } else {
+                diff_output = ""
+            }
             
             # Output in pipe-separated format for later processing
-            printf "%s|%s|%.3f|%d|%s\n", test_name, status, duration_sec, duration, file_path_clean
+            printf "%s|%s|%.3f|%d|%s|%s\n", test_name, status, duration_sec, duration, file_path_clean, diff_output
             
             if (verbose == 1) {
                 printf "  Found test: %s (%s, %dms)\n", test_name, status, duration > "/dev/stderr"
@@ -238,6 +322,9 @@ process_files() {
                 printf "  Found %d test results (%d failures)\n", file_tests, file_failures > "/dev/stderr"
             }
         }' "$file_path" >> "$temp_file" || true
+        
+        # Cleanup diffs temp file
+        rm -f "$diffs_temp_file"
     done
     
     # Check if we processed any files
@@ -296,8 +383,20 @@ generate_xml() {
             gsub(/</, "\\&lt;", text)
             gsub(/>/, "\\&gt;", text)
             gsub(/"/, "\\&quot;", text)
-            gsub(/'\''/, "\\&#39;", text)
+            gsub(/\x27/, "\\&#39;", text)
             return text
+        }
+        
+        function decode_base64(encoded) {
+            if (encoded == "") return ""
+            cmd = "echo \"" encoded "\" | base64 -d 2>/dev/null"
+            decoded = ""
+            while ((cmd | getline line) > 0) {
+                if (decoded != "") decoded = decoded "\n"
+                decoded = decoded line
+            }
+            close(cmd)
+            return decoded
         }
         
         BEGIN {
@@ -311,6 +410,7 @@ generate_xml() {
             duration_sec = $3
             duration_ms = $4
             file_path = $5
+            diff_output_encoded = $6
             
             # If new file, close previous suite and start new one
             if (file_path != current_file) {
@@ -369,9 +469,16 @@ generate_xml() {
             
             if (status != "ok") {
                 printf ">\n"
+                # Decode base64 diff if present
+                diff_output = decode_base64(diff_output_encoded)
                 if (status == "FAILED" || status == "failed") {
-                    printf "      <failure message=\"Test %s failed\">Test %s failed in %s</failure>\n", \
-                        xml_escape(test_name), xml_escape(test_name), xml_escape(file_path)
+                    if (diff_output != "") {
+                        printf "      <failure message=\"Test %s failed\"><![CDATA[%s]]></failure>\n", \
+                            xml_escape(test_name), diff_output
+                    } else {
+                        printf "      <failure message=\"Test %s failed\">Test %s failed in %s</failure>\n", \
+                            xml_escape(test_name), xml_escape(test_name), xml_escape(file_path)
+                    }
                 } else {
                     printf "      <error message=\"Test %s had status: %s\">Test %s completed with status %s in %s</error>\n", \
                         xml_escape(test_name), xml_escape(status), xml_escape(test_name), xml_escape(status), xml_escape(file_path)
