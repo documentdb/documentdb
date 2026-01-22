@@ -416,11 +416,19 @@ RumPrintEntryToJsonB(RumPageGetEntriesContext *context, uint64 counter)
 
 	entryAttrNumber = rumtuple_get_attrnum(&context->rumState, tuple);
 	indexDatum = rumtuple_get_key(&context->rumState, tuple, &category);
-	getTypeOutputInfo(TupleDescAttr(context->rumState.origTupdesc,
-									entryAttrNumber - 1)->atttypid,
-					  &typeOutputFunction, &typIsVarlena);
-	entryCstringDatum = OidFunctionCall1(typeOutputFunction, indexDatum);
-	firstEntryCString = DatumGetCString(entryCstringDatum);
+
+	if (category == RUM_CAT_NORM_KEY)
+	{
+		getTypeOutputInfo(TupleDescAttr(context->rumState.origTupdesc,
+										entryAttrNumber - 1)->atttypid,
+						  &typeOutputFunction, &typIsVarlena);
+		entryCstringDatum = OidFunctionCall1(typeOutputFunction, indexDatum);
+		firstEntryCString = DatumGetCString(entryCstringDatum);
+	}
+	else
+	{
+		firstEntryCString = "";
+	}
 
 	values[4].val.string.len = dlen * 2;
 	values[4].val.string.val = datacstring;

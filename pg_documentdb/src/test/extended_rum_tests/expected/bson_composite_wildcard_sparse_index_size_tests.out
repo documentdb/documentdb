@@ -1,0 +1,85 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+SET documentdb.next_collection_id TO 1100;
+SET documentdb.next_collection_index_id TO 1100;
+set documentdb.defaultUseCompositeOpClass to on;
+-- create composite wildcard index - should be sparse already
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'wildcard_db', '{ "createIndexes": "wildcard_coll", "indexes": [ { "name": "sparse_wildcard_index", "key": { "a.$**": 1 } } ] }', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- insert 5000 rows that don't match the index path
+SELECT COUNT(documentdb_api.insert_one('wildcard_db', 'wildcard_coll', bson_build_document('_id'::text, i, 'b'::text, i))) FROM generate_series(1, 5000) i;
+ count 
+-------
+  5000
+(1 row)
+
+ANALYZE documentdb_data.documents_1101;
+-- check index size - should be empty.
+SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_1102', 0));
+                            documentdb_rum_get_meta_page_info                             
+------------------------------------------------------------------------------------------
+ {"entries": 0, "dataPages": 0, "entryPages": 1, "totalPages": 2, "pendingHeapTuples": 0}
+(1 row)
+
+-- read the root page: it should be a page that's a leaf with 0 entries.
+SELECT documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_1102', 1));
+                                   documentdb_rum_page_get_stats                                    
+----------------------------------------------------------------------------------------------------
+ {"flags": 2, "cycleId": 0, "flagsStr": "LEAF", "leftLink": null, "nEntries": 0, "rightLink": null}
+(1 row)
+
+SELECT jsonb_set(documentdb_api_internal.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_1102', 1), 'documentdb_data.documents_rum_index_1102'::regclass), '{tupleTid}', 'null');
+ jsonb_set 
+-----------
+(0 rows)
+
+-- now insert into 'a'
+SELECT documentdb_api.insert_one('wildcard_db', 'wildcard_coll', bson_build_document('_id'::text, 5001, 'a'::text, 5001));
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ANALYZE documentdb_data.documents_1101;
+-- read the root page: it should be a page that's a leaf with 1 entry.
+SELECT documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_1102', 1));
+                                   documentdb_rum_page_get_stats                                    
+----------------------------------------------------------------------------------------------------
+ {"flags": 2, "cycleId": 0, "flagsStr": "LEAF", "leftLink": null, "nEntries": 1, "rightLink": null}
+(1 row)
+
+SELECT jsonb_set(jsonb_set(jsonb_set(documentdb_api_internal.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_1102', 1), 'documentdb_data.documents_rum_index_1102'::regclass), '{tupleTid}', 'null'), '{firstTids}', 'null'), '{data}', 'null');
+                                                                                            jsonb_set                                                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"data": null, "offset": 1, "tupleTid": null, "entryType": "postingList", "firstTids": null, "attrNumber": 1, "entryFlags": 1, "firstEntry": "\\x000c0000001024008913000000", "numPostings": 1}
+(1 row)
+
+TRUNCATE documentdb_data.documents_1101;
+-- unset the guc to see the other behavior
+set documentdb.enableCompositeWildcardSkipEmptyEntries to off;
+-- insert 5000 rows that don't match the index path
+SELECT COUNT(documentdb_api.insert_one('wildcard_db', 'wildcard_coll', bson_build_document('_id'::text, i, 'b'::text, i))) FROM generate_series(1, 5000) i;
+ count 
+-------
+  5000
+(1 row)
+
+ANALYZE documentdb_data.documents_1101;
+-- read the root page: it should be a page that's a leaf with 1 entry.
+SELECT documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_1102', 1));
+                                   documentdb_rum_page_get_stats                                    
+----------------------------------------------------------------------------------------------------
+ {"flags": 2, "cycleId": 0, "flagsStr": "LEAF", "leftLink": null, "nEntries": 1, "rightLink": null}
+(1 row)
+
+SELECT jsonb_set(jsonb_set(documentdb_api_internal.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_1102', 1), 'documentdb_data.documents_rum_index_1102'::regclass), '{tupleTid}', 'null'), '{data}', 'null');
+                                                                              jsonb_set                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"data": null, "offset": 1, "tupleTid": null, "entryType": "postingTree", "firstTids": null, "attrNumber": 1, "entryFlags": 1, "firstEntry": "", "numPostings": -1}
+(1 row)
+

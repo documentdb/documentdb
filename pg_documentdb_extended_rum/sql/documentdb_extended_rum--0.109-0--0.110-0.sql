@@ -8,3 +8,6 @@ ALTER OPERATOR FAMILY documentdb_extended_rum_catalog.bson_extended_rum_single_p
     OPERATOR 29 documentdb_api_internal.@!<=(documentdb_core.bson, documentdb_core.bson);
 
 #include "pg_documentdb/sql/schema/bson_hash_operator_class--0.23-0.sql"
+
+ALTER OPERATOR FAMILY documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops USING documentdb_extended_rum
+    ADD FUNCTION 6 (__CORE_SCHEMA__.bson) __API_SCHEMA_INTERNAL_V2__.gin_bson_composite_rum_config(internal);

@@ -43,3 +43,5 @@ REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA documentdb_api_v2 FROM PUBLIC;
 #include "udfs/commands_crud/insert--0.110-0.sql"
 #include "udfs/commands_crud/update--0.110-0.sql"
 #include "udfs/query/bson_orderby--0.110-0.sql"
+
+#include "udfs/rum/composite_path_operator_functions--0.110-0.sql"
