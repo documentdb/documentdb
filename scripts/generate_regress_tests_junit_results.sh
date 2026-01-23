@@ -117,7 +117,7 @@ process_files() {
             
             while IFS= read -r line || [[ -n "$line" ]]; do
                 # Check if this is a new diff header line
-                if [[ "$line" =~ ^diff[[:space:]]+-dU[0-9]+[[:space:]]+.*/expected/([^/]+)\.out ]]; then
+                if [[ "$line" =~ ^diff[[:space:]]+-dU[0-9]+[[:space:]]+.*/expected/(multinode/[^/]+|[^/]+)\.out ]]; then
                     # Save previous test's diff if we had one
                     if [[ -n "$current_test" && -n "$current_diff" ]]; then
                         diffs_map["$current_test"]="$current_diff"
@@ -202,8 +202,8 @@ process_files() {
         /^parallel group/ { next }
         /^#/ { next }
         
-        # Match test lines: optional spaces, optional "test ", test_name, " ... ", status, duration, "ms"
-        /^[[:space:]]*(test[[:space:]]+)?[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]+\.\.\.[[:space:]]+[a-zA-Z]+[[:space:]]+[0-9]+[[:space:]]+ms[[:space:]]*$/ {
+        # Match test lines: optional spaces, optional "test ", path-like test_name, " ... ", status, duration, "ms"
+        /^[[:space:]]*(test[[:space:]]+)?[A-Za-z_][A-Za-z0-9_\.\/-]*[[:space:]]+\.\.\.[[:space:]]+[A-Za-z]+[[:space:]]+[0-9]+[[:space:]]+ms[[:space:]]*$/ {
             matched_lines++
             if (debug == 1) {
                 printf "DEBUG: MATCHED line %d: [%s]\n", NR, $0 > "/dev/stderr"
@@ -256,8 +256,8 @@ process_files() {
             }
         }
         
-        # Match new TAP format: "ok"/"not ok" number "-"/"+" test_name duration "ms"
-        /^(ok|not ok)[[:space:]]+[0-9]+[[:space:]]*[-+][[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]+[0-9]+[[:space:]]+ms[[:space:]]*$/ {
+        # Match new TAP format: "ok"/"not ok" number "-"/"+" path-like test_name duration "ms"
+        /^(ok|not ok)[[:space:]]+[0-9]+[[:space:]]*[-+][[:space:]]*[A-Za-z_][A-Za-z0-9_\.\/-]*[[:space:]]+[0-9]+[[:space:]]+ms[[:space:]]*$/ {
             matched_lines++
             if (debug == 1) {
                 printf "DEBUG: MATCHED TAP format line %d: [%s]\n", NR, $0 > "/dev/stderr"
