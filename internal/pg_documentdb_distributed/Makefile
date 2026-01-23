@@ -82,6 +82,12 @@ check-valgrind:
 check-dist-minimal:
 	$(MAKE) -C src/test $@
 
+check-multinode-minimal:
+	$(MAKE) -C src/test $@
+
+check-multinode:
+	$(MAKE) -C src/test $@
+
 check-rbac-minimal:
 	$(MAKE) -C src/test $@
 
