@@ -46,8 +46,16 @@ test: bson_dollar_operators_negation_tests_index
 test: bson_dollar_operators_negation_tests_explain_index
 test: bson_dollar_operators_negation_tests_explain_runtime
 test: bson_dollar_ops_collation_tests_runtime
+
 # With PG18 the tests above this line all pass.
 test: bson_aggregation_cursor_tests_pk_cursors
+
+test: bson_collation_index_tests
+test: bson_collation_index_sort_truncation_tests
+test: bson_collation_index_unique_pfe_tests
+test: bson_collation_composite_index_tests
+test: bson_collation_composite_index_sort_truncation_tests
+test: bson_collation_composite_index_unique_pfe_tests
 
 test: create_indexes_cosmos_vector bson_aggregation_pipeline_tests_index_pushdown
 test: bson_query_operator_geospatial_tests_index

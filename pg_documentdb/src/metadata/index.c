@@ -2704,6 +2704,18 @@ AreIndexOptionsStillEquivalent(const char *path, const bson_value_t *left,
 		}
 	}
 
+	if (areEquivalent && strcmp(path, "collation") == 0)
+	{
+		if (left == NULL || right == NULL)
+		{
+			areEquivalent = left == right;
+		}
+		else
+		{
+			areEquivalent = BsonValueEquals(left, right);
+		}
+	}
+
 	return areEquivalent;
 }
 
