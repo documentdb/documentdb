@@ -221,3 +221,23 @@ pub async fn process_unshard_collection(
 
     Ok(Response::ok())
 }
+
+pub async fn process_get_shard_map(
+    request_context: &mut RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response> {
+    pg_data_client
+        .execute_get_shard_map(request_context, connection_context)
+        .await
+}
+
+pub async fn process_list_shards(
+    request_context: &mut RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response> {
+    pg_data_client
+        .execute_list_shards(request_context, connection_context)
+        .await
+}

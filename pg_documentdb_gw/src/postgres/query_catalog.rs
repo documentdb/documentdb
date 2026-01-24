@@ -63,6 +63,8 @@ pub struct QueryCatalog {
     pub rename_collection: String,
     pub coll_mod: String,
     pub unshard_collection: String,
+    pub get_shard_map: String,
+    pub list_shards: String,
 
     // data_management.rs
     pub delete: String,
@@ -411,6 +413,14 @@ impl QueryCatalog {
 
     pub fn unshard_collection(&self) -> &str {
         &self.unshard_collection
+    }
+
+    pub fn get_shard_map(&self) -> &str {
+        &self.get_shard_map
+    }
+
+    pub fn list_shards(&self) -> &str {
+        &self.list_shards
     }
 
     pub fn compact(&self) -> &str {

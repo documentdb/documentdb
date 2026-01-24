@@ -377,4 +377,16 @@ pub trait PgDataClient: Send + Sync {
         request_context: &mut RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<()>;
+
+    async fn execute_get_shard_map(
+        &self,
+        request_context: &mut RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response>;
+
+    async fn execute_list_shards(
+        &self,
+        request_context: &mut RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response>;
 }
