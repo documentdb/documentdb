@@ -41,6 +41,7 @@
 #include "api_hooks.h"
 #include "io/bson_core.h"
 #include "aggregation/bson_projection_tree.h"
+#include "collation/collation.h"
 #include "commands/commands_common.h"
 #include "commands/create_indexes.h"
 #include "commands/diagnostic_commands_common.h"
@@ -159,13 +160,15 @@ extern bool ForceIndexTermTruncation;
 extern int IndexTruncationLimitOverride;
 extern int MaxWildcardIndexKeySize;
 extern bool DefaultEnableLargeUniqueIndexKeys;
-extern bool SkipFailOnCollation;
 extern bool ForceWildcardReducedTerm;
 extern bool EnableCompositeUniqueHash;
 extern bool EnableCompositeWildcardIndex;
 extern bool EnableCompositeReducedCorrelatedTerms;
 extern bool EnableUniqueCompositeReducedCorrelatedTerms;
 extern bool EnableCompositeShardDocumentTerms;
+
+extern bool EnableCollationWithIndexes;
+extern bool SkipFailOnCollation;
 
 extern char *AlternateIndexHandler;
 
@@ -235,7 +238,8 @@ static pgbson * GenerateWildcardProjDocument(const BsonIntermediatePathNode *
 static pgbson * GenerateWildcardProjDocumentInternal(const
 													 BsonIntermediatePathNode *treeNode,
 													 bool isTopLevel);
-static Expr * ParseIndexDefPartFilterDocument(const bson_iter_t *indexDefDocIter);
+static Expr * ParseIndexDefPartFilterDocument(const pgbson *partialFilterExprDocument,
+											  const char *collationString);
 static bool CheckPartFilterExprOperatorsWalker(Node *node, void *context);
 static void ThrowUnsupportedPartFilterExprError(Node *node);
 static char * GetPartFilterExprNodeRepr(Node *node);
@@ -303,7 +307,8 @@ static char * GenerateIndexExprStr(const char *indexAmSuffix,
 								   bool enableLargeIndexKeys,
 								   bool useReducedWildcardTerms,
 								   const char *indexAmOpClassCatalogSchema,
-								   const char *indexAmOpClassInternalCatalogSchema);
+								   const char *indexAmOpClassInternalCatalogSchema,
+								   const char *collationString);
 static char * Generate2dsphereIndexExprStr(const IndexDefKey *indexDefKey);
 static char * Generate2dsphereSparseExprStr(const IndexDefKey *indexDefKey);
 static char * GenerateIndexFilterStr(uint64 collectionId, Expr *indexDefPartFilterExpr);
@@ -1400,7 +1405,6 @@ ParseCreateIndexesArg(Datum dbNameDatum, pgbson *arg, bool buildAsUniqueForPrepa
 	}
 
 	/* verify that all non-optional fields are given */
-
 	if (!gotIndexesArray)
 	{
 		ThrowTopLevelMissingFieldError("createIndexes.indexes");
@@ -1626,8 +1630,6 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 			EnsureIndexDefDocFieldType(&indexDefDocIter,
 									   BSON_TYPE_DOCUMENT);
 
-			indexDef->partialFilterExpr =
-				ParseIndexDefPartFilterDocument(&indexDefDocIter);
 			indexDef->partialFilterExprDocument =
 				PgbsonInitFromIterDocumentValue(&indexDefDocIter);
 		}
@@ -1952,11 +1954,31 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 			/* parsed by the method above*/
 			continue;
 		}
-		else if (!SkipFailOnCollation && strcmp(indexDefDocKey, "collation") == 0)
+		else if (strcmp(indexDefDocKey, "collation") == 0)
 		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-							errmsg(
-								"createIndex.collation has not been implemented yet")));
+			ReportFeatureUsage(FEATURE_COLLATION_CREATE_INDEX);
+			if (EnableCollationWithIndexes)
+			{
+				EnsureTopLevelFieldType("collation", &indexDefDocIter,
+										BSON_TYPE_DOCUMENT);
+
+				const bson_value_t *value = bson_iter_value(&indexDefDocIter);
+
+				char collationString[MAX_ICU_COLLATION_LENGTH] = { 0 };
+				ParseAndGetCollationString(value, collationString);
+
+				if (IsCollationValid(collationString))
+				{
+					indexDef->collationString = pstrdup(collationString);
+					indexDef->collationSpec = palloc0(sizeof(bson_value_t));
+					bson_value_copy(value, indexDef->collationSpec);
+				}
+			}
+			else if (!SkipFailOnCollation)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+								errmsg("createIndex.collation is not implemented yet")));
+			}
 		}
 		else if (strcmp(indexDefDocKey, "storageEngine") == 0)
 		{
@@ -2004,7 +2026,6 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 	}
 
 	/* verify that all non-optional fields are given */
-
 	if (!gotKeyDocument)
 	{
 		ThrowIndexDefDocMissingFieldError("key");
@@ -2075,6 +2096,14 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 							errmsg(
 								"enableLargeIndexKeys is only supported with regular indexes.")));
 		}
+	}
+
+	/* parse the partialFilterExpression with applicable collation*/
+	if (indexDef->partialFilterExprDocument != NULL)
+	{
+		indexDef->partialFilterExpr =
+			ParseIndexDefPartFilterDocument(indexDef->partialFilterExprDocument,
+											indexDef->collationString);
 	}
 
 	if (indexDef->enableCompositeTerm == BoolIndexOption_Undefined &&
@@ -2174,6 +2203,47 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 		{
 			indexDef->enableCompositeTerm = BoolIndexOption_True;
 		}
+	}
+
+	/* Validate collation compatibility with index types and options  */
+	bool hasApplicableCollation = IsCollationApplicable(indexDef->collationString);
+	if (hasApplicableCollation)
+	{
+		if (indexDef->key->has2dIndex)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg("Index type '2d' does not support collation")));
+		}
+
+		if (indexDef->key->hasTextIndexes)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg("Index type 'text' does not support collation")));
+		}
+
+		/* We do not support collation with hashed, 2dsphere and cosmosSearch indexes */
+		if (indexDef->key->hasHashedIndexes)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg("Index type 'hashed' does not support collation")));
+		}
+
+		if (indexDef->key->has2dsphereIndex)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg("Index type '2dsphere' does not support collation")));
+		}
+
+		if (indexDef->cosmosSearchOptions != NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg(
+								"Index type 'cosmosSearch' does not support collation")));
+		}
+
+		/* TODO: we do not support collation for any indexes yet */
+		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("Collation is not yet supported for indexes")));
 	}
 
 	if (indexDef->enableCompositeTerm != BoolIndexOption_True &&
@@ -3669,18 +3739,18 @@ GenerateWildcardProjDocumentInternal(const BsonIntermediatePathNode *treeParentN
 
 
 /*
- * ParseIndexDefPartFilterDocument returns an Expr node parsing value of
- * pgbson iterator that points to the "partialFilterExpression" field of
- * an index definiton document.
+ * ParseIndexDefPartFilterDocument returns an Expr node parsing the
+ * "partialFilterExpression" field of an index definition document.
  *
  * Returns a Const(true) node if given "partialFilterExpression" points
  * to an empty document.
  */
 static Expr *
-ParseIndexDefPartFilterDocument(const bson_iter_t *indexDefDocIter)
+ParseIndexDefPartFilterDocument(const pgbson *partialFilterExprDocument,
+								const char *collationString)
 {
 	bson_iter_t partFilterExprIter;
-	bson_iter_recurse(indexDefDocIter, &partFilterExprIter);
+	PgbsonInitIterator(partialFilterExprDocument, &partFilterExprIter);
 
 	BsonQueryOperatorContext context = { 0 };
 	context.documentExpr = (Expr *) MakeSimpleDocumentVar();
@@ -3688,6 +3758,7 @@ ParseIndexDefPartFilterDocument(const bson_iter_t *indexDefDocIter)
 	context.simplifyOperators = false;
 	context.coerceOperatorExprIfApplicable = true;
 	context.variableContext = NULL;
+	context.collationString = collationString;
 	List *partialFilterQuals = CreateQualsFromQueryDocIterator(&partFilterExprIter,
 															   &context);
 
@@ -4834,6 +4905,12 @@ MakeIndexSpecForIndexDef(IndexDef *indexDef)
 		PgbsonWriterAppendInt32(&writer, "enableOrderedIndex", 18, 1);
 	}
 
+	if (indexDef->collationSpec)
+	{
+		PgbsonWriterAppendValue(&writer, "collation", 9,
+								indexDef->collationSpec);
+	}
+
 	if (indexDef->buildAsUnique == BoolIndexOption_True)
 	{
 		PgbsonWriterAppendInt32(&writer, "buildAsUnique", 13, 1);
@@ -4937,7 +5014,8 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 											  enableLargeIndexKeys,
 											  useReducedWildcardTermGeneration,
 											  indexAm->get_opclass_catalog_schema(),
-											  indexAm->get_opclass_internal_catalog_schema()),
+											  indexAm->get_opclass_internal_catalog_schema(),
+											  indexDef->collationString),
 						 indexDef->partialFilterExpr ? "WHERE (" : "",
 						 indexDef->partialFilterExpr ?
 						 GenerateIndexFilterStr(collectionId,
@@ -5086,7 +5164,8 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 											  enableLargeIndexKeys,
 											  useReducedWildcardTermGeneration,
 											  indexAm->get_opclass_catalog_schema(),
-											  indexAm->get_opclass_internal_catalog_schema()),
+											  indexAm->get_opclass_internal_catalog_schema(),
+											  indexDef->collationString),
 						 indexDef->partialFilterExpr ? "WHERE (" : "",
 						 indexDef->partialFilterExpr ?
 						 GenerateIndexFilterStr(collectionId,
@@ -5450,15 +5529,16 @@ AppendUniqueColumnExpr(StringInfo indexExprStr, IndexDefKey *indexDefKey,
  */
 static char *
 GenerateIndexExprStr(const char *indexAmSuffix,
-					 bool unique, bool buildAsUnique, bool sparse, bool
-					 enableCompositeOpClass,
+					 bool unique, bool buildAsUnique, bool sparse,
+					 bool enableCompositeOpClass,
 					 IndexDefKey *indexDefKey,
 					 const BsonIntermediatePathNode *indexDefWildcardProjTree,
 					 const char *indexName, const char *defaultLanguage,
 					 const char *languageOverride, bool enableLargeIndexKeys,
 					 bool useReducedWildcardTerms,
 					 const char *indexAmOpClassCatalogSchema,
-					 const char *indexAmOpClassInternalCatalogSchema)
+					 const char *indexAmOpClassInternalCatalogSchema,
+					 const char *collationString)
 {
 	StringInfo indexExprStr = makeStringInfo();
 
@@ -5877,6 +5957,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 									 indexTermSizeLimitArg,
 									 generateNotFoundTermOption,
 									 useReducedWildcardOption);
+
 					if (unique)
 					{
 						appendStringInfo(indexExprStr, " WITH OPERATOR(%s.=?=)",

@@ -241,6 +241,9 @@ bool SkipFailOnCollation = DEFAULT_SKIP_FAIL_ON_COLLATION;
 bool EnableLookupIdJoinOptimizationOnCollation =
 	DEFAULT_ENABLE_LOOKUP_ID_JOIN_OPTIMIZATION_ON_COLLATION;
 
+#define DEFAULT_ENABLE_COLLATION_WITH_INDEXES false
+bool EnableCollationWithIndexes = DEFAULT_ENABLE_COLLATION_WITH_INDEXES;
+
 
 /*
  * SECTION: DML Write Path feature flags
@@ -389,6 +392,15 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL, &EnableLookupIdJoinOptimizationOnCollation,
 		DEFAULT_ENABLE_LOOKUP_ID_JOIN_OPTIMIZATION_ON_COLLATION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCollationWithIndexes", newGucPrefix),
+		gettext_noop(
+			"Determines whether collation is supported for indexes."),
+		NULL, &EnableCollationWithIndexes,
+		DEFAULT_ENABLE_COLLATION_WITH_INDEXES,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableNowSystemVariable", newGucPrefix),

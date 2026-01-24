@@ -19,7 +19,7 @@
 #include <port/atomics.h>
 
 #define MAX_FEATURE_NAME_LENGTH 255
-#define MAX_FEATURE_COUNT 402
+#define MAX_FEATURE_COUNT 403
 
 /* Internal features that are not exposed */
 #define INTERNAL_FEATURE_TYPE MAX_FEATURE_COUNT
@@ -253,6 +253,7 @@ typedef enum
 	FEATURE_AGGREGATE_WINDOW_TOP_N,
 
 	FEATURE_COLLATION,
+	FEATURE_COLLATION_CREATE_INDEX,
 
 	/* Feature counter region - Commands */
 	FEATURE_COMMAND_AGG_CURSOR_FIRST_PAGE,
