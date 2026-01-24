@@ -366,6 +366,22 @@ pub async fn process_request(
                 )
                 .await
             }
+            &RequestType::GetShardMap => {
+                data_description::process_get_shard_map(
+                    request_context,
+                    connection_context,
+                    &pg_data_client,
+                )
+                .await
+            }
+            &RequestType::ListShards => {
+                data_description::process_list_shards(
+                    request_context,
+                    connection_context,
+                    &pg_data_client,
+                )
+                .await
+            }
         };
 
         if response.is_ok()

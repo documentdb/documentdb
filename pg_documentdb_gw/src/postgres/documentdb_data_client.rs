@@ -1130,6 +1130,54 @@ impl PgDataClient for DocumentDBDataClient {
         Ok(())
     }
 
+    async fn execute_get_shard_map(
+        &self,
+        request_context: &mut RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response> {
+        let (_, request_info, request_tracker) = request_context.get_components();
+        let shard_map_rows = self
+            .pull_connection(connection_context)
+            .await?
+            .query(
+                connection_context
+                    .service_context
+                    .query_catalog()
+                    .get_shard_map(),
+                &[],
+                &[],
+                Timeout::command(request_info.max_time_ms),
+                request_tracker,
+            )
+            .await?;
+
+        Ok(Response::Pg(PgResponse::new(shard_map_rows)))
+    }
+
+    async fn execute_list_shards(
+        &self,
+        request_context: &mut RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response> {
+        let (_, request_info, request_tracker) = request_context.get_components();
+        let shards = self
+            .pull_connection(connection_context)
+            .await?
+            .query(
+                connection_context
+                    .service_context
+                    .query_catalog()
+                    .list_shards(),
+                &[],
+                &[],
+                Timeout::command(request_info.max_time_ms),
+                request_tracker,
+            )
+            .await?;
+
+        Ok(Response::Pg(PgResponse::new(shards)))
+    }
+
     async fn execute_connection_status(
         &self,
         request_context: &mut RequestContext<'_>,
