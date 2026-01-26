@@ -382,6 +382,30 @@ pub async fn process_request(
                 )
                 .await
             }
+            &RequestType::BalancerStart => {
+                data_description::process_balancer_start(
+                    request_context,
+                    connection_context,
+                    &pg_data_client,
+                )
+                .await
+            }
+            &RequestType::BalancerStatus => {
+                data_description::process_balancer_status(
+                    request_context,
+                    connection_context,
+                    &pg_data_client,
+                )
+                .await
+            }
+            &RequestType::BalancerStop => {
+                data_description::process_balancer_stop(
+                    request_context,
+                    connection_context,
+                    &pg_data_client,
+                )
+                .await
+            }
         };
 
         if response.is_ok()

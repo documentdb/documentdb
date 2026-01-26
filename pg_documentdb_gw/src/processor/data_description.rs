@@ -241,3 +241,33 @@ pub async fn process_list_shards(
         .execute_list_shards(request_context, connection_context)
         .await
 }
+
+pub async fn process_balancer_start(
+    request_context: &mut RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response> {
+    pg_data_client
+        .execute_balancer_start(request_context, connection_context)
+        .await
+}
+
+pub async fn process_balancer_status(
+    request_context: &mut RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response> {
+    pg_data_client
+        .execute_balancer_status(request_context, connection_context)
+        .await
+}
+
+pub async fn process_balancer_stop(
+    request_context: &mut RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response> {
+    pg_data_client
+        .execute_balancer_stop(request_context, connection_context)
+        .await
+}

@@ -389,4 +389,22 @@ pub trait PgDataClient: Send + Sync {
         request_context: &mut RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response>;
+
+    async fn execute_balancer_start(
+        &self,
+        request_context: &mut RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response>;
+
+    async fn execute_balancer_status(
+        &self,
+        request_context: &mut RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response>;
+
+    async fn execute_balancer_stop(
+        &self,
+        request_context: &mut RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response>;
 }
