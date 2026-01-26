@@ -88,6 +88,9 @@ impl RequestInfo<'_> {
 pub enum RequestType {
     AbortTransaction,
     Aggregate,
+    BalancerStart,
+    BalancerStatus,
+    BalancerStop,
     BuildInfo,
     CollMod,
     CollStats,
@@ -173,6 +176,9 @@ impl FromStr for RequestType {
         match cmd_name {
             "abortTransaction" => Ok(RequestType::AbortTransaction),
             "aggregate" => Ok(RequestType::Aggregate),
+            "balancerStart" => Ok(RequestType::BalancerStart),
+            "balancerStatus" => Ok(RequestType::BalancerStatus),
+            "balancerStop" => Ok(RequestType::BalancerStop),
             "buildinfo" => Ok(RequestType::BuildInfo),
             "buildInfo" => Ok(RequestType::BuildInfo),
             "collMod" => Ok(RequestType::CollMod),

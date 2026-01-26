@@ -1372,4 +1372,76 @@ impl PgDataClient for DocumentDBDataClient {
             .await?;
         Ok(Response::Pg(PgResponse::new(roles_info_rows)))
     }
+
+    async fn execute_balancer_start(
+        &self,
+        request_context: &mut RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response> {
+        let (request, request_info, request_tracker) = request_context.get_components();
+        let balancer_start = self
+            .pull_connection(connection_context)
+            .await?
+            .query(
+                connection_context
+                    .service_context
+                    .query_catalog()
+                    .balancer_start(),
+                &[Type::BYTEA],
+                &[&PgDocument(request.document())],
+                Timeout::command(request_info.max_time_ms),
+                request_tracker,
+            )
+            .await?;
+
+        Ok(Response::Pg(PgResponse::new(balancer_start)))
+    }
+
+    async fn execute_balancer_status(
+        &self,
+        request_context: &mut RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response> {
+        let (request, request_info, request_tracker) = request_context.get_components();
+        let balancer_status = self
+            .pull_connection(connection_context)
+            .await?
+            .query(
+                connection_context
+                    .service_context
+                    .query_catalog()
+                    .balancer_status(),
+                &[Type::BYTEA],
+                &[&PgDocument(request.document())],
+                Timeout::command(request_info.max_time_ms),
+                request_tracker,
+            )
+            .await?;
+
+        Ok(Response::Pg(PgResponse::new(balancer_status)))
+    }
+
+    async fn execute_balancer_stop(
+        &self,
+        request_context: &mut RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response> {
+        let (request, request_info, request_tracker) = request_context.get_components();
+        let balancer_stop = self
+            .pull_connection(connection_context)
+            .await?
+            .query(
+                connection_context
+                    .service_context
+                    .query_catalog()
+                    .balancer_stop(),
+                &[Type::BYTEA],
+                &[&PgDocument(request.document())],
+                Timeout::command(request_info.max_time_ms),
+                request_tracker,
+            )
+            .await?;
+
+        Ok(Response::Pg(PgResponse::new(balancer_stop)))
+    }
 }

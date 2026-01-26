@@ -88,6 +88,9 @@ pub struct QueryCatalog {
     pub get_parameter: String,
     pub compact: String,
     pub kill_op: String,
+    pub balancer_start: String,
+    pub balancer_status: String,
+    pub balancer_stop: String,
 
     // indexing.rs
     pub create_indexes_background: String,
@@ -434,6 +437,18 @@ impl QueryCatalog {
     pub fn kill_cursors(&self) -> &str {
         &self.kill_cursors
     }
+
+    pub fn balancer_start(&self) -> &str {
+        &self.balancer_start
+    }
+
+    pub fn balancer_status(&self) -> &str {
+        &self.balancer_status
+    }
+
+    pub fn balancer_stop(&self) -> &str {
+        &self.balancer_stop
+    }
 }
 
 pub fn create_query_catalog() -> QueryCatalog {
@@ -482,6 +497,9 @@ pub fn create_query_catalog() -> QueryCatalog {
             rename_collection: "SELECT documentdb_api.rename_collection($1, $2, $3, $4)".to_string(),
             coll_mod: "SELECT documentdb_api.coll_mod($1, $2, $3)".to_string(),
             unshard_collection: "SELECT documentdb_api.unshard_collection($1)".to_string(),
+            balancer_start: "SELECT documentdb_api_distributed.rebalancer_start($1)".to_string(),
+            balancer_status: "SELECT documentdb_api_distributed.rebalancer_status($1)".to_string(),
+            balancer_stop: "SELECT documentdb_api_distributed.rebalancer_stop($1)".to_string(),
 
             // data_management.rs
             delete: "SELECT * FROM documentdb_api.delete($1, $2, $3, NULL)".to_string(),
