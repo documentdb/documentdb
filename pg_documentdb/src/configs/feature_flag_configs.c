@@ -215,6 +215,9 @@ bool EnableUseLookupNewProjectInlineMethod = DEFAULT_USE_LOOKUP_NEW_PROJECT_INLI
 #define DEFAULT_USE_FOREIGN_KEY_LOOKUP_INLINE true
 bool EnableUseForeignKeyLookupInline = DEFAULT_USE_FOREIGN_KEY_LOOKUP_INLINE;
 
+/* Remove after 111 */
+#define DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE true
+bool EnableAddToSetAggregationRewrite = DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE;
 
 /*
  * SECTION: Let support feature flags
@@ -781,5 +784,13 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to schedule index builds via background worker jobs."),
 		NULL, &IndexBuildsScheduledOnBgWorker,
 		DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableAddToSetAggregationRewrite", newGucPrefix),
+		gettext_noop(
+			"Whether to enable the new addToSet aggregation implementation that prevents crashes with the new delayed portal feature."),
+		NULL, &EnableAddToSetAggregationRewrite,
+		DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }
