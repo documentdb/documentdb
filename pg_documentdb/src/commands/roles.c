@@ -30,10 +30,31 @@ extern bool EnableRoleCrud;
 /* GUC that controls whether the DB admin check is enabled */
 extern bool EnableRolesAdminDBCheck;
 
+/* Supported privilege actions for collection-level custom role */
+static const char *const SupportedActions[] = {
+	"find",
+	"insert",
+	"update",
+	"remove"
+};
+static const int NumSupportedActions = sizeof(SupportedActions) /
+									   sizeof(SupportedActions[0]);
+
 PG_FUNCTION_INFO_V1(command_create_role);
 PG_FUNCTION_INFO_V1(command_drop_role);
 PG_FUNCTION_INFO_V1(command_roles_info);
 PG_FUNCTION_INFO_V1(command_update_role);
+
+/*
+ * Represents a single collection privilege entry.
+ * Contains the database name, collection name, and a hash set of action strings.
+ */
+typedef struct CustomPrivilege
+{
+	StringView dbName;
+	StringView collectionName;
+	HTAB *actions;
+} CustomPrivilege;
 
 /*
  * Struct to hold createRole parameters
@@ -42,6 +63,7 @@ typedef struct
 {
 	const char *roleName;
 	List *parentRoles;
+	List *customPrivileges;
 } CreateRoleSpec;
 
 /*
@@ -74,6 +96,11 @@ typedef struct RoleParentEntry
 
 static void ParseCreateRoleSpec(pgbson *createRoleBson, CreateRoleSpec *createRoleSpec);
 static void ParseRolesArray(bson_iter_t *rolesIter, CreateRoleSpec *createRoleSpec);
+static void ParsePrivilegesArray(bson_iter_t *privilegesIter,
+								 CreateRoleSpec *createRoleSpec);
+static void ParseResourceDocument(bson_iter_t *privilegeDocIter, StringView *dbName,
+								  StringView *collectionName);
+static HTAB * ParseActionsArray(bson_iter_t *privilegeDocIter);
 static void GrantInheritedRoles(const CreateRoleSpec *createRoleSpec);
 static void ParseDropRoleSpec(pgbson *dropRoleBson, DropRoleSpec *dropRoleSpec);
 static void ParseRolesInfoSpec(pgbson *rolesInfoBson, RolesInfoSpec *rolesInfoSpec);
@@ -95,6 +122,7 @@ static void CollectInheritedRolesRecursive(const char *roleName,
 										   HTAB *roleInheritanceTable,
 										   HTAB *resultSet);
 static List * LookupAllInheritedRoles(const char *roleName, HTAB *roleInheritanceTable);
+static bool IsActionSupported(const char *action);
 
 /*
  * Parses a createRole spec, executes the createRole command, and returns the result.
@@ -194,16 +222,8 @@ create_role(pgbson *createRoleBson)
 		return PointerGetDatum(PgbsonWriterGetPgbson(&finalWriter));
 	}
 
-	CreateRoleSpec createRoleSpec = { NULL, NIL };
+	CreateRoleSpec createRoleSpec = { NULL, NIL, NIL };
 	ParseCreateRoleSpec(createRoleBson, &createRoleSpec);
-
-	/* Validate that at least one inherited role is specified */
-	if (list_length(createRoleSpec.parentRoles) == 0)
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-						errmsg(
-							"At least one inherited role must be specified in 'roles' array.")));
-	}
 
 	/* Create the specified role in the database */
 	StringInfo createRoleInfo = makeStringInfo();
@@ -216,6 +236,16 @@ create_role(pgbson *createRoleBson)
 
 	/* Grant inherited roles to the new role */
 	GrantInheritedRoles(&createRoleSpec);
+
+	ListCell *cell;
+	foreach(cell, createRoleSpec.customPrivileges)
+	{
+		CustomPrivilege *privilege = (CustomPrivilege *) lfirst(cell);
+		hash_destroy(privilege->actions);
+	}
+	list_free_deep(createRoleSpec.customPrivileges);
+
+	list_free_deep(createRoleSpec.parentRoles);
 
 	pgbson_writer finalWriter;
 	PgbsonWriterInit(&finalWriter);
@@ -233,6 +263,8 @@ ParseCreateRoleSpec(pgbson *createRoleBson, CreateRoleSpec *createRoleSpec)
 	bson_iter_t createRoleIter;
 	PgbsonInitIterator(createRoleBson, &createRoleIter);
 	bool dbFound = false;
+	bool rolesFound = false;
+	bool privilegesFound = false;
 	while (bson_iter_next(&createRoleIter))
 	{
 		const char *key = bson_iter_key(&createRoleIter);
@@ -260,7 +292,13 @@ ParseCreateRoleSpec(pgbson *createRoleBson, CreateRoleSpec *createRoleSpec)
 		}
 		else if (strcmp(key, "roles") == 0)
 		{
+			rolesFound = true;
 			ParseRolesArray(&createRoleIter, createRoleSpec);
+		}
+		else if (strcmp(key, "privileges") == 0)
+		{
+			privilegesFound = true;
+			ParsePrivilegesArray(&createRoleIter, createRoleSpec);
 		}
 		else if (strcmp(key, "$db") == 0 && EnableRolesAdminDBCheck)
 		{
@@ -297,6 +335,18 @@ ParseCreateRoleSpec(pgbson *createRoleBson, CreateRoleSpec *createRoleSpec)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 						errmsg("'createRole' is a required field.")));
+	}
+
+	if (!rolesFound)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("'roles' is a required field.")));
+	}
+
+	if (!privilegesFound)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("'privileges' is a required field.")));
 	}
 }
 
@@ -339,6 +389,243 @@ ParseRolesArray(bson_iter_t *rolesIter, CreateRoleSpec *createRoleSpec)
 				pstrdup(inheritedBuiltInRole));
 		}
 	}
+}
+
+
+/*
+ * ParsePrivilegesArray parses the privileges array from the createRole command.
+ */
+static void
+ParsePrivilegesArray(bson_iter_t *privilegesIter, CreateRoleSpec *createRoleSpec)
+{
+	if (bson_iter_type(privilegesIter) != BSON_TYPE_ARRAY)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg(
+							"'privileges' must be an array.")));
+	}
+
+	bson_iter_t privilegesArrayIter;
+	bson_iter_recurse(privilegesIter, &privilegesArrayIter);
+
+	while (bson_iter_next(&privilegesArrayIter))
+	{
+		if (bson_iter_type(&privilegesArrayIter) != BSON_TYPE_DOCUMENT)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"Each privilege entry must be a document.")));
+		}
+
+		bson_iter_t privilegeDocIter;
+		bson_iter_recurse(&privilegesArrayIter, &privilegeDocIter);
+
+		StringView dbName = { 0 };
+		StringView collectionName = { 0 };
+		HTAB *actions = NULL;
+		bool resourceFound = false;
+		bool actionsFound = false;
+
+		while (bson_iter_next(&privilegeDocIter))
+		{
+			const char *privilegeKey = bson_iter_key(&privilegeDocIter);
+
+			if (strcmp(privilegeKey, "resource") == 0)
+			{
+				resourceFound = true;
+				ParseResourceDocument(&privilegeDocIter, &dbName, &collectionName);
+			}
+			else if (strcmp(privilegeKey, "actions") == 0)
+			{
+				actionsFound = true;
+				actions = ParseActionsArray(&privilegeDocIter);
+			}
+			else
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"The specified field '%s' is not supported in privilege.",
+									privilegeKey)));
+			}
+		}
+
+		if (!resourceFound)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"'resource' is required in privilege.")));
+		}
+
+		if (!actionsFound)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"'actions' is required in privilege.")));
+		}
+
+		if (dbName.string == NULL || collectionName.string == NULL || actions == NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"Internal error: privilege parsing produced NULL values for dbName, collectionName, or actions.")));
+		}
+
+		CustomPrivilege *customPrivilege = palloc(sizeof(CustomPrivilege));
+		customPrivilege->dbName = dbName;
+		customPrivilege->collectionName = collectionName;
+		customPrivilege->actions = actions;
+
+		createRoleSpec->customPrivileges = lappend(
+			createRoleSpec->customPrivileges, customPrivilege);
+	}
+}
+
+
+/*
+ * ParseResourceDocument parses the "resource" field from a privilege entry.
+ * Extracts the database and collection names as StringViews.
+ * Both 'db' and 'collection' are required fields.
+ */
+static void
+ParseResourceDocument(bson_iter_t *privilegeDocIter,
+					  StringView *dbName,
+					  StringView *collectionName)
+{
+	if (bson_iter_type(privilegeDocIter) != BSON_TYPE_DOCUMENT)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("'resource' must be a document.")));
+	}
+
+	bson_iter_t resourceIter;
+	bson_iter_recurse(privilegeDocIter, &resourceIter);
+
+	bool dbFound = false;
+	bool collectionFound = false;
+
+	while (bson_iter_next(&resourceIter))
+	{
+		const char *resourceKey = bson_iter_key(&resourceIter);
+
+		if (strcmp(resourceKey, "db") == 0)
+		{
+			if (bson_iter_type(&resourceIter) != BSON_TYPE_UTF8)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg("'db' in resource must be a string.")));
+			}
+
+			uint32_t strLength = 0;
+			const char *strValue = bson_iter_utf8(&resourceIter, &strLength);
+			if (strValue == NULL || strLength == 0)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg("'db' in resource must not be empty.")));
+			}
+
+			*dbName = CreateStringViewFromStringWithLength(strValue, strLength);
+			dbFound = true;
+		}
+		else if (strcmp(resourceKey, "collection") == 0)
+		{
+			if (bson_iter_type(&resourceIter) != BSON_TYPE_UTF8)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"'collection' in resource must be a string.")));
+			}
+
+			uint32_t strLength = 0;
+			const char *strValue = bson_iter_utf8(&resourceIter, &strLength);
+			if (strValue == NULL || strLength == 0)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg("'collection' in resource must not be empty.")));
+			}
+
+			*collectionName = CreateStringViewFromStringWithLength(strValue, strLength);
+			collectionFound = true;
+		}
+		else
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"The specified field '%s' is not supported in resource.",
+								resourceKey)));
+		}
+	}
+
+	if (!dbFound)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("'db' is required in resource.")));
+	}
+
+	if (!collectionFound)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("'collection' is required in resource.")));
+	}
+}
+
+
+/*
+ * ParseActionsArray parses the "actions" field from a privilege entry.
+ * Returns a hash set of action strings for automatic deduplication.
+ */
+static HTAB *
+ParseActionsArray(bson_iter_t *privilegeDocIter)
+{
+	if (bson_iter_type(privilegeDocIter) != BSON_TYPE_ARRAY)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("'actions' must be an array.")));
+	}
+
+	/* Create a hash set for deduplication */
+	HASHCTL hashCtl;
+	MemSet(&hashCtl, 0, sizeof(hashCtl));
+	hashCtl.keysize = NAMEDATALEN;
+	hashCtl.entrysize = NAMEDATALEN;
+	HTAB *actions = hash_create("ActionsSet", 8, &hashCtl, HASH_ELEM | HASH_STRINGS);
+
+	bson_iter_t actionsIter;
+	bson_iter_recurse(privilegeDocIter, &actionsIter);
+
+	while (bson_iter_next(&actionsIter))
+	{
+		if (bson_iter_type(&actionsIter) != BSON_TYPE_UTF8)
+		{
+			hash_destroy(actions);
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg("Each action must be a string.")));
+		}
+
+		uint32_t actionLength = 0;
+		const char *action = bson_iter_utf8(&actionsIter, &actionLength);
+
+		if (actionLength > 0 && actionLength < NAMEDATALEN)
+		{
+			if (!IsActionSupported(action))
+			{
+				hash_destroy(actions);
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg("Unsupported action '%s'.",
+									   action)));
+			}
+
+			hash_search(actions, action, HASH_ENTER, NULL);
+		}
+	}
+
+	if (hash_get_num_entries(actions) == 0)
+	{
+		hash_destroy(actions);
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("At least one valid action must be specified.")));
+	}
+
+	return actions;
 }
 
 
@@ -1302,4 +1589,21 @@ FreeRoleInheritanceTable(HTAB *roleInheritanceTable)
 	}
 
 	hash_destroy(roleInheritanceTable);
+}
+
+
+/*
+ * Check if an action string is in the SupportedActions list.
+ */
+static bool
+IsActionSupported(const char *action)
+{
+	for (int i = 0; i < NumSupportedActions; i++)
+	{
+		if (strcmp(action, SupportedActions[i]) == 0)
+		{
+			return true;
+		}
+	}
+	return false;
 }

@@ -11,7 +11,7 @@ SET documentdb.enableRoleCrud TO ON;
 SET documentdb.enableRolesAdminDBCheck TO ON;
 
 -- Create a custom role for testing rolesInfo with a custom role
-SELECT documentdb_api.create_role('{"createRole":"test_custom_role", "roles":["documentdb_readonly_role"], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"test_custom_role", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
 
 -- ********* Test rolesInfo with int value *********
 -- Test rolesInfo with 1
