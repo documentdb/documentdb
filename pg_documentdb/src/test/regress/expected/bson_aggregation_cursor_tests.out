@@ -973,3 +973,170 @@ NOTICE:  There are open held portals. Closing them
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.get_aggregation_cursor_test" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "4" } ] } | 5654032 | { "qi" : { "$numberLong" : "4294967294" }, "qp" : true, "qk" : { "$numberInt" : "2" }, "qn" : "cursor_4294967294", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | f
 (2 rows)
 
+-- add 200 docs with larger fields so that they use more pages and we test continuation with multiple pages.
+DO $$
+DECLARE i int;
+BEGIN
+FOR i IN 1..200 LOOP
+PERFORM documentdb_api.insert_one('db', 'bitmap_cursor_continuation', FORMAT('{ "_id": %s, "sk": "skval", "a": "aval-%s%s", "c": [ "%s", "d" ] }', i, i, repeat('a', 200), repeat('b', 100))::documentdb_core.bson);
+END LOOP;
+END;
+$$;
+NOTICE:  creating collection
+-- create an index on field 'a'
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "bitmap_cursor_continuation", "indexes": [{"key": {"a": 1}, "name": "a_1" }]}', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Store results with fast bitmap lookup ON
+set documentdb.enableContinuationFastBitmapLookup to on;
+CREATE TEMP TABLE results_fast AS
+SELECT row_number() OVER () as batch_num, (filteredDoc->>'ids')::text as ids
+FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 40, 
+    pipeline => '{ "": [{ "$match": { "a": { "$gte": "aval-" } } }] }', 
+    collection_name => 'bitmap_cursor_continuation');
+select * from results_fast;
+ batch_num |                                                                                                    ids                                                                                                     
+-----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+         1 | [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40 ]
+         2 | [ 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80 ]
+         3 | [ 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120 ]
+         4 | [ 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160 ]
+         5 | [ 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200 ]
+(5 rows)
+
+-- Store results with fast bitmap lookup OFF
+set documentdb.enableContinuationFastBitmapLookup to off;
+CREATE TEMP TABLE results_slow AS
+SELECT row_number() OVER () as batch_num, (filteredDoc->>'ids')::text as ids
+FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 40, 
+    pipeline => '{ "": [{ "$match": { "a": { "$gte": "aval-" } } }] }', 
+    collection_name => 'bitmap_cursor_continuation');
+select * from results_slow;
+ batch_num |                                                                                                    ids                                                                                                     
+-----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+         1 | [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40 ]
+         2 | [ 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80 ]
+         3 | [ 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120 ]
+         4 | [ 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160 ]
+         5 | [ 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200 ]
+(5 rows)
+
+-- compare results
+SELECT f.batch_num, 
+       f.ids = s.ids as ids_match
+FROM results_fast f
+FULL OUTER JOIN results_slow s ON f.batch_num = s.batch_num
+ORDER BY COALESCE(f.batch_num, s.batch_num);
+ batch_num | ids_match 
+-----------+-----------
+         1 | t
+         2 | t
+         3 | t
+         4 | t
+         5 | t
+(5 rows)
+
+-- now check the explain to make sure it is bitmap.
+set documentdb.enableCursorsOnAggregationQueryRewrite to on;
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('db', '{ "find": "bitmap_cursor_continuation", "projection": { "_id": 1 }, "filter": { "a": { "$gte": "aval-" } } , "batchSize": 1 }');
+                                                                                                                                       QUERY PLAN                                                                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiScan)
+   Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$gte" : "aval-" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), documentdb_api_internal.current_cursor_state(document)
+   ->  Bitmap Heap Scan on documentdb_data.documents_3102 collection
+         Output: shard_key_value, object_id, document
+         Recheck Cond: (collection.document @>= '{ "a" : "aval-" }'::bson)
+         Filter: documentdb_api_internal.cursor_state(collection.document, '{ }'::bson)
+         ->  Bitmap Index Scan on a_1
+               Index Cond: (collection.document @>= '{ "a" : "aval-" }'::bson)
+(8 rows)
+
+CREATE TEMP TABLE firstPageResponse AS
+SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid FROM
+    find_cursor_first_page(database => 'db', commandSpec => '{ "find": "bitmap_cursor_continuation",  "projection": { "_id": 1 }, "filter": { "a": { "$gte": "aval-" } }, "batchSize": 2 }', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM firstPageResponse \gset
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('db',
+    '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation", "batchSize": 1 }', :'r1_continuation');
+                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiScan)
+   Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$gte" : "aval-" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), documentdb_api_internal.current_cursor_state(document)
+   Page Row Count: 2 rows
+   Page Size Hint: 16777216 bytes
+   Continuation: { "table_name" : "documents_3102", "value" : { "$binary" : { "base64" : "AAAAAAIA", "subType" : "00" } } }
+   ->  Bitmap Heap Scan on documentdb_data.documents_3102 collection
+         Output: shard_key_value, object_id, document
+         Recheck Cond: (collection.document @>= '{ "a" : "aval-" }'::bson)
+         Filter: documentdb_api_internal.cursor_state(collection.document, '{ "continuation" : [ { "table_name" : "documents_3102", "value" : { "$binary" : { "base64" : "AAAAAAIA", "subType" : "00" } } } ], "getpage_batchCount" : { "$numberInt" : "2" }, "getpage_batchSizeHint" : { "$numberInt" : "16777216" }, "getpage_batchSizeAttr" : { "$numberInt" : "1" } }'::bson)
+         ->  Bitmap Index Scan on a_1
+               Index Cond: (collection.document @>= '{ "a" : "aval-" }'::bson)
+(11 rows)
+
+DROP TABLE firstPageResponse;
+DROP TABLE results_fast;
+DROP TABLE results_slow;
+set documentdb.enableContinuationFastBitmapLookup to on;
+BEGIN;
+CREATE TEMP TABLE firstPageResponse AS
+SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid FROM
+    find_cursor_first_page(database => 'db', commandSpec => '{ "find": "bitmap_cursor_continuation", "projection": { "_id": 1 }, "filter": { "a": { "$gte": "aval-" } }, "batchSize": 2  }', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM firstPageResponse \gset
+-- now delete in between to invalidate some of the bitmap entries.
+SELECT documentdb_api.delete('db', '{ "delete": "bitmap_cursor_continuation", "deletes": [ {"q": {"_id": { "$gte": 1, "$lte": 190 } }, "limit": 0 } ]}');
+                                          delete                                          
+------------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""190"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT cursorPage FROM cursor_get_more(database => 'db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation" }'::bson,
+    continuationSpec => :'r1_continuation');
+                                                                                                                                                                                                                                                                 cursorpage                                                                                                                                                                                                                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.bitmap_cursor_continuation", "nextBatch" : [ { "_id" : { "$numberInt" : "191" } }, { "_id" : { "$numberInt" : "192" } }, { "_id" : { "$numberInt" : "193" } }, { "_id" : { "$numberInt" : "194" } }, { "_id" : { "$numberInt" : "195" } }, { "_id" : { "$numberInt" : "196" } }, { "_id" : { "$numberInt" : "197" } }, { "_id" : { "$numberInt" : "198" } }, { "_id" : { "$numberInt" : "199" } }, { "_id" : { "$numberInt" : "200" } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+set documentdb.enableContinuationFastBitmapLookup to off;
+SELECT cursorPage FROM cursor_get_more(database => 'db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation" }'::bson,
+    continuationSpec => :'r1_continuation');
+                                                                                                                                                                                                                                                                 cursorpage                                                                                                                                                                                                                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.bitmap_cursor_continuation", "nextBatch" : [ { "_id" : { "$numberInt" : "191" } }, { "_id" : { "$numberInt" : "192" } }, { "_id" : { "$numberInt" : "193" } }, { "_id" : { "$numberInt" : "194" } }, { "_id" : { "$numberInt" : "195" } }, { "_id" : { "$numberInt" : "196" } }, { "_id" : { "$numberInt" : "197" } }, { "_id" : { "$numberInt" : "198" } }, { "_id" : { "$numberInt" : "199" } }, { "_id" : { "$numberInt" : "200" } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ROLLBACK;
+-- now leave some blocks before and after the deleted range.
+BEGIN;
+CREATE TEMP TABLE firstPageResponse AS
+SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid FROM
+    find_cursor_first_page(database => 'db', commandSpec => '{ "find": "bitmap_cursor_continuation", "projection": { "_id": 1 }, "filter": { "a": { "$gte": "aval-" } }, "batchSize": 100  }', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM firstPageResponse \gset
+-- now delete in between to invalidate some of the bitmap entries.
+SELECT documentdb_api.delete('db', '{ "delete": "bitmap_cursor_continuation", "deletes": [ {"q": {"_id": { "$gte": 81, "$lte": 190 } }, "limit": 0 } ]}');
+                                          delete                                          
+------------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""110"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT cursorPage FROM cursor_get_more(database => 'db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation" }'::bson,
+    continuationSpec => :'r1_continuation');
+                                                                                                                                                                                                                                                                 cursorpage                                                                                                                                                                                                                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.bitmap_cursor_continuation", "nextBatch" : [ { "_id" : { "$numberInt" : "191" } }, { "_id" : { "$numberInt" : "192" } }, { "_id" : { "$numberInt" : "193" } }, { "_id" : { "$numberInt" : "194" } }, { "_id" : { "$numberInt" : "195" } }, { "_id" : { "$numberInt" : "196" } }, { "_id" : { "$numberInt" : "197" } }, { "_id" : { "$numberInt" : "198" } }, { "_id" : { "$numberInt" : "199" } }, { "_id" : { "$numberInt" : "200" } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+set documentdb.enableContinuationFastBitmapLookup to off;
+SELECT cursorPage FROM cursor_get_more(database => 'db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation" }'::bson,
+    continuationSpec => :'r1_continuation');
+                                                                                                                                                                                                                                                                 cursorpage                                                                                                                                                                                                                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.bitmap_cursor_continuation", "nextBatch" : [ { "_id" : { "$numberInt" : "191" } }, { "_id" : { "$numberInt" : "192" } }, { "_id" : { "$numberInt" : "193" } }, { "_id" : { "$numberInt" : "194" } }, { "_id" : { "$numberInt" : "195" } }, { "_id" : { "$numberInt" : "196" } }, { "_id" : { "$numberInt" : "197" } }, { "_id" : { "$numberInt" : "198" } }, { "_id" : { "$numberInt" : "199" } }, { "_id" : { "$numberInt" : "200" } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ROLLBACK;

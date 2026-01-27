@@ -14,6 +14,9 @@
 #include <nodes/extensible.h>
 #include <nodes/makefuncs.h>
 #include <nodes/nodeFuncs.h>
+#include <nodes/tidbitmap.h>
+#include <access/htup_details.h>
+#include <access/heapam.h>
 #include <optimizer/pathnode.h>
 #include <optimizer/optimizer.h>
 #include <parser/parse_relation.h>
@@ -177,6 +180,7 @@ const StringView PrimaryKeyShardKey =
 };
 
 extern bool EnablePrimaryKeyCursorScan;
+extern bool EnableContinuationFastBitmapLookup;
 
 #define InputContinuationNodeName "ExtensionScanInputContinuation"
 
@@ -1820,6 +1824,259 @@ ParseContinuationState(ExtensionScanState *extensionScanState,
 }
 
 
+#if PG_VERSION_NUM >= 180000
+
+/*
+ * Skips the bitmap scan to the user continuation point.
+ * Returns true if the continuation point was found, false otherwise.
+ *
+ * We advance the underlying iterator to one block before the target block,
+ * so that the next fetch will land on the correct block. This optimizes to avoid loading heap pages unnecessarily because every time next is called, the heap scan state
+ * will load the next block and fetch the tuple, then we would compare against the continuation and discard if it was smaller, all that is wasted work.
+ */
+static bool
+SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
+							 ItemPointerData *userContinuation)
+{
+	TBMIterator tbmiterator = { 0 };
+
+	/* The bitmap scan state should never be initialized, however we add defensive check to not fail and also, this will be helpful for when we support paginated bitmaps. */
+	if (!bitmapScanState->initialized)
+	{
+		if (bitmapScanState->pstate)
+		{
+			ereport(ERROR, (errmsg(
+								"Parallel scan not supported for cursor continuation.")));
+		}
+
+		bitmapScanState->tbm = (TIDBitmap *) MultiExecProcNode(outerPlanState(
+																   bitmapScanState));
+
+		if (!bitmapScanState->tbm || !IsA(bitmapScanState->tbm, TIDBitmap))
+		{
+			elog(ERROR, "unrecognized result from subplan");
+		}
+
+		/* We don't support parallel scans in continuations so we just pass an InvalidDsaPointer. */
+		tbmiterator = tbm_begin_iterate(bitmapScanState->tbm,
+										bitmapScanState->ss.ps.state->es_query_dsa,
+										InvalidDsaPointer);
+
+		if (!bitmapScanState->ss.ss_currentScanDesc)
+		{
+			bitmapScanState->ss.ss_currentScanDesc =
+				table_beginscan_bm(bitmapScanState->ss.ss_currentRelation,
+								   bitmapScanState->ss.ps.state->es_snapshot,
+								   0,
+								   NULL);
+		}
+
+		bitmapScanState->ss.ss_currentScanDesc->st.rs_tbmiterator = tbmiterator;
+		bitmapScanState->initialized = true;
+	}
+	else
+	{
+		tbm_end_iterate(&bitmapScanState->ss.ss_currentScanDesc->st.rs_tbmiterator);
+		tbmiterator = tbm_begin_iterate(bitmapScanState->tbm,
+										bitmapScanState->ss.ps.state->es_query_dsa,
+										InvalidDsaPointer);
+		bitmapScanState->ss.ss_currentScanDesc->st.rs_tbmiterator = tbmiterator;
+	}
+
+	/* move forward to the current continuation block number. */
+	bool foundTargetTid = false;
+	BlockNumber target_blockno = ItemPointerGetBlockNumber(userContinuation);
+
+	Assert(target_blockno != InvalidBlockNumber);
+
+	/* ahead iterator to stop the real iterator one block behind, we need this approach in case there were deletion of blocks in between continuations. */
+	TBMIterator tmp_tbmiterator = { 0 };
+
+	if (target_blockno <= 1)
+	{
+		foundTargetTid = true;
+	}
+	else
+	{
+		tmp_tbmiterator = tbm_begin_iterate(bitmapScanState->tbm,
+											bitmapScanState->ss.ps.state->es_query_dsa,
+											InvalidDsaPointer);
+	}
+
+	TBMIterateResult tbmres = {
+		.blockno = InvalidBlockNumber,
+		.internal_page = NULL,
+	};
+
+
+	TBMIterateResult tbmres_tmp = {
+		.blockno = InvalidBlockNumber,
+		.internal_page = NULL,
+	};
+
+	while (!foundTargetTid && tbm_iterate(&tmp_tbmiterator, &tbmres_tmp))
+	{
+		CHECK_FOR_INTERRUPTS();
+
+		BlockNumber blockno = tbmres_tmp.blockno;
+		if (blockno < target_blockno)
+		{
+			tbm_iterate(&tbmiterator, &tbmres);
+			continue; /* Skip blocks before target */
+		}
+		else
+		{
+			/* We are either on the target block at the ahead iterator or we got to a larger block, we stop here. */
+			foundTargetTid = true;
+			tbm_end_iterate(&tmp_tbmiterator);
+		}
+	}
+
+	if (!foundTargetTid)
+	{
+		tbm_end_iterate(&tmp_tbmiterator);
+		tbm_end_iterate(&tbmiterator);
+		return false;
+	}
+	Assert(target_blockno <= 1 ||
+		   tbmres.blockno < target_blockno);
+
+	/* Since we are stopping one block earlier, we set the heap scan descriptor values to invalid so that fetch next skips this block and fetches the right tuple. */
+	HeapScanDesc hscan = (HeapScanDesc) bitmapScanState->ss.ss_currentScanDesc;
+	hscan->rs_cindex = MaxOffsetNumber + 1;
+	hscan->rs_ntuples = 0;
+
+	return true;
+}
+
+
+#else
+
+/*
+ * Skips the bitmap scan to the user continuation point.
+ * Returns true if the continuation point was found, false otherwise.
+ *
+ * We advance the underlying iterator to one block before the target block,
+ * so that the next fetch will land on the correct block. This optimizes to avoid loading heap pages unnecessarily because every time next is called, the heap scan state
+ * will load the next block and fetch the tuple, then we would compare against the continuation and discard if it was smaller, all that is wasted work.
+ */
+static bool
+SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
+							 ItemPointerData *userContinuation)
+{
+	TBMIterator *tbmiterator = NULL;
+
+	/* The bitmap scan state should never be initialized, however we add defensive check to not fail and also, this will be helpful for when we support paginated bitmaps. */
+	if (!bitmapScanState->initialized)
+	{
+		if (bitmapScanState->pstate)
+		{
+			ereport(ERROR, (errmsg(
+								"Parallel scan not supported for cursor continuation.")));
+		}
+
+		bitmapScanState->tbm = (TIDBitmap *) MultiExecProcNode(outerPlanState(
+																   bitmapScanState));
+
+		if (!bitmapScanState->tbm || !IsA(bitmapScanState->tbm, TIDBitmap))
+		{
+			elog(ERROR, "unrecognized result from subplan");
+		}
+
+		tbmiterator = tbm_begin_iterate(bitmapScanState->tbm);
+		bitmapScanState->tbmres = NULL;
+
+		if (!bitmapScanState->ss.ss_currentScanDesc)
+		{
+			bitmapScanState->ss.ss_currentScanDesc =
+				table_beginscan_bm(bitmapScanState->ss.ss_currentRelation,
+								   bitmapScanState->ss.ps.state->es_snapshot,
+								   0,
+	#if PG_VERSION_NUM >= 170000
+								   NULL,
+								   true);
+	#else
+								   NULL);
+	#endif
+		}
+
+		bitmapScanState->tbmiterator = tbmiterator;
+		bitmapScanState->initialized = true;
+	}
+	else
+	{
+		tbm_end_iterate(bitmapScanState->tbmiterator);
+		tbmiterator = tbm_begin_iterate(bitmapScanState->tbm);
+		bitmapScanState->tbmiterator = tbmiterator;
+	}
+
+	/* move forward to the current continuation block number. */
+	bool foundTargetTid = false;
+	BlockNumber target_blockno = ItemPointerGetBlockNumber(userContinuation);
+	Assert(target_blockno != InvalidBlockNumber);
+
+	/* We use an ahead iterator to stop the real iterator one block behind, we need this approach for fetch next to initialize the heap scan state properly and for that it needs to iterate again
+	 * that way we're guaranteed we always stop at the correct block, also this protects us from the case of a block being deleted in between continuations. */
+	TBMIterator *tmp_tbmiterator = NULL;
+	if (target_blockno <= 1)
+	{
+		foundTargetTid = true;
+	}
+	else
+	{
+		tmp_tbmiterator = tbm_begin_iterate(bitmapScanState->tbm);
+	}
+
+	TBMIterateResult *tbmres = NULL;
+	TBMIterateResult *tbmres_tmp = NULL;
+	while (!foundTargetTid)
+	{
+		CHECK_FOR_INTERRUPTS();
+
+		tbmres_tmp = tbm_iterate(tmp_tbmiterator);
+		if (!tbmres_tmp)
+		{
+			break;
+		}
+
+		BlockNumber blockno = tbmres_tmp->blockno;
+		if (blockno < target_blockno)
+		{
+			tbmres = tbm_iterate(tbmiterator);
+			continue;
+		}
+		else
+		{
+			/* We are either on the target block at the ahead iterator or we got to a larger block, we stop here. */
+			foundTargetTid = true;
+			tbm_end_iterate(tmp_tbmiterator);
+		}
+	}
+
+	if (!foundTargetTid)
+	{
+		tbm_end_iterate(tbmiterator);
+		tbm_end_iterate(tmp_tbmiterator);
+		return false;
+	}
+
+	/* if tbmres is NULL, we are on the first block number. */
+	Assert(tbmres == NULL || tbmres->blockno < target_blockno);
+
+	bitmapScanState->tbmres = tbmres;
+
+	/* Since we are stopping one block earlier, we set the heap scan descriptor values to invalid so that fetch next skips this block and fetches the right tuple. */
+	HeapScanDesc hscan = (HeapScanDesc) bitmapScanState->ss.ss_currentScanDesc;
+	hscan->rs_cindex = MaxOffsetNumber + 1;
+	hscan->rs_ntuples = 0;
+
+	return true;
+}
+
+
+#endif
+
+
 /*
  * Skips enumerating rows until the specified continuation is hit.
  * If the enumeration lands *after* the given continuation, returns the tuple
@@ -1830,6 +2087,24 @@ static TupleTableSlot *
 SkipWithUserContinuation(ExtensionScanState *state, bool *shouldContinue)
 {
 	*shouldContinue = false;
+
+	if (EnableContinuationFastBitmapLookup &&
+		state->innerScanState->ps.type == T_BitmapHeapScanState)
+	{
+		BitmapHeapScanState *bitmapScanState =
+			(BitmapHeapScanState *) &state->innerScanState->ps;
+		bool found = SkipBitmapToUserContinuation(bitmapScanState,
+												  &state->userContinuationState);
+		if (!found)
+		{
+			return NULL;
+		}
+	}
+	else if (state->innerScanState->ps.type == T_BitmapHeapScanState)
+	{
+		ReportFeatureUsage(FEATURE_CURSOR_CAN_USE_FAST_BITMAP);
+	}
+
 	while (true)
 	{
 		TupleTableSlot *slot = state->innerScanState->ps.ExecProcNode(
