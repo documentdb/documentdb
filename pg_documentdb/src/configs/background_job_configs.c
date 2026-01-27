@@ -28,7 +28,7 @@ int IndexQueueEvictionIntervalInSec = DEFAULT_INDEX_BUILD_EVICTION_INTERVAL_IN_S
 #define DEFAULT_MAX_NUM_ACTIVE_USERS_INDEX_BUILDS 2
 int MaxNumActiveUsersIndexBuilds = DEFAULT_MAX_NUM_ACTIVE_USERS_INDEX_BUILDS;
 
-#define DEFAULT_MAX_TTL_DELETE_BATCH_SIZE 10000
+#define DEFAULT_MAX_TTL_DELETE_BATCH_SIZE 1000
 int MaxTTLDeleteBatchSize = DEFAULT_MAX_TTL_DELETE_BATCH_SIZE;
 
 #define DEFAULT_TTL_PURGER_STATEMENT_TIMEOUT 60000
@@ -37,6 +37,7 @@ int TTLPurgerStatementTimeout = DEFAULT_TTL_PURGER_STATEMENT_TIMEOUT;
 #define DEFAULT_TTL_PURGER_LOCK_TIMEOUT 10000
 int TTLPurgerLockTimeout = DEFAULT_TTL_PURGER_LOCK_TIMEOUT;
 
+/* TODO: remove this this TTL repeat mode is stabilized in production */
 #define DEFAULT_SINGLE_TTL_TASK_TIME_BUDGET 20000
 int SingleTTLTaskTimeBudget = DEFAULT_SINGLE_TTL_TASK_TIME_BUDGET;
 
@@ -49,9 +50,12 @@ double TTLDeleteSaturationThreshold = DEFAULT_TTL_DELETE_SATURATION_RATIO_THRESH
 #define DEFAULT_SLOW_TTL_BATCH_DELETE_THRESHOLD_IN_MS 10000
 int TTLSlowBatchDeleteThresholdInMS = DEFAULT_SLOW_TTL_BATCH_DELETE_THRESHOLD_IN_MS;
 
-/* Enable by default on 1.109 */
-#define DEFAULT_REPEAT_PURGE_INDEXES_FOR_TTL_TASK false
+#define DEFAULT_REPEAT_PURGE_INDEXES_FOR_TTL_TASK true
 bool RepeatPurgeIndexesForTTLTask = DEFAULT_REPEAT_PURGE_INDEXES_FOR_TTL_TASK;
+
+#define DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES true
+bool TTLSkipCaughtUpIndexes = DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES;
+
 
 #define DEFAULT_ENABLE_TTL_DESC_SORT false
 bool EnableTTLDescSort = DEFAULT_ENABLE_TTL_DESC_SORT;
@@ -165,7 +169,18 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		NULL,
 		&RepeatPurgeIndexesForTTLTask,
 		DEFAULT_REPEAT_PURGE_INDEXES_FOR_TTL_TASK,
-		PGC_SUSET,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.TTLSkipCaughtUpIndexes", newGucPrefix),
+		gettext_noop(
+			"Whether to skip checking a TTL index further, once they are caught up during a TTL task invocation cycle."),
+		NULL,
+		&TTLSkipCaughtUpIndexes,
+		DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES,
+		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
 

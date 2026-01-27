@@ -106,7 +106,10 @@ SELECT * FROM documentdb_distributed_test_helpers.get_collection_indexes('db', '
 (2 rows)
 
 -- 3. Call ttl purge procedure with a batch size of 10
+BEGIN;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(10);
+END;
 -- 4.a. Check what documents are left after purging
 SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlcoll') order by object_id;
  shard_key_value |            object_id            |                                           document                                            
@@ -286,13 +289,17 @@ BEGIN;
 Set citus.log_remote_commands to on; -- Will print Citus rewrites of the queries
 Set citus.log_local_commands to on; -- Will print the local queries 
 set local documentdb.SingleTTLTaskTimeBudget to 1;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(0); -- To test the sql query, it won't delete any data
 NOTICE:  executing the command locally: SELECT index_id, collection_id, (index_spec).index_key AS index_key, (index_spec).index_pfe AS index_pfe, (index_spec).index_expire_after_seconds AS index_expire_after_seconds, (index_spec).index_is_sparse AS index_is_sparse, COALESCE((documentdb_core.bson_get_value_text((index_spec).index_options, 'enableCompositeTerm'::text))::boolean, (documentdb_core.bson_get_value_text((index_spec).index_options, 'enableOrderedIndex'::text))::boolean, false) AS index_is_ordered, (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_is_valid AND ((index_spec).index_expire_after_seconds OPERATOR(pg_catalog.>=) 0)) ORDER BY collection_id, index_id
 Set citus.log_remote_commands to off;
 Set citus.log_local_commands to off;
 END;
 -- 10.a.
+BEGIN;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(10);
+END;
 -- 11.a. Check what documents are left after purging
 SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlcoll') order by object_id;
    shard_key_value    |            object_id            |                                           document                                            
@@ -530,7 +537,10 @@ SELECT documentdb_api.insert_one('db','ttlcoll2', '{ "_id" : 9, "b": 55, "a" : 1
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
+BEGIN;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(10);
+END;
 SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlcoll2') order by object_id;
  shard_key_value |            object_id            |                                                                                                               document                                                                                                                
 ---------------------------------------------------------------------
@@ -638,7 +648,10 @@ SELECT documentdb_api.insert_one('db','ttlcoll3', '{ "_id" : 9, "b": 55, "a" : 1
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
+BEGIN;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(10);
+END;
 SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlcoll3') order by object_id;
  shard_key_value |            object_id            |                                                                                           document                                                                                           
 ---------------------------------------------------------------------
@@ -781,7 +794,7 @@ SELECT count(*)  from documentdb_api.collection('db', 'ttlRepeatedDeletes2');
 
 BEGIN;
 SET LOCAL documentdb.TTLTaskMaxRunTimeInMS to 3000;
-SET LOCAL documentdb.SingleTTLTaskTimeBudget to 2000;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(11);
   -- With repeat mode off (by default), we should delete exactly 11 documents per collections (currently has 10001 and 9991 documents)
 SELECT count(*) = 9990  from documentdb_api.collection('db', 'ttlRepeatedDeletes');
@@ -799,8 +812,7 @@ SELECT count(*) = 9980 from documentdb_api.collection('db', 'ttlRepeatedDeletes2
 END;
 BEGIN;
 SET LOCAL documentdb.TTLTaskMaxRunTimeInMS to 3000;
-SET LOCAL documentdb.SingleTTLTaskTimeBudget to 2000;
-SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to true;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to on;
 SELECT count(*)  from documentdb_api.collection('db', 'ttlRepeatedDeletes');
  count 
 ---------------------------------------------------------------------
@@ -979,6 +991,7 @@ SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documen
 BEGIN;
 SET client_min_messages TO LOG;
 SET LOCAL documentdb.logTTLProgressActivity to on;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(100);
 RESET client_min_messages;
 END;
@@ -986,6 +999,7 @@ BEGIN;
 SET client_min_messages TO LOG;
 SET LOCAL documentdb.useIndexHintsForTTLTask to off;
 SET LOCAL documentdb.logTTLProgressActivity to on;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(100);
 RESET client_min_messages;
 END;
@@ -1058,7 +1072,10 @@ SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documen
   9801
 (1 row)
 
+BEGIN;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(100);
+END;
 SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlCompositeOrderedScan') order by object_id) as a;
  count 
 ---------------------------------------------------------------------
@@ -1127,6 +1144,7 @@ SET LOCAL documentdb.useIndexHintsForTTLTask to off;
 SET LOCAL documentdb.logTTLProgressActivity to on;
 SET LOCAL documentdb.enableTTLDescSort to on;
 SET LOCAL documentdb.enableIndexOrderbyPushdown to on;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(100);
 RESET client_min_messages;
 END;
