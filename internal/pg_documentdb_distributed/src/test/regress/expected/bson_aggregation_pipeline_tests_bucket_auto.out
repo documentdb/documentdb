@@ -419,6 +419,19 @@ ERROR:  The 'output' field in $bucketAuto must be an object, but a different typ
 -- unknown argument of $bucketAuto
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "dollarBucketAuto", "pipeline": [ { "$bucketAuto": { "groupBy": "$price", "buckets": 3, "unknown": 1 } } ] }');
 ERROR:  Unrecognized option to $bucketAuto: unknown
+-- 'n' in $bucketAuto output accumulators must be constant
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "dollarBucketAuto", "pipeline": [ { "$bucketAuto": { "groupBy": "$price", "buckets": 3, "output": { "smallestPrinces": { "$minN": { "n": { "$cond": { "if": { "$eq": [ "$product", "melon" ] }, "then": 2, "else": 1 } }, "input": "$year" } } } } } ] }');
+ERROR:  Can't refer to the group key in $bucketAuto
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "dollarBucketAuto", "pipeline": [ { "$bucketAuto": { "groupBy": "$price", "buckets": 3, "output": { "smallestPrinces": { "$maxN": { "n": { "$cond": { "if": { "$eq": [ "$product", "melon" ] }, "then": 2, "else": 1 } }, "input": "$year" } } } } } ] }');
+ERROR:  Can't refer to the group key in $bucketAuto
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "dollarBucketAuto", "pipeline": [ { "$bucketAuto": { "groupBy": "$price", "buckets": 3, "output": { "smallestPrinces": { "$firstN": { "n": { "$cond": { "if": { "$eq": [ "$product", "melon" ] }, "then": 2, "else": 1 } }, "input": "$year" } } } } } ] }');
+ERROR:  Can't refer to the group key in $bucketAuto
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "dollarBucketAuto", "pipeline": [ { "$bucketAuto": { "groupBy": "$price", "buckets": 3, "output": { "smallestPrinces": { "$lastN": { "n": { "$cond": { "if": { "$eq": [ "$product", "melon" ] }, "then": 2, "else": 1 } }, "input": "$year" } } } } } ] }');
+ERROR:  Can't refer to the group key in $bucketAuto
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "dollarBucketAuto", "pipeline": [ { "$bucketAuto": { "groupBy": "$price", "buckets": 3, "output": { "smallestPrinces": { "$topN": { "n": { "$cond": { "if": { "$eq": [ "$product", "melon" ] }, "then": 2, "else": 1 } }, "output": ["$year", "$_id"], "sortBy": { "$year": 1 } } } } } } ] }');
+ERROR:  Can't refer to the group key in $bucketAuto
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "dollarBucketAuto", "pipeline": [ { "$bucketAuto": { "groupBy": "$price", "buckets": 3, "output": { "smallestPrinces": { "$bottomN": { "n": { "$cond": { "if": { "$eq": [ "$product", "melon" ] }, "then": 2, "else": 1 } }, "output": ["$year", "$_id"], "sortBy": { "$year": 1 } } } } } } ] }');
+ERROR:  Can't refer to the group key in $bucketAuto
 -- granularity must be a string
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "dollarBucketAuto", "pipeline": [ { "$bucketAuto": { "groupBy": "$price", "buckets": 3, "granularity": 1 } } ] }');
 ERROR:  Expected 'string' for 'granularity' field for $bucketAuto but found 'int' type
