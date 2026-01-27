@@ -280,3 +280,108 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pa
 
 -- now run a new query - this should close the cursor above, and continue with a fresh query
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 1, pipeline => '{ "": [{ "$skip": 2 }]}');
+
+
+-- add 200 docs with larger fields so that they use more pages and we test continuation with multiple pages.
+DO $$
+DECLARE i int;
+BEGIN
+FOR i IN 1..200 LOOP
+PERFORM documentdb_api.insert_one('db', 'bitmap_cursor_continuation', FORMAT('{ "_id": %s, "sk": "skval", "a": "aval-%s%s", "c": [ "%s", "d" ] }', i, i, repeat('a', 200), repeat('b', 100))::documentdb_core.bson);
+END LOOP;
+END;
+$$;
+
+-- create an index on field 'a'
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "bitmap_cursor_continuation", "indexes": [{"key": {"a": 1}, "name": "a_1" }]}', TRUE);
+
+-- Store results with fast bitmap lookup ON
+set documentdb.enableContinuationFastBitmapLookup to on;
+CREATE TEMP TABLE results_fast AS
+SELECT row_number() OVER () as batch_num, (filteredDoc->>'ids')::text as ids
+FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 40, 
+    pipeline => '{ "": [{ "$match": { "a": { "$gte": "aval-" } } }] }', 
+    collection_name => 'bitmap_cursor_continuation');
+
+select * from results_fast;
+
+-- Store results with fast bitmap lookup OFF
+set documentdb.enableContinuationFastBitmapLookup to off;
+CREATE TEMP TABLE results_slow AS
+SELECT row_number() OVER () as batch_num, (filteredDoc->>'ids')::text as ids
+FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 40, 
+    pipeline => '{ "": [{ "$match": { "a": { "$gte": "aval-" } } }] }', 
+    collection_name => 'bitmap_cursor_continuation');
+
+select * from results_slow;
+
+-- compare results
+SELECT f.batch_num, 
+       f.ids = s.ids as ids_match
+FROM results_fast f
+FULL OUTER JOIN results_slow s ON f.batch_num = s.batch_num
+ORDER BY COALESCE(f.batch_num, s.batch_num);
+
+-- now check the explain to make sure it is bitmap.
+set documentdb.enableCursorsOnAggregationQueryRewrite to on;
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('db', '{ "find": "bitmap_cursor_continuation", "projection": { "_id": 1 }, "filter": { "a": { "$gte": "aval-" } } , "batchSize": 1 }');
+
+CREATE TEMP TABLE firstPageResponse AS
+SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid FROM
+    find_cursor_first_page(database => 'db', commandSpec => '{ "find": "bitmap_cursor_continuation",  "projection": { "_id": 1 }, "filter": { "a": { "$gte": "aval-" } }, "batchSize": 2 }', cursorId => 4294967294);
+
+SELECT continuation AS r1_continuation FROM firstPageResponse \gset
+
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('db',
+    '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation", "batchSize": 1 }', :'r1_continuation');
+
+DROP TABLE firstPageResponse;
+DROP TABLE results_fast;
+DROP TABLE results_slow;
+
+set documentdb.enableContinuationFastBitmapLookup to on;
+
+BEGIN;
+CREATE TEMP TABLE firstPageResponse AS
+SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid FROM
+    find_cursor_first_page(database => 'db', commandSpec => '{ "find": "bitmap_cursor_continuation", "projection": { "_id": 1 }, "filter": { "a": { "$gte": "aval-" } }, "batchSize": 2  }', cursorId => 4294967294);
+
+SELECT continuation AS r1_continuation FROM firstPageResponse \gset
+
+-- now delete in between to invalidate some of the bitmap entries.
+SELECT documentdb_api.delete('db', '{ "delete": "bitmap_cursor_continuation", "deletes": [ {"q": {"_id": { "$gte": 1, "$lte": 190 } }, "limit": 0 } ]}');
+
+SELECT cursorPage FROM cursor_get_more(database => 'db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation" }'::bson,
+    continuationSpec => :'r1_continuation');
+
+set documentdb.enableContinuationFastBitmapLookup to off;
+
+SELECT cursorPage FROM cursor_get_more(database => 'db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation" }'::bson,
+    continuationSpec => :'r1_continuation');
+
+ROLLBACK;
+
+-- now leave some blocks before and after the deleted range.
+BEGIN;
+CREATE TEMP TABLE firstPageResponse AS
+SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid FROM
+    find_cursor_first_page(database => 'db', commandSpec => '{ "find": "bitmap_cursor_continuation", "projection": { "_id": 1 }, "filter": { "a": { "$gte": "aval-" } }, "batchSize": 100  }', cursorId => 4294967294);
+
+SELECT continuation AS r1_continuation FROM firstPageResponse \gset
+
+-- now delete in between to invalidate some of the bitmap entries.
+SELECT documentdb_api.delete('db', '{ "delete": "bitmap_cursor_continuation", "deletes": [ {"q": {"_id": { "$gte": 81, "$lte": 190 } }, "limit": 0 } ]}');
+
+SELECT cursorPage FROM cursor_get_more(database => 'db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation" }'::bson,
+    continuationSpec => :'r1_continuation');
+
+set documentdb.enableContinuationFastBitmapLookup to off;
+
+SELECT cursorPage FROM cursor_get_more(database => 'db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation" }'::bson,
+    continuationSpec => :'r1_continuation');
+
+ROLLBACK;

@@ -19,7 +19,7 @@
 #include <port/atomics.h>
 
 #define MAX_FEATURE_NAME_LENGTH 255
-#define MAX_FEATURE_COUNT 403
+#define MAX_FEATURE_COUNT 404
 
 /* Internal features that are not exposed */
 #define INTERNAL_FEATURE_TYPE MAX_FEATURE_COUNT
@@ -333,6 +333,7 @@ typedef enum
 	FEATURE_CURSOR_TYPE_STREAMING,
 	FEATURE_CURSOR_TYPE_TAILABLE,
 	FEATURE_CURSOR_CAN_USE_PRIMARY_KEY_SCAN,
+	FEATURE_CURSOR_CAN_USE_FAST_BITMAP,
 
 	/* Feature mapping region - ExternalIdentityProvider */
 	FEATURE_EXTERNAL_IDENTITY_USER_CREATE,

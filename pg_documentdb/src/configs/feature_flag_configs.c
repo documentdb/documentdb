@@ -185,6 +185,9 @@ bool EnableNowSystemVariable = DEFAULT_ENABLE_NOW_SYSTEM_VARIABLE;
 #define DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN false
 bool EnablePrimaryKeyCursorScan = DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN;
 
+#define DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP false
+bool EnableContinuationFastBitmapLookup = DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP;
+
 #define DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS false
 bool UseFileBasedPersistedCursors = DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS;
 
@@ -792,5 +795,13 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable the new addToSet aggregation implementation that prevents crashes with the new delayed portal feature."),
 		NULL, &EnableAddToSetAggregationRewrite,
 		DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableContinuationFastBitmapLookup", newGucPrefix),
+		gettext_noop(
+			"Whether to enable skipping bitmap records by tid without loading the heap to find the continuation point."),
+		NULL, &EnableContinuationFastBitmapLookup,
+		DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }
