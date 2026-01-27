@@ -14,7 +14,7 @@ PROCESS_ALL=0
 SPECIFIC_FILE=""
 SEARCH_DIR="."
 RESULT_DIR="."
-SEARCH_FILENAME="summary.out"
+SEARCH_FILENAME="summary*.out"
 
 # Logging functions
 log_verbose() {
@@ -43,7 +43,7 @@ Convert PostgreSQL test output files to JUnit XML format.
 OPTIONS:
     -f, --file FILE         Process specific file
     -a, --all               Process all matching files found in directory tree
-    -n, --name FILENAME     Filename to search for (default: summary.out)
+    -n, --name FILENAME     Filename pattern to search for, supports wildcards (default: summary*.out)
     -d, --directory DIR     Root directory to search (default: current directory)
     -o, --output FILE       Output XML file path (default: test-results.xml)
     -r, --result-dir DIR    Directory to write test results to (default: current directory)
@@ -55,11 +55,14 @@ EXAMPLES:
     # Convert specific file (uses default output)
     $SCRIPT_NAME -f summary.out
     
-    # Find and convert all summary.out files
+    # Find and convert all summary*.out files
     $SCRIPT_NAME -a -o all_results.xml
     
-    # Search for regression.out instead of summary.out
+    # Search for regression.out instead of summary*.out
     $SCRIPT_NAME -a -n regression.out
+    
+    # Search for all .out files
+    $SCRIPT_NAME -a -n "*.out"
     
     # Write results to specific directory
     $SCRIPT_NAME -a -r ./test-output
@@ -329,7 +332,7 @@ process_files() {
     
     # Check if we processed any files
     if [[ $files_processed -eq 0 ]]; then
-        log_error "No valid $SEARCH_FILENAME files were processed"
+        log_error "No valid files matching pattern '$SEARCH_FILENAME' were processed"
         exit 1
     fi
     
@@ -527,18 +530,18 @@ main() {
     local files_to_process=()
     
     if [[ $PROCESS_ALL -eq 1 ]]; then
-        log_verbose "Searching for $SEARCH_FILENAME files in: $SEARCH_DIR"
+        log_verbose "Searching for files matching pattern '$SEARCH_FILENAME' in: $SEARCH_DIR"
         
         while IFS= read -r file; do
             files_to_process+=("$file")
         done < <(find_regression_files "$SEARCH_DIR")
         
         if [[ ${#files_to_process[@]} -eq 0 ]]; then
-            log_error "No $SEARCH_FILENAME files found in $SEARCH_DIR"
+            log_error "No files matching pattern '$SEARCH_FILENAME' found in $SEARCH_DIR"
             exit 1
         fi
         
-        log_verbose "Found ${#files_to_process[@]} $SEARCH_FILENAME files:"
+        log_verbose "Found ${#files_to_process[@]} files matching pattern '$SEARCH_FILENAME':"
         for file in "${files_to_process[@]}"; do
             log_verbose "  $file"
         done
