@@ -35,7 +35,10 @@ SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.
 SELECT * FROM documentdb_distributed_test_helpers.get_collection_indexes('db', 'ttlcoll') ORDER BY collection_id, index_id;
 
 -- 3. Call ttl purge procedure with a batch size of 10
+BEGIN;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(10);
+END;
 
 -- 4.a. Check what documents are left after purging
 SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlcoll') order by object_id;
@@ -134,13 +137,17 @@ BEGIN;
 Set citus.log_remote_commands to on; -- Will print Citus rewrites of the queries
 Set citus.log_local_commands to on; -- Will print the local queries 
 set local documentdb.SingleTTLTaskTimeBudget to 1;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(0); -- To test the sql query, it won't delete any data
 Set citus.log_remote_commands to off;
 Set citus.log_local_commands to off;
 END;
 
 -- 10.a.
+BEGIN;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(10);
+END;
 
 -- 11.a. Check what documents are left after purging
 SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlcoll') order by object_id;
@@ -231,7 +238,10 @@ SELECT documentdb_api.insert_one('db','ttlcoll2', '{ "_id" : 7, "b": 55, "a" : 1
 SELECT documentdb_api.insert_one('db','ttlcoll2', '{ "_id" : 8, "b": 55, "a" : 1, "c": 1, "ttl" : true }', NULL);
 SELECT documentdb_api.insert_one('db','ttlcoll2', '{ "_id" : 9, "b": 55, "a" : 1, "c": 1, "ttl" : "would not expire" }', NULL);
 
+BEGIN;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(10);
+END;
 SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlcoll2') order by object_id;
 
 -- 18. Large TTL (expire after INT_MAX seconds aka 68 years)
@@ -267,7 +277,10 @@ SELECT documentdb_api.insert_one('db','ttlcoll3', '{ "_id" : 7, "b": 55, "a" : 1
 SELECT documentdb_api.insert_one('db','ttlcoll3', '{ "_id" : 8, "b": 55, "a" : 1, "c": 1, "ttl" : true }', NULL);
 SELECT documentdb_api.insert_one('db','ttlcoll3', '{ "_id" : 9, "b": 55, "a" : 1, "c": 1, "ttl" : "would not expire" }', NULL);
 
+BEGIN;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(10);
+END;
 SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlcoll3') order by object_id;
 
 -- 19 Float TTL
@@ -307,7 +320,7 @@ SELECT count(*)  from documentdb_api.collection('db', 'ttlRepeatedDeletes2');
 
 BEGIN;
 SET LOCAL documentdb.TTLTaskMaxRunTimeInMS to 3000;
-SET LOCAL documentdb.SingleTTLTaskTimeBudget to 2000;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(11);
   -- With repeat mode off (by default), we should delete exactly 11 documents per collections (currently has 10001 and 9991 documents)
 SELECT count(*) = 9990  from documentdb_api.collection('db', 'ttlRepeatedDeletes');
@@ -316,8 +329,7 @@ END;
 
 BEGIN;
 SET LOCAL documentdb.TTLTaskMaxRunTimeInMS to 3000;
-SET LOCAL documentdb.SingleTTLTaskTimeBudget to 2000;
-SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to true;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to on;
 SELECT count(*)  from documentdb_api.collection('db', 'ttlRepeatedDeletes');
 SELECT count(*)  from documentdb_api.collection('db', 'ttlRepeatedDeletes2');
   -- With repeat mode on, we should delete more than 10 documents per collections (currently has 9990 and 9980 documents)
@@ -385,6 +397,7 @@ SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documen
 BEGIN;
 SET client_min_messages TO LOG;
 SET LOCAL documentdb.logTTLProgressActivity to on;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(100);
 RESET client_min_messages;
 END;
@@ -393,6 +406,7 @@ BEGIN;
 SET client_min_messages TO LOG;
 SET LOCAL documentdb.useIndexHintsForTTLTask to off;
 SET LOCAL documentdb.logTTLProgressActivity to on;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(100);
 RESET client_min_messages;
 END;
@@ -424,7 +438,10 @@ SELECT documentdb_api.shard_collection('db', 'ttlCompositeOrderedScan', '{ "_id"
 
 --  Check TTL deletes work on sharded (should delete 800 docs, 100 for each shard)
 SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlCompositeOrderedScan') order by object_id) as a;
+BEGIN;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(100);
+END;
 SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlCompositeOrderedScan') order by object_id) as a;
 
 
@@ -456,6 +473,7 @@ SET LOCAL documentdb.useIndexHintsForTTLTask to off;
 SET LOCAL documentdb.logTTLProgressActivity to on;
 SET LOCAL documentdb.enableTTLDescSort to on;
 SET LOCAL documentdb.enableIndexOrderbyPushdown to on;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(100);
 RESET client_min_messages;
 END;
