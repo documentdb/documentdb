@@ -9,11 +9,11 @@
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
-    time::{Duration, Instant},
 };
 
 use bson::RawDocumentBuf;
 use openssl::ssl::SslRef;
+use tokio::time::{Duration, Instant};
 use uuid::{Builder, Uuid};
 
 use crate::{
@@ -99,7 +99,7 @@ impl ConnectionContext {
             .await
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn add_cursor(
         &self,
         conn: Option<Arc<Connection>>,

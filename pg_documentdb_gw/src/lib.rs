@@ -24,14 +24,15 @@ pub mod telemetry;
 
 pub use crate::postgres::QueryCatalog;
 
+use std::{net::IpAddr, pin::Pin, sync::Arc};
+
 use either::Either::{Left, Right};
 use openssl::ssl::Ssl;
 use socket2::TcpKeepalive;
-use std::net::IpAddr;
-use std::{pin::Pin, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncWrite, BufStream},
     net::{TcpListener, TcpStream, UnixListener, UnixStream},
+    time::{Duration, Instant},
 };
 use tokio_openssl::SslStream;
 use tokio_util::sync::CancellationToken;
@@ -526,7 +527,7 @@ where
                         None,
                         &mut stream,
                         None,
-                        &mut RequestTracker::new(),
+                        &RequestTracker::new(),
                         &request_activity_id,
                     )
                     .await
@@ -569,7 +570,7 @@ where
 }
 
 async fn get_response<T>(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &mut ConnectionContext,
 ) -> Result<Response>
 where
@@ -614,11 +615,11 @@ where
     T: PgDataClient,
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut request_tracker = RequestTracker::new();
-    let handle_message_start = request_tracker.start_timer();
+    let request_tracker = RequestTracker::new();
+    let handle_message_start = Instant::now();
 
     // Read the request message off the stream
-    let buffer_read_start = request_tracker.start_timer();
+    let buffer_read_start = Instant::now();
     let message = protocol::reader::read_request(header, stream).await?;
     request_tracker.record_duration(RequestIntervalKind::BufferRead, buffer_read_start);
 
@@ -633,18 +634,18 @@ where
         ));
     }
 
-    let format_request_start = request_tracker.start_timer();
+    let format_request_start = Instant::now();
     let request =
         protocol::reader::parse_request(&message, &mut connection_context.requires_response)
             .await?;
     request_tracker.record_duration(RequestIntervalKind::FormatRequest, format_request_start);
 
     let request_info = request.extract_common()?;
-    let mut request_context = RequestContext {
+    let request_context = RequestContext {
         activity_id,
         payload: &request,
         info: &request_info,
-        tracker: &mut request_tracker,
+        tracker: &request_tracker,
     };
 
     let mut collection = String::new();
@@ -652,7 +653,7 @@ where
     let request_result = handle_request::<T, S>(
         connection_context,
         header,
-        &mut request_context,
+        &request_context,
         stream,
         &mut collection,
         handle_message_start,
@@ -701,7 +702,7 @@ where
 async fn handle_request<T, S>(
     connection_context: &mut ConnectionContext,
     header: &Header,
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     stream: &mut S,
     collection: &mut String,
     handle_message_start: tokio::time::Instant,
@@ -712,7 +713,7 @@ where
 {
     *collection = request_context.info.collection().unwrap_or("").to_string();
 
-    let format_response_start = request_context.tracker.start_timer();
+    let format_response_start = Instant::now();
 
     // Process the response for the message
     let response_result = get_response::<T>(request_context, connection_context).await;
@@ -764,7 +765,7 @@ async fn log_and_write_error<S>(
     request: Option<&Request<'_>>,
     stream: &mut S,
     collection: Option<String>,
-    request_tracker: &mut RequestTracker,
+    request_tracker: &RequestTracker,
     activity_id: &str,
 ) -> Result<CommandError>
 where
@@ -797,7 +798,7 @@ where
 }
 
 async fn log_verbose_latency(
-    connection_context: &mut ConnectionContext,
+    connection_context: &ConnectionContext,
     request_context: &RequestContext<'_>,
     e: Option<&CommandError>,
 ) {

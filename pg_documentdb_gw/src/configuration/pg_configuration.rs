@@ -60,14 +60,14 @@ impl PgConfigurationInner {
             Err(e) => tracing::warn!("Host Config file not able to be loaded: {e}"),
         }
 
-        let mut request_tracker = RequestTracker::new();
+        let request_tracker = RequestTracker::new();
         let pg_config_rows = conn
             .query(
                 self.query_catalog.pg_settings(),
                 &[],
                 &[],
                 None,
-                &mut request_tracker,
+                &request_tracker,
             )
             .await?;
         for pg_config in pg_config_rows {
@@ -95,7 +95,7 @@ impl PgConfigurationInner {
                 &[],
                 &[],
                 None,
-                &mut request_tracker,
+                &request_tracker,
             )
             .await?;
         let in_recovery: bool = pg_is_in_recovery_row.first().is_some_and(|row| row.get(0));

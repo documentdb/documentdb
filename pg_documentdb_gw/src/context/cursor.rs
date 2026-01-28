@@ -6,14 +6,14 @@
  *-------------------------------------------------------------------------
  */
 
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, sync::Arc};
 
 use bson::RawDocumentBuf;
-use tokio::{sync::RwLock, task::JoinHandle};
+use tokio::{
+    sync::RwLock,
+    task::JoinHandle,
+    time::{Duration, Instant},
+};
 
 use crate::{configuration::DynamicConfiguration, postgres::Connection};
 

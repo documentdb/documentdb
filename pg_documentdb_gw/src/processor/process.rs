@@ -6,12 +6,10 @@
  *-------------------------------------------------------------------------
  */
 
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
 
 use deadpool_postgres::{HookError, PoolError};
+use tokio::time::{Duration, Instant};
 use tokio_postgres::error::SqlState;
 
 use crate::{
@@ -35,7 +33,7 @@ enum Retry {
 }
 
 pub async fn process_request(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &mut ConnectionContext,
     pg_data_client: impl PgDataClient,
 ) -> Result<Response> {
