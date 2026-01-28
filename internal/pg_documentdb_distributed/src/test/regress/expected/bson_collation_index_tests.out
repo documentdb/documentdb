@@ -3,7 +3,7 @@ SET citus.next_shard_id TO 970000;
 SET documentdb.next_collection_id TO 9700;
 SET documentdb.next_collection_index_id TO 9700;
 SET documentdb_core.enableCollation TO on;
-SET documentdb.enableCollationWithIndexes TO on;
+SET documentdb.enableCollationWithIndexes TO off;
 SET documentdb_api.forceUseIndexIfAvailable to on;
 ALTER SYSTEM SET documentdb_core.enablecollation='on';
 SELECT pg_reload_conf();
@@ -27,7 +27,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
    }',
    TRUE
 );
-ERROR:  Error in specification { "key" : { "a" : "text" }, "name" : "index_0_a_text", "collation" : { "locale" : "en", "strength" : 1 } }:Index type 'text' does not support collation
+ERROR:  Error in specification { "key" : { "a" : "text" }, "name" : "index_0_a_text", "collation" : { "locale" : "en", "strength" : 1 } }:createIndex.collation is not implemented yet
 -- 2d indexes: unsupported with collation
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
   'db',
@@ -42,7 +42,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
    }',
    TRUE
 );
-ERROR:  Error in specification { "key" : { "a" : "2d" }, "name" : "index_0_a_2d", "collation" : { "locale" : "en", "strength" : 1 } }:Index type '2d' does not support collation
+ERROR:  Error in specification { "key" : { "a" : "2d" }, "name" : "index_0_a_2d", "collation" : { "locale" : "en", "strength" : 1 } }:createIndex.collation is not implemented yet
 -- hash indexes: unsupported with collation YET
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
   'db',
@@ -57,7 +57,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
    }',
    TRUE
 );
-ERROR:  Error in specification { "key" : { "a" : "hashed" }, "name" : "index_0_a_hashed", "collation" : { "locale" : "en", "strength" : 1 } }:Index type 'hashed' does not support collation
+ERROR:  Error in specification { "key" : { "a" : "hashed" }, "name" : "index_0_a_hashed", "collation" : { "locale" : "en", "strength" : 1 } }:createIndex.collation is not implemented yet
 -- ======== SECTION 1: Single-path index tests on coll_index_1 ========
 SELECT documentdb_api.insert_one('db','coll_index_1', '{"_id": 1, "a" : "DOG" }', NULL);
 NOTICE:  creating collection
@@ -99,7 +99,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
    }',
    TRUE
 );
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "a" : 1 }, "name" : "index_1_a", "collation" : { "locale" : "en", "strength" : 1 } }:createIndex.collation is not implemented yet
 -- no collation: index not used
 -- find
 BEGIN;
@@ -412,7 +412,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
    }',
    TRUE
 );
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "a" : 1 }, "name" : "index_2_a", "collation" : { "locale" : "en", "strength" : 1 } }:createIndex.collation is not implemented yet
 -- find: unsharded
 BEGIN;
 -- $eq
@@ -2294,7 +2294,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
    }',
    TRUE
 );
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "c.$**" : 1 }, "name" : "index_2_c_wildcard", "collation" : { "locale" : "en", "strength" : 1 } }:createIndex.collation is not implemented yet
 BEGIN;
 -- $eq
 SET LOCAL enable_seqscan TO OFF;
@@ -2976,7 +2976,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
    }',
    TRUE
 );
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "a" : 1 }, "name" : "index_2_a", "collation" : { "locale" : "en", "strength" : 3 } }:createIndex.collation is not implemented yet
 BEGIN;
 -- index_2_a is used
 SET LOCAL enable_seqscan TO OFF;
@@ -3578,7 +3578,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
    }',
    TRUE
 );
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "$**" : 1 }, "name" : "index_2_wildcard_projection_exclusion", "wildcardProjection" : { "a" : 0 }, "collation" : { "locale" : "en", "strength" : 1 } }:createIndex.collation is not implemented yet
 -- wildcard with projection exclusion: find
 BEGIN;
 SET LOCAL enable_seqscan TO OFF;
@@ -4325,7 +4325,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
    }',
    TRUE
 );
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "$**" : 1 }, "name" : "index_2_wildcard_projection_inclusion", "wildcardProjection" : { "b" : 1, "c" : 1 }, "collation" : { "locale" : "en", "strength" : 1 } }:createIndex.collation is not implemented yet
 -- wildcard with projection: find
 BEGIN;
 SET LOCAL enable_seqscan TO OFF;
