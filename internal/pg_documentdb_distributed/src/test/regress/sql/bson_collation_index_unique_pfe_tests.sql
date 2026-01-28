@@ -4,7 +4,7 @@ SET documentdb.next_collection_id TO 9720;
 SET documentdb.next_collection_index_id TO 9720;
 
 SET documentdb_core.enableCollation TO on;
-SET documentdb.enableCollationWithIndexes TO on;
+SET documentdb.enableCollationWithIndexes TO off;
 SET documentdb_api.forceUseIndexIfAvailable to on;
 
 ALTER SYSTEM SET documentdb_core.enablecollation='on';

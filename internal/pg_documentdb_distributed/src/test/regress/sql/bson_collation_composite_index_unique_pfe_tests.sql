@@ -5,7 +5,7 @@ SET documentdb.next_collection_index_id TO 19720;
 
 SET documentdb_api.forceUseIndexIfAvailable to on;
 
-SET documentdb.enableCollationWithIndexes TO on;
+SET documentdb.enableCollationWithIndexes TO off;
 ALTER SYSTEM SET documentdb_core.enablecollation='on';
 SELECT pg_reload_conf();
 

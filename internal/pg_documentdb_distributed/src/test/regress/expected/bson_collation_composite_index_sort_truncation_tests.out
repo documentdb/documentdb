@@ -3,7 +3,7 @@ SET citus.next_shard_id TO 2690000;
 SET documentdb.next_collection_id TO 269000;
 SET documentdb.next_collection_index_id TO 269000;
 SET documentdb.forceUseIndexIfAvailable TO on;
-SET documentdb.enableCollationWithIndexes TO on;
+SET documentdb.enableCollationWithIndexes TO off;
 ALTER SYSTEM SET documentdb_core.enablecollation='on';
 SELECT pg_reload_conf();
  pg_reload_conf 
@@ -73,7 +73,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
        }
      ]
    }', TRUE);
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "a" : 1 }, "name" : "index_1_cmp_a", "enableCompositeTerm" : true, "collation" : { "locale" : "en", "strength" : 1 } }:createIndex.collation is not implemented yet
 -- Sort ascending
 BEGIN;
 SELECT document FROM bson_aggregation_find('db',
@@ -460,7 +460,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
        }
      ]
    }', TRUE);
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "a" : 1 }, "name" : "index_2_cmp_a", "enableCompositeTerm" : true, "collation" : { "locale" : "en", "strength" : 1 } }:createIndex.collation is not implemented yet
 -- Sort ascending with range filter
 BEGIN;
 SELECT document FROM bson_aggregation_find('db',
@@ -668,7 +668,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
        }
      ]
    }', TRUE);
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "longField" : 1 }, "name" : "index_trunc_cmp_long", "enableCompositeTerm" : true, "enableLargeIndexKeys" : true, "collation" : { "locale" : "en", "strength" : 1 } }:createIndex.collation is not implemented yet
 -- Insert documents with long strings
 SELECT documentdb_api.insert_one('db', 'coll_sort_trunc_cmp', FORMAT('{ "_id": 10, "longField": "%s" }', 'abcde' || repeat('z', 3000) || '2')::bson);
                               insert_one                              
@@ -928,7 +928,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
        }
      ]
    }', TRUE);
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "code" : 1 }, "name" : "code_cmp_numeric", "enableCompositeTerm" : true, "collation" : { "locale" : "en", "strength" : 1, "numericOrdering" : true } }:createIndex.collation is not implemented yet
 -- Sort ascending with numeric ordering
 BEGIN;
 SELECT document FROM bson_aggregation_find('db',

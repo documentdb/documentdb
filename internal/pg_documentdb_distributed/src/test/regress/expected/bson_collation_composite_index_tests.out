@@ -3,7 +3,7 @@ SET citus.next_shard_id TO 1970000;
 SET documentdb.next_collection_id TO 19700;
 SET documentdb.next_collection_index_id TO 19700;
 SET documentdb_api.forceUseIndexIfAvailable to on;
-SET documentdb.enableCollationWithIndexes TO on;
+SET documentdb.enableCollationWithIndexes TO off;
 ALTER SYSTEM SET documentdb_core.enablecollation='on';
 SELECT pg_reload_conf();
  pg_reload_conf 
@@ -53,7 +53,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
    }',
    TRUE
 );
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "a" : 1 }, "name" : "index_1_a_cmp", "collation" : { "locale" : "en", "strength" : 1 }, "enableCompositeTerm" : true }:createIndex.collation is not implemented yet
 -- no collation: index not used
 -- find
 BEGIN;
@@ -367,7 +367,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
    }',
    TRUE
 );
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "a" : 1 }, "name" : "index_2_cmp_a", "collation" : { "locale" : "en", "strength" : 1 }, "enableCompositeTerm" : true }:createIndex.collation is not implemented yet
 -- find: unsharded
 BEGIN;
 -- $eq
@@ -2261,7 +2261,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
    }',
    TRUE
 );
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "a" : 1 }, "name" : "index_2_cmp_a", "collation" : { "locale" : "en", "strength" : 3 }, "enableCompositeTerm" : true }:createIndex.collation is not implemented yet
 BEGIN;
 -- index_2_cmp_a is used
 SET LOCAL enable_seqscan TO OFF;

@@ -3,7 +3,7 @@ SET citus.next_shard_id TO 972000;
 SET documentdb.next_collection_id TO 9720;
 SET documentdb.next_collection_index_id TO 9720;
 SET documentdb_core.enableCollation TO on;
-SET documentdb.enableCollationWithIndexes TO on;
+SET documentdb.enableCollationWithIndexes TO off;
 SET documentdb_api.forceUseIndexIfAvailable to on;
 ALTER SYSTEM SET documentdb_core.enablecollation='on';
 SELECT pg_reload_conf();
@@ -113,7 +113,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
    }',
    TRUE
 );
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "a" : -1 }, "name" : "index_pfe_a_partial", "partialFilterExpression" : { "a" : { "$lte" : "cat" } }, "collation" : { "locale" : "en", "strength" : 1 } }:createIndex.collation is not implemented yet
 BEGIN;
 -- $eq
 SET LOCAL enable_seqscan TO OFF;
@@ -845,7 +845,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
        }
      ]
    }', TRUE);
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "username" : 1 }, "name" : "unique_username_ci", "unique" : true, "collation" : { "locale" : "en", "strength" : 1 } }:createIndex.collation is not implemented yet
 -- Insert initial documents
 SELECT documentdb_api.insert_one('db', 'coll_unique_collation', '{"_id": 1, "username": "Alice"}');
                               insert_one                              
@@ -968,7 +968,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
        }
      ]
    }', TRUE);
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "email" : 1 }, "name" : "unique_email_sparse_ci", "unique" : true, "sparse" : true, "collation" : { "locale" : "en", "strength" : 1 } }:createIndex.collation is not implemented yet
 -- Insert documents with and without email
 SELECT documentdb_api.insert_one('db', 'coll_unique_sparse_collation', '{"_id": 1, "email": "Test@Example.com"}');
                               insert_one                              
@@ -1194,7 +1194,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
        }
      ]
    }', TRUE);
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "code" : 1 }, "name" : "unique_code_numeric", "unique" : true, "collation" : { "locale" : "en", "strength" : 1, "numericOrdering" : true } }:createIndex.collation is not implemented yet
 -- Insert documents with numeric strings
 SELECT documentdb_api.insert_one('db', 'coll_unique_numeric', '{"_id": 1, "code": "1"}');
                               insert_one                              
@@ -1295,7 +1295,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
        }
      ]
    }', TRUE);
-ERROR:  Collation is not yet supported for indexes
+ERROR:  Error in specification { "key" : { "name" : 1 }, "name" : "unique_name_strength2", "unique" : true, "collation" : { "locale" : "en", "strength" : 2 } }:createIndex.collation is not implemented yet
 -- Insert initial document
 SELECT documentdb_api.insert_one('db', 'coll_unique_strength', '{"_id": 1, "name": "cafe"}');
                               insert_one                              
