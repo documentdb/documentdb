@@ -109,7 +109,7 @@ fn write_output_stage(
 /// A command with explain:true, or an explain command wrapping a sub command
 #[async_recursion]
 pub async fn process_explain(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     verbosity: Option<Verbosity>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
@@ -141,7 +141,7 @@ pub async fn process_explain(
                         request_context.payload.extra(),
                     );
 
-                    let mut new_request_context = RequestContext {
+                    let new_request_context = RequestContext {
                         activity_id: request_context.activity_id,
                         payload: &new_request,
                         info: request_context.info,
@@ -150,7 +150,7 @@ pub async fn process_explain(
 
                     // Recursive call with the unwrapped command
                     Box::pin(process_explain(
-                        &mut new_request_context,
+                        &new_request_context,
                         Some(verbosity),
                         connection_context,
                         pg_data_client,
@@ -237,7 +237,7 @@ impl Verbosity {
 }
 
 async fn run_explain(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     query_base: &str,
     verbosity: Verbosity,
     connection_context: &ConnectionContext,

@@ -14,8 +14,8 @@ use crate::{
 };
 
 pub async fn process_create_user(
-    request_context: &mut RequestContext<'_>,
-    connection_context: &mut ConnectionContext,
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response, DocumentDBError> {
     pg_data_client
@@ -24,8 +24,8 @@ pub async fn process_create_user(
 }
 
 pub async fn process_drop_user(
-    request_context: &mut RequestContext<'_>,
-    connection_context: &mut ConnectionContext,
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response, DocumentDBError> {
     pg_data_client
@@ -34,8 +34,8 @@ pub async fn process_drop_user(
 }
 
 pub async fn process_update_user(
-    request_context: &mut RequestContext<'_>,
-    connection_context: &mut ConnectionContext,
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response, DocumentDBError> {
     pg_data_client
@@ -44,8 +44,8 @@ pub async fn process_update_user(
 }
 
 pub async fn process_users_info(
-    request_context: &mut RequestContext<'_>,
-    connection_context: &mut ConnectionContext,
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response, DocumentDBError> {
     pg_data_client
@@ -54,8 +54,8 @@ pub async fn process_users_info(
 }
 
 pub async fn process_connection_status(
-    request_context: &mut RequestContext<'_>,
-    connection_context: &mut ConnectionContext,
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response, DocumentDBError> {
     pg_data_client

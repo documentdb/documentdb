@@ -20,7 +20,7 @@ use crate::{
 };
 
 pub async fn process_coll_mod(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -30,7 +30,7 @@ pub async fn process_coll_mod(
 }
 
 pub async fn process_create(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -40,7 +40,7 @@ pub async fn process_create(
 }
 
 pub async fn process_drop_database(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     dynamic_config: &Arc<dyn DynamicConfiguration>,
     pg_data_client: &impl PgDataClient,
@@ -73,7 +73,7 @@ pub async fn process_drop_database(
 }
 
 pub async fn process_drop_collection(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     dynamic_config: &Arc<dyn DynamicConfiguration>,
     pg_data_client: &impl PgDataClient,
@@ -110,7 +110,7 @@ pub async fn process_drop_collection(
 }
 
 pub async fn process_rename_collection(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -182,7 +182,7 @@ pub async fn process_rename_collection(
 }
 
 pub async fn process_shard_collection(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     reshard: bool,
     pg_data_client: &impl PgDataClient,
@@ -211,7 +211,7 @@ pub async fn process_shard_collection(
 }
 
 pub async fn process_unshard_collection(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -223,7 +223,7 @@ pub async fn process_unshard_collection(
 }
 
 pub async fn process_get_shard_map(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -233,7 +233,7 @@ pub async fn process_get_shard_map(
 }
 
 pub async fn process_list_shards(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -243,7 +243,7 @@ pub async fn process_list_shards(
 }
 
 pub async fn process_balancer_start(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -253,7 +253,7 @@ pub async fn process_balancer_start(
 }
 
 pub async fn process_balancer_status(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -263,7 +263,7 @@ pub async fn process_balancer_status(
 }
 
 pub async fn process_balancer_stop(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {

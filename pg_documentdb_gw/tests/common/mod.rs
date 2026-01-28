@@ -11,7 +11,6 @@ pub mod validation_utils;
 
 use std::{
     backtrace::Backtrace,
-    env,
     sync::{Arc, Once},
     thread,
     time::Duration,
@@ -43,8 +42,6 @@ static INIT: Once = Once::new();
 
 // Starts the server and returns an authenticated client
 async fn initialize_full(config: DocumentDBSetupConfiguration) {
-    env::set_var("RUST_LIB_BACKTRACE", "1");
-
     INIT.call_once(|| {
         tracing_subscriber::registry()
             .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))

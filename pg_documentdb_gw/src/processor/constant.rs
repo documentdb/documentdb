@@ -55,7 +55,7 @@ pub fn process_is_db_grid(context: &ConnectionContext) -> Result<Response> {
     })))
 }
 
-pub fn process_get_rw_concern(request_context: &mut RequestContext<'_>) -> Result<Response> {
+pub fn process_get_rw_concern(request_context: &RequestContext<'_>) -> Result<Response> {
     let request = request_context.payload;
     let request_info = request_context.info;
 

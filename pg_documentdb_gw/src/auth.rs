@@ -8,15 +8,6 @@
 
 use std::{str::from_utf8, sync::Arc};
 
-use crate::{
-    context::{ConnectionContext, RequestContext},
-    error::{DocumentDBError, ErrorCode, Result},
-    postgres::{PgDataClient, PgDocument},
-    processor,
-    protocol::OK_SUCCEEDED,
-    requests::{request_tracker::RequestTracker, Request, RequestType},
-    responses::{PgResponse, RawResponse, Response},
-};
 use base64::{engine::general_purpose, Engine as _};
 use bson::{rawdoc, spec::BinarySubtype};
 use rand::Rng;
@@ -26,6 +17,17 @@ use tokio::{
     time::{sleep, Duration},
 };
 use tokio_postgres::{error::SqlState, types::Type};
+
+use crate::{
+    context::{ConnectionContext, RequestContext},
+    error::{DocumentDBError, ErrorCode, Result},
+    postgres::{PgDataClient, PgDocument},
+    processor,
+    protocol::OK_SUCCEEDED,
+    requests::{request_tracker::RequestTracker, Request, RequestType},
+    responses::{PgResponse, RawResponse, Response},
+};
+
 const NONCE_LENGTH: usize = 2;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -113,7 +115,7 @@ impl AuthState {
     }
 
     async fn initialize_expiry_timer(
-        &mut self,
+        &self,
         timeout_secs: u64,
         connection_activity_id: &str,
     ) -> Result<()> {
@@ -148,7 +150,7 @@ impl AuthState {
 
 pub async fn process<T>(
     connection_context: &mut ConnectionContext,
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
 ) -> Result<Response>
 where
     T: PgDataClient,
@@ -313,7 +315,7 @@ async fn handle_oidc_token_authentication(
             &[Type::TEXT, Type::TEXT],
             &[&oid, &token_string],
             None,
-            &mut RequestTracker::new(),
+            &RequestTracker::new(),
         )
         .await
     {
@@ -554,7 +556,7 @@ async fn handle_sasl_continue(
                 &[Type::TEXT, Type::TEXT, Type::TEXT],
                 &[&username, &auth_message, &proof],
                 None,
-                &mut RequestTracker::new(),
+                &RequestTracker::new(),
             )
             .await?;
 
@@ -700,7 +702,7 @@ async fn get_salt_and_iteration(
             &[Type::TEXT],
             &[&username],
             None,
-            &mut RequestTracker::new(),
+            &RequestTracker::new(),
         )
         .await?;
 
@@ -743,7 +745,7 @@ pub async fn get_user_oid(connection_context: &ConnectionContext, username: &str
             &[Type::TEXT],
             &[&username],
             None,
-            &mut RequestTracker::new(),
+            &RequestTracker::new(),
         )
         .await?;
 

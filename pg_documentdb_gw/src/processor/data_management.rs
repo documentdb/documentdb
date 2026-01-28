@@ -21,7 +21,7 @@ use crate::{
 };
 
 pub async fn process_delete(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     dynamic_config: &Arc<dyn DynamicConfiguration>,
     pg_data_client: &impl PgDataClient,
@@ -41,7 +41,7 @@ pub async fn process_delete(
 }
 
 pub async fn process_find(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -54,7 +54,7 @@ pub async fn process_find(
 }
 
 pub async fn process_insert(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
     enable_write_procedures: bool,
@@ -77,7 +77,7 @@ pub async fn process_insert(
 }
 
 pub async fn process_aggregate(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -89,7 +89,7 @@ pub async fn process_aggregate(
 }
 
 pub async fn process_update(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
     enable_write_procedures: bool,
@@ -112,7 +112,7 @@ pub async fn process_update(
 }
 
 pub async fn process_list_databases(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -122,7 +122,7 @@ pub async fn process_list_databases(
 }
 
 pub async fn process_list_collections(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -135,7 +135,7 @@ pub async fn process_list_collections(
 }
 
 pub async fn process_validate(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -145,7 +145,7 @@ pub async fn process_validate(
 }
 
 pub async fn process_find_and_modify(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -155,7 +155,7 @@ pub async fn process_find_and_modify(
 }
 
 pub async fn process_distinct(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -165,7 +165,7 @@ pub async fn process_distinct(
 }
 
 pub async fn process_count(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -197,7 +197,7 @@ fn convert_to_scale(scale: RawBsonRef) -> Result<f64> {
 }
 
 pub async fn process_coll_stats(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -214,7 +214,7 @@ pub async fn process_coll_stats(
 }
 
 pub async fn process_db_stats(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -231,7 +231,7 @@ pub async fn process_db_stats(
 }
 
 pub async fn process_current_op(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -253,7 +253,7 @@ pub async fn process_current_op(
 }
 
 pub async fn process_kill_op(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -298,7 +298,7 @@ pub async fn process_kill_op(
 
 async fn get_parameter(
     connection_context: &ConnectionContext,
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     all: bool,
     show_details: bool,
     params: Vec<String>,
@@ -316,7 +316,7 @@ async fn get_parameter(
 }
 
 pub async fn process_get_parameter(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -387,7 +387,7 @@ pub async fn process_get_parameter(
 }
 
 pub async fn process_compact(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {

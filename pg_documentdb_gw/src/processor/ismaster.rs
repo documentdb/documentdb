@@ -22,7 +22,7 @@ use crate::{
 };
 
 pub async fn process(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     writeable_primary_field: &str,
     connection_context: &mut ConnectionContext,
     dynamic_configuration: &Arc<dyn DynamicConfiguration>,
