@@ -10,11 +10,11 @@ use tokio::time::Instant;
 
 #[derive(Debug)]
 pub enum RequestIntervalKind {
-    /// Interval kind for reading stream from request body. BufferRead + HandleRequest is the full duration of a request spent in the Gateway.
-    BufferRead,
+    /// Interval kind for the overall request processing duration, which includes BufferRead, FormatRequest, FormatResponse, and ProcessRequest via backend.
+    HandleMessage,
 
-    /// Interval kind for the overall request processing duration, which includes FormatRequest, FormatResponse, and ProcessRequest via backend.
-    HandleRequest,
+    /// Interval kind for reading stream from request body.
+    BufferRead,
 
     /// Time spent formatting and parsing the incoming request.
     FormatRequest,
