@@ -614,13 +614,12 @@ where
     T: PgDataClient,
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    // Read the request message off the stream
     let mut request_tracker = RequestTracker::new();
+    let handle_message_start = request_tracker.start_timer();
 
-    let handle_request_start = request_tracker.start_timer();
+    // Read the request message off the stream
     let buffer_read_start = request_tracker.start_timer();
     let message = protocol::reader::read_request(header, stream).await?;
-
     request_tracker.record_duration(RequestIntervalKind::BufferRead, buffer_read_start);
 
     if connection_context
@@ -656,7 +655,7 @@ where
         &mut request_context,
         stream,
         &mut collection,
-        handle_request_start,
+        handle_message_start,
     )
     .await;
 
@@ -705,7 +704,7 @@ async fn handle_request<T, S>(
     request_context: &mut RequestContext<'_>,
     stream: &mut S,
     collection: &mut String,
-    handle_request_start: tokio::time::Instant,
+    handle_message_start: tokio::time::Instant,
 ) -> Result<()>
 where
     T: PgDataClient,
@@ -725,7 +724,7 @@ where
 
     request_context
         .tracker
-        .record_duration(RequestIntervalKind::HandleRequest, handle_request_start);
+        .record_duration(RequestIntervalKind::HandleMessage, handle_message_start);
 
     let response = match response_result {
         Ok(response) => response,
@@ -816,9 +815,9 @@ async fn log_verbose_latency(
     tracing::info!(
         activity_id = request_context.activity_id,
         event_id = EventId::RequestTrace.code(),
-        "Latency for Mongo Request with interval timings (ns): BufferRead={}, HandleRequest={}, FormatRequest={}, ProcessRequest={}, PostgresBeginTransaction={}, PostgresSetStatementTimeout={}, PostgresTransactionCommit={}, FormatResponse={}, Address={}, TransportProtocol={}, DatabaseName={}, CollectionName={}, OperationName={}, StatusCode={}, SubStatusCode={}, ErrorCode={}",
+        "Latency for Mongo Request with interval timings (ns): HandleMessage={}, BufferRead={}, FormatRequest={}, ProcessRequest={}, PostgresBeginTransaction={}, PostgresSetStatementTimeout={}, PostgresTransactionCommit={}, FormatResponse={}, Address={}, TransportProtocol={}, DatabaseName={}, CollectionName={}, OperationName={}, StatusCode={}, SubStatusCode={}, ErrorCode={}",
+        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::HandleMessage),
         request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::BufferRead),
-        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::HandleRequest),
         request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::FormatRequest),
         request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::ProcessRequest),
         request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::PostgresBeginTransaction),
