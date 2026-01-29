@@ -713,7 +713,7 @@ where
 {
     *collection = request_context.info.collection().unwrap_or("").to_string();
 
-    let format_response_start = Instant::now();
+    let handle_request_start = Instant::now();
 
     // Process the response for the message
     let response_result = get_response::<T>(request_context, connection_context).await;
@@ -721,7 +721,7 @@ where
     // Always record durations, regardless of success or error
     request_context
         .tracker
-        .record_duration(RequestIntervalKind::FormatResponse, format_response_start);
+        .record_duration(RequestIntervalKind::HandleRequest, handle_request_start);
 
     request_context
         .tracker
@@ -816,15 +816,15 @@ async fn log_verbose_latency(
     tracing::info!(
         activity_id = request_context.activity_id,
         event_id = EventId::RequestTrace.code(),
-        "Latency for Mongo Request with interval timings (ns): HandleMessage={}, BufferRead={}, FormatRequest={}, ProcessRequest={}, PostgresBeginTransaction={}, PostgresSetStatementTimeout={}, PostgresTransactionCommit={}, FormatResponse={}, Address={}, TransportProtocol={}, DatabaseName={}, CollectionName={}, OperationName={}, StatusCode={}, SubStatusCode={}, ErrorCode={}",
+        "Latency for Mongo Request with interval timings (ns): HandleMessage={}, BufferRead={}, FormatRequest={}, ProcessRequest={}, PostgresBeginTransaction={}, PostgresSetStatementTimeout={}, PostgresCommitTransaction={}, HandleRequest={}, Address={}, TransportProtocol={}, DatabaseName={}, CollectionName={}, OperationName={}, StatusCode={}, SubStatusCode={}, ErrorCode={}",
         request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::HandleMessage),
         request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::BufferRead),
         request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::FormatRequest),
         request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::ProcessRequest),
         request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::PostgresBeginTransaction),
         request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::PostgresSetStatementTimeout),
-        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::PostgresTransactionCommit),
-        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::FormatResponse),
+        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::PostgresCommitTransaction),
+        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::HandleRequest),
         connection_context.ip_address,
         connection_context.transport_protocol(),
         database_name,
