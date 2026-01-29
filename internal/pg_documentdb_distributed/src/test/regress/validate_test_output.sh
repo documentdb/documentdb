@@ -142,7 +142,7 @@ for validationFile in $(ls $scriptDir/expected/*.out); do
     fi
 
     if [ "$findResult" == "" ]; then
-        if [[ "$fileNameBase" =~ "pg15" ]] || [[ "$fileNameBase" =~ "pg16" ]] || [[ "$fileNameBase" =~ "pg17" ]] || [[ "$fileNameBase" =~ "_explain" ]]; then
+        if [[ "$fileNameBase" =~ "pg15" ]] || [[ "$fileNameBase" =~ "pg16" ]] || [[ "$fileNameBase" =~ "pg17" ]] || [[ "$fileNameBase" =~ "pg18" ]] || [[ "$fileNameBase" =~ "_explain" ]]; then
             echo "Skipping schedule existence check for $fileNameBase"
         else
             echo "Test file '$validationFile' with name '$fileNameBase' or '$fileNameMod' is not in the schedule, please add it to the schedule";

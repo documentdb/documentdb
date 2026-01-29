@@ -51,6 +51,7 @@ jobs:
           - 15
           - 16
           - 17
+          - 18
     runs-on: ${{ matrix.runner }}
     outputs:
       documentdb_version: ${{ steps.extract_version.outputs.documentdb_version }}
@@ -96,6 +97,7 @@ jobs:
           - 15
           - 16
           - 17
+          - 18
     runs-on: ubuntu-22.04
     needs: build-and-push
     steps:
