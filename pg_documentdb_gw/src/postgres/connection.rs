@@ -143,7 +143,7 @@ impl Connection {
                 let commit_start = Instant::now();
                 self.pool_connection.batch_execute("COMMIT").await?;
                 request_tracker
-                    .record_duration(RequestIntervalKind::PostgresTransactionCommit, commit_start);
+                    .record_duration(RequestIntervalKind::PostgresCommitTransaction, commit_start);
 
                 Ok(results)
             }
