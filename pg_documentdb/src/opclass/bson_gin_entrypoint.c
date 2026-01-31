@@ -614,6 +614,10 @@ gin_bson_single_path_options(PG_FUNCTION_ARGS)
 							   "Prefix path for the index",
 							   NULL, &ValidateSinglePathSpec, &FillSinglePathSpec,
 							   offsetof(BsonGinSinglePathOptions, path));
+	add_local_string_reloption(relopts, "collation",
+							   "Collation of the index",
+							   "", &ValidateCollationSpec, &FillCollationSpec,
+							   offsetof(BsonGinSinglePathOptions, collation));
 	add_local_string_reloption(relopts, "indexname",
 							   "[deprecated] The mongo specific name for the index",
 							   NULL, NULL, &FillDeprecatedStringSpec,
@@ -707,6 +711,11 @@ gin_bson_wildcard_project_options(PG_FUNCTION_ARGS)
 							   &FillWildcardProjectPathSpec,
 							   offsetof(BsonGinWildcardProjectionPathOptions,
 										pathSpec));
+	add_local_string_reloption(relopts, "collation",
+							   "Collation of the index",
+							   "", &ValidateCollationSpec,
+							   &FillCollationSpec,
+							   offsetof(BsonGinWildcardProjectionPathOptions, collation));
 	add_local_string_reloption(relopts, "indexname",
 							   "[deprecated] The mongo specific name for the index",
 							   NULL, NULL, &FillDeprecatedStringSpec,
@@ -1258,6 +1267,36 @@ GetIndexTermMetadata(void *indexOptions)
 }
 
 
+void
+GetCollationFromIndexOptions(void *indexOptions, StringView *collationView)
+{
+	BsonGinIndexOptionsBase *options = (BsonGinIndexOptionsBase *) indexOptions;
+	switch (options->type)
+	{
+		case IndexOptionsType_SinglePath:
+		{
+			Get_Index_Collation_Option(((BsonGinSinglePathOptions *) indexOptions),
+									   collation, collationView->string,
+									   collationView->length);
+			break;
+		}
+
+		case IndexOptionsType_Wildcard:
+		{
+			Get_Index_Collation_Option(
+				((BsonGinWildcardProjectionPathOptions *) indexOptions),
+				collation, collationView->string, collationView->length);
+			break;
+		}
+
+		default:
+		{
+			break;
+		}
+	}
+}
+
+
 /*
  * Given a specific index term path in the document (e.g. a.b.c) and a specific
  * index option, determines whether or not to generate terms based on whether it's
@@ -1410,10 +1449,16 @@ ValidateSinglePathSpec(const char *prefix)
 }
 
 
+void
+ValidateCollationSpec(const char *collationOption)
+{
+	ValidateSinglePathSpec(collationOption);
+}
+
+
 /* --------------------------------------------------------- */
 /* Private helper methods */
 /* --------------------------------------------------------- */
-
 
 /*
  * Given a specific index term path in the document (e.g. a.b.c) and a specific
@@ -1469,6 +1514,14 @@ FillSinglePathSpec(const char *prefix, void *buffer)
 
 	/* first 4 bytes are length, then chars, and trailing 0 */
 	return sizeof(uint32_t) + length + suffixLength;
+}
+
+
+Size
+FillCollationSpec(const char *collation, void *buffer)
+{
+	/* Collation spec shares the same layout as path specs */
+	return FillSinglePathSpec(collation, buffer);
 }
 
 
