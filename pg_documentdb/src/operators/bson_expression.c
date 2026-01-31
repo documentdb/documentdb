@@ -2570,7 +2570,7 @@ ParseDocumentAggregationExpressionData(const bson_value_t *value,
 	}
 	else
 	{
-		ereport(DEBUG3, (errmsg(
+		ereport(DEBUG2, (errmsg(
 							 "Converting document expression into a fixed constant.")));
 
 		/* We write the tree instead of just copying the input value for 2 reasons:
@@ -2675,7 +2675,7 @@ ParseArrayAggregationExpressionData(const bson_value_t *value,
 
 	if (isConstantArray)
 	{
-		ereport(DEBUG3, (errmsg("Transforming array expression into fixed constant.")));
+		ereport(DEBUG2, (errmsg("Transforming array expression into fixed constant.")));
 
 		/* If it is a constant array, it could've had nested operators that were transformed to a constant
 		 * as the result of evaluating that operator is always constant. So we need to write the value from the parsed tree
