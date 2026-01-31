@@ -2205,7 +2205,11 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 		}
 	}
 
-	/* Validate collation compatibility with index types and options  */
+	/*
+	 * Validate collation compatibility with index types and options.
+	 * TODO: For now, plumb collation through only for single-path and wildcard indexes.
+	 */
+	bool isUniqueOrBuildAsUniqueIndex = IsUniqueOrBuildAsUniqueIndex(indexDef);
 	bool hasApplicableCollation = IsCollationApplicable(indexDef->collationString);
 	if (hasApplicableCollation)
 	{
@@ -2241,9 +2245,21 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 								"Index type 'cosmosSearch' does not support collation")));
 		}
 
-		/* TODO: we do not support collation for any indexes yet */
-		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("Collation is not yet supported for indexes")));
+		/* We do not yet support collation with composite indexes */
+		if (indexDef->enableCompositeTerm == BoolIndexOption_True)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg(
+								"Collation is not yet supported for composite indexes")));
+		}
+
+		/* We do not support collation with unique indexes yet */
+		if (isUniqueOrBuildAsUniqueIndex)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg(
+								"Collation is not supported for unique indexes")));
+		}
 	}
 
 	if (indexDef->enableCompositeTerm != BoolIndexOption_True &&
@@ -2288,27 +2304,27 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 							"The language_override option is permitted exclusively when using text indexes.")));
 	}
 
-	if (IsUniqueOrBuildAsUniqueIndex(indexDef) && indexDef->key->isWildcard)
+	if (isUniqueOrBuildAsUniqueIndex && indexDef->key->isWildcard)
 	{
 		ereport(ERROR, errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
 				errmsg("Index type 'wildcard' does not support the unique option"));
 	}
 
-	if (IsUniqueOrBuildAsUniqueIndex(indexDef) && indexDef->key->hasHashedIndexes)
+	if (isUniqueOrBuildAsUniqueIndex && indexDef->key->hasHashedIndexes)
 	{
 		ereport(ERROR, errcode(ERRCODE_DOCUMENTDB_LOCATION16764),
 				errmsg(
 					"Index type 'hashed' does not support the unique option."));
 	}
 
-	if (IsUniqueOrBuildAsUniqueIndex(indexDef) && indexDef->key->hasTextIndexes)
+	if (isUniqueOrBuildAsUniqueIndex && indexDef->key->hasTextIndexes)
 	{
 		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						errmsg(
 							"Index type 'text' does not support the unique option")));
 	}
 
-	if (IsUniqueOrBuildAsUniqueIndex(indexDef) && indexDef->enableLargeIndexKeys ==
+	if (isUniqueOrBuildAsUniqueIndex && indexDef->enableLargeIndexKeys ==
 		BoolIndexOption_True)
 	{
 		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -2318,7 +2334,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 
 	if (indexDef->key->hasCosmosIndexes)
 	{
-		if (IsUniqueOrBuildAsUniqueIndex(indexDef))
+		if (isUniqueOrBuildAsUniqueIndex)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 							errmsg(
@@ -2335,7 +2351,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 
 	if (indexDef->key->has2dIndex)
 	{
-		if (IsUniqueOrBuildAsUniqueIndex(indexDef))
+		if (isUniqueOrBuildAsUniqueIndex)
 		{
 			/*
 			 * TODO: Support unique indexes with GIST
@@ -2368,7 +2384,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 
 	if (indexDef->key->has2dsphereIndex)
 	{
-		if (IsUniqueOrBuildAsUniqueIndex(indexDef))
+		if (isUniqueOrBuildAsUniqueIndex)
 		{
 			/*
 			 * TODO: Support unique indexes with GIST
@@ -5568,6 +5584,8 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 									  (enableLargeIndexKeys ||
 									   isUsingCompositeOpClass);
 
+	bool hasApplicableCollation = IsCollationApplicable(collationString);
+
 	/* For unique with truncation, instead of creating a unique hash for every column, we simply create a single
 	 * value with a new operator that handles unique constraints. That way for a composite unique index, we support
 	 * up to 31 columns (instead of 16 without truncation). Here we want to produce a term that incorporates the
@@ -5641,13 +5659,16 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 
 			appendStringInfo(indexExprStr,
 							 "%s document %s.bson_%s_single_path_ops"
-							 "(path='', iswildcard=true%s%s%s)",
+							 "(path='', iswildcard=true%s%s%s%s%s)",
 							 firstColumnWritten ? "," : "",
 							 indexAmOpClassCatalogSchema,
 							 indexAmSuffix,
 							 indexTermSizeLimitArg,
 							 wildcardIndexTruncatedPathLimit,
-							 useReducedWildcardOption);
+							 useReducedWildcardOption,
+							 hasApplicableCollation ? ", collation=" : "",
+							 hasApplicableCollation ?
+							 quote_literal_cstr(collationString) : "");
 
 			firstColumnWritten = true;
 		}
@@ -5670,13 +5691,16 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 			bool includeId = wpPathOps->idFieldInclusion == WP_IM_INCLUDE;
 			appendStringInfo(indexExprStr,
 							 "%s document %s.bson_%s_wildcard_project_path_ops"
-							 "(includeid=%s%s%s",
+							 "(includeid=%s%s%s%s%s",
 							 firstColumnWritten ? "," : "",
 							 indexAmOpClassCatalogSchema,
 							 indexAmSuffix,
 							 includeId ? "true" : "false",
 							 indexTermSizeLimitArg,
-							 wildcardIndexTruncatedPathLimit);
+							 wildcardIndexTruncatedPathLimit,
+							 hasApplicableCollation ? ", collation=" : "",
+							 hasApplicableCollation ?
+							 quote_literal_cstr(collationString) : "");
 
 			firstColumnWritten = true;
 
@@ -5948,7 +5972,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 					}
 
 					appendStringInfo(indexExprStr,
-									 "%s document %s.bson_%s_single_path_ops(path=%s%s%s%s%s)",
+									 "%s document %s.bson_%s_single_path_ops(path=%s%s%s%s%s%s%s)",
 									 firstColumnWritten ? "," : "",
 									 indexAmOpClassCatalogSchema,
 									 indexAmSuffix,
@@ -5956,7 +5980,10 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 									 indexKeyPath->isWildcard ? ",iswildcard=true" : "",
 									 indexTermSizeLimitArg,
 									 generateNotFoundTermOption,
-									 useReducedWildcardOption);
+									 useReducedWildcardOption,
+									 hasApplicableCollation ? ",collation=" : "",
+									 hasApplicableCollation ?
+									 quote_literal_cstr(collationString) : "");
 
 					if (unique)
 					{

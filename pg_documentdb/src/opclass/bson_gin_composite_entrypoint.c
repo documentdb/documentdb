@@ -2677,6 +2677,9 @@ CreateSinglePathOptions(const char *indexPath, int32_t pathIndex, int32_t pathCo
 		compositeOptions->base.wildcardIndexTruncatedPathLimit;
 	singlePathOptions->path = sizeof(BsonGinSinglePathOptions);
 
+	/* TODO: pass down collation from composite options */
+	singlePathOptions->collation = 0;
+
 	FillSinglePathSpec(indexPath, ((char *) singlePathOptions) +
 					   sizeof(BsonGinSinglePathOptions));
 

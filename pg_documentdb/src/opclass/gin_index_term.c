@@ -20,6 +20,7 @@
 #include "types/decimal128.h"
 #include "io/bsonvalue_utils.h"
 
+extern bool EnableCollationWithIndexes;
 
 /*
  * While this looks like a flags enum, it started out that way
@@ -70,6 +71,21 @@ typedef enum IndexTermMetadata
 	 */
 	IndexTermMetadataCollationPrefixed = 0xFF,
 } IndexTermMetadata;
+
+
+/*
+ * Cached state for gin_bson_compare collation lookup.
+ * We cache this to avoid repeated opclass option extraction.
+ */
+typedef struct GinBsonCompareState
+{
+	/* The cached collation string (NULL if no collation) */
+	const char *collationString;
+
+	/* The opclass options pointer used to extract collation (for assertion) */
+	bytea *options;
+} GinBsonCompareState;
+
 
 extern int IndexTermCompressionThreshold;
 
@@ -251,6 +267,25 @@ CompareSerializedBsonIndexTermWithCollation(Datum a, Datum b, const char *collat
 
 
 /*
+ * Populates the GinBsonCompareState from opclass options.
+ */
+static void
+PopulateGinBsonCompareState(GinBsonCompareState *state, bytea *options)
+{
+	state->collationString = NULL;
+	if (options != NULL)
+	{
+		StringView collationView = { 0 };
+		GetCollationFromIndexOptions(options, &collationView);
+		if (collationView.string != NULL)
+		{
+			state->collationString = collationView.string;
+		}
+	}
+}
+
+
+/*
  * gin_bson_compare compares two elements to sort the values
  * when placed in the gin index. This is different from a regular BSON
  * compare as Bson compares are done as <type><path><value>
@@ -263,7 +298,33 @@ gin_bson_compare(PG_FUNCTION_ARGS)
 	bytea *left = PG_GETARG_BYTEA_PP(0);
 	bytea *right = PG_GETARG_BYTEA_PP(1);
 
-	const char *defaultCollation = NULL;
+	const char *collationString = NULL;
+	if (EnableCollationWithIndexes)
+	{
+		/* Get collation from fn_extra cache, or extract from opclass options and cache */
+		GinBsonCompareState *state = (GinBsonCompareState *) fcinfo->flinfo->fn_extra;
+
+		if (state != NULL)
+		{
+			Assert(!PG_HAS_OPCLASS_OPTIONS() ||
+				   state->options == (bytea *) PG_GET_OPCLASS_OPTIONS());
+
+			collationString = state->collationString;
+		}
+		else if (PG_HAS_OPCLASS_OPTIONS())
+		{
+			bytea *options = (bytea *) PG_GET_OPCLASS_OPTIONS();
+
+			MemoryContext oldContext = MemoryContextSwitchTo(fcinfo->flinfo->fn_mcxt);
+			state = palloc0(sizeof(GinBsonCompareState));
+			PopulateGinBsonCompareState(state, options);
+			state->options = options;
+			MemoryContextSwitchTo(oldContext);
+
+			fcinfo->flinfo->fn_extra = state;
+			collationString = state->collationString;
+		}
+	}
 
 	const uint8_t *leftBuffer = (const uint8_t *) VARDATA_ANY(left);
 	uint32_t leftSize = VARSIZE_ANY_EXHDR(left);
@@ -271,7 +332,7 @@ gin_bson_compare(PG_FUNCTION_ARGS)
 	const uint8_t *rightBuffer = (const uint8_t *) VARDATA_ANY(right);
 	uint32_t rightSize = VARSIZE_ANY_EXHDR(right);
 	int32_t compareTerm = CompareBsonGinIndexTerms(leftBuffer, leftSize, rightBuffer,
-												   rightSize, defaultCollation);
+												   rightSize, collationString);
 	PG_FREE_IF_COPY(left, 0);
 	PG_FREE_IF_COPY(right, 1);
 	PG_RETURN_INT32(compareTerm);
