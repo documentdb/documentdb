@@ -776,7 +776,7 @@ bson_expression_get('{"a" : null}', '{ "": { "a" : "$a" }}', true);
 (1 row)
 
 -- Document and array expressions with nested expressions that should be converted to a constant at the tree parse stage
-SET client_min_messages TO DEBUG3;
+SET client_min_messages TO DEBUG2;
 SELECT bson_expression_get('{}', '{"result": {"a": [ { "$literal" : "foo" } ] }}');
 DEBUG:  Transforming array expression into fixed constant.
 DEBUG:  Converting document expression into a fixed constant.
