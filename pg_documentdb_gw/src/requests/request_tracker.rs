@@ -11,11 +11,12 @@ use tokio::time::Instant;
 
 #[derive(Debug)]
 pub enum RequestIntervalKind {
-    /// Interval kind for the overall request processing duration, which includes BufferRead, FormatRequest, and HandleRequest via backend.
-    HandleMessage,
-
     /// Time spent reading stream from request body.
-    BufferRead,
+    ReadRequest,
+
+    /// Interval kind for the overall request processing duration, which includes FormatRequest, and HandleRequest via backend.
+    /// ReadRequest and WriteResponse are not part of HandleMessage.
+    HandleMessage,
 
     /// Time spent formatting and parsing the incoming request.
     FormatRequest,
@@ -35,6 +36,9 @@ pub enum RequestIntervalKind {
 
     /// Time spent committing a Postgres transaction.
     PostgresCommitTransaction,
+
+    /// Time spent writing the response to the stream.
+    WriteResponse,
 
     /// Special value used to define the size of the metrics array.
     MaxUnused,

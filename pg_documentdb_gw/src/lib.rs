@@ -529,6 +529,7 @@ where
                         None,
                         &RequestTracker::new(),
                         &request_activity_id,
+                        None,
                     )
                     .await
                     {
@@ -616,13 +617,17 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let request_tracker = RequestTracker::new();
-    let handle_message_start = Instant::now();
 
     // Read the request message off the stream
-    let buffer_read_start = Instant::now();
+    let read_request_start = Instant::now();
     let message = protocol::reader::read_request(header, stream).await?;
-    request_tracker.record_duration(RequestIntervalKind::BufferRead, buffer_read_start);
+    request_tracker.record_duration(RequestIntervalKind::ReadRequest, read_request_start);
 
+    // HandleMessage captures the overall duration needed by the server to handle/process
+    // a user operation message/request. Client-to-Gateway networking latency should be
+    // excluded from HandleMessage; therefore, ReadRequest is closed before this starts,
+    // and WriteResponse starts measuring only after HandleMessage is closed.
+    let handle_message_start = Instant::now();
     if connection_context
         .dynamic_configuration()
         .send_shutdown_responses()
@@ -672,6 +677,7 @@ where
             Some(collection),
             request_context.tracker,
             activity_id,
+            Some(handle_message_start),
         )
         .await
         {
@@ -713,30 +719,32 @@ where
 {
     *collection = request_context.info.collection().unwrap_or("").to_string();
 
+    // Process the request
     let handle_request_start = Instant::now();
-
-    // Process the response for the message
     let response_result = get_response::<T>(request_context, connection_context).await;
-
-    // Always record durations, regardless of success or error
     request_context
         .tracker
         .record_duration(RequestIntervalKind::HandleRequest, handle_request_start);
 
-    request_context
-        .tracker
-        .record_duration(RequestIntervalKind::HandleMessage, handle_message_start);
-
     let response = match response_result {
         Ok(response) => response,
+        // For the error case, the error handling code will close HandleMessage.
         Err(e) => {
             return Err(e);
         }
     };
 
     // Write the response back to the stream
+    request_context
+        .tracker
+        .record_duration(RequestIntervalKind::HandleMessage, handle_message_start);
+
     if connection_context.requires_response {
+        let write_response_start = Instant::now();
         responses::writer::write(header, &response, stream).await?;
+        request_context
+            .tracker
+            .record_duration(RequestIntervalKind::WriteResponse, write_response_start);
     }
 
     if let Some(telemetry) = connection_context.telemetry_provider.as_ref() {
@@ -767,6 +775,7 @@ async fn log_and_write_error<S>(
     collection: Option<String>,
     request_tracker: &RequestTracker,
     activity_id: &str,
+    handle_message_start: Option<Instant>,
 ) -> Result<CommandError>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -774,7 +783,13 @@ where
     let command_error = CommandError::from_error(connection_context, e, activity_id).await;
     let response = command_error.to_raw_document_buf();
 
+    if let Some(start) = handle_message_start {
+        request_tracker.record_duration(RequestIntervalKind::HandleMessage, start);
+    }
+
+    let write_response_start = Instant::now();
     responses::writer::write_and_flush(header, &response, stream).await?;
+    request_tracker.record_duration(RequestIntervalKind::WriteResponse, write_response_start);
 
     // telemetry can block so do it after write and flush.
     tracing::error!(activity_id = activity_id, "Request failure: {e}");
@@ -816,15 +831,16 @@ async fn log_verbose_latency(
     tracing::info!(
         activity_id = request_context.activity_id,
         event_id = EventId::RequestTrace.code(),
-        "Latency for Mongo Request with interval timings (ns): HandleMessage={}, BufferRead={}, FormatRequest={}, ProcessRequest={}, PostgresBeginTransaction={}, PostgresSetStatementTimeout={}, PostgresCommitTransaction={}, HandleRequest={}, Address={}, TransportProtocol={}, DatabaseName={}, CollectionName={}, OperationName={}, StatusCode={}, SubStatusCode={}, ErrorCode={}",
+        "Latency for Mongo Request with interval timings (ns): ReadRequest={}, HandleMessage={} FormatRequest={}, HandleRequest={}, ProcessRequest={}, PostgresBeginTransaction={}, PostgresSetStatementTimeout={}, PostgresCommitTransaction={}, WriteResponse={}, Address={}, TransportProtocol={}, DatabaseName={}, CollectionName={}, OperationName={}, StatusCode={}, SubStatusCode={}, ErrorCode={}",
+        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::ReadRequest),
         request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::HandleMessage),
-        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::BufferRead),
         request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::FormatRequest),
+        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::HandleRequest),
         request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::ProcessRequest),
         request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::PostgresBeginTransaction),
         request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::PostgresSetStatementTimeout),
         request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::PostgresCommitTransaction),
-        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::HandleRequest),
+        request_context.tracker.get_interval_elapsed_time(RequestIntervalKind::WriteResponse),
         connection_context.ip_address,
         connection_context.transport_protocol(),
         database_name,
