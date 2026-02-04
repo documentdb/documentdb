@@ -1,0 +1,4 @@
+ErrorName,ErrorCode,ExternalErrorCode
+UserNotFound,42704,11
+InvalidPassword,28P01,392
+OutOfDiskSpace,53100,14031
