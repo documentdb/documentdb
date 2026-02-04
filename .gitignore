@@ -73,6 +73,7 @@ build/
 # packages
 *.deb
 *.rpm
+*.tar.gz
 
 site/
 

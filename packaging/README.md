@@ -55,6 +55,19 @@ This script checks:
 ./packaging/build_packages.sh --os rhel8 --pg 17 --test-clean-install
 ```
 
+## Building Alpine Linux Archive
+
+For Alpine Linux, the script compiles the extension and produces a `.tar.gz` archive containing the installed files.
+
+```sh
+./packaging/build_packages.sh --os alpine --pg 16
+```
+
+Supported Alpine distributions:
+- alpine (Uses `postgres:<version>-alpine` base image)
+
+Supported PG versions: 15, 16, 17
+
 ## Output
 
 Packages can be found at the `packages` directory by default, but it can be configured with the `--output-dir` option.

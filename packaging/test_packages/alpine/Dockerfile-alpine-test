@@ -1,0 +1,65 @@
+ARG BASE_IMAGE=alpine:3.21
+FROM ${BASE_IMAGE}
+
+ARG TARBALL_PATH
+ARG POSTGRES_VERSION=16
+
+ENV POSTGRES_VERSION=${POSTGRES_VERSION}
+
+# Install PostgreSQL and build/test dependencies using Alpine's native packages
+# This ensures all paths are consistent with Alpine's package layout
+RUN apk add --no-cache \
+    build-base \
+    bash \
+    cmake \
+    git \
+    pkgconf \
+    postgresql${POSTGRES_VERSION} \
+    postgresql${POSTGRES_VERSION}-dev \
+    postgresql${POSTGRES_VERSION}-contrib \
+    libbson-dev \
+    libbson-static \
+    pcre2-dev \
+    pcre2 \
+    curl \
+    linux-headers \
+    openssl-dev \
+    krb5-dev \
+    krb5-libs \
+    flex \
+    bison \
+    libxml2-dev \
+    libxml2 \
+    icu-libs \
+    python3 \
+    sudo \
+    postgresql-pgvector \
+    postgresql-pg_cron \
+    postgis
+
+# Set PG_CONFIG to point to the correct pg_config
+ENV PG_CONFIG=/usr/bin/pg_config
+
+# Copy and extract the documentdb extension files
+COPY ${TARBALL_PATH} /tmp/documentdb.tar.gz
+RUN tar -xzvf /tmp/documentdb.tar.gz -C /
+
+# Copy source tree for running make check
+WORKDIR /usr/src/documentdb
+COPY . /usr/src/documentdb
+
+# Setup environment for dependency installation (needed for make check to find deps)
+ENV INSTALL_DEPENDENCIES_ROOT=/usr/src/documentdb/build_deps
+RUN mkdir -p $INSTALL_DEPENDENCIES_ROOT
+ENV INSTALLDESTDIR=/usr
+ENV PKG_CONFIG_INSTALL_PATH=/usr/lib/pkgconfig
+RUN mkdir -p $PKG_CONFIG_INSTALL_PATH
+
+# Install Intel Decimal Math Library (needed for make check)
+RUN bash scripts/install_setup_intel_decimal_math_lib.sh
+
+# Copy test entrypoint script
+COPY packaging/test_packages/alpine/test-install-entrypoint-alpine.sh /usr/local/bin/test-install-entrypoint-alpine.sh
+RUN chmod +x /usr/local/bin/test-install-entrypoint-alpine.sh
+
+ENTRYPOINT ["test-install-entrypoint-alpine.sh"]
