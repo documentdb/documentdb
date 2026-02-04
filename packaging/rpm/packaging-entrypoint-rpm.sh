@@ -8,19 +8,16 @@ test -n "$POSTGRES_VERSION" || (echo "POSTGRES_VERSION not set" && false)
 # Change to the build directory
 cd /build
 
-# Update packaging changelogs from CHANGELOG.md (fail build if this fails)
-if [[ -n "${DOCUMENTDB_VERSION:-}" ]]; then
-    echo "DOCUMENTDB_VERSION provided via environment: ${DOCUMENTDB_VERSION}"
-else
-    DOCUMENTDB_VERSION=$(grep -E "^default_version" pg_documentdb_core/documentdb_core.control | sed -E "s/.*'([0-9]+\.[0-9]+-[0-9]+)'.*/\1/" || true)
-fi
-if [[ -n "$DOCUMENTDB_VERSION" ]]; then
-    echo "Running changelog update for version: $DOCUMENTDB_VERSION"
-    /bin/bash /build/packaging/update_spec_changelog.sh "$DOCUMENTDB_VERSION"
-else
-    echo "WARNING: Could not determine documentdb version; skipping changelog update"
+# DOCUMENTDB_VERSION is required and must be provided by caller
+if [[ -z "${DOCUMENTDB_VERSION:-}" ]]; then
+    echo "ERROR: DOCUMENTDB_VERSION environment variable not set" >&2
     exit 1
 fi
+echo "Using DOCUMENTDB_VERSION: ${DOCUMENTDB_VERSION}"
+
+# Update packaging changelogs from CHANGELOG.md (fail build if this fails)
+echo "Running changelog update for version: $DOCUMENTDB_VERSION"
+/bin/bash /build/packaging/update_spec_changelog.sh "$DOCUMENTDB_VERSION"
 
 # Remove 'internal' references from Makefile
 sed -i '/internal/d' Makefile
