@@ -68,20 +68,22 @@ build-sql: $(generated_sql_files)
 
 generate_errors_file: $(DOCDB_CORE_DIR)include/utils/documentdb_errors.h $(OSS_SRC_DIR)/documentdb_errors.csv
 
-generate_external_error_mapping_file: generate_errors_file $(DOCDB_CORE_DIR)include/utils/external_error_mapping.csv 
-
-all: generate_external_error_mapping_file
-
-$(DOCDB_CORE_DIR)include/utils/documentdb_errors.h: $(OSS_SRC_DIR)/scripts/generate_error_values.sh $(OSS_SRC_DIR)/documentdb_errors.csv
+generate_extension_errors: $(OSS_SRC_DIR)/scripts/generate_error_values.sh $(OSS_SRC_DIR)/documentdb_errors.csv
 	mkdir -p $(DOCDB_CORE_DIR)/build
 	mkdir -p $(DOCDB_CORE_DIR)/include/utils
 	$(OSS_SRC_DIR)/scripts/generate_error_values.sh $(OSS_SRC_DIR)/documentdb_errors.csv $(DOCDB_CORE_DIR)include/utils/documentdb_errors.h $(DOCDB_CORE_DIR)include/utils/documentdb_codes.txt documentdb
 
 $(DOCDB_CORE_DIR)include/utils/documentdb_codes.txt: $(DOCDB_CORE_DIR)include/utils/documentdb_errors.h
 
-$(DOCDB_CORE_DIR)include/utils/external_error_mapping.csv: $(OSS_SRC_DIR)/scripts/generate_external_error_mapping_file.sh $(OSS_SRC_DIR)/error_mappings.csv $(DOCDB_CORE_DIR)include/utils/documentdb_codes.txt
+generate_external_error_mapping_file: generate_errors_file generate_extension_errors $(OSS_SRC_DIR)/scripts/generate_external_error_mapping_file.sh $(OSS_SRC_DIR)/error_mappings.csv $(DOCDB_CORE_DIR)include/utils/documentdb_codes.txt
 	$(OSS_SRC_DIR)/scripts/generate_external_error_mapping_file.sh $(DOCDB_CORE_DIR)include/utils/documentdb_codes.txt $(OSS_SRC_DIR)/error_mappings.csv \
 		$(DOCDB_CORE_DIR)include/utils/external_error_mapping.csv 
+
+generate_all_error_mappings: generate_external_error_mapping_file $(DOCDB_CORE_DIR)include/utils/external_error_mapping.csv $(OSS_SRC_DIR)/pg_documentdb_gw/include/core_postgres_error_mappings.csv
+	$(OSS_SRC_DIR)/scripts/combine_all_error_mappings.sh $(DOCDB_CORE_DIR)include/utils/external_error_mapping.csv $(OSS_SRC_DIR)/pg_documentdb_gw/include/core_postgres_error_mappings.csv \
+	$(DOCDB_CORE_DIR)include/utils/all_error_mappings_oss_generated.csv
+
+all: generate_all_error_mappings
 
 $(generated_sql_files): build/%: %
 	@mkdir -p $(SQL_DEPDIR) $(SQL_BUILDDIR)

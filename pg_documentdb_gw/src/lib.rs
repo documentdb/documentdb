@@ -823,7 +823,7 @@ async fn log_verbose_latency(
 
     let (status_code, error_code) = if let Some(error) = e {
         let code = error.code;
-        (error_code_to_status_code(code), code)
+        (error_code_to_status_code(code.into()), code)
     } else {
         (200, 0)
     };
