@@ -83,9 +83,8 @@ impl ConnectionContext {
         // If there is a transaction, get the cursor to its store
         if let Some((session_id, _)) = self.transaction.as_ref() {
             let transaction_store = self.service_context.transaction_store();
-            if let Some((_, transaction)) =
-                transaction_store.transactions.read().await.get(session_id)
-            {
+            if let Some(entry) = transaction_store.transactions.get(session_id) {
+                let (_, transaction) = entry.value();
                 return transaction
                     .cursors
                     .get_cursor((id, username.to_string()))
@@ -124,9 +123,8 @@ impl ConnectionContext {
         // If there is a transaction, add the cursor to its store
         if let Some((session_id, _)) = self.transaction.as_ref() {
             let transaction_store = self.service_context.transaction_store();
-            if let Some((_, transaction)) =
-                transaction_store.transactions.read().await.get(session_id)
-            {
+            if let Some(entry) = transaction_store.transactions.get(session_id) {
+                let (_, transaction) = entry.value();
                 transaction.cursors.add_cursor(key, value).await;
                 return;
             }
