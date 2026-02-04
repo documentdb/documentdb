@@ -60,6 +60,63 @@ PG_FUNCTION_INFO_V1(documentdb_extension_update_user);
 PG_FUNCTION_INFO_V1(documentdb_extension_get_users);
 PG_FUNCTION_INFO_V1(command_connection_status);
 
+enum DocumentDB_BuiltInRoles
+{
+	DocumentDB_Role_Read_AnyDatabase = 0x1,
+	DocumentDB_Role_ReadWrite_AnyDatabase = 0x2,
+	DocumentDB_Role_Cluster_Admin = 0x4,
+};
+
+typedef struct
+{
+	/* "createUser" field */
+	const char *createUser;
+
+	/* "pwd" field */
+	const char *pwd;
+
+	/* "roles" field */
+	bson_value_t roles;
+
+	/* "identityProvider" field*/
+	bson_value_t identityProviderData;
+
+	/* pgRole the passed in role maps to */
+	char *pgRole;
+
+	/* principalType */
+	char *principalType;
+
+	/* has_identity_provider */
+	bool has_identity_provider;
+} CreateUserSpec;
+
+typedef struct
+{
+	/* "updateUser" field */
+	const char *updateUser;
+
+	/* "pwd" field */
+	const char *pwd;
+} UpdateUserSpec;
+
+typedef struct
+{
+	StringView user;
+	bool showAllUsers;
+	bool showPrivileges;
+} GetUserSpec;
+
+/*
+ * Hash entry structure for user roles.
+ */
+typedef struct UserRoleHashEntry
+{
+	char *user;
+	HTAB *roles;
+	bool isExternal;
+} UserRoleHashEntry;
+
 static void ParseCreateUserSpec(pgbson *createUserSpec, CreateUserSpec *spec);
 static void CreateNativeUser(const CreateUserSpec *createUserSpec);
 static char * ParseDropUserSpec(pgbson *dropSpec);
@@ -1433,6 +1490,11 @@ ValidateAndObtainUserRole(const bson_value_t *rolesDocument)
 		(userRoles & DocumentDB_Role_Cluster_Admin) != 0)
 	{
 		return ApiAdminRoleV2;
+	}
+
+	if ((userRoles & DocumentDB_Role_ReadWrite_AnyDatabase) != 0)
+	{
+		return ApiReadWriteRole;
 	}
 
 	if ((userRoles & DocumentDB_Role_Read_AnyDatabase) != 0)

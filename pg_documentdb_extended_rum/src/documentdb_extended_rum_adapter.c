@@ -34,6 +34,8 @@ typedef struct DocumentDBRumOidCacheData
 	Oid DocumentDBRumAmOid;
 	Oid BsonDocumentDBRumSinglePathOperatorFamilyId;
 	Oid BsonDocumentDBRumCompositePathOperatorFamilyId;
+	Oid BsonDocumentDBRumHashedPathOperatorFamilyId;
+	Oid DocumentDbExtendedRumUniquePathOperatorFamilyId;
 } DocumentDBRumOidCacheData;
 
 extern bool EnableCompositeIndexPlanner;
@@ -42,6 +44,8 @@ extern bool EnableCompositeIndexPlanner;
 static Oid DocumentDBExtendedRumIndexAmId(void);
 static Oid DocumentDBExtendedRumSinglePathOpFamilyOid(void);
 static Oid DocumentDBExtendedRumCompositePathOpFamilyOid(void);
+static Oid DocumentdbExtendedRumHashedPathOpsFamilyOid(void);
+static Oid DocumentDbExtendedRumUniquePathOperatorFamilyOid(void);
 static const char * GetDocumentDBCatalogSchema(void);
 static void LoadBaseIndexAmRoutine(void);
 
@@ -49,17 +53,14 @@ extern PGDLLIMPORT void try_explain_documentdb_rum_index(IndexScanDesc scan, str
 														 ExplainState *es);
 extern PGDLLIMPORT bool can_documentdb_rum_index_scan_ordered(IndexScanDesc scan);
 extern PGDLLIMPORT Datum documentdb_rumhandler(PG_FUNCTION_ARGS);
-extern PGDLLEXPORT bool documentdb_rum_get_multi_key_status(Relation indexRelation);
-extern PGDLLEXPORT void documentdb_rum_update_multi_key_status(Relation indexRelation);
+extern PGDLLIMPORT bool documentdb_rum_get_multi_key_status(Relation indexRelation);
+extern PGDLLIMPORT void documentdb_rum_update_multi_key_status(Relation indexRelation);
 
 /* Static Globals */
 static BsonIndexAmEntry DocumentDBIndexAmEntry = {
 	.is_single_path_index_supported = true,
-	.is_unique_index_supported = false,
-	.is_wild_card_supported = false,
-	.is_composite_index_supported = true,
-	.is_text_index_supported = false,
-	.is_hashed_index_supported = false,
+	.is_wild_card_supported = true,
+	.is_wild_card_projection_supported = false,
 	.is_order_by_supported = true,
 	.is_backwards_scan_supported = true,
 	.is_index_only_scan_supported = true,
@@ -68,8 +69,8 @@ static BsonIndexAmEntry DocumentDBIndexAmEntry = {
 	.get_single_path_op_family_oid = DocumentDBExtendedRumSinglePathOpFamilyOid,
 	.get_composite_path_op_family_oid = DocumentDBExtendedRumCompositePathOpFamilyOid,
 	.get_text_path_op_family_oid = NULL,
-	.get_unique_path_op_family_oid = NULL,
-	.get_hashed_path_op_family_oid = NULL,
+	.get_unique_path_op_family_oid = DocumentDbExtendedRumUniquePathOperatorFamilyOid,
+	.get_hashed_path_op_family_oid = DocumentdbExtendedRumHashedPathOpsFamilyOid,
 	.add_explain_output = try_explain_documentdb_rum_index,
 	.am_name = "extended_rum",
 	.get_opclass_catalog_schema = GetDocumentDBCatalogSchema,
@@ -260,6 +261,40 @@ DocumentDBExtendedRumSinglePathOpFamilyOid(void)
 
 
 static Oid
+DocumentdbExtendedRumHashedPathOpsFamilyOid(void)
+{
+	if (Cache.BsonDocumentDBRumHashedPathOperatorFamilyId == InvalidOid)
+	{
+		bool missingOk = false;
+		Cache.BsonDocumentDBRumHashedPathOperatorFamilyId = get_opfamily_oid(
+			DocumentDBExtendedRumIndexAmId(),
+			list_make2(makeString((char *) GetDocumentDBCatalogSchema()), makeString(
+						   "documentdb_extended_rum_hashed_ops")),
+			missingOk);
+	}
+
+	return Cache.BsonDocumentDBRumHashedPathOperatorFamilyId;
+}
+
+
+static Oid
+DocumentDbExtendedRumUniquePathOperatorFamilyOid(void)
+{
+	if (Cache.DocumentDbExtendedRumUniquePathOperatorFamilyId == InvalidOid)
+	{
+		bool missingOk = false;
+		Cache.DocumentDbExtendedRumUniquePathOperatorFamilyId = get_opfamily_oid(
+			DocumentDBExtendedRumIndexAmId(),
+			list_make2(makeString((char *) GetDocumentDBCatalogSchema()), makeString(
+						   "bson_extended_rum_unique_shard_path_ops")),
+			missingOk);
+	}
+
+	return Cache.DocumentDbExtendedRumUniquePathOperatorFamilyId;
+}
+
+
+static Oid
 DocumentDBExtendedRumCompositePathOpFamilyOid(void)
 {
 	if (Cache.BsonDocumentDBRumCompositePathOperatorFamilyId == InvalidOid)
@@ -315,53 +350,4 @@ documentdb_extended_rumhandler(PG_FUNCTION_ARGS)
 	amroutine->aminsert = extension_documentdb_extended_ruminsert;
 	amroutine->amcostestimate = extension_documentdb_extended_rumcostestimate;
 	PG_RETURN_POINTER(amroutine);
-}
-
-
-PGDLLEXPORT bool
-documentdb_rum_get_multi_key_status(Relation indexRelation)
-{
-	Buffer metabuffer;
-	Page metapage;
-	RumMetaPageData *metadata;
-	bool hasMultiKeyPaths = false;
-
-	metabuffer = ReadBuffer(indexRelation, RUM_METAPAGE_BLKNO);
-	LockBuffer(metabuffer, RUM_SHARE);
-	metapage = BufferGetPage(metabuffer);
-	metadata = RumPageGetMeta(metapage);
-	hasMultiKeyPaths = metadata->nPendingHeapTuples > 0;
-	UnlockReleaseBuffer(metabuffer);
-
-	return hasMultiKeyPaths;
-}
-
-
-PGDLLEXPORT void
-documentdb_rum_update_multi_key_status(Relation index)
-{
-	/* First do a get to see if we even need to update */
-	bool isMultiKey = documentdb_rum_get_multi_key_status(index);
-	if (isMultiKey)
-	{
-		return;
-	}
-
-	Buffer metaBuffer;
-	Page metapage;
-	RumMetaPageData *metadata;
-	GenericXLogState *state;
-
-	metaBuffer = ReadBuffer(index, RUM_METAPAGE_BLKNO);
-	LockBuffer(metaBuffer, RUM_EXCLUSIVE);
-
-	state = GenericXLogStart(index);
-	metapage = GenericXLogRegisterBuffer(state, metaBuffer, 0);
-	metadata = RumPageGetMeta(metapage);
-
-	/* Set pending heap tuples to 1 to indicate this is a multi-key index */
-	metadata->nPendingHeapTuples = 1;
-
-	GenericXLogFinish(state);
-	UnlockReleaseBuffer(metaBuffer);
 }

@@ -348,7 +348,8 @@ generate_unique_shard_document(PG_FUNCTION_ARGS)
 		singlePathOptions->base.version = IndexOptionsVersion_V0;
 		singlePathOptions->path = sizeof(BsonGinSinglePathOptions);
 		char *pathPrefix = buffer + sizeof(BsonGinSinglePathOptions);
-		*(uint32_t *) pathPrefix = pathIter.length;
+		uint32_t pathLength = pathIter.length;
+		memcpy(pathPrefix, &pathLength, sizeof(uint32_t));
 		pathPrefix += 4;
 		memcpy(pathPrefix, pathIter.string, pathIter.length);
 

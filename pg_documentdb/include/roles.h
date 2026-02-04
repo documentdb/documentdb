@@ -14,25 +14,6 @@
 #include "postgres.h"
 #include "utils/string_view.h"
 
-typedef struct
-{
-	const char *roleName;
-	List *parentRoles;
-} CreateRoleSpec;
-
-typedef struct
-{
-	List *roleNames;
-	bool showAllRoles;
-	bool showBuiltInRoles;
-	bool showPrivileges;
-} RolesInfoSpec;
-
-typedef struct
-{
-	const char *roleName;
-} DropRoleSpec;
-
 /* Method to create a role */
 Datum create_role(pgbson *createRoleBson);
 

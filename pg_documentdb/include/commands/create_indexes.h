@@ -192,6 +192,12 @@ typedef struct
 	 * index create. Default is off (concurrent).
 	 */
 	bool blocking;
+
+	/* Collation spec to be persisted in the collection metadata */
+	bson_value_t *collationSpec;
+
+	/* Collation string from the parsed collation spec */
+	const char *collationString;
 } IndexDef;
 
 /*

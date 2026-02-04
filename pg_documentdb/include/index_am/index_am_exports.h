@@ -30,11 +30,8 @@ typedef bool (*GetTruncationStatusFunc)(Relation indexRelation);
 typedef struct
 {
 	bool is_single_path_index_supported;
-	bool is_unique_index_supported;
 	bool is_wild_card_supported;
-	bool is_composite_index_supported;
-	bool is_text_index_supported;
-	bool is_hashed_index_supported;
+	bool is_wild_card_projection_supported;
 	bool is_order_by_supported;
 	bool is_backwards_scan_supported;
 	bool is_index_only_scan_supported;

@@ -15,23 +15,27 @@
 
 #include "utils/type_cache.h"
 
-extern PGDLLIMPORT char *ApiDataSchemaName;
-extern PGDLLIMPORT char *ApiSchemaName;
-extern PGDLLIMPORT char *ApiSchemaNameV2;
-extern PGDLLIMPORT char *ApiInternalSchemaName;
-extern PGDLLIMPORT char *ApiInternalSchemaNameV2;
-extern PGDLLIMPORT char *ExtensionObjectPrefix;
-extern PGDLLIMPORT char *ExtensionObjectPrefixV2;
-extern PGDLLIMPORT char *CoreSchemaName;
-extern PGDLLIMPORT char *CoreSchemaNameV2;
-extern PGDLLIMPORT char *FullBsonTypeName;
 extern PGDLLIMPORT char *ApiCatalogSchemaName;
 extern PGDLLIMPORT char *ApiCatalogSchemaNameV2;
-extern PGDLLIMPORT char *ApiToApiInternalSchemaName;
 extern PGDLLIMPORT char *ApiCatalogToApiInternalSchemaName;
-extern PGDLLIMPORT char *PostgisSchemaName;
-extern PGDLLIMPORT char *DocumentDBApiInternalSchemaName;
 extern PGDLLIMPORT char *ApiCatalogToCoreSchemaName;
+extern PGDLLIMPORT char *ApiDataSchemaName;
+extern PGDLLIMPORT char *ApiSchemaName;
+extern PGDLLIMPORT char *ApiInternalAdminSchemaName;
+extern PGDLLIMPORT char *ApiInternalBgworkerSchemaName;
+extern PGDLLIMPORT char *ApiInternalReadOnlySchemaName;
+extern PGDLLIMPORT char *ApiInternalReadWriteSchemaName;
+extern PGDLLIMPORT char *ApiInternalSchemaName;
+extern PGDLLIMPORT char *ApiInternalSchemaNameV2;
+extern PGDLLIMPORT char *ApiSchemaNameV2;
+extern PGDLLIMPORT char *ApiToApiInternalSchemaName;
+extern PGDLLIMPORT char *CoreSchemaName;
+extern PGDLLIMPORT char *CoreSchemaNameV2;
+extern PGDLLIMPORT char *DocumentDBApiInternalSchemaName;
+extern PGDLLIMPORT char *ExtensionObjectPrefix;
+extern PGDLLIMPORT char *ExtensionObjectPrefixV2;
+extern PGDLLIMPORT char *FullBsonTypeName;
+extern PGDLLIMPORT char *PostgisSchemaName;
 
 /* Roles */
 extern PGDLLIMPORT char *ApiAdminRole;

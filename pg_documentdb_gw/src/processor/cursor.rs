@@ -50,7 +50,7 @@ pub async fn save_cursor(
 }
 
 pub async fn process_kill_cursors(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -114,7 +114,7 @@ pub async fn process_kill_cursors(
 }
 
 pub async fn process_get_more(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {

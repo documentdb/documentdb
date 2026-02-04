@@ -156,13 +156,42 @@ typedef struct
 } ForceIndexSupportFuncs;
 
 
-typedef struct IndexElemmatchState
+/*
+ * A single query predicate for an elemMatch call.
+ */
+typedef struct IndexElemMatchSingleOp
 {
-	pgbson_array_writer *stateWriter;
+	/* The indexop for the request */
+	BsonIndexStrategy op;
 
+	/* The query predicate value */
+	bson_value_t value;
+} IndexElemMatchSingleOp;
+
+/* the per path match operations */
+typedef struct IndexElemMatchPathState
+{
+	/* The path that is matched */
 	const char *indexPath;
 	uint32_t indexPathLength;
+
+	/* Whether or not the path is the top level index query
+	 * e.g. if the query is "a": { "$elemMatch": { "b": 5 } }
+	 * on index "a.b": -> isTopLevel: false
+	 * if the query is "a.b": { "$elemMatch": { "$eq": 5 } }
+	 * on index "a.b": -> isTopLevel: true
+	 */
 	bool isTopLevel;
+
+	/* A list of IndexElemMatchSingleOp for this path */
+	List *singleOps;
+} IndexElemMatchPathState;
+
+/* State tracking the query walking for elemMatch operators */
+typedef struct IndexElemmatchState
+{
+	/* A list of IndexElemMatchPathState - one per index paths */
+	List *pathStates;
 } IndexElemmatchState;
 
 
@@ -252,7 +281,6 @@ static bool TryUseAlternateIndexForPrimaryKeyLookup(PlannerInfo *root, RelOptInf
 													context,
 													MatchIndexPath matchIndexPath);
 static void PrimaryKeyLookupUnableToFindIndex(void);
-static bool IsBsonRangeArgsForFullScan(List *args);
 
 static const ForceIndexSupportFuncs ForceIndexOperatorSupport[] =
 {
@@ -307,15 +335,10 @@ static const ForceIndexSupportFuncs ForceIndexOperatorSupport[] =
 
 extern bool EnableVectorForceIndexPushdown;
 extern bool EnableGeonearForceIndexPushdown;
-extern bool UseNewElemMatchIndexPushdown;
-extern bool UseNewElemMatchIndexOperatorOnPushdown;
-extern bool DisableDollarSupportFuncSelectivity;
 extern bool EnableNewOperatorSelectivityMode;
 extern bool EnableCompositeIndexPlanner;
 extern bool LowSelectivityForLookup;
 extern bool EnableIndexOrderbyPushdown;
-extern bool EnableIndexOrderByReverse;
-extern bool SetSelectivityForFullScan;
 extern bool EnableExprLookupIndexPushdown;
 extern bool EnableUnifyPfeOnIndexInfo;
 extern bool EnableIdIndexPushdown;
@@ -377,8 +400,7 @@ dollar_support(PG_FUNCTION_ARGS)
 	else if (IsA(supportRequest, SupportRequestSelectivity))
 	{
 		SupportRequestSelectivity *req = (SupportRequestSelectivity *) supportRequest;
-		if (!DisableDollarSupportFuncSelectivity &&
-			(EnableNewOperatorSelectivityMode || EnableCompositeIndexPlanner))
+		if ((EnableNewOperatorSelectivityMode || EnableCompositeIndexPlanner))
 		{
 			const MongoIndexOperatorInfo *indexOperator =
 				GetMongoIndexOperatorInfoByPostgresFuncId(req->funcid);
@@ -395,8 +417,7 @@ dollar_support(PG_FUNCTION_ARGS)
 				responsePointer = (Pointer) req;
 			}
 		}
-		else if (SetSelectivityForFullScan &&
-				 req->funcid == BsonRangeMatchFunctionId())
+		else if (req->funcid == BsonRangeMatchFunctionId())
 		{
 			/* For fullScan for orderby, we want to ensure we mark the
 			 * selectivity as 1.0 to ensure that we say that it will select
@@ -415,12 +436,11 @@ dollar_support(PG_FUNCTION_ARGS)
 		 * we simply say here that its cost is super low.
 		 */
 		SupportRequestCost *req = (SupportRequestCost *) supportRequest;
-		if (SetSelectivityForFullScan &&
-			req->funcid == BsonRangeMatchFunctionId() && req->node != NULL &&
+		if (req->funcid == BsonRangeMatchFunctionId() && req->node != NULL &&
 			IsA(req->node, FuncExpr))
 		{
 			FuncExpr *func = (FuncExpr *) req->node;
-			if (IsBsonRangeArgsForFullScan(func->args))
+			if (IsBsonRangeArgsForFullScanOrElemMatch(func->args))
 			{
 				req->per_tuple = 1e-9;
 				req->startup = 0;
@@ -490,10 +510,10 @@ bson_dollar_merge_filter_support(PG_FUNCTION_ARGS)
 }
 
 
-static bool
-IsBsonRangeArgsForFullScan(List *args)
+bool
+TryGetRangeParamsForRangeArgs(List *args, DollarRangeParams *params)
 {
-	if (list_length(args) == 2)
+	if (list_length(args) != 2)
 	{
 		return false;
 	}
@@ -511,14 +531,34 @@ IsBsonRangeArgsForFullScan(List *args)
 	pgbsonelement queryElement;
 	PgbsonToSinglePgbsonElement(queryBson, &queryElement);
 
+	InitializeQueryDollarRange(&queryElement.bsonValue, params);
+	return true;
+}
+
+
+bool
+IsBsonRangeArgsForFullScanOrElemMatch(List *args)
+{
 	DollarRangeParams rangeParams = { 0 };
-	InitializeQueryDollarRange(&queryElement.bsonValue, &rangeParams);
-	if (rangeParams.isFullScan)
+	if (!TryGetRangeParamsForRangeArgs(args, &rangeParams))
 	{
-		return true;
+		return false;
 	}
 
-	return false;
+	return rangeParams.isElemMatch || rangeParams.isFullScan;
+}
+
+
+bool
+IsBsonRangeArgsForFullScan(List *args)
+{
+	DollarRangeParams rangeParams = { 0 };
+	if (!TryGetRangeParamsForRangeArgs(args, &rangeParams))
+	{
+		return false;
+	}
+
+	return rangeParams.isFullScan;
 }
 
 
@@ -2185,11 +2225,6 @@ ProcessOrderByStatements(PlannerInfo *root,
 				break;
 			}
 
-			if (determinedSortOrder < 0 && !EnableIndexOrderByReverse)
-			{
-				continue;
-			}
-
 			if (determinedSortOrder < 0 &&
 				!(IsClusterVersionAtleast(DocDB_V0, 107, 0) ||
 				  IsClusterVersionAtLeastPatch(DocDB_V0, 106, 1)))
@@ -2681,8 +2716,7 @@ HandleSupportRequestCondition(SupportRequestIndexCondition *req)
 	}
 
 	if (operator->indexStrategy == BSON_INDEX_STRATEGY_DOLLAR_ELEMMATCH &&
-		(IsCompositeOpFamilyOid(req->index->relam, operatorFamily) ||
-		 UseNewElemMatchIndexPushdown))
+		IsCompositeOpFamilyOid(req->index->relam, operatorFamily))
 	{
 		Expr *elemMatchExpr = ProcessElemMatchOperator(options, queryValue, operator,
 													   args);
@@ -4439,9 +4473,9 @@ IsSupportedElemMatchExpr(Node *elemMatchExpr, bytea *options,
 
 
 static void
-WalkExprAndAddSupportedElemMatchExprsNew(List *clauses, bytea *options,
-										 IndexElemmatchState *elemMatchState, const
-										 char *topLevelPath)
+WalkExprAndAddSupportedElemMatchExprs(List *clauses, bytea *options,
+									  IndexElemmatchState *elemMatchState, const
+									  char *topLevelPath)
 {
 	CHECK_FOR_INTERRUPTS();
 	check_stack_depth();
@@ -4460,7 +4494,7 @@ WalkExprAndAddSupportedElemMatchExprsNew(List *clauses, bytea *options,
 				continue;
 			}
 
-			WalkExprAndAddSupportedElemMatchExprsNew(
+			WalkExprAndAddSupportedElemMatchExprs(
 				boolExpr->args, options, elemMatchState, topLevelPath);
 			continue;
 		}
@@ -4475,72 +4509,37 @@ WalkExprAndAddSupportedElemMatchExprsNew(List *clauses, bytea *options,
 			continue;
 		}
 
-		if (elemMatchState->indexPath == NULL)
+		/* GetOrCreate the path level state */
+		ListCell *cell;
+		IndexElemMatchPathState *pathState = NULL;
+		foreach(cell, elemMatchState->pathStates)
 		{
-			elemMatchState->indexPath = queryElement.path;
-			elemMatchState->indexPathLength = queryElement.pathLength;
-			elemMatchState->isTopLevel = strcmp(topLevelPath, queryElement.path) == 0;
-		}
-		else if (elemMatchState->indexPathLength != queryElement.pathLength ||
-				 strncmp(elemMatchState->indexPath, queryElement.path,
-						 queryElement.pathLength) != 0)
-		{
-			continue;
-		}
-
-		pgbson_writer qualWriter;
-		PgbsonArrayWriterStartDocument(elemMatchState->stateWriter, &qualWriter);
-		PgbsonWriterAppendInt32(&qualWriter, "op", 2, innerOperator->indexStrategy);
-		PgbsonWriterAppendValue(&qualWriter, "value", 5, &queryElement.bsonValue);
-		PgbsonWriterAppendBool(&qualWriter, "isTopLevel", 10, elemMatchState->isTopLevel);
-		PgbsonArrayWriterEndDocument(elemMatchState->stateWriter, &qualWriter);
-	}
-}
-
-
-static List *
-WalkExprAndAddSupportedElemMatchExprs(List *clauses, bytea *options)
-{
-	CHECK_FOR_INTERRUPTS();
-	check_stack_depth();
-
-	List *matchedArgs = NIL;
-	ListCell *elemMatchCell;
-	foreach(elemMatchCell, clauses)
-	{
-		Node *elemMatchExpr = (Node *) lfirst(elemMatchCell);
-
-		if (IsA(elemMatchCell, BoolExpr))
-		{
-			BoolExpr *boolExpr = (BoolExpr *) elemMatchExpr;
-			if (boolExpr->boolop != AND_EXPR)
+			IndexElemMatchPathState *currentState = lfirst(cell);
+			if (currentState->indexPathLength == queryElement.pathLength &&
+				strncmp(queryElement.path, currentState->indexPath,
+						currentState->indexPathLength) == 0)
 			{
-				/* We only support $elemMatch with AND expressions */
-				continue;
+				pathState = currentState;
+				break;
 			}
-
-			List *nestedExprs = WalkExprAndAddSupportedElemMatchExprs(
-				boolExpr->args, options);
-			matchedArgs = list_concat(matchedArgs, nestedExprs);
-			continue;
 		}
 
-		List *innerArgs = NIL;
-		const MongoIndexOperatorInfo *innerOperator;
-		pgbsonelement queryElement;
-		if (!IsSupportedElemMatchExpr(elemMatchExpr, options, &innerOperator, &innerArgs,
-									  &queryElement))
+		if (pathState == NULL)
 		{
-			continue;
+			/* Not found - build a new one and add it in */
+			pathState = palloc0(sizeof(IndexElemMatchPathState));
+			pathState->indexPath = queryElement.path;
+			pathState->indexPathLength = queryElement.pathLength;
+			pathState->isTopLevel = strcmp(topLevelPath, queryElement.path) == 0;
+			elemMatchState->pathStates = lappend(elemMatchState->pathStates, pathState);
 		}
 
-		Expr *finalExpression =
-			(Expr *) GetOpExprClauseFromIndexOperator(innerOperator, innerArgs,
-													  options);
-		matchedArgs = lappend(matchedArgs, finalExpression);
-	}
+		IndexElemMatchSingleOp *singleOp = palloc0(sizeof(IndexElemMatchSingleOp));
+		singleOp->op = innerOperator->indexStrategy;
+		singleOp->value = queryElement.bsonValue;
 
-	return matchedArgs;
+		pathState->singleOps = lappend(pathState->singleOps, singleOp);
+	}
 }
 
 
@@ -4589,51 +4588,55 @@ ProcessElemMatchOperator(bytea *options, Datum queryValue, const
 	/* Get the underlying list of expressions that are AND-ed */
 	List *clauses = make_ands_implicit(expr);
 
-	if (UseNewElemMatchIndexOperatorOnPushdown)
+	IndexElemmatchState elemMatchState = { 0 };
+
+	WalkExprAndAddSupportedElemMatchExprs(clauses, options, &elemMatchState,
+										  argElement.path);
+
+	if (elemMatchState.pathStates == NIL)
 	{
-		IndexElemmatchState elemMatchState = { 0 };
+		return NULL;
+	}
+
+	ListCell *cell;
+
+	List *overallQuals = NIL;
+	foreach(cell, elemMatchState.pathStates)
+	{
+		IndexElemMatchPathState *pathState = lfirst(cell);
+		ListCell *innerCell;
 
 		pgbson_writer writer;
 		PgbsonWriterInit(&writer);
 		pgbson_array_writer arrayWriter;
 		PgbsonWriterStartArray(&writer, "", 0, &arrayWriter);
-		elemMatchState.stateWriter = &arrayWriter;
 
-		WalkExprAndAddSupportedElemMatchExprsNew(clauses, options, &elemMatchState,
-												 argElement.path);
-
-		if (elemMatchState.indexPath == NULL)
+		foreach(innerCell, pathState->singleOps)
 		{
-			PgbsonWriterFree(&writer);
-			return NULL;
+			IndexElemMatchSingleOp *singleOp = lfirst(innerCell);
+
+			pgbson_writer qualWriter;
+			PgbsonArrayWriterStartDocument(&arrayWriter, &qualWriter);
+			PgbsonWriterAppendInt32(&qualWriter, "op", 2, singleOp->op);
+			PgbsonWriterAppendValue(&qualWriter, "value", 5, &singleOp->value);
+			PgbsonWriterAppendBool(&qualWriter, "isTopLevel", 10, pathState->isTopLevel);
+			PgbsonArrayWriterEndDocument(&arrayWriter, &qualWriter);
 		}
 
 		pgbsonelement queryElement;
-		queryElement.path = elemMatchState.indexPath;
-		queryElement.pathLength = elemMatchState.indexPathLength;
+		queryElement.path = pathState->indexPath;
+		queryElement.pathLength = pathState->indexPathLength;
 		queryElement.bsonValue = PgbsonArrayWriterGetValue(&arrayWriter);
 		Expr *result = GetElemMatchIndexPushdownOperator(context.documentExpr,
 														 &queryElement);
 		PgbsonWriterFree(&writer);
-		return result;
+		list_free_deep(pathState->singleOps);
+		pathState->singleOps = NIL;
+		overallQuals = lappend(overallQuals, result);
 	}
-	else
-	{
-		List *matchedArgs = WalkExprAndAddSupportedElemMatchExprs(clauses, options);
-		if (matchedArgs == NIL)
-		{
-			return NULL;
-		}
-		else if (list_length(matchedArgs) == 1)
-		{
-			/* If there's only one argument for $elemMatch, return it */
-			return (Expr *) linitial(matchedArgs);
-		}
-		else
-		{
-			return make_ands_explicit(matchedArgs);
-		}
-	}
+
+	list_free_deep(elemMatchState.pathStates);
+	return make_ands_explicit(overallQuals);
 }
 
 

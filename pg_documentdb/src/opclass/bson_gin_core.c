@@ -3489,8 +3489,9 @@ GinBsonComparePartialGreater(BsonIndexTerm *queryValue,
 	else
 	{
 		bool isComparisonValid = true;
+		const char *collation = NULL;
 		int cmp = CompareBsonIndexTerm(compareValue, queryValue,
-									   &isComparisonValid);
+									   &isComparisonValid, collation);
 		if (!isComparisonValid)
 		{
 			return -1;
@@ -3638,9 +3639,10 @@ GinBsonComparePartialLess(BsonIndexTerm *queryValue,
 		else
 		{
 			bool isComparisonValid = true;
+			const char *collation = NULL;
 			cmp = CompareBsonIndexTerm(compareValue,
 									   &maxValueIndexTerm,
-									   &isComparisonValid);
+									   &isComparisonValid, collation);
 			if (!isComparisonValid)
 			{
 				return -1;
@@ -3689,8 +3691,9 @@ GinBsonComparePartialDollarRange(DollarRangeValues *rangeValues,
 										  &rangeValues->params.minValue) == 0)
 		{
 			bool isComparisonValidMin = true;
+			const char *collation = NULL;
 			int minCmp = CompareBsonIndexTerm(compareValue, &minValueIndexTerm,
-											  &isComparisonValidMin);
+											  &isComparisonValidMin, collation);
 
 			/* Do the default comparison check for Min */
 			isMinConditionMet = rangeValues->params.isMinInclusive ? minCmp >= 0 :
@@ -3717,8 +3720,9 @@ GinBsonComparePartialDollarRange(DollarRangeValues *rangeValues,
 		else if (sortOrderCmpMax == 0)
 		{
 			bool isComparisonValidMax = true;
+			const char *collation = NULL;
 			maxCmp = CompareBsonIndexTerm(compareValue, &maxValueIndexTerm,
-										  &isComparisonValidMax);
+										  &isComparisonValidMax, collation);
 
 			/* Do the default comparison check for Min */
 			isMaxConditionMet = rangeValues->params.isMaxInclusive ? maxCmp <= 0 :

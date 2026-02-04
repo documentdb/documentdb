@@ -93,7 +93,7 @@ impl DocumentDBError {
         )
     }
 
-    #[allow(clippy::self_named_constructors)]
+    #[expect(clippy::self_named_constructors)]
     pub fn documentdb_error(e: ErrorCode, msg: String) -> Self {
         DocumentDBError::DocumentDBError(e, msg, Backtrace::capture())
     }

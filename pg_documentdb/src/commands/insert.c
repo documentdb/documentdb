@@ -94,6 +94,7 @@ PG_FUNCTION_INFO_V1(command_insert);
 PG_FUNCTION_INFO_V1(command_insert_one);
 PG_FUNCTION_INFO_V1(command_insert_worker);
 PG_FUNCTION_INFO_V1(command_insert_bulk);
+PG_FUNCTION_INFO_V1(command_insert_txn_proc);
 
 
 static BatchInsertionSpec * BuildBatchInsertionSpec(bson_iter_t *insertCommandIter,
@@ -172,7 +173,7 @@ command_insert(PG_FUNCTION_ARGS)
 
 
 /*
- * command_insert_bulk handles the insert command invocation through a PostgreSQL procedure.
+ * command_insert_bulk handles the insert command invocation through a PostgreSQL procedure and commits after each batch.
  */
 Datum
 command_insert_bulk(PG_FUNCTION_ARGS)
@@ -205,6 +206,19 @@ command_insert_bulk(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_DATUM(result);
+}
+
+
+/*
+ * command_insert_txn_proc handles the insert command invocation through a PostgreSQL procedure.
+ * this function behaves the same way as command_insert.
+ */
+Datum
+command_insert_txn_proc(PG_FUNCTION_ARGS)
+{
+	ReportFeatureUsage(FEATURE_COMMAND_INSERT);
+	bool isTransactional = true;
+	PG_RETURN_DATUM(CommandInsertCore(fcinfo, isTransactional, CurrentMemoryContext));
 }
 
 
@@ -707,6 +721,10 @@ DoSingleInsert(MongoCollection *collection,
 		/* Abort inner transaction */
 		RollbackAndReleaseCurrentSubTransaction();
 		CurrentResourceOwner = oldOwner;
+		if (IsOperatorInterventionError(errorData))
+		{
+			ReThrowError(errorData);
+		}
 
 		MemoryContextSwitchTo(batchResult->resultMemoryContext);
 		batchResult->writeErrors = lappend(batchResult->writeErrors,
@@ -861,8 +879,8 @@ ProcessInsertion(MongoCollection *collection,
 				 text *transactionId, ExprEvalState *evalState)
 {
 	if (transactionId != NULL &&
-		!DocumentBsonValueHasDocumentId(documentValue) &&
 		collection->shardKey != NULL &&
+		!DocumentBsonValueHasDocumentId(documentValue) &&
 		PgbsonHasDocumentId(collection->shardKey))
 	{
 		RetryableWriteResult writeResult;

@@ -16,7 +16,7 @@ use crate::{
 
 // Create the transaction if required, and populate the context information with the transaction info
 pub async fn handle(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &mut ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<()> {
@@ -172,7 +172,7 @@ pub async fn handle(
     Ok(())
 }
 
-pub async fn process_commit(context: &mut ConnectionContext) -> Result<Response> {
+pub async fn process_commit(context: &ConnectionContext) -> Result<Response> {
     if let Some((session_id, _)) = context.transaction.as_ref() {
         let store = context.service_context.transaction_store();
         store.commit(session_id).await?;
@@ -180,7 +180,7 @@ pub async fn process_commit(context: &mut ConnectionContext) -> Result<Response>
     Ok(Response::ok())
 }
 
-pub async fn process_abort(context: &mut ConnectionContext) -> Result<Response> {
+pub async fn process_abort(context: &ConnectionContext) -> Result<Response> {
     let (session_id, _) = context
         .transaction
         .as_ref()

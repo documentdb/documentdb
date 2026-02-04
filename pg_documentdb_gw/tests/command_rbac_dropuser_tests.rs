@@ -1,16 +1,17 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
- * tests/command/rbac/dropuser_tests.rs
+ * tests/command_rbac_dropuser_tests.rs
  *
  *-------------------------------------------------------------------------
  */
 
+pub mod common;
+
 use bson::doc;
 use uuid::Uuid;
 
-pub mod common;
-pub use crate::common::rbac_utils::user_exists;
+use crate::common::{rbac_utils, validation_utils};
 
 #[tokio::test]
 async fn test_drop_user() -> Result<(), mongodb::error::Error> {
@@ -19,7 +20,7 @@ async fn test_drop_user() -> Result<(), mongodb::error::Error> {
     let db = client.database(db_name);
     let username = format!("user_{}", Uuid::new_v4().to_string().replace("-", ""));
     let user_id = format!("{}.{}", db_name, username);
-    let role = "read";
+    let role = "readAnyDatabase";
 
     db.run_command(doc! {
         "createUser": &username,
@@ -35,7 +36,7 @@ async fn test_drop_user() -> Result<(), mongodb::error::Error> {
         .await?;
 
     assert!(
-        user_exists(&users_before, &user_id),
+        rbac_utils::user_exists(&users_before, &user_id),
         "User should exist before drop"
     );
 
@@ -51,7 +52,7 @@ async fn test_drop_user() -> Result<(), mongodb::error::Error> {
         .await?;
 
     assert!(
-        !user_exists(&users_after, &user_id),
+        !rbac_utils::user_exists(&users_after, &user_id),
         "User should not exist after drop"
     );
 
@@ -61,24 +62,32 @@ async fn test_drop_user() -> Result<(), mongodb::error::Error> {
 #[tokio::test]
 async fn test_cannot_drop_system_users() -> Result<(), mongodb::error::Error> {
     let client = common::initialize().await;
-    let db = client.database(db_name);
+    let db = client.database("drop_user");
 
     let system_users = vec![
-        "documentdb_bg_worker_role",
-        "documentdb_admin_role",
-        "documentdb_readonly_role",
+        ("documentdb_bg_worker_role", 2, "Invalid username."),
+        (
+            "documentdb_admin_role",
+            16909442,
+            "role \"documentdb_admin_role\" cannot be dropped because some objects depend on it",
+        ),
+        (
+            "documentdb_readonly_role",
+            16909442,
+            "role \"documentdb_readonly_role\" cannot be dropped because some objects depend on it",
+        ),
     ];
 
-    for user in system_users {
-        common::utils::execute_command_and_validate_error(
+    for (user, error_code, error_message) in system_users {
+        validation_utils::execute_command_and_validate_error(
             &db,
             doc! {
                 "dropUser": user
             },
-            2,
-            "Invalid username.",
+            error_code,
+            error_message,
         )
-        .await?;
+        .await;
     }
 
     Ok(())

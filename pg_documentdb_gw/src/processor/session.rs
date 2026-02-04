@@ -13,12 +13,12 @@ use crate::{
 };
 
 pub async fn end_sessions(
-    request_context: &mut RequestContext<'_>,
-    context: &mut ConnectionContext,
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
 ) -> Result<Response> {
     let request = request_context.payload;
 
-    let store = context.service_context.transaction_store();
+    let store = connection_context.service_context.transaction_store();
     for value in request
         .document()
         .get_array("endSessions")
@@ -38,7 +38,7 @@ pub async fn end_sessions(
         let _ = store.abort(session_id).await;
 
         // Remove all cursors for the session
-        context
+        connection_context
             .service_context
             .cursor_store()
             .invalidate_cursors_by_session(session_id)

@@ -21,9 +21,7 @@
 extern bool EnableNewOperatorSelectivityMode;
 extern bool EnableCompositeIndexPlanner;
 extern bool LowSelectivityForLookup;
-extern bool SetSelectivityForFullScan;
 
-static bool IsDollarRangeFullScan(List *args);
 static double GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double
 									   defaultExprSelectivity);
 
@@ -76,11 +74,24 @@ GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 							 double defaultExprSelectivity)
 {
 	/* Special case, check if it's a full scan */
-	if (SetSelectivityForFullScan &&
-		selectivityOpExpr == BsonRangeMatchOperatorOid() &&
-		IsDollarRangeFullScan(args))
+	DollarRangeParams params = { 0 };
+	if (selectivityOpExpr == BsonRangeMatchOperatorOid() &&
+		TryGetRangeParamsForRangeArgs(args, &params))
 	{
-		return 1.0;
+		if (params.isFullScan)
+		{
+			return 1.0;
+		}
+
+		if (params.isElemMatch)
+		{
+			/* Since elemMatch runtime evaluation is not implemented yet, the generic_restriction_selectivity
+			 * yields a selectivity of 1.0 for small docs.
+			 * TODO: Once elemMatch runtime selectivity is enabled - remove this logic.
+			 */
+			return GetStatisticsNoStatsData(args, selectivityOpExpr,
+											defaultExprSelectivity);
+		}
 	}
 
 	if (!EnableNewOperatorSelectivityMode && !EnableCompositeIndexPlanner)
@@ -100,26 +111,6 @@ GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 		planner, selectivityOpExpr, collation, args, varRelId, defaultInputSelectivity);
 
 	return selectivity;
-}
-
-
-static bool
-IsDollarRangeFullScan(List *args)
-{
-	/* Special case, check if it's a full scan */
-	Node *secondNode = lsecond(args);
-	if (!IsA(secondNode, Const))
-	{
-		return false;
-	}
-
-	Const *secondConst = (Const *) secondNode;
-	pgbsonelement dollarElement;
-	PgbsonToSinglePgbsonElement(
-		DatumGetPgBson(secondConst->constvalue), &dollarElement);
-	DollarRangeParams rangeParams = { 0 };
-	InitializeQueryDollarRange(&dollarElement.bsonValue, &rangeParams);
-	return rangeParams.isFullScan;
 }
 
 

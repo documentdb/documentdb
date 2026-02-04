@@ -1,0 +1,478 @@
+SET citus.next_shard_id TO 19841000;
+SET documentdb.next_collection_id TO 1984100;
+SET documentdb.next_collection_index_id TO 1984100;
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+SHOW documentdb.enableRbacCompliantSchemas;
+ documentdb.enableRbacCompliantSchemas 
+---------------------------------------------------------------------
+ on
+(1 row)
+
+SELECT documentdb_api.create_user('{"createUser":"user_rw", "pwd":"Password@9", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}]}');
+            create_user            
+---------------------------------------------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+\c regression user_rw
+SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog;
+-- Should not have access to the earlier API schemas
+SELECT documentdb_api.create_collection('test', 'my_coll1');
+ERROR:  permission denied for schema documentdb_api
+LINE 1: SELECT documentdb_api.create_collection('test', 'my_coll1');
+               ^
+SELECT documentdb_api_v2.create_collection('test', 'my_coll1');
+NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- Should not be able to drop database
+SELECT documentdb_api_v2.drop_database('test');
+ERROR:  permission denied for function drop_database
+      
+SELECT documentdb_api_v2.drop_collection('test','my_coll1');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api_v2.create_collection_view('db', '{ "create": "create_view_tests_not_capped1", "capped": false}');
+NOTICE:  creating collection
+         create_collection_view         
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT * FROM documentdb_api_v2.create_indexes_background('db', '{"createIndexes": "collection_6", "indexes": [{"key": {"a$**foo": 1}, "name": "my_idx_1"}]}');
+NOTICE:  creating collection
+                                                                                                               retval                                                                                                                | ok | requests 
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } } | t  | { }
+(1 row)
+
+SELECT documentdb_api_internal_readwrite.create_indexes_non_concurrently('db', '{"createIndexes": "my_coll1", "indexes": [{"key": {"a": 1}, "name": "idx_1", "unique": true }]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert('db', '{"insert":"into", "documents":[{"a":1}],"ordered":true}');
+NOTICE:  creating collection
+                                         insert                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT documentdb_api_v2.delete('db', '{"delete":"into","deletes":[{"q":{"a":1},"limit":1}],"ordered":true}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT documentdb_api_v2.rename_collection('db','my_coll1', 'my_coll1_renamed');
+ rename_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+select 1 from documentdb_api_v2.insert_one('db', 'updateme', '{"a":1,"_id":1,"b":1}');
+NOTICE:  creating collection
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+SELECT documentdb_api_v2.update(
+  'db',
+  '{"update":"updateme",
+    "updates":[
+      {"q":{"_id":1}, "u":{"$set":{"b":2}}, "multi":false, "upsert":false}
+    ],
+    "ordered":true}'
+);
+                                                               update                                                               
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT * FROM documentdb_api_v2.list_databases('{"listDatabases": 1, "nameOnly":true}');
+                                          list_databases                                          
+---------------------------------------------------------------------
+ { "databases" : [ { "name" : "db" }, { "name" : "test" } ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+select 1 from documentdb_api_v2.insert_one('bulkdb', 'updateme', '{"a":1,"_id":1,"b":1}');
+NOTICE:  creating collection
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+select 1 from documentdb_api_v2.insert_one('bulkdb', 'updateme', '{"a":2,"_id":2,"b":2}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+select 1 from documentdb_api_v2.insert_one('bulkdb', 'updateme', '{"a":3,"_id":3,"b":3}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+CALL documentdb_api_v2.update_bulk('bulkdb', '{"update":"updateme", "updates":[{"q":{},"u":{"$set":{"b":0}},"multi":true}]}');
+                                                  p_result                                                  | p_success 
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "3" }, "n" : { "$numberInt" : "3" } } | t
+(1 row)
+
+-- Count documents where b = 0 (should be 3)
+SELECT document FROM documentdb_api_v2.count_query('bulkdb', '{ "count": "updateme", "query": { "b": 0 } }');
+                               document                               
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "3" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db','aggregation_pipeline','{"_id":"1", "int": 10, "a" : { "b" : [ "x", 1, 2.0, true ] } }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db','aggregation_pipeline','{"_id":"2", "double": 2.0, "a" : { "b" : {"c": 3} } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db','aggregation_pipeline','{"_id":"3", "boolean": false, "a" : "no", "b": "yes", "c": true }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$addFields": { "newField" : "1", "a.y": ["p", "q"] } } ], "cursor": {} }');
+                                                                                  document                                                                                  
+---------------------------------------------------------------------
+ { "_id" : "1", "int" : { "$numberInt" : "10" }, "a" : { "b" : [ "x", { "$numberInt" : "1" }, { "$numberDouble" : "2.0" }, true ], "y" : [ "p", "q" ] }, "newField" : "1" }
+ { "_id" : "2", "double" : { "$numberDouble" : "2.0" }, "a" : { "b" : { "c" : { "$numberInt" : "3" } }, "y" : [ "p", "q" ] }, "newField" : "1" }
+ { "_id" : "3", "boolean" : false, "b" : "yes", "c" : true, "newField" : "1", "a" : { "y" : [ "p", "q" ] } }
+(3 rows)
+
+SELECT document FROM documentdb_api_v2.count_query('db', '{ "count": "aggregation_pipeline", "query": { "_id": { "$gt": "1" } } }');
+                               document                               
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "2" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM documentdb_api_v2.distinct_query('db', '{ "distinct": "aggregation_pipeline", "key": "_id" }');
+                               document                               
+---------------------------------------------------------------------
+ { "values" : [ "1", "2", "3" ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.db_stats('db');
+                                                                                                                                                                                                                                          db_stats                                                                                                                                                                                                                                           
+---------------------------------------------------------------------
+ { "db" : "db", "collections" : { "$numberLong" : "8" }, "views" : { "$numberLong" : "0" }, "objects" : { "$numberLong" : "0" }, "avgObjSize" : { "$numberDouble" : "0.0" }, "dataSize" : { "$numberDouble" : "548864.0" }, "storageSize" : { "$numberDouble" : "548864.0" }, "indexes" : { "$numberLong" : "10" }, "indexSize" : { "$numberDouble" : "811008.0" }, "totalSize" : { "$numberDouble" : "1359872.0" }, "scaleFactor" : { "$numberInt" : "1" }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT 1 FROM documentdb_api_v2.insert_one('db', 'coll_to_update', '{"a": 10,"b":7}');
+NOTICE:  creating collection
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+SELECT documentdb_api_v2.find_and_modify('db', '{"findAndModify": "coll_to_update", "query": {"a": 10}, "update": {"$set": {"a": 1000}}, "fields": {"_id": 0}, "new": true}');
+                                                                                                             find_and_modify                                                                                                             
+---------------------------------------------------------------------
+ ("{ ""lastErrorObject"" : { ""n"" : { ""$numberInt"" : ""1"" }, ""updatedExisting"" : true }, ""value"" : { ""a"" : { ""$numberInt"" : ""1000"" }, ""b"" : { ""$numberInt"" : ""7"" } }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT documentdb_api_v2.create_collection('db','newColl');
+NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT COUNT(documentdb_api_v2.insert_one('db','newColl', FORMAT('{"_id":"%s", "a": %s }', i, i )::documentdb_core.bson)) FROM generate_series(1, 100) i;
+ count 
+---------------------------------------------------------------------
+   100
+(1 row)
+
+SELECT documentdb_api_internal_readwrite.create_indexes_non_concurrently('db', '{"createIndexes": "newColl", "indexes": [{"key": {"a": 1}, "name": "my_idx_1" }]}', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+DO $$
+DECLARE i int;
+BEGIN
+FOR i IN 1..10 LOOP
+PERFORM documentdb_api_v2.insert_one('db', 'aggregation_cursor_txn', FORMAT('{ "_id": %s, "sk": %s, "a": "%s", "c": [ %s "d" ] }',  i, mod(i, 2), repeat('Sample', 10), repeat('"' || repeat('a', 10) || '", ', 5))::documentdb_core.bson);
+END LOOP;
+END;
+$$;
+NOTICE:  creating collection
+SELECT documentdb_api_internal_readwrite.create_indexes_non_concurrently('db', '{"createIndexes": "aggregation_cursor_txn", "indexes": [{"key": {"a": 1}, "name": "a_1" }]}', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+CREATE TEMP TABLE firstPageResponse AS
+SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid FROM
+    documentdb_api_v2.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "aggregation_cursor_txn", "batchSize": 5 }', cursorId => 4294967294);
+SELECT * FROM firstPageResponse;
+                                                                                                                        bson_dollar_project                                                                                                                        |                                                                                                                                                                                                   continuation                                                                                                                                                                                                    | persistconnection |  cursorid  
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "firstBatch" : [ { "_id" : { "$numberInt" : "1" } }, { "_id" : { "$numberInt" : "2" } }, { "_id" : { "$numberInt" : "3" } }, { "_id" : { "$numberInt" : "4" } }, { "_id" : { "$numberInt" : "5" } } ] } } | { "qi" : { "$numberLong" : "4294967294" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qc" : { "find" : "aggregation_cursor_txn", "batchSize" : { "$numberInt" : "5" } }, "continuation" : [ { "table_name" : "documents_15_102188", "value" : { "$binary" : { "base64" : "AAAAAAUA", "subType" : "00" } } } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | f                 | 4294967294
+(1 row)
+
+-- now drain it
+SELECT continuation AS r1_continuation FROM firstPageResponse \gset
+SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1, "cursor.id": 1 }'), continuation FROM documentdb_api_v2.cursor_get_more(database => 'db', getMoreSpec => '{ "collection": "aggregation_cursor_txn", "getMore": 4294967294, "batchSize": 6 }', continuationSpec => :'r1_continuation');
+                                                                                                                   bson_dollar_project                                                                                                                    | continuation 
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "nextBatch" : [ { "_id" : { "$numberInt" : "6" } }, { "_id" : { "$numberInt" : "7" } }, { "_id" : { "$numberInt" : "8" } }, { "_id" : { "$numberInt" : "9" } }, { "_id" : { "$numberInt" : "10" } } ] } } | 
+(1 row)
+
+SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid 
+FROM documentdb_api_v2.aggregate_cursor_first_page(
+    database => 'db', 
+    commandSpec => '{ "aggregate": "aggregation_cursor_txn", "pipeline": [{ "$match": { "sk": 0 } }], "cursor": { "batchSize": 3 } }', 
+    cursorId => 4294967295
+);
+                                                                                    bson_dollar_project                                                                                    |                                                                                                                                                                                                                                               continuation                                                                                                                                                                                                                                               | persistconnection |  cursorid  
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "4294967295" }, "firstBatch" : [ { "_id" : { "$numberInt" : "2" } }, { "_id" : { "$numberInt" : "4" } }, { "_id" : { "$numberInt" : "6" } } ] } } | { "qi" : { "$numberLong" : "4294967295" }, "qp" : false, "qk" : { "$numberInt" : "2" }, "qc" : { "aggregate" : "aggregation_cursor_txn", "pipeline" : [ { "$match" : { "sk" : { "$numberInt" : "0" } } } ], "cursor" : { "batchSize" : { "$numberInt" : "3" } } }, "continuation" : [ { "table_name" : "documents_15_102188", "value" : { "$binary" : { "base64" : "AAAAAAYA", "subType" : "00" } } } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | f                 | 4294967295
+(1 row)
+
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') 
+FROM documentdb_api_v2.list_indexes_cursor_first_page('db', '{ "listIndexes": "newColl" }') 
+ORDER BY 1;
+                                                                                                     bson_dollar_unwind                                                                                                     
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.newColl", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.newColl", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" } }, "name" : "my_idx_1" } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+SELECT cursorpage, continuation, persistconnection, cursorid 
+FROM documentdb_api_v2.list_collections_cursor_first_page('db', '{ "listCollections": 1, "nameOnly": true }');
+                                                                                                                                                                                                                                                                                                                                                                              cursorpage                                                                                                                                                                                                                                                                                                                                                                               | continuation | persistconnection | cursorid 
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.$cmd.ListCollections", "firstBatch" : [ { "name" : "aggregation_cursor_txn", "type" : "collection" }, { "name" : "aggregation_pipeline", "type" : "collection" }, { "name" : "collection_6", "type" : "collection" }, { "name" : "coll_to_update", "type" : "collection" }, { "name" : "create_view_tests_not_capped1", "type" : "collection" }, { "name" : "firstCollection", "type" : "collection" }, { "name" : "into", "type" : "collection" }, { "name" : "my_coll1_renamed", "type" : "collection" }, { "name" : "newColl", "type" : "collection" }, { "name" : "secondCollection", "type" : "collection" }, { "name" : "updateme", "type" : "collection" } ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db', 'coll_agg_proj', '{ "_id": 1, "a": "cat" }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db', 'coll_agg_proj', '{ "_id": 2, "a": "dog" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db', 'coll_agg_proj', '{ "_id": 3, "a": "cAt" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db', 'coll_agg_proj', '{ "_id": 4, "a": "dOg" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db', 'coll_agg_proj', '{ "_id": "hen", "a": "hen" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db', 'coll_agg_proj', '{ "_id": "bat", "a": "bat" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('db', '{ "find": "coll_agg_proj", "filter": { "$expr": {"$ne": ["$a", "CAT"]} }, "sort": { "_id": 1 }, "skip": 0, "collation": { "locale": "fi", "strength" : 1 } }');
+                    document                     
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "cat" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "dog" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "cAt" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "dOg" }
+ { "_id" : "bat", "a" : "bat" }
+ { "_id" : "hen", "a" : "hen" }
+(6 rows)
+
+SELECT documentdb_api_v2.insert_one('db','agg_facet_group','{ "_id": 1, "a": { "b": 1, "c": 1} }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db','agg_facet_group','{ "_id": 2, "a": { "b": 1, "c": 2} }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db','agg_facet_group','{ "_id": 3, "a": { "b": 1, "c": 3} }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db','agg_facet_group','{ "_id": 4, "a": { "b": 2, "c": 1} }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db','agg_facet_group','{ "_id": 5, "a": { "b": 2, "c": 2} }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db','agg_facet_group','{ "_id": 6, "a": { "b": 2, "c": 3} }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db','agg_facet_group','{ "_id": 7, "a": { "b": 3, "c": 1} }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db','agg_facet_group','{ "_id": 8, "a": { "b": 3, "c": 2} }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db','agg_facet_group','{ "_id": 9, "a": { "b": 3, "c": 3} }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$addFields": {"name": "$a.c"} }, { "$sort": { "a.b": 1, "name" : 1 } }, { "$facet": { "facet1" : [ { "$group": { "_id": "$a.b", "first": { "$first" : "$name" } } } ], "facet2" : [ { "$group": { "_id": "$a.b", "last": { "$last" : "$name" }}}]}} ] }');
+                                                                                                                                                                                                                             document                                                                                                                                                                                                                              
+---------------------------------------------------------------------
+ { "facet1" : [ { "_id" : { "$numberInt" : "2" }, "first" : { "$numberInt" : "1" } }, { "_id" : { "$numberInt" : "3" }, "first" : { "$numberInt" : "1" } }, { "_id" : { "$numberInt" : "1" }, "first" : { "$numberInt" : "1" } } ], "facet2" : [ { "_id" : { "$numberInt" : "2" }, "last" : { "$numberInt" : "3" } }, { "_id" : { "$numberInt" : "3" }, "last" : { "$numberInt" : "3" } }, { "_id" : { "$numberInt" : "1" }, "last" : { "$numberInt" : "3" } } ] }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$addFields": {"name": "$a.c"} }, { "$sort": { "a.b": 1, "name" : 1 } }, { "$facet": { "facet1" : [ { "$group": { "_id": "$a.b", "first": { "$first" : "$name" } } } ], "facet1" : [ { "$group": { "_id": "$a.b", "last": { "$last" : "$name" }}}]}} ] }');
+                                                                                                             document                                                                                                             
+---------------------------------------------------------------------
+ { "facet1" : [ { "_id" : { "$numberInt" : "2" }, "last" : { "$numberInt" : "3" } }, { "_id" : { "$numberInt" : "3" }, "last" : { "$numberInt" : "3" } }, { "_id" : { "$numberInt" : "1" }, "last" : { "$numberInt" : "3" } } ] }
+(1 row)
+
+SELECT * FROM bson_dollar_project('{"a":{"$numberDouble": "10.2"}}', '{"result": { "$multiply": [ "$a", 1]}}');
+                     bson_dollar_project                      
+---------------------------------------------------------------------
+ { "result" : { "$numberDouble" : "10.199999999999999289" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db', 'graphlookup_places', '{ "_id" : 0, "placeCode" : "P1", "nearby" : [ "P2", "P3" ] }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db', 'graphlookup_places', '{ "_id" : 1, "placeCode" : "P2", "nearby" : [ "P1", "P4" ] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db', 'graphlookup_places', '{ "_id" : 2, "placeCode" : "P3", "nearby" : [ "P1" ] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db', 'graphlookup_places', '{ "_id" : 3, "placeCode" : "P4", "nearby" : [ "P2", "P5" ] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db', 'graphlookup_places', '{ "_id" : 4, "placeCode" : "P5", "nearby" : [ "P4" ] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db', 'graphlookup_visitors', '{ "_id" : 1, "userName" : "Sam", "homePlace" : "P1" }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db', 'graphlookup_visitors', '{ "_id" : 2, "userName" : "Alex", "homePlace" : "P1" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_v2.insert_one('db', 'graphlookup_visitors', '{ "_id" : 3, "userName" : "Jamie", "homePlace" : "P2" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
+    '{ "aggregate": "graphlookup_visitors", "pipeline": [ { "$graphLookup": { "from": "graphlookup_places", "startWith": "$homePlace", "connectFromField": "nearby", "connectToField": "placeCode", "as": "reachablePlaces", "maxDepth": 2 } } ]}');
+                                                                                                                                                                                                                                                        document                                                                                                                                                                                                                                                         
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "userName" : "Sam", "homePlace" : "P1", "reachablePlaces" : [ { "_id" : { "$numberInt" : "0" }, "placeCode" : "P1", "nearby" : [ "P2", "P3" ] }, { "_id" : { "$numberInt" : "1" }, "placeCode" : "P2", "nearby" : [ "P1", "P4" ] }, { "_id" : { "$numberInt" : "2" }, "placeCode" : "P3", "nearby" : [ "P1" ] }, { "_id" : { "$numberInt" : "3" }, "placeCode" : "P4", "nearby" : [ "P2", "P5" ] } ] }
+ { "_id" : { "$numberInt" : "2" }, "userName" : "Alex", "homePlace" : "P1", "reachablePlaces" : [ { "_id" : { "$numberInt" : "0" }, "placeCode" : "P1", "nearby" : [ "P2", "P3" ] }, { "_id" : { "$numberInt" : "1" }, "placeCode" : "P2", "nearby" : [ "P1", "P4" ] }, { "_id" : { "$numberInt" : "2" }, "placeCode" : "P3", "nearby" : [ "P1" ] }, { "_id" : { "$numberInt" : "3" }, "placeCode" : "P4", "nearby" : [ "P2", "P5" ] } ] }
+ { "_id" : { "$numberInt" : "3" }, "userName" : "Jamie", "homePlace" : "P2", "reachablePlaces" : [ { "_id" : { "$numberInt" : "0" }, "placeCode" : "P1", "nearby" : [ "P2", "P3" ] }, { "_id" : { "$numberInt" : "1" }, "placeCode" : "P2", "nearby" : [ "P1", "P4" ] }, { "_id" : { "$numberInt" : "2" }, "placeCode" : "P3", "nearby" : [ "P1" ] }, { "_id" : { "$numberInt" : "3" }, "placeCode" : "P4", "nearby" : [ "P2", "P5" ] }, { "_id" : { "$numberInt" : "4" }, "placeCode" : "P5", "nearby" : [ "P4" ] } ] }
+(3 rows)
+
+SELECT * FROM bson_dollar_project('{}', '{"result": { "$in": [3, [1, 2, {"$add": [1, 1, 1]}]]}}');
+ bson_dollar_project 
+---------------------------------------------------------------------
+ { "result" : true }
+(1 row)
+
+SELECT * FROM bson_dollar_project('{}', '{"result": { "$in": [3, [1, 2, {"$add": [1, 1, 3]}]]}}');
+ bson_dollar_project  
+---------------------------------------------------------------------
+ { "result" : false }
+(1 row)
+
+SELECT * FROM bson_dollar_project('{"a": true, "b": [1, 2]}', '{"result": { "$in": ["$a", [1, 2, {"$isArray": "$b"}]]}}');
+ bson_dollar_project 
+---------------------------------------------------------------------
+ { "result" : true }
+(1 row)
+
+SELECT * FROM bson_dollar_project('{"a": {}}', '{"result": { "$in": [{"$literal": "$a"}, [1, 2, {"$literal": "$a"}]]}}');
+ bson_dollar_project 
+---------------------------------------------------------------------
+ { "result" : true }
+(1 row)
+

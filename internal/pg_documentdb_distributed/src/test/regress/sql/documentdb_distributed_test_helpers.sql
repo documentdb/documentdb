@@ -116,6 +116,32 @@ BEGIN
 END; $$ language plpgsql;
 
 
+CREATE OR REPLACE FUNCTION documentdb_distributed_test_helpers.run_explain_and_trim(p_query text)
+RETURNS SETOF text
+AS $$
+DECLARE
+  v_explain_row text;
+BEGIN
+  FOR v_explain_row IN EXECUTE p_query
+  LOOP
+    IF v_explain_row ~ '^\s+Disabled: true\s*$' THEN
+      CONTINUE;
+    ELSIF v_explain_row ~ '^\s+Index Searches: [0-9]+\s*$' THEN
+      CONTINUE;
+    ELSIF v_explain_row ~ 'Parallel Index Scan using .+ on documents_[0-9]+ collection \(actual rows=[0-9\.]+ loops=[0-9]+\)' THEN
+      SELECT regexp_replace(v_explain_row, 'Parallel Index Scan using (.+) on documents_([0-9]+) collection \(actual rows=[0-9\.]+ loops=([0-9]+)\)',
+                                           'Parallel Index Scan using \1 on documents_\2 collection (actual rows=xyz loops=\3)') INTO v_explain_row;
+    ELSIF v_explain_row ~ 'actual rows=[0-9]+\.00' THEN
+      SELECT regexp_replace(v_explain_row, 'actual rows=([0-9]+)\.00', 'actual rows=\1') INTO v_explain_row;
+    ELSIF v_explain_row ~ 'Sort Method: quicksort  Memory: [0-9]+kB' THEN
+      SELECT regexp_replace(v_explain_row, 'Sort Method: quicksort  Memory: [0-9]+kB', 'Sort Method: quicksort  Memory: xxxkB') INTO v_explain_row;
+    END IF;
+    RETURN NEXT v_explain_row;
+  END LOOP;
+END
+$$
+LANGUAGE plpgsql;
+
 CREATE OR REPLACE FUNCTION documentdb_distributed_test_helpers.drop_primary_key(p_database_name text, p_collection_name text)
 RETURNS void
 AS $$

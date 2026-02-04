@@ -606,11 +606,31 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_maxmi
 
 /* $maxN are subject to the 100 MB limit */
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_maxminn_group_test1", "pipeline": [ { "$group": { "_id": "$teamId", "NScore":{"$maxN": {"input": "$points", "n": 12345678 } } } } ] }');
-ERROR:  Size is larger than maximum size allowed for an intermediate document 104857600
+                                                              document                                                              
+------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "T1", "NScore" : [ { "$numberInt" : "55" }, { "$numberInt" : "20" }, { "$numberInt" : "10" }, { "$numberInt" : "3" } ] }
+ { "_id" : "T2", "NScore" : [ { "$numberInt" : "60" }, { "$numberInt" : "40" }, { "$numberInt" : "18" }, { "$numberInt" : "7" } ] }
+(2 rows)
+
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_maxminn_group_test1", "pipeline": [ { "$group": { "_id": "$teamId", "NScore":{"$maxN": {"input": "$points", "n": 9223372036854775807 } } } } ] }');
-ERROR:  Size is larger than maximum size allowed for an intermediate document 104857600
+                                                              document                                                              
+------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "T1", "NScore" : [ { "$numberInt" : "55" }, { "$numberInt" : "20" }, { "$numberInt" : "10" }, { "$numberInt" : "3" } ] }
+ { "_id" : "T2", "NScore" : [ { "$numberInt" : "60" }, { "$numberInt" : "40" }, { "$numberInt" : "18" }, { "$numberInt" : "7" } ] }
+(2 rows)
+
 /* $minN are subject to the 100 MB limit */
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_maxminn_group_test1", "pipeline": [ { "$group": { "_id": "$teamId", "NScore":{"$minN": {"input": "$points", "n": 12345678 } } } } ] }');
-ERROR:  Size is larger than maximum size allowed for an intermediate document 104857600
+                                                              document                                                              
+------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "T1", "NScore" : [ { "$numberInt" : "3" }, { "$numberInt" : "10" }, { "$numberInt" : "20" }, { "$numberInt" : "55" } ] }
+ { "_id" : "T2", "NScore" : [ { "$numberInt" : "7" }, { "$numberInt" : "18" }, { "$numberInt" : "40" }, { "$numberInt" : "60" } ] }
+(2 rows)
+
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_maxminn_group_test1", "pipeline": [ { "$group": { "_id": "$teamId", "NScore":{"$minN": {"input": "$points", "n": 9223372036854775807 } } } } ] }');
-ERROR:  Size is larger than maximum size allowed for an intermediate document 104857600
+                                                              document                                                              
+------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "T1", "NScore" : [ { "$numberInt" : "3" }, { "$numberInt" : "10" }, { "$numberInt" : "20" }, { "$numberInt" : "55" } ] }
+ { "_id" : "T2", "NScore" : [ { "$numberInt" : "7" }, { "$numberInt" : "18" }, { "$numberInt" : "40" }, { "$numberInt" : "60" } ] }
+(2 rows)
+

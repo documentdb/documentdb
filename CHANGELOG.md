@@ -1,4 +1,5 @@
-### documentdb v1.110-0 (Unreleased) ###
+### documentdb v0.110-0 (Unreleased) ###
+* Add support for keyword `description` in `$jsonSchema` *[Feature]*
 
 ### documentdb v0.109-0 (Unreleased) ###
 * Support collation with find positional queries *[Feature]*
@@ -14,7 +15,7 @@
 * Enable ordered indexes by default. Can be turned off by specifying "storageEngine": {"enableOrderedIndex": false} for a single index or by turning off the `documentdb.defaultUseCompositeOpClass` GUC.
 * Fix NULL document crash from `$in: []` optimization on sharded collections.
 
-### documentdb v0.108-0 (Unreleased) ###
+### documentdb v0.108-0 (January 08, 2026) ###
 * Top-level `let` variables and `$$NOW` supported by default.
 * Fix collation support on find and aggregation when variableSpec is not available *[Bugfix]*.
 * Support `dropRole` command *[Feature]*
@@ -31,7 +32,7 @@
 * Provide Rust dev environment in devcontainer *[Feature]*
 * Add extension that adds a gateway host that's run as a postgres background worker *[Feature]*
 
-### documentdb v0.107-0 (Unreleased) ###
+### documentdb v0.107-0 (October 22, 2025) ###
 * Support sort by _id against the _id index using the enableIndexOrderbyPushdown flag *[Feature]*.
 * Improvements to explain for various scan types *[Feature]*.
 * Support schema enforcement with CSFLE integration *[Preview]*

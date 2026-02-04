@@ -55,7 +55,7 @@ pub fn process_is_db_grid(context: &ConnectionContext) -> Result<Response> {
     })))
 }
 
-pub fn process_get_rw_concern(request_context: &mut RequestContext<'_>) -> Result<Response> {
+pub fn process_get_rw_concern(request_context: &RequestContext<'_>) -> Result<Response> {
     let request = request_context.payload;
     let request_info = request_context.info;
 
@@ -158,7 +158,7 @@ struct CommandInfo {
     secondary_override_ok: Option<bool>,
 }
 
-static SUPPORTED_COMMANDS : [CommandInfo; 57] = [
+static SUPPORTED_COMMANDS : [CommandInfo; 62] = [
 	CommandInfo {
 		command_name: "abortTransaction",
 		admin_only: true,
@@ -181,6 +181,30 @@ static SUPPORTED_COMMANDS : [CommandInfo; 57] = [
 		help: "Authenticates the underlying connection using user-supplied credentials.",
 		secondary_ok: false,
 		requires_auth: false,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
+		command_name: "balancerStart",
+		admin_only: true,
+		help: "Enables the sharded cluster balancer, allowing automatic migration of chunks between shards.",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
+		command_name: "balancerStatus",
+		admin_only: true,
+		help: "Returns the current status of the sharded cluster balancer.",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
+		command_name: "balancerStop",
+		admin_only: true,
+		help: "Disables the sharded cluster balancer, preventing automatic chunk migrations.",
+		secondary_ok: false,
+		requires_auth: true,
 		secondary_override_ok: None,
 	},
 	CommandInfo {
@@ -400,6 +424,14 @@ static SUPPORTED_COMMANDS : [CommandInfo; 57] = [
 		secondary_override_ok: None,
 	},
 	CommandInfo {
+		command_name: "getShardMap",
+		admin_only: true,
+		help: "Returns internal metadata describing shard ownership and data distribution.",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
 		command_name: "getnonce",
 		admin_only: false,
 		help: "unused",
@@ -502,6 +534,14 @@ static SUPPORTED_COMMANDS : [CommandInfo; 57] = [
 		secondary_ok: false,
 		requires_auth: true,
 		secondary_override_ok: Some(false),
+	},
+	CommandInfo {
+		command_name: "listShards",
+		admin_only: true,
+		help: "Lists all shards in the cluster and their associated connection endpoints.",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
 	},
 	CommandInfo {
 		command_name: "logout",

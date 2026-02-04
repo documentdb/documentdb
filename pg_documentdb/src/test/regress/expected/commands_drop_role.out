@@ -8,7 +8,7 @@ SET documentdb.enableRoleCrud TO ON;
 SET documentdb.enableRolesAdminDBCheck TO ON;
 -- ********* Test dropRole command basic functionality *********
 -- Test dropRole of a custom role
-SELECT documentdb_api.create_role('{"createRole":"custom_role", "roles":["documentdb_readonly_role"], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"custom_role", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
             create_role            
 -----------------------------------
  { "ok" : { "$numberInt" : "1" } }
@@ -26,7 +26,7 @@ SELECT rolname FROM pg_roles WHERE rolname = 'custom_role';
 (0 rows)
 
 -- Test dropRole of a referenced role which will still drop regardless
-SELECT documentdb_api.create_role('{"createRole":"custom_role", "roles":["documentdb_readonly_role"], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"custom_role", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
             create_role            
 -----------------------------------
  { "ok" : { "$numberInt" : "1" } }
@@ -57,7 +57,7 @@ SELECT documentdb_api.drop_user('{"dropUser":"userWithCustomRole", "$db":"admin"
 (1 row)
 
 -- Test dropRole with additional fields that should be ignored
-SELECT documentdb_api.create_role('{"createRole":"custom_role", "roles":["documentdb_readonly_role"], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"custom_role", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
             create_role            
 -----------------------------------
  { "ok" : { "$numberInt" : "1" } }
@@ -76,7 +76,7 @@ SELECT rolname FROM pg_roles WHERE rolname = 'custom_role';
 
 -- ********* Test dropRole error inputs *********
 -- Creating this custom_role for all negative tests below which will be removed at the end of all error tests
-SELECT documentdb_api.create_role('{"createRole":"custom_role", "roles":["documentdb_readonly_role"], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"custom_role", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
             create_role            
 -----------------------------------
  { "ok" : { "$numberInt" : "1" } }
@@ -149,7 +149,7 @@ SELECT rolname FROM pg_roles WHERE rolname = 'custom_role';
 (0 rows)
 
 -- Test dropRole with no database when admin DB check is disabled
-SELECT documentdb_api.create_role('{"createRole":"custom_role", "roles":["documentdb_readonly_role"], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"custom_role", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
             create_role            
 -----------------------------------
  { "ok" : { "$numberInt" : "1" } }

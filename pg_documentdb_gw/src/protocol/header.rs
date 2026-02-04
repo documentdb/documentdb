@@ -6,9 +6,9 @@
  *-------------------------------------------------------------------------
  */
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::{error::Result, protocol::opcode::OpCode, GwStream};
+use crate::{error::Result, protocol::opcode::OpCode};
 
 /// Represents the message header (first 16 bytes of wire protocol message).
 ///
@@ -35,7 +35,10 @@ impl Header {
     ///
     /// # Errors
     /// Returns an error if writing to the stream fails.
-    pub async fn write_to(&self, stream: &mut GwStream) -> Result<()> {
+    pub async fn write_to<S>(&self, stream: &mut S) -> Result<()>
+    where
+        S: AsyncWrite + Unpin,
+    {
         stream.write_all(&self.length.to_le_bytes()).await?;
         stream.write_all(&self.request_id.to_le_bytes()).await?;
         stream.write_all(&self.response_to.to_le_bytes()).await?;
@@ -61,7 +64,10 @@ impl Header {
     /// Returns an error if:
     /// - Reading from the stream fails
     /// - The stream contains insufficient data
-    pub async fn read_from(reader: &mut GwStream) -> Result<Self> {
+    pub async fn read_from<S>(reader: &mut S) -> Result<Self>
+    where
+        S: AsyncRead + Unpin,
+    {
         let length = reader.read_i32_le().await?;
         let request_id = reader.read_i32_le().await?;
         let response_to = reader.read_i32_le().await?;

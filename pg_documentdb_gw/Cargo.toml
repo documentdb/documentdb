@@ -44,6 +44,7 @@ serde = { version = "1.0.125", features = ["derive", "rc"] }
 uuid = { version = "1.12.1", features = ["v4"] }
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 tracing = "0.1.41"
+notify = "6"
 
 [dev-dependencies]
 mongodb = { version = "3.2.0", default-features = false, features = [
@@ -58,6 +59,8 @@ complexity = { level = "warn", priority = -1 }
 correctness = { level = "warn", priority = -1 }
 suspicious = { level = "warn", priority = -1 }
 perf = { level = "warn", priority = -1 }
+
+needless_pass_by_ref_mut = "warn"
 
 [profile.release-with-symbols]
 inherits = "release"

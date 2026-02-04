@@ -12,11 +12,11 @@ pub struct RequestContext<'a> {
     pub activity_id: &'a str,
     pub payload: &'a Request<'a>,
     pub info: &'a RequestInfo<'a>,
-    pub tracker: &'a mut RequestTracker,
+    pub tracker: &'a RequestTracker,
 }
 
 impl<'a> RequestContext<'a> {
-    pub fn get_components(&mut self) -> (&Request<'a>, &RequestInfo<'a>, &mut RequestTracker) {
+    pub fn get_components(&self) -> (&Request<'a>, &RequestInfo<'a>, &RequestTracker) {
         (self.payload, self.info, self.tracker)
     }
 }

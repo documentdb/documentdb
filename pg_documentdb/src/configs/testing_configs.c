@@ -95,6 +95,9 @@ bool ForceIndexOnlyScanIfAvailable = DEFAULT_FORCE_INDEX_ONLY_SCAN_IF_AVAILABLE;
 #define DEFAULT_FORCE_PARALLEL_SCAN_IF_AVAILABLE false
 bool ForceParallelScanIfAvailable = DEFAULT_FORCE_PARALLEL_SCAN_IF_AVAILABLE;
 
+#define DEFAULT_ENABLE_RBAC_COMPLIANT_SCHEMAS false
+bool EnableRbacCompliantSchemas = DEFAULT_ENABLE_RBAC_COMPLIANT_SCHEMAS;
+
 #define DEFAULT_DISABLE_EXTENDED_RUM_EXPLAIN_PLANS false
 bool DisableExtendedRumExplainPlans = DEFAULT_DISABLE_EXTENDED_RUM_EXPLAIN_PLANS;
 
@@ -331,6 +334,13 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, &ForceParallelScanIfAvailable,
 		DEFAULT_FORCE_PARALLEL_SCAN_IF_AVAILABLE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableRbacCompliantSchemas", newGucPrefix),
+		gettext_noop(
+			"Enables RBAC compliant schemas."),
+		NULL, &EnableRbacCompliantSchemas, DEFAULT_ENABLE_RBAC_COMPLIANT_SCHEMAS,
+		PGC_POSTMASTER, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.disableExtendedRumExplainPlans", newGucPrefix),

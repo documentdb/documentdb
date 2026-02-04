@@ -20,10 +20,12 @@ PG_MODULE_MAGIC;
 
 void _PG_init(void);
 void _PG_fini(void);
-
+static void UseRBACCompliantSchemas(void);
 
 bool SkipDocumentDBLoad = false;
-
+extern bool EnableRbacCompliantSchemas;
+extern char *ApiSchemaName;
+extern char *ApiSchemaNameV2;
 
 /*
  * _PG_init gets called when the extension is loaded.
@@ -58,7 +60,24 @@ _PG_init(void)
 
 	InstallDocumentDBApiPostgresHooks();
 
+	/* Use RBAC compliant schemas based on GUC*/
+	if (EnableRbacCompliantSchemas)
+	{
+		UseRBACCompliantSchemas();
+	}
+
 	ereport(LOG, (errmsg("Initialized pg_documentdb extension")));
+}
+
+
+/*
+ * UseRBACCompliantSchemas sets up the schema name globals based on feature flags
+ */
+static void
+UseRBACCompliantSchemas(void)
+{
+	ApiSchemaName = "documentdb_api_v2";
+	ApiSchemaNameV2 = "documentdb_api_v2";
 }
 
 

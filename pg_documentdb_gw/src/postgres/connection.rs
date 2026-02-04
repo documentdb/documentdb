@@ -6,8 +6,7 @@
  *-------------------------------------------------------------------------
  */
 
-use std::time::Duration;
-
+use tokio::time::{Duration, Instant};
 use tokio_postgres::{
     types::{ToSql, Type},
     Row,
@@ -77,14 +76,14 @@ impl Connection {
         parameter_types: &[Type],
         params: &[&(dyn ToSql + Sync)],
         timeout: Option<Timeout>,
-        request_tracker: &mut RequestTracker,
+        request_tracker: &RequestTracker,
     ) -> Result<Vec<Row>> {
         match timeout {
             Some(Timeout {
                 timeout_type: _,
                 max_time_ms,
             }) if self.in_transaction => {
-                let set_timeout_start = request_tracker.start_timer();
+                let set_timeout_start = Instant::now();
                 self.pool_connection
                     .batch_execute(&format!("set local statement_timeout to {max_time_ms}"))
                     .await?;
@@ -93,11 +92,11 @@ impl Connection {
                     set_timeout_start,
                 );
 
-                let request_start = request_tracker.start_timer();
+                let request_start = Instant::now();
                 let results = self.query_internal(query, parameter_types, params).await;
                 request_tracker.record_duration(RequestIntervalKind::ProcessRequest, request_start);
 
-                let set_timeout_start = request_tracker.start_timer();
+                let set_timeout_start = Instant::now();
                 self.pool_connection
                     .batch_execute(&format!(
                         "set local statement_timeout to {}",
@@ -115,14 +114,14 @@ impl Connection {
                 timeout_type: TimeoutType::Transaction,
                 max_time_ms,
             }) => {
-                let begin_transaction_start = request_tracker.start_timer();
+                let begin_transaction_start = Instant::now();
                 self.pool_connection.batch_execute("BEGIN").await?;
                 request_tracker.record_duration(
                     RequestIntervalKind::PostgresBeginTransaction,
                     begin_transaction_start,
                 );
 
-                let set_timeout_start = request_tracker.start_timer();
+                let set_timeout_start = Instant::now();
                 self.pool_connection
                     .batch_execute(&format!("set local statement_timeout to {max_time_ms}"))
                     .await?;
@@ -131,7 +130,7 @@ impl Connection {
                     set_timeout_start,
                 );
 
-                let request_start = request_tracker.start_timer();
+                let request_start = Instant::now();
                 let results = match self.query_internal(query, parameter_types, params).await {
                     Ok(results) => Ok(results),
                     Err(e) => {
@@ -141,10 +140,10 @@ impl Connection {
                 }?;
                 request_tracker.record_duration(RequestIntervalKind::ProcessRequest, request_start);
 
-                let commit_start = request_tracker.start_timer();
+                let commit_start = Instant::now();
                 self.pool_connection.batch_execute("COMMIT").await?;
                 request_tracker
-                    .record_duration(RequestIntervalKind::PostgresTransactionCommit, commit_start);
+                    .record_duration(RequestIntervalKind::PostgresCommitTransaction, commit_start);
 
                 Ok(results)
             }
@@ -152,7 +151,7 @@ impl Connection {
                 timeout_type: TimeoutType::Command,
                 max_time_ms,
             }) => {
-                let set_timeout_start = request_tracker.start_timer();
+                let set_timeout_start = Instant::now();
                 self.pool_connection
                     .batch_execute(&format!("set statement_timeout to {max_time_ms}"))
                     .await?;
@@ -161,11 +160,11 @@ impl Connection {
                     set_timeout_start,
                 );
 
-                let request_start = request_tracker.start_timer();
+                let request_start = Instant::now();
                 let results = self.query_internal(query, parameter_types, params).await;
                 request_tracker.record_duration(RequestIntervalKind::ProcessRequest, request_start);
 
-                let set_timeout_start = request_tracker.start_timer();
+                let set_timeout_start = Instant::now();
                 self.pool_connection
                     .batch_execute(&format!(
                         "set statement_timeout to {}",
@@ -180,7 +179,7 @@ impl Connection {
                 Ok(results?)
             }
             None => {
-                let request_start = request_tracker.start_timer();
+                let request_start = Instant::now();
                 let results = self.query_internal(query, parameter_types, params).await;
                 request_tracker.record_duration(RequestIntervalKind::ProcessRequest, request_start);
 
@@ -195,7 +194,7 @@ impl Connection {
         db: &str,
         bson: &PgDocument<'_>,
         timeout: Option<Timeout>,
-        request_tracker: &mut RequestTracker,
+        request_tracker: &RequestTracker,
     ) -> Result<Vec<Row>> {
         self.query(
             query,

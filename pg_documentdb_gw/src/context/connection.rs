@@ -9,11 +9,11 @@
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
-    time::{Duration, Instant},
 };
 
 use bson::RawDocumentBuf;
 use openssl::ssl::SslRef;
+use tokio::time::{Duration, Instant};
 use uuid::{Builder, Uuid};
 
 use crate::{
@@ -50,11 +50,13 @@ impl ConnectionContext {
         connection_id: Uuid,
         transport_protocol: String,
     ) -> Self {
-        let tls_provider = service_context.tls_provider();
-
-        let cipher_type = tls_config
-            .map(|tls| tls_provider.ciphersuite_to_i32(tls.current_cipher()))
-            .unwrap_or_default();
+        let cipher_type = if let Some(tls) = tls_config {
+            service_context
+                .tls_provider()
+                .ciphersuite_to_i32(tls.current_cipher())
+        } else {
+            0
+        };
 
         let ssl_protocol = tls_config
             .map(|tls| tls.version_str().to_string())
@@ -97,7 +99,7 @@ impl ConnectionContext {
             .await
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn add_cursor(
         &self,
         conn: Option<Arc<Connection>>,

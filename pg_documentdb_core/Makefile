@@ -33,6 +33,8 @@ DEBUG ?= no
 ifeq ($(DEBUG),yes)
   PG_CPPFLAGS += -ggdb -O0 -g
   PG_CFLAGS += -ggdb -O0 -g
+  override CFLAGS += -O0
+  override CPPFLAGS += -O0
 endif
 
 SHLIB_LINK = $(libpq)

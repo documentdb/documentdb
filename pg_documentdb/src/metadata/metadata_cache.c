@@ -121,6 +121,10 @@ PGDLLEXPORT char *ApiCatalogSchemaNameV2 = "documentdb_api_catalog";
 PGDLLEXPORT char *ApiGucPrefix = "documentdb";
 PGDLLEXPORT char *ApiGucPrefixV2 = "documentdb";
 PGDLLEXPORT char *PostgisSchemaName = "public";
+PGDLLIMPORT char *ApiInternalReadWriteSchemaName = "documentdb_api_internal_readwrite";
+PGDLLIMPORT char *ApiInternalReadOnlySchemaName = "documentdb_api_internal_readonly";
+PGDLLIMPORT char *ApiInternalAdminSchemaName = "documentdb_api_internal_admin";
+PGDLLIMPORT char *ApiInternalBgworkerSchemaName = "documentdb_api_internal_bgworker";
 
 /* Role names */
 PGDLLEXPORT char *ApiAdminRole = "documentdb_admin_role";
@@ -144,6 +148,8 @@ PGDLLEXPORT char *ApiCatalogToApiInternalSchemaName = "documentdb_api_internal";
 PGDLLEXPORT char *DocumentDBApiInternalSchemaName = "documentdb_api_internal";
 
 PGDLLEXPORT char *ApiCatalogToCoreSchemaName = "documentdb_core";
+
+extern bool EnableRbacCompliantSchemas;
 
 typedef struct DocumentDBApiOidCacheData
 {

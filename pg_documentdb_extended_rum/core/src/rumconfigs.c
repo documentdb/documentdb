@@ -32,11 +32,11 @@ PGDLLEXPORT bool RumThrowErrorOnInvalidDataPage =
 #define RUM_DEFAULT_USE_NEW_ITEM_PTR_DECODING true
 PGDLLEXPORT bool RumUseNewItemPtrDecoding = RUM_DEFAULT_USE_NEW_ITEM_PTR_DECODING;
 
-#define RUM_ENABLE_PARALLEL_VACUUM_FLAGS true
-PGDLLEXPORT bool RumEnableParallelVacuumFlags = RUM_ENABLE_PARALLEL_VACUUM_FLAGS;
-
 /* rumbtree.c */
+#define RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT true
 PGDLLEXPORT bool RumTrackIncompleteSplit = RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT;
+
+#define RUM_DEFAULT_FIX_INCOMPLETE_SPLIT true
 PGDLLEXPORT bool RumFixIncompleteSplit = RUM_DEFAULT_FIX_INCOMPLETE_SPLIT;
 
 #define RUM_DEFAULT_ENABLE_INJECT_PAGE_SPLIT_INCOMPLETE false
@@ -243,15 +243,6 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enable_set_vacuum_parallel_flags", documentDBRumGucPrefix),
-		"Enables setting the parallel vacuum flags in Postgres",
-		NULL,
-		&RumEnableParallelVacuumFlags,
-		RUM_ENABLE_PARALLEL_VACUUM_FLAGS,
-		PGC_USERSET, 0,
-		NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enable_custom_cost_estimate", documentDBRumGucPrefix),
 		"Temporary flag to enable using the custom rum cost estimate logic",
 		NULL,
@@ -342,7 +333,23 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		RUM_DEFAULT_TRAVERSE_PAGE_ONLY_ON_BACKTRACK,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
+	DefineCustomBoolVariable(
+		psprintf("%s.track_incomplete_split", documentDBRumGucPrefix),
+		"Sets whether or not to track incomplete splits",
+		NULL,
+		&RumTrackIncompleteSplit,
+		RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
 
+	DefineCustomBoolVariable(
+		psprintf("%s.fix_incomplete_split", documentDBRumGucPrefix),
+		"Sets whether or not to fix incomplete splits",
+		NULL,
+		&RumFixIncompleteSplit,
+		RUM_DEFAULT_FIX_INCOMPLETE_SPLIT,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
 	rum_relopt_kind = add_reloption_kind();
 
 	add_string_reloption(rum_relopt_kind, "attach",
