@@ -38,17 +38,20 @@ RUN /home/documentdb/code/scripts/install_llvm.sh
 
 # Install Rust if not using rust:* base image (i.e., Ubuntu)
 # rust:slim-* images already have cargo/rustc pre-installed
-ENV RUSTUP_HOME=/home/documentdb/.rustup
-ENV CARGO_HOME=/home/documentdb/.cargo
-ENV PATH=$PATH:/home/documentdb/.cargo/bin
-
 RUN if ! command -v cargo &> /dev/null; then \
         echo "Rust not found, installing via rustup..."; \
+        export RUSTUP_HOME=/home/documentdb/.rustup; \
+        export CARGO_HOME=/home/documentdb/.cargo; \
         mkdir -p $RUSTUP_HOME && mkdir -p $CARGO_HOME; \
         /home/documentdb/code/scripts/install_rustup.sh --install-toolchain; \
     else \
         echo "Rust already installed: $(cargo --version)"; \
     fi
+
+# Set Rust environment variables after installation check
+ENV RUSTUP_HOME=/home/documentdb/.rustup
+ENV CARGO_HOME=/home/documentdb/.cargo
+ENV PATH=$PATH:/home/documentdb/.cargo/bin
 
 RUN cargo install cargo-deb
 

@@ -11,7 +11,7 @@
 #
 #   Gateway test (requires both packages):
 #     docker build --target test-gateway \
-#       --build-arg BASE_IMAGE=ubuntu:22.04 \
+#       --build-arg BASE_IMAGE=debian:bookworm \
 #       --build-arg POSTGRES_VERSION=17 \
 #       --build-arg DEB_PACKAGE_REL_PATH=packages/postgresql-17-documentdb_1.0.0_amd64.deb \
 #       --build-arg DEB_GATEWAY_PACKAGE_REL_PATH=packages/documentdb-gateway_1.0.0_amd64.deb \
