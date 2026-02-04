@@ -48,6 +48,7 @@
 
 #include "io/bson_core.h"
 #include "io/bson_hash.h"
+#include "query/bson_compare.h"
 #include "utils/documentdb_errors.h"
 #include "utils/version_utils.h"
 #include "utils/hashset_utils.h"
@@ -97,6 +98,12 @@ typedef struct IndexBoundsWithLength
 	int32_t length;
 	bool isCompositeHash;
 } IndexBoundsWithLength;
+
+typedef struct
+{
+	pgbsonelement element;
+	const char *collationString;
+} UniqueIndexTermHashEntry;
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -609,9 +616,11 @@ GenerateNonCompositeHashTerms(bson_iter_t *specIter, uint32_t numTerms,
 			 * We check the GUC in order to force a hash collision.
 			 * This is only used for testing and should not be set in production.
 			 */
+			const char *collationString = NULL;
 			*lastBytes = DefaultUniqueIndexKeyhashOverride > 0 ?
 						 (uint64_t) DefaultUniqueIndexKeyhashOverride :
-						 HashBsonValueComparableExtended(indexTerm, keyhash);
+						 HashBsonValueComparableExtended(indexTerm, keyhash,
+														 collationString);
 
 			if (index > numTerms)
 			{
@@ -690,9 +699,11 @@ GenerateCompositeHashTerms(bson_iter_t *specIter, uint32_t numTerms,
 			 * We check the GUC in order to force a hash collision.
 			 * This is only used for testing and should not be set in production.
 			 */
+			const char *collationString = NULL;
 			uint64_t hash = DefaultUniqueIndexKeyhashOverride > 0 ?
 							(uint64_t) DefaultUniqueIndexKeyhashOverride :
-							HashBsonValueComparableExtended(indexTerm, keyhash);
+							HashBsonValueComparableExtended(indexTerm, keyhash,
+															collationString);
 
 			if (index > numTerms)
 			{
@@ -1182,14 +1193,14 @@ ProcessUniqueShardDocumentKeysNew(pgbson *uniqueShardDocument,
 		bool keyTermMatch = false;
 		while (bson_iter_next(&arrayIter))
 		{
-			pgbsonelement element = { 0 };
-			element.path = key;
-			element.pathLength = keyPathLength;
-			element.bsonValue = *bson_iter_value(&arrayIter);
+			UniqueIndexTermHashEntry searchEntry = { 0 };
+			searchEntry.element.path = key;
+			searchEntry.element.pathLength = keyPathLength;
+			searchEntry.element.bsonValue = *bson_iter_value(&arrayIter);
 
 			/* Query hash table with given action. */
 			bool found;
-			hash_search(termsHashSet, &element, hashAction, &found);
+			hash_search(termsHashSet, &searchEntry, hashAction, &found);
 
 			if (found)
 			{
@@ -1227,6 +1238,72 @@ GetUniqueShardDocumentTermsHTAB(pgbson *uniqueShardDocument)
 
 
 /*
+ * Hash function for unique index term entries - hashes path + value.
+ */
+static uint32
+UniqueIndexTermHashFunc(const void *obj, size_t objsize)
+{
+	const UniqueIndexTermHashEntry *hashEntry = obj;
+	uint32 pathHash = hash_bytes((const unsigned char *) hashEntry->element.path,
+								 (int) hashEntry->element.pathLength);
+
+	return (uint32) HashBsonValueComparableExtended(&hashEntry->element.bsonValue,
+													pathHash,
+													hashEntry->collationString);
+}
+
+
+/*
+ * Compare function for unique index term entries - compares path + value.
+ */
+static int
+UniqueIndexTermCompareFunc(const void *obj1, const void *obj2, Size objsize)
+{
+	const UniqueIndexTermHashEntry *hashEntry1 = obj1;
+	const UniqueIndexTermHashEntry *hashEntry2 = obj2;
+
+	int minLength = Min(hashEntry1->element.pathLength, hashEntry2->element.pathLength);
+	int result = strncmp(hashEntry1->element.path, hashEntry2->element.path, minLength);
+
+	if (result != 0)
+	{
+		return result;
+	}
+
+	if (hashEntry1->element.pathLength != hashEntry2->element.pathLength)
+	{
+		return hashEntry1->element.pathLength - hashEntry2->element.pathLength;
+	}
+
+	bool isComparisonValidIgnore = false;
+	return CompareBsonValueAndTypeWithCollation(&hashEntry1->element.bsonValue,
+												&hashEntry2->element.bsonValue,
+												&isComparisonValidIgnore,
+												hashEntry1->collationString);
+}
+
+
+/*
+ * Creates a hash table for unique index term comparison using path + value.
+ */
+static HTAB *
+CreateUniqueIndexTermHashSet(void)
+{
+	HASHCTL hashInfo = CreateExtensionHashCTL(
+		sizeof(UniqueIndexTermHashEntry),
+		sizeof(UniqueIndexTermHashEntry),
+		UniqueIndexTermCompareFunc,
+		UniqueIndexTermHashFunc
+		);
+	HTAB *hashSet =
+		hash_create("Unique Index Term Hash Table", 32, &hashInfo,
+					DefaultExtensionHashFlags);
+
+	return hashSet;
+}
+
+
+/*
  * Utility function that receives a unique shard document (i.e. document returned from the generate_unique_shard_document function),
  * inserts all terms in a hash table and returns it to the caller.
  */
@@ -1234,7 +1311,7 @@ static HTAB *
 GetUniqueShardDocumentTermsHTABNew(pgbson *uniqueShardDocument, int64_t *shardKeyValue,
 								   bool *hasShardKeyValue)
 {
-	HTAB *termsHashSet = CreatePgbsonElementPathAndValueHashSet();
+	HTAB *termsHashSet = CreateUniqueIndexTermHashSet();
 	ProcessUniqueShardDocumentKeysNew(uniqueShardDocument, shardKeyValue,
 									  hasShardKeyValue,
 									  termsHashSet, HASH_ENTER);
