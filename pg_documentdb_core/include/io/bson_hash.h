@@ -16,7 +16,8 @@
 uint64 HashBsonComparableExtended(bson_iter_t *bsonIterValue, int64 seed);
 uint32_t HashBsonComparable(bson_iter_t *bsonIterValue, uint32_t seed);
 
-uint64 HashBsonValueComparableExtended(const bson_value_t *bsonIterValue, int64 seed);
+uint64 HashBsonValueComparableExtended(const bson_value_t *bsonIterValue, int64 seed,
+									   const char *collationString);
 uint32_t HashBsonValueComparable(const bson_value_t *bsonIterValue, uint32_t seed);
 
 #endif
