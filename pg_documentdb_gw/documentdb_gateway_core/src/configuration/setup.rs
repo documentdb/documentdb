@@ -9,6 +9,7 @@
 use std::{env, fs::File, path::Path};
 
 use serde::Deserialize;
+use tokio::sync::Semaphore;
 
 use crate::{
     configuration::{CertInputType, CertificateOptions, SetupConfiguration},
@@ -99,6 +100,9 @@ pub struct DocumentDBSetupConfiguration {
     pub stream_read_buffer_size: Option<usize>,
     pub stream_write_buffer_size: Option<usize>,
 
+    // Connection limits
+    pub max_incoming_connections: Option<usize>,
+
     // Unix domain socket configuration
     // If specified with a non-empty path, Unix socket is enabled at that path.
     // If not specified (None), Unix socket is disabled.
@@ -183,6 +187,7 @@ impl std::fmt::Debug for DocumentDBSetupConfiguration {
             )
             .field("stream_read_buffer_size", &self.stream_read_buffer_size)
             .field("stream_write_buffer_size", &self.stream_write_buffer_size)
+            .field("max_incoming_connections", &self.max_incoming_connections)
             .field("unix_socket_path", &self.unix_socket_path)
             .field(
                 "unix_socket_file_permissions",
@@ -953,6 +958,11 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
 
     fn enforce_tls(&self) -> bool {
         self.enforce_tls.unwrap_or(true)
+    }
+
+    fn max_incoming_connections(&self) -> usize {
+        self.max_incoming_connections
+            .unwrap_or(Semaphore::MAX_PERMITS)
     }
 
     #[expect(clippy::unwrap_used, reason = "validated octal string")]
