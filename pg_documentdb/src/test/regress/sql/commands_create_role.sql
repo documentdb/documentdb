@@ -12,19 +12,19 @@ SET documentdb.enableRoleCrud TO ON;
 SET documentdb.enableRolesAdminDBCheck TO ON;
 
 -- Test creating a basic role that inherits from readAnyDatabase
-SELECT documentdb_api.create_role('{"createRole":"customReadRole", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"customReadRole", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 
 -- Verify the role was created
 SELECT rolname FROM pg_roles WHERE rolname = 'customReadRole';
 
 -- Test creating a role that inherits from admin role
-SELECT documentdb_api.create_role('{"createRole":"customAdminRole", "roles":["documentdb_admin_role"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"customAdminRole", "roles":["readWriteAnyDatabase", "clusterAdmin"], "privileges":[], "$db":"admin"}');
 
 -- Verify the role was created
 SELECT rolname FROM pg_roles WHERE rolname = 'customAdminRole';
 
 -- Test creating a role that inherits from multiple roles
-SELECT documentdb_api.create_role('{"createRole":"multiInheritRole", "roles":["documentdb_readonly_role", "documentdb_admin_role"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"multiInheritRole", "roles":["readAnyDatabase", "readWriteAnyDatabase", "clusterAdmin"], "privileges":[], "$db":"admin"}');
 
 -- Verify the role was created
 SELECT rolname FROM pg_roles WHERE rolname = 'multiInheritRole';
@@ -49,7 +49,7 @@ SELECT documentdb_api.create_role('{"createRole":"noRolesRole", "privileges":[],
 SELECT documentdb_api.create_role('{"createRole":"noPrivilegesRole", "roles":[], "$db":"admin"}');
 
 -- Test createRole with empty role name, should fail
-SELECT documentdb_api.create_role('{"createRole":"", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 
 -- Test createRole with invalid inherited role, should fail
 SELECT documentdb_api.create_role('{"createRole":"invalidInheritRole", "roles":["nonexistent_role"], "privileges":[], "$db":"admin"}');
@@ -61,28 +61,37 @@ SELECT documentdb_api.create_role('{"createRole":"invalidRolesType", "roles":"no
 SELECT documentdb_api.create_role('{"createRole":"invalidRoleNames", "roles":[123, true], "privileges":[], "$db":"admin"}');
 
 -- Test createRole with missing createRole field, should fail
-SELECT documentdb_api.create_role('{"roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 
 -- Test createRole with a built-in role, should fail
-SELECT documentdb_api.create_role('{"createRole": "documentdb_admin_role", "roles":[], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole": "clusterAdmin", "roles":["readWriteAnyDatabase", "clusterAdmin"], "privileges":[],"$db":"admin"}');
 
 -- Test createRole with unsupported field, should fail
-SELECT documentdb_api.create_role('{"createRole":"unsupportedFieldRole", "roles":["documentdb_readonly_role"], "privileges":[], "unsupportedField":"value", "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"unsupportedFieldRole", "roles":["readAnyDatabase"], "privileges":[], "unsupportedField":"value", "$db":"admin"}');
 
 -- Test creating role with same name as existing role, should fail
-SELECT documentdb_api.create_role('{"createRole":"customReadRole", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"customReadRole", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 
 -- Test roles array with mixed valid and invalid roles, should fail
-SELECT documentdb_api.create_role('{"createRole":"mixedRolesTest", "roles":["documentdb_readonly_role", "invalid_role"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"mixedRolesTest", "roles":["readAnyDatabase", "invalid_role"], "privileges":[], "$db":"admin"}');
 
 -- Test invalid JSON in createRole, should fail
-SELECT documentdb_api.create_role('{"createRole":"invalidJson", "roles":["documentdb_readonly_role"], "privileges":[]');
+SELECT documentdb_api.create_role('{"createRole":"invalidJson", "roles":["readAnyDatabase"], "privileges":[]');
 
 -- Test createRole with non-admin database, should fail
-SELECT documentdb_api.create_role('{"createRole":"nonAdminDatabaseRole", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"nonAdminDatabase"}');
+SELECT documentdb_api.create_role('{"createRole":"nonAdminDatabaseRole", "roles":["readAnyDatabase"], "privileges":[], "$db":"nonAdminDatabase"}');
 
 -- Test createRole with no database, should fail
-SELECT documentdb_api.create_role('{"createRole":"noDatabaseRole", "roles":["documentdb_readonly_role"], "privileges":[]}');
+SELECT documentdb_api.create_role('{"createRole":"noDatabaseRole", "roles":["readAnyDatabase"], "privileges":[]}');
+
+-- Test createRole with just readWriteAnyDatabase role, should fail
+SELECT documentdb_api.create_role('{"createRole":"readWriteOnlyRole", "roles":["readWriteAnyDatabase"], "privileges":[], "$db":"admin"}');
+
+-- Test createRole with just clusterAdmin role, should fail
+SELECT documentdb_api.create_role('{"createRole":"clusterAdminOnlyRole", "roles":["clusterAdmin"], "$db":"admin", "privileges":[]}');
+
+-- Test createRole with root role, should fail
+SELECT documentdb_api.create_role('{"createRole":"rootRoleTest", "roles":["root"], "privileges":[], "$db":"admin"}');
 
 -- Test role functionality by creating users and assigning custom roles
 -- Create a user first
@@ -109,41 +118,41 @@ ORDER BY r2.rolname;
 
 -- Test edge cases for role names
 -- Test role name with maximum length (63 characters is PostgreSQL limit)
-SELECT documentdb_api.create_role('{"createRole":"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = 'abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk';
 
 -- Test role name exceeding maximum length (64 characters), will be truncated to 63 characters
-SELECT documentdb_api.create_role('{"createRole":"1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = '1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij';
 
 -- Test createRole when feature is disabled
 SET documentdb.enableRoleCrud TO OFF;
-SELECT documentdb_api.create_role('{"createRole":"disabledFeatureRole", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"disabledFeatureRole", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 SET documentdb.enableRoleCrud TO ON;
 
 -- Test createRole when admin DB check is disabled
 SET documentdb.enableRolesAdminDBCheck TO OFF;
-SELECT documentdb_api.create_role('{"createRole":"nonAdminDBNoCheckRole", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"nonAdminDatabase"}');
+SELECT documentdb_api.create_role('{"createRole":"nonAdminDBNoCheckRole", "roles":["readAnyDatabase"], "privileges":[], "$db":"nonAdminDatabase"}');
 SELECT rolname FROM pg_roles WHERE rolname = 'nonAdminDBNoCheckRole';
 
 -- Test createRole with no $db field
-SELECT documentdb_api.create_role('{"createRole":"noDbFieldRole", "roles":["documentdb_readonly_role"], "privileges":[]}');
+SELECT documentdb_api.create_role('{"createRole":"noDbFieldRole", "roles":["readAnyDatabase"], "privileges":[]}');
 SELECT rolname FROM pg_roles WHERE rolname = 'noDbFieldRole';
 SET documentdb.enableRolesAdminDBCheck TO ON;
 
 -- Test special characters in role names
-SELECT documentdb_api.create_role('{"createRole":"role_with_underscores", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
-SELECT documentdb_api.create_role('{"createRole":"role-with-dashes", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
-SELECT documentdb_api.create_role('{"createRole":"role123numbers", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"role_with_underscores", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"role-with-dashes", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"role123numbers", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname IN ('role_with_underscores', 'role-with-dashes', 'role123numbers') ORDER BY rolname;
 
 -- Test case sensitivity in createRole
-SELECT documentdb_api.create_role('{"createRole":"CaseSensitiveRole", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
-SELECT documentdb_api.create_role('{"createRole":"casesensitiverole", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"CaseSensitiveRole", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"casesensitiverole", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname IN ('CaseSensitiveRole', 'casesensitiverole') ORDER BY rolname;
 
 -- Test createRole with additional fields that should be ignored
-SELECT documentdb_api.create_role('{"createRole":"ignoredFieldsRole", "roles":["documentdb_readonly_role"], "privileges":[], "lsid":"session123", "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"ignoredFieldsRole", "roles":["readAnyDatabase"], "privileges":[], "lsid":"session123", "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = 'ignoredFieldsRole';
 
 -- Test createRole with valid privileges (find action)
@@ -247,8 +256,8 @@ SELECT documentdb_api.drop_user('{"dropUser":"testRoleUser", "$db":"admin"}');
 
 -- Test createRole with blocked role names, should fail
 SET documentdb.blockedRolePrefixList TO 'block,test';
-SELECT documentdb_api.create_role('{"createRole":"block", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
-SELECT documentdb_api.create_role('{"createRole":"test_block_user", "roles":["documentdb_readonly_role"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"block", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"test_block_user", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 RESET documentdb.blockedRolePrefixList;
 
 -- Reset settings

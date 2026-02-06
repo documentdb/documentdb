@@ -699,12 +699,8 @@ DropNativeUser(const char *dropUser)
 
 
 /*
- * documentdb_extension_update_user implements the core logic to update a user.
- * In Mongo community edition a user with userAdmin privileges or root privileges can change
- * other users passwords. In postgres a superuser can change any users password.
- * A user with CreateRole privileges can change pwds of roles they created. Given
- * that ApiAdminRole has neither create role nor superuser privileges in our case
- * a user can only change their own pwd and no one elses.
+ * documentdb_extension_update_user implements the
+ * core logic to update a user
  */
 Datum
 documentdb_extension_update_user(PG_FUNCTION_ARGS)
@@ -1187,7 +1183,7 @@ connection_status(pgbson *showPrivilegesSpec)
 		pgbson_array_writer privilegesArrayWriter;
 		PgbsonWriterStartArray(&authInfoWriter, "authenticatedUserPrivileges", 27,
 							   &privilegesArrayWriter);
-		WriteSingleRolePrivileges(parentRole, &privilegesArrayWriter);
+		WritePrivileges(parentRole, &privilegesArrayWriter);
 		PgbsonWriterEndArray(&authInfoWriter, &privilegesArrayWriter);
 	}
 
@@ -1602,12 +1598,13 @@ GetAllUsersInfo(void)
 		"  JOIN pg_auth_members am ON parent.oid = am.roleid "
 		"  JOIN pg_roles child ON am.member = child.oid "
 		"  WHERE child.rolcanlogin = true "
-		"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s') "
+		"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s') "
 		") "
 		"SELECT ARRAY_AGG(%s.row_get_bson(r) ORDER BY r.child_role, r.parent_role) "
 		"FROM r;",
 		ApiRootInternalRole, ApiRootRole,
 		ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole,
+		ApiSettingsManagerRole,
 		CoreSchemaName);
 
 	bool readOnly = true;
@@ -1646,12 +1643,13 @@ GetSingleUserInfo(const char *userName, bool returnDocuments)
 			"  JOIN pg_roles child ON am.member = child.oid "
 			"  WHERE child.rolcanlogin = true "
 			"    AND child.rolname = $1"
-			"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s') "
+			"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s') "
 			") "
 			"SELECT ARRAY_AGG(%s.row_get_bson(r) ORDER BY r.parent_role) "
 			"FROM r;",
 			ApiRootInternalRole, ApiRootRole,
 			ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole,
+			ApiSettingsManagerRole,
 			CoreSchemaName);
 	}
 	else
@@ -1666,11 +1664,12 @@ GetSingleUserInfo(const char *userName, bool returnDocuments)
 			"JOIN pg_roles child ON am.member = child.oid "
 			"WHERE child.rolcanlogin = true "
 			"  AND child.rolname = $1 "
-			"  AND child.rolname NOT IN ('%s', '%s', '%s', '%s') "
+			"  AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s') "
 			"ORDER BY parent.rolname "
 			"LIMIT 1;",
 			ApiRootInternalRole, ApiRootRole,
-			ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole);
+			ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole,
+			ApiSettingsManagerRole);
 	}
 
 	int argCount = 1;

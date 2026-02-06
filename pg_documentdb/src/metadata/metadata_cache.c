@@ -130,11 +130,13 @@ PGDLLIMPORT char *ApiInternalBgworkerSchemaName = "documentdb_api_internal_bgwor
 PGDLLEXPORT char *ApiAdminRole = "documentdb_admin_role";
 PGDLLEXPORT char *ApiAdminRoleV2 = "documentdb_admin_role";
 PGDLLEXPORT char *ApiBgWorkerRole = "documentdb_bg_worker_role";
+PGDLLEXPORT char *ApiClusterAdminRole = "documentdb_cluster_admin_role";
 PGDLLEXPORT char *ApiReadOnlyRole = "documentdb_readonly_role";
 PGDLLEXPORT char *ApiReadWriteRole = "documentdb_readwrite_role";
 PGDLLEXPORT char *ApiReplicationRole = "";
 PGDLLEXPORT char *ApiRootInternalRole = "documentdb_root_role";
 PGDLLEXPORT char *ApiRootRole = "documentdb_root_role";
+PGDLLEXPORT char *ApiSettingsManagerRole = "";
 PGDLLEXPORT char *ApiUserAdminRole = "documentdb_user_admin_role";
 
 /* Schema functions migrated from a public API to an internal API schema
