@@ -288,10 +288,10 @@ static const Privilege dropDatabasePrivileges[] = {
  * writes them to the provided BSON array writer.
  */
 void
-WriteSingleRolePrivileges(const char *roleName,
-						  pgbson_array_writer *privilegesArrayWriter)
+WritePrivileges(const char *internalRoleName,
+				pgbson_array_writer *privilegesArrayWriter)
 {
-	if (roleName == NULL)
+	if (internalRoleName == NULL)
 	{
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 						errmsg("Role name cannot be NULL.")));
@@ -299,7 +299,7 @@ WriteSingleRolePrivileges(const char *roleName,
 
 	List *consolidatedPrivileges = NIL;
 
-	ConsolidatePrivilegesForRole(roleName, &consolidatedPrivileges);
+	ConsolidatePrivilegesForRole(internalRoleName, &consolidatedPrivileges);
 
 	WritePrivilegeListToArray(consolidatedPrivileges, privilegesArrayWriter);
 	DeepFreePrivileges(consolidatedPrivileges);
@@ -401,6 +401,28 @@ ConsolidatePrivilegesForRole(const char *roleName, List **consolidatedPrivileges
 		ConsolidatePrivileges(consolidatedPrivileges, readWritePrivileges,
 							  sourcePrivilegeCount);
 
+		sourcePrivilegeCount = sizeof(clusterManagerPrivileges) /
+							   sizeof(clusterManagerPrivileges[0]);
+		ConsolidatePrivileges(consolidatedPrivileges, clusterManagerPrivileges,
+							  sourcePrivilegeCount);
+
+		sourcePrivilegeCount = sizeof(clusterMonitorPrivileges) /
+							   sizeof(clusterMonitorPrivileges[0]);
+		ConsolidatePrivileges(consolidatedPrivileges, clusterMonitorPrivileges,
+							  sourcePrivilegeCount);
+
+		sourcePrivilegeCount = sizeof(hostManagerPrivileges) /
+							   sizeof(hostManagerPrivileges[0]);
+		ConsolidatePrivileges(consolidatedPrivileges, hostManagerPrivileges,
+							  sourcePrivilegeCount);
+
+		sourcePrivilegeCount = sizeof(dropDatabasePrivileges) /
+							   sizeof(dropDatabasePrivileges[0]);
+		ConsolidatePrivileges(consolidatedPrivileges, dropDatabasePrivileges,
+							  sourcePrivilegeCount);
+	}
+	else if (strcmp(roleName, ApiClusterAdminRole) == 0)
+	{
 		sourcePrivilegeCount = sizeof(clusterManagerPrivileges) /
 							   sizeof(clusterManagerPrivileges[0]);
 		ConsolidatePrivileges(consolidatedPrivileges, clusterManagerPrivileges,

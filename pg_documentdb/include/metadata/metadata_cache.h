@@ -41,11 +41,13 @@ extern PGDLLIMPORT char *PostgisSchemaName;
 extern PGDLLIMPORT char *ApiAdminRole;
 extern PGDLLIMPORT char *ApiAdminRoleV2;
 extern PGDLLIMPORT char *ApiBgWorkerRole;
+extern PGDLLEXPORT char *ApiClusterAdminRole;
 extern PGDLLIMPORT char *ApiReadOnlyRole;
 extern PGDLLEXPORT char *ApiReadWriteRole;
 extern PGDLLEXPORT char *ApiReplicationRole;
 extern PGDLLEXPORT char *ApiRootInternalRole;
 extern PGDLLIMPORT char *ApiRootRole;
+extern PGDLLEXPORT char *ApiSettingsManagerRole;
 extern PGDLLEXPORT char *ApiUserAdminRole;
 
 extern MemoryContext DocumentDBApiMetadataCacheContext;

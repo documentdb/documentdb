@@ -7,11 +7,13 @@
 /* Macro to check if a role is a system role */
 #define IS_SYSTEM_LOGIN_ROLE(roleName) \
 	(strcmp((roleName), ApiBgWorkerRole) == 0 || \
+	 strcmp((roleName), ApiSettingsManagerRole) == 0 || \
 	 strcmp((roleName), ApiReplicationRole) == 0)
 
 /* Macro to check if a role is a customer facing built-in role */
 #define IS_BUILTIN_ROLE(roleName) \
 	(strcmp((roleName), ApiAdminRoleV2) == 0 || \
+	 strcmp((roleName), ApiClusterAdminRole) == 0 || \
 	 strcmp((roleName), ApiReadOnlyRole) == 0 || \
 	 strcmp((roleName), ApiReadWriteRole) == 0 || \
 	 strcmp((roleName), ApiRootRole) == 0 || \
@@ -41,8 +43,8 @@ typedef struct
 } ConsolidatedPrivilege;
 
 /* Function to write a single role's privileges to a BSON array writer */
-void WriteSingleRolePrivileges(const char *roleName,
-							   pgbson_array_writer *privilegesArrayWriter);
+void WritePrivileges(const char *internalRoleName,
+					 pgbson_array_writer *privilegesArrayWriter);
 
 /* Function to write multiple roles' privileges from an HTAB to a BSON array writer*/
 void WriteMultipleRolePrivileges(HTAB *rolesTable,
