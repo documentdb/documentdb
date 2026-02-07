@@ -390,6 +390,7 @@ IndexSpecOptionsAreEquivalent(const IndexSpec *leftIndexSpec,
 		return IndexOptionsEquivalency_NotEquivalent;
 	}
 
+	bool convertSupportedInToScalarArrayOp = true;
 	if (leftIndexSpec->indexPFEDocument == NULL &&
 		rightIndexSpec->indexPFEDocument == NULL)
 	{
@@ -402,7 +403,8 @@ IndexSpecOptionsAreEquivalent(const IndexSpec *leftIndexSpec,
 		return IndexOptionsEquivalency_NotEquivalent;
 	}
 	else if (!QueryDocumentsAreEquivalent(leftIndexSpec->indexPFEDocument,
-										  rightIndexSpec->indexPFEDocument))
+										  rightIndexSpec->indexPFEDocument,
+										  convertSupportedInToScalarArrayOp))
 	{
 		return IndexOptionsEquivalency_NotEquivalent;
 	}

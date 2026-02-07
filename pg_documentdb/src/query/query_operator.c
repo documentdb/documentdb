@@ -113,6 +113,7 @@ extern bool EnableCollation;
 extern bool EnableLetAndCollationForQueryMatch;
 extern bool EnableVariablesSupportForWriteCommands;
 extern bool EnableIdIndexPushdown;
+extern bool EnableDollarInToScalarArrayOpExprConversion;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -1166,6 +1167,7 @@ ValidateQueryDocumentValue(const bson_value_t *value)
 		.inputType = MongoQueryOperatorInputType_Bson,
 		.simplifyOperators = false,
 		.coerceOperatorExprIfApplicable = false,
+		.convertSupportedInToScalarArrayOp = false,
 		.requiredFilterPathNameHashSet = NULL,
 		.variableContext = NULL,
 	};
@@ -1180,7 +1182,8 @@ ValidateQueryDocumentValue(const bson_value_t *value)
  */
 bool
 QueryDocumentsAreEquivalent(const pgbson *leftQueryDocument,
-							const pgbson *rightQueryDocument)
+							const pgbson *rightQueryDocument,
+							bool convertSupportedInToScalarArrayOp)
 {
 	bson_iter_t leftDocumentIter;
 	PgbsonInitIterator(leftQueryDocument, &leftDocumentIter);
@@ -1189,7 +1192,8 @@ QueryDocumentsAreEquivalent(const pgbson *leftQueryDocument,
 		.documentExpr = (Expr *) MakeSimpleDocumentVar(),
 		.inputType = MongoQueryOperatorInputType_Bson,
 		.simplifyOperators = false,
-		.coerceOperatorExprIfApplicable = false,
+		.coerceOperatorExprIfApplicable = true,
+		.convertSupportedInToScalarArrayOp = convertSupportedInToScalarArrayOp,
 		.requiredFilterPathNameHashSet = NULL,
 		.variableContext = NULL,
 	};
@@ -1204,7 +1208,8 @@ QueryDocumentsAreEquivalent(const pgbson *leftQueryDocument,
 		.documentExpr = (Expr *) MakeSimpleDocumentVar(),
 		.inputType = MongoQueryOperatorInputType_Bson,
 		.simplifyOperators = false,
-		.coerceOperatorExprIfApplicable = false,
+		.coerceOperatorExprIfApplicable = true,
+		.convertSupportedInToScalarArrayOp = convertSupportedInToScalarArrayOp,
 		.requiredFilterPathNameHashSet = NULL,
 		.variableContext = NULL,
 	};
@@ -1897,6 +1902,45 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 						operatorType, context->inputType);
 				return CreateFuncExprForQueryOperator(context, path, actualOperator,
 													  &currentValue);
+			}
+			else if (EnableDollarInToScalarArrayOpExprConversion &&
+					 context->convertSupportedInToScalarArrayOp &&
+					 context->coerceOperatorExprIfApplicable &&
+					 context->inputType == MongoQueryOperatorInputType_Bson &&
+					 numValues >= 1 &&
+					 operator->operatorType == QUERY_OPERATOR_IN && !hasRegex)
+			{
+				List *inArgsList = NIL;
+				if (bson_iter_recurse(operatorDocIterator, &arrayIterator))
+				{
+					while (bson_iter_next(&arrayIterator))
+					{
+						currentValue = *bson_iter_value(&arrayIterator);
+						Const *bsonConst = CreateConstFromBsonValue(
+							path, &currentValue,
+							context->collationString);
+						inArgsList = lappend(inArgsList, bsonConst);
+					}
+				}
+
+				/*
+				 * In the case where we're operating with a $in and indexes with
+				 * PFE we need to coerce the expression to the type of the index
+				 */
+				ScalarArrayOpExpr *inOperator = makeNode(ScalarArrayOpExpr);
+				inOperator->useOr = true;
+				inOperator->opno = BsonEqualMatchRuntimeOperatorId();
+				inOperator->opfuncid = BsonEqualMatchRuntimeFunctionId();
+
+				/* Second arg is an ArrayExpr containing the documents */
+				ArrayExpr *arrayExpr = makeNode(ArrayExpr);
+				arrayExpr->array_typeid = GetClusterBsonQueryArrayTypeId();
+				arrayExpr->element_typeid = GetClusterBsonQueryTypeId();
+				arrayExpr->multidims = false;
+				arrayExpr->elements = inArgsList;
+				inOperator->args = list_make2(context->documentExpr, arrayExpr);
+
+				return (Expr *) inOperator;
 			}
 			else
 			{

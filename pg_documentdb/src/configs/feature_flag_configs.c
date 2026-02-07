@@ -212,6 +212,10 @@ bool ForceCollStatsDataCollection = DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION;
 #define DEFAULT_ENABLE_ID_INDEX_PUSHDOWN true
 bool EnableIdIndexPushdown = DEFAULT_ENABLE_ID_INDEX_PUSHDOWN;
 
+#define DEFAULT_ENABLE_DOLLAR_IN_TO_SCALAR_ARRAY_OP_EXPR_CONVERSION true
+bool EnableDollarInToScalarArrayOpExprConversion =
+	DEFAULT_ENABLE_DOLLAR_IN_TO_SCALAR_ARRAY_OP_EXPR_CONVERSION;
+
 /* Remove after 111*/
 #define DEFAULT_USE_LOOKUP_NEW_PROJECT_INLINE_METHOD true
 bool EnableUseLookupNewProjectInlineMethod = DEFAULT_USE_LOOKUP_NEW_PROJECT_INLINE_METHOD;
@@ -606,6 +610,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Whether to enable extended id index pushdown optimizations."),
 		NULL, &EnableIdIndexPushdown, DEFAULT_ENABLE_ID_INDEX_PUSHDOWN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableDollarInToScalarArrayOpExprConversion", newGucPrefix),
+		gettext_noop(
+			"Whether to enable conversion of $in with scalar array to OpExpr."),
+		NULL, &EnableDollarInToScalarArrayOpExprConversion,
+		DEFAULT_ENABLE_DOLLAR_IN_TO_SCALAR_ARRAY_OP_EXPR_CONVERSION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 	DefineCustomBoolVariable(
 		psprintf("%s.enableExprLookupIndexPushdown", newGucPrefix),

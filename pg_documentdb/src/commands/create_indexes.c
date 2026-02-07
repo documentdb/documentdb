@@ -3773,6 +3773,7 @@ ParseIndexDefPartFilterDocument(const pgbson *partialFilterExprDocument,
 	context.inputType = MongoQueryOperatorInputType_Bson;
 	context.simplifyOperators = false;
 	context.coerceOperatorExprIfApplicable = true;
+	context.convertSupportedInToScalarArrayOp = true;
 	context.variableContext = NULL;
 	context.collationString = collationString;
 	List *partialFilterQuals = CreateQualsFromQueryDocIterator(&partFilterExprIter,
@@ -3837,6 +3838,26 @@ CheckPartFilterExprOperatorsWalker(Node *node, void *context)
 		else
 		{
 			ereport(ERROR, (errmsg("Unrecognized boolean operator encountered")));
+		}
+	}
+	else if (IsA(node, ScalarArrayOpExpr))
+	{
+		ScalarArrayOpExpr *scalarArrayOpExpr = (ScalarArrayOpExpr *) node;
+		if (!scalarArrayOpExpr->useOr)
+		{
+			ereport(ERROR, (errmsg(
+								"Unsupported Scalar array operator expr in  $in operator is supported in partialFilterExpression, only ANY expressions supported")));
+		}
+
+		const MongoQueryOperator *operator = GetMongoQueryOperatorByPostgresFuncId(
+			scalarArrayOpExpr->opfuncid);
+		if (operator->operatorType != QUERY_OPERATOR_EQ)
+		{
+			ThrowUnsupportedPartFilterExprError(node);
+		}
+		else
+		{
+			/* $in is supported operator for partial filter expressions */
 		}
 	}
 	else if (IsA(node, OpExpr) || IsA(node, FuncExpr))
@@ -4043,6 +4064,56 @@ GetPartFilterExprNodeReprWalker(Node *node, void *contextArg)
 		{
 			ereport(ERROR, (errmsg("Unrecognized boolean operator encountered")));
 		}
+	}
+	else if (IsA(node, ScalarArrayOpExpr))
+	{
+		ScalarArrayOpExpr *scalarArrayOpExpr = (ScalarArrayOpExpr *) node;
+		const MongoQueryOperator *operator = GetMongoQueryOperatorByPostgresFuncId(
+			scalarArrayOpExpr->opfuncid);
+
+		if (operator->operatorType != QUERY_OPERATOR_EQ || !scalarArrayOpExpr->useOr)
+		{
+			return false;
+		}
+
+		Node *rhsNode = lsecond(scalarArrayOpExpr->args);
+		if (!IsA(rhsNode, ArrayExpr))
+		{
+			return false;
+		}
+
+		ArrayExpr *bsonConst = (ArrayExpr *) rhsNode;
+
+		ListCell *elemCell;
+		bool isFirst = true;
+		foreach(elemCell, bsonConst->elements)
+		{
+			Expr *elemNode = (Expr *) lfirst(elemCell);
+			if (!IsA(elemNode, Const))
+			{
+				ereport(ERROR, (errmsg("got a non-Const node for an element "
+									   "of array argument of $in operator")));
+			}
+
+			Const *bsonConst = (Const *) elemNode;
+			pgbsonelement element;
+			PgbsonToSinglePgbsonElement((pgbson *) bsonConst->constvalue, &element);
+
+			if (isFirst)
+			{
+				appendStringInfo(context->reprStr, "%s%s $in [ %s",
+								 indentStr->data, element.path,
+								 BsonValueToJsonForLogging(&(element.bsonValue)));
+				isFirst = false;
+			}
+			else
+			{
+				appendStringInfo(context->reprStr, ", %s",
+								 BsonValueToJsonForLogging(&(element.bsonValue)));
+			}
+		}
+
+		appendStringInfo(context->reprStr, " ]\n");
 	}
 	else if (IsA(node, OpExpr) || IsA(node, FuncExpr))
 	{

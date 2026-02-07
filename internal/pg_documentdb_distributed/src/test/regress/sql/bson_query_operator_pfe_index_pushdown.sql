@@ -155,3 +155,78 @@ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'bsonqu
 EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'bsonquery') WHERE document @@ '{ "a": { "$ne" :  null }, "a.b": { "$gte": null } }';
 EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'bsonquery') WHERE document @@ '{ "a": { "$ne" :  null }, "a.b": { "$lte": null } }';
 ROLLBACK;
+
+-- handle null/empty string in pfe index pushdown with $in
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db2',
+  '{ "createIndexes": "pfe_coll_1", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "a_b_c_1", "partialFilterExpression": { "d": "vald", "c": "" } } ] }');
+
+set documentdb.forceUseIndexIfAvailable to on;
+set documentdb.forceDisableSeqScan to on;
+
+-- can push down
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": "", "a": { "$gte": 10 } } }');
+
+-- cannot push down due to null vs empty string
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": null, "a": { "$gte": 10 } } }');
+
+-- create an index with null in pfe
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db2',
+  '{ "createIndexes": "pfe_coll_1", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "a_b_c_2", "partialFilterExpression": { "d": "vald", "c": null } } ] }', TRUE);
+
+-- can push down now  
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": null, "a": { "$gte": 10 } } }');
+
+-- not these that overlap with null
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": { "$gte": { "$minKey": 1 }}, "a": { "$gte": 10 } } }');
+
+
+-- test null pushdown values.
+reset documentdb.forceDisableSeqScan;
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 1, "a": 15, "b": 20, "c": null, "d": "vald"}', NULL);
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 2, "a": 15, "b": 20, "d": "vald"}', NULL);
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 3, "a": 15, "b": 20, "c": { "$minKey": 1 }, "d": "vald"}', NULL);
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 4, "a": 15, "b": 20, "c": 0, "d": "vald"}', NULL);
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 5, "a": 15, "b": 20, "c": "", "d": "vald"}', NULL);
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 6, "a": 15, "b": 20, "c": "1", "d": "vald"}', NULL);
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 7, "a": 15, "b": 20, "c": [ "1" ], "d": "vald"}', NULL);
+
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 8, "a": 15, "b": 20, "c": [ "", 3 ], "d": "vald"}', NULL);
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 9, "a": 15, "b": 20, "c": [ 5, null ], "d": "vald"}', NULL);
+
+set documentdb.forceDisableSeqScan to on;
+SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": null, "a": { "$gte": 10 } } }');
+
+CALL documentdb_api.drop_indexes('db2', '{ "dropIndexes": "pfe_coll_1", "index": [ "a_b_c_1", "a_b_c_2" ] }');
+
+-- repeat with $in in the filter.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db2',
+  '{ "createIndexes": "pfe_coll_1", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "a_b_c_3", "partialFilterExpression": { "d": "vald", "c": { "$in": [ null, "" ] } } } ] }', TRUE);
+
+\d documentdb_data.documents_10982
+
+-- can push down
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": "", "a": { "$gte": 10 } } }');
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": null, "a": { "$gte": 10 } } }');
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": null, "a": { "$gte": 10 } } }');
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": { "$gte": { "$minKey": 1 }}, "a": { "$gte": 10 } } }');
+
+SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": null, "a": { "$gte": 10 } } }');
+SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": "", "a": { "$gte": 10 } } }');
+
+-- $in also works here
+SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": { "$in": [ null, "" ] }, "a": { "$gte": 10 } } }');
+
+-- but $in with elements not covered by the index do not
+SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": { "$in": [ null, 5 ] }, "a": { "$gte": 10 } } }');
+
+-- test insertion of documents into unique with PFE wiht a $in
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db2',
+  '{ "createIndexes": "pfe_unique_coll_1", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "unique": true, "partialFilterExpression": { "b": { "$in": [ 1, 2, 3 ] } } } ] }', TRUE);
+
+SELECT documentdb_api.insert_one('db2','pfe_unique_coll_1', '{"_id": 1, "a": 10, "b": 1}', NULL);
+
+-- duplicate error
+SELECT documentdb_api.insert_one('db2','pfe_unique_coll_1', '{"_id": 2, "a": 10, "b": 3}', NULL);
+
+-- this one is allowed (PFE mismatch)
+SELECT documentdb_api.insert_one('db2','pfe_unique_coll_1', '{"_id": 3, "a": 10, "b": 5}', NULL);
