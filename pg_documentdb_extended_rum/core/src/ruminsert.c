@@ -2529,6 +2529,8 @@ rumHeapTupleInsert(RumState *rumstate, OffsetNumber attnum,
 		insert_item.addInfo = addInfo[i];
 		insert_item.addInfoIsNull = addInfoIsNull[i];
 
+		/* there could be many entries, so be willing to abort here */
+		CHECK_FOR_INTERRUPTS();
 		rumEntryInsert(rumstate, attnum, entries[i], categories[i],
 					   &insert_item, 1, NULL);
 	}
