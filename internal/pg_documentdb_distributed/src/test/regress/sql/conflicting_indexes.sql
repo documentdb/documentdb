@@ -41,7 +41,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('conflict_test', 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('conflict_test', '{"createIndexes": "collection_1", "indexes": [{"key": {"$**": 1}, "name": "idx_8", "partialFilterExpression": {"b": {"$gte": 1}}}]}', true);
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('conflict_test', '{"createIndexes": "collection_1", "indexes": [{"key": {"$**": 1}, "name": "idx_9", "partialFilterExpression": {"b": {"$in": [1,2,3]}, "a": 1}}]}', true);
-SELECT documentdb_api_internal.create_indexes_non_concurrently('conflict_test', '{"createIndexes": "collection_1", "indexes": [{"key": {"$**": 1}, "name": "idx_9", "partialFilterExpression": {"b": {"$in": [2,1,3]}, "a": 1}}]}', true);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('conflict_test', '{"createIndexes": "collection_1", "indexes": [{"key": {"$**": 1}, "name": "idx_10", "partialFilterExpression": {"b": {"$in": [2,1,3]}, "a": 1}}]}', true);
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('conflict_test', '{"createIndexes": "collection_1", "indexes": [{"key": {"$**": 1}, "name": "idx_10", "partialFilterExpression": {"b": {"$not": {"$in": [1,2,3]}}, "a": 1}}]}', true);
 SELECT documentdb_api_internal.create_indexes_non_concurrently('conflict_test', '{"createIndexes": "collection_1", "indexes": [{"key": {"$**": 1}, "name": "idx_10", "partialFilterExpression": {"b": {"$nin": [1,2,3]}, "a": 1}}]}', true);

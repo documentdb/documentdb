@@ -1205,6 +1205,9 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* Opfamily for the bson */
 	Oid BsonRumCompositeIndexOperatorFamily;
+
+	/* Gets the oid of the bsonquery[] type */
+	Oid BsonQueryArrayTypeOid;
 } DocumentDBApiOidCacheData;
 
 static DocumentDBApiOidCacheData Cache;
@@ -7079,6 +7082,13 @@ GetClusterBsonQueryTypeId()
 	}
 
 	return typeId;
+}
+
+
+Oid
+GetClusterBsonQueryArrayTypeId()
+{
+	return GetArrayTypeOid(&Cache.BsonQueryArrayTypeOid, GetClusterBsonQueryTypeId());
 }
 
 

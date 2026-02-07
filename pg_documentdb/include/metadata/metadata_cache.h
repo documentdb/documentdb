@@ -176,6 +176,7 @@ Oid HalfVectorTypeId(void);
 Oid IndexSpecTypeId(void);
 Oid ApiCatalogCollectionsTypeOid(void);
 Oid GetClusterBsonQueryTypeId(void);
+Oid GetClusterBsonQueryArrayTypeId(void);
 Oid GetBsonArrayTypeOid(void);
 Oid BsonIndexBoundsTypeId(void);
 Oid GetBsonIndexBoundsArrayTypeOid(void);
