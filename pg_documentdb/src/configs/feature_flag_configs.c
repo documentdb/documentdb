@@ -296,6 +296,13 @@ bool EnableDropInvalidIndexesOnReadOnly = DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ON
 #define DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER false
 bool IndexBuildsScheduledOnBgWorker = DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER;
 
+/* Remove it after 112 */
+#define DEFAULT_INLINE_CHANGESTREAM_MATCH_STAGES true
+bool InlineChangeStreamMatchStage = DEFAULT_INLINE_CHANGESTREAM_MATCH_STAGES;
+
+#define DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS true
+bool RemoveMatchNamespaceFilters = DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS;
+
 /* FEATURE FLAGS END */
 
 void
@@ -807,6 +814,22 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable the new addToSet aggregation implementation that prevents crashes with the new delayed portal feature."),
 		NULL, &EnableAddToSetAggregationRewrite,
 		DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.inlineChangeStreamMatchStage", newGucPrefix),
+		gettext_noop(
+			"Determines whether to inline $match aggregation stage with  $changestreams"),
+		NULL, &InlineChangeStreamMatchStage,
+		DEFAULT_INLINE_CHANGESTREAM_MATCH_STAGES,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.removeMatchNamespaceFilters", newGucPrefix),
+		gettext_noop(
+			"Determines whether to remove $match aggregation stage filters on namespace when inlined with $changestreams"),
+		NULL, &RemoveMatchNamespaceFilters,
+		DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
