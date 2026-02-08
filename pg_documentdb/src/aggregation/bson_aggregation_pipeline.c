@@ -82,6 +82,8 @@ extern bool EnableConversionStreamableToSingleBatch;
 extern bool EnableFindProjectionAfterOffset;
 extern bool EnableNewCountAggregates;
 extern bool EnableUseLookupNewProjectInlineMethod;
+extern bool InlineChangeStreamMatchStage;
+extern bool RemoveMatchNamespaceFilters;
 
 /* GUC to config tdigest compression */
 extern int TdigestCompressionAccuracy;
@@ -257,6 +259,11 @@ static void RewriteFillToSetWindowFieldsSpec(const bson_value_t *fillSpec,
 											 bson_value_t *partitionByFields);
 static void TryOptimizeAggregationPipelines(List **aggregationStages,
 											AggregationPipelineBuildContext *context);
+static bool IsPipelineStageFollowedByOtherStage(Stage firstStage, Stage secondStage,
+												int curIndx, List *stagesList);
+static bool TryInlineChangeStreamNamespaceFilters(AggregationStage *changeStreamStage,
+												  AggregationStage *matchStage,
+												  bool *inlinedCompletely);
 
 #define COMPATIBLE_CHANGE_STREAM_STAGES_COUNT 8
 const char *CompatibleChangeStreamPipelineStages[COMPATIBLE_CHANGE_STREAM_STAGES_COUNT] =
@@ -8015,41 +8022,58 @@ TryOptimizeAggregationPipelines(List **aggregationStages,
 			allowShardBaseTable = false;
 		}
 
-		if (definition->stageEnum == Stage_Lookup)
+		if (IsPipelineStageFollowedByOtherStage(Stage_Lookup, Stage_Unwind,
+												currentIndex, stagesList))
 		{
 			/* Optimization for $lookup stage
+			 * If the next stage is $unwind, we can merge the $lookup and $unwind stages into a single stage.
+			 * This is because $lookup followed by $unwind is a common pattern and can be optimized to a single stage,
+			 * if $unwind is requested on the same field which is the "as" field in lookup stage.
 			 */
-			if (currentIndex < list_length(stagesList) - 1)
+			AggregationStage *unwindStage =
+				(AggregationStage *) lfirst(list_nth_cell(stagesList, currentIndex +
+														  1));
+			bool preserveEmptyArrays = false;
+			if (CanInlineLookupWithUnwind(&stage->stageValue,
+										  &unwindStage->stageValue,
+										  &preserveEmptyArrays))
 			{
-				AggregationStage *nextStage =
-					(AggregationStage *) lfirst(list_nth_cell(stagesList, currentIndex +
-															  1));
-				if (nextStage->stageDefinition->stageEnum == Stage_Unwind)
+				*aggregationStages = foreach_delete_current(stagesList, cell);
+				AggregationStage *lookupUnwindStage = unwindStage;
+
+				/* merge preserve empty arrays and the lookup spec */
+				pgbson_writer writer;
+				PgbsonWriterInit(&writer);
+				PgbsonWriterAppendBool(&writer, "preserveNullAndEmptyArrays", 26,
+									   preserveEmptyArrays);
+				PgbsonWriterAppendValue(&writer, "lookup", 6, &stage->stageValue);
+
+				lookupUnwindStage->stageValue = ConvertPgbsonToBsonValue(
+					PgbsonWriterGetPgbson(&writer));
+				lookupUnwindStage->stageDefinition =
+					(AggregationStageDefinition *) &LookupUnwindStageDefinition;
+			}
+		}
+
+		if (InlineChangeStreamMatchStage &&
+			IsPipelineStageFollowedByOtherStage(Stage_ChangeStream, Stage_Match,
+												currentIndex, stagesList))
+		{
+			/* Inline $match stage collection filters */
+			AggregationStage *matchStage =
+				(AggregationStage *) lfirst(list_nth_cell(stagesList, currentIndex + 1));
+			bool inlinedCompletely = false;
+			if (TryInlineChangeStreamNamespaceFilters(stage, matchStage,
+													  &inlinedCompletely))
+			{
+				/* If the match stage has only collection namespace filters, we can
+				 * remove the next stage completely after inlining. */
+				if (RemoveMatchNamespaceFilters && inlinedCompletely)
 				{
-					/* If the next stage is $unwind, we can merge the $lookup and $unwind stages into a single stage.
-					 * This is because $lookup followed by $unwind is a common pattern and can be optimized to a single stage,
-					 * if $unwind is requested on the same field which is the "as" field in lookup stage.
-					 */
-					bool preserveEmptyArrays = false;
-					if (CanInlineLookupWithUnwind(&stage->stageValue,
-												  &nextStage->stageValue,
-												  &preserveEmptyArrays))
-					{
-						*aggregationStages = foreach_delete_current(stagesList, cell);
-						AggregationStage *lookupUnwindStage = nextStage;
+					memcpy(matchStage, stage, sizeof(AggregationStage));
 
-						/* merge preserve empty arrays and the lookup spec */
-						pgbson_writer writer;
-						PgbsonWriterInit(&writer);
-						PgbsonWriterAppendBool(&writer, "preserveNullAndEmptyArrays", 26,
-											   preserveEmptyArrays);
-						PgbsonWriterAppendValue(&writer, "lookup", 6, &stage->stageValue);
-
-						lookupUnwindStage->stageValue = ConvertPgbsonToBsonValue(
-							PgbsonWriterGetPgbson(&writer));
-						lookupUnwindStage->stageDefinition =
-							(AggregationStageDefinition *) &LookupUnwindStageDefinition;
-					}
+					/* delete the current stage */
+					*aggregationStages = foreach_delete_current(stagesList, cell);
 				}
 			}
 		}
@@ -8058,4 +8082,142 @@ TryOptimizeAggregationPipelines(List **aggregationStages,
 	}
 
 	context->allowShardBaseTable = allowShardBaseTable;
+}
+
+
+/* Utility to check if firstStage is followed by secondStage */
+static bool
+IsPipelineStageFollowedByOtherStage(Stage firstStage, Stage secondStage, int curIndx,
+									List *stagesList)
+{
+	if (curIndx >= list_length(stagesList) - 1)
+	{
+		return false;
+	}
+
+	AggregationStage *stage =
+		(AggregationStage *) lfirst(list_nth_cell(stagesList, curIndx));
+	AggregationStage *nextStage =
+		(AggregationStage *) lfirst(list_nth_cell(stagesList, curIndx + 1));
+	return stage->stageDefinition->stageEnum == firstStage &&
+		   nextStage->stageDefinition->stageEnum == secondStage;
+}
+
+
+/*
+ * Try inlining the match filters on namespace followed by a change stream stage.
+ * If successful, the match filters are added to the change stream stage as internalfilters.
+ * Returns true if inlining was successful.
+ * Also the match stage if completely inlined is removed otherwise the namespace filters are removed from the stage.
+ */
+static bool
+TryInlineChangeStreamNamespaceFilters(AggregationStage *changeStreamStage,
+									  AggregationStage *matchStage,
+									  bool *inlinedCompletely)
+{
+	/* Validate inputs */
+	if (changeStreamStage == NULL || matchStage == NULL ||
+		inlinedCompletely == NULL)
+	{
+		return false;
+	}
+
+	bson_iter_t changeValueIter;
+	BsonValueInitIterator(&changeStreamStage->stageValue, &changeValueIter);
+	bool isAllClusterChangeStream = false;
+	while (bson_iter_next(&changeValueIter))
+	{
+		const char *key = bson_iter_key(&changeValueIter);
+		if (strcmp(key, "allChangesForCluster") == 0)
+		{
+			const bson_value_t *allChangesValue = bson_iter_value(&changeValueIter);
+			if (allChangesValue->value_type != BSON_TYPE_BOOL ||
+				!allChangesValue->value.v_bool)
+			{
+				/* It's non bool type or specifically marked as false, no optimizations can be made here */
+				return false;
+			}
+			else
+			{
+				isAllClusterChangeStream = true;
+			}
+		}
+		else if (strcmp(key, "internalFilters_ns") == 0)
+		{
+			/* Changestream spec can't have internal filters
+			 * treat it is an unknown field and throw error.
+			 */
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_UNKNOWNBSONFIELD),
+							errmsg("BSON field '%s' is an unknown field", key),
+							errdetail_log("BSON field '%s' is an unknown field",
+										  key)));
+		}
+	}
+
+	if (!isAllClusterChangeStream)
+	{
+		/* This is not an allChangesForCluster stream, bail out */
+		return false;
+	}
+
+	bson_iter_t matchIter;
+	BsonValueInitIterator(&matchStage->stageValue, &matchIter);
+	List *nsFilters = NIL;
+
+	bool multipleNSFilters = false;
+	bool isInvalidNSFilters = false;
+	pgbson *newFilters = FindNamespaceFiltersInMatchSpec(&matchIter, &nsFilters,
+														 &multipleNSFilters,
+														 &isInvalidNSFilters);
+	*inlinedCompletely = IsPgbsonEmptyDocument(newFilters);
+
+	if (multipleNSFilters || isInvalidNSFilters)
+	{
+		/* No complete namespace filters found, bail out */
+		return false;
+	}
+
+	pgbson *existingSpec = PgbsonInitFromDocumentBsonValue(
+		&changeStreamStage->stageValue);
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	PgbsonWriterConcat(&writer, existingSpec);
+
+	if (nsFilters != NIL)
+	{
+		pgbson_array_writer nsValueArrayWriter;
+		PgbsonWriterStartArray(&writer, "internalFilters_ns", strlen(
+								   "internalFilters_ns"), &nsValueArrayWriter);
+
+		ListCell *cell;
+		foreach(cell, nsFilters)
+		{
+			List *nsValueFilter = (List *) lfirst(cell);
+			pgbson_writer nsValueDocWriter;
+			PgbsonWriterInit(&nsValueDocWriter);
+			PgbsonWriterAppendUtf8(&nsValueDocWriter, "db", 2,
+								   (const char *) linitial(nsValueFilter));
+			PgbsonWriterAppendUtf8(&nsValueDocWriter, "coll", 4,
+								   (const char *) lsecond(nsValueFilter));
+			PgbsonArrayWriterWriteDocument(&nsValueArrayWriter,
+										   PgbsonWriterGetPgbson(&nsValueDocWriter));
+
+			list_free(nsValueFilter);
+		}
+		PgbsonWriterEndArray(&writer, &nsValueArrayWriter);
+
+		list_free(nsFilters);
+		nsFilters = NIL;
+	}
+
+	/* Update changeStream stage value to include filteredCollection */
+	changeStreamStage->stageValue = ConvertPgbsonToBsonValue(PgbsonWriterGetPgbson(
+																 &writer));
+	if (RemoveMatchNamespaceFilters && !(*inlinedCompletely))
+	{
+		/* If not inlined completely, we need to update the match stage value after removeing ns filters */
+		matchStage->stageValue = ConvertPgbsonToBsonValue(newFilters);
+	}
+
+	return true;
 }

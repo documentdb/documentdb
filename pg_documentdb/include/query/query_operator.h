@@ -153,5 +153,8 @@ bool ValidateOrderbyExpressionAndGetIsAscending(pgbson *orderby);
 bool IsValidBsonDocumentForDollarInOrNinOp(const bson_value_t *value);
 void UpdateQueryOperatorContextSortList(Query *query, List *sortClauses,
 										List *targetEntries);
+pgbson * FindNamespaceFiltersInMatchSpec(bson_iter_t *specIter, List **nsFilters,
+										 bool *multipleNSFilters,
+										 bool *invalidNSFilters);
 
 #endif
