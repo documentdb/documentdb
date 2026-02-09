@@ -3,6 +3,7 @@ name = "documentdb_gateway"
 description = "A gateway component for DocumentDB."
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0 OR MIT"
 
 [package.metadata.deb]
 name = "documentdb_gateway"
