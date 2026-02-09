@@ -6,6 +6,9 @@ Makefile:;
 
 .PHONY: %
 
+notice:
+	$(MAKE) -C pg_documentdb_gw notice
+
 check-no-distributed:
 	$(MAKE) -C pg_documentdb_core check
 	$(MAKE) -C pg_documentdb check
