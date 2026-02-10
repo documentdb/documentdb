@@ -1,0 +1,11 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# This file contains fine-tuning settings that cannot be specified in cargo.toml (which only supports "error level").
+
+# Absolute paths of length 3 can be useful to emphasize where a particular symbol is coming from,
+# e.g. by using "std::sync::mutex" versus "tokio::sync::mutex".  Anything beyond 3 segments seems
+# excessively verbose, so we limit it to 3 - import or alias to shorten longer symbol paths.
+absolute-paths-max-segments = 3
+avoid-breaking-exported-api = false
+semicolon-outside-block-ignore-multiline = true

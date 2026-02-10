@@ -63,25 +63,25 @@ impl Transaction {
     }
 
     pub async fn commit(&mut self) -> Result<()> {
-        let t = self
-            .transaction
+        self.transaction
             .as_mut()
             .ok_or(DocumentDBError::documentdb_error(
                 ErrorCode::NoSuchTransaction,
                 "No transaction found to commit".to_string(),
-            ))?;
-        t.commit().await
+            ))?
+            .commit()
+            .await
     }
 
     pub async fn abort(&mut self) -> Result<()> {
-        let t = self
-            .transaction
+        self.transaction
             .as_mut()
             .ok_or(DocumentDBError::documentdb_error(
                 ErrorCode::NoSuchTransaction,
-                "No transaction found to commit".to_string(),
-            ))?;
-        t.abort().await
+                "No transaction found to abort".to_string(),
+            ))?
+            .abort()
+            .await
     }
 
     pub fn transaction_number(&self) -> i64 {
@@ -276,25 +276,56 @@ impl TransactionStore {
         }
     }
 
-    pub async fn abort(&self, session_id: &[u8]) -> Result<()> {
-        if let Some((_, (_, mut transaction))) = self.transactions.remove(session_id) {
-            transaction.abort().await?;
-            if let Some(mut last_seen) = self.last_seen_transactions.get_mut(session_id) {
-                last_seen.state = TransactionState::Aborted;
-            } else {
-                return Err(DocumentDBError::documentdb_error(
+    /// Removes the active transaction for `session_id`, aborts it, and marks the
+    /// last-seen transaction as aborted.
+    ///
+    /// Returns `Ok(None)` when there is no active transaction for the session.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ErrorCode::NoSuchTransaction` if the transaction is found but the
+    /// last-seen record is missing, or if aborting the transaction fails.
+    pub async fn remove_transaction_by_session(
+        &self,
+        session_id: &[u8],
+    ) -> Result<Option<(Vec<u8>, TransactionEntry)>> {
+        let Some((deleted_sessions_id, mut transaction_entry)) =
+            self.transactions.remove(session_id)
+        else {
+            return Ok(None);
+        };
+
+        transaction_entry.1.abort().await?;
+        self.last_seen_transactions
+            .get_mut(session_id)
+            .map(|mut last_seen| last_seen.state = TransactionState::Aborted)
+            .ok_or_else(|| {
+                DocumentDBError::documentdb_error(
                     ErrorCode::NoSuchTransaction,
                     "Last seen transaction should always exist for an existing transaction"
                         .to_string(),
-                ));
-            }
-            Ok(())
-        } else {
-            Err(DocumentDBError::documentdb_error(
-                ErrorCode::NoSuchTransaction,
-                "No such transaction to abort".to_string(),
-            ))
-        }
+                )
+            })?;
+
+        Ok(Some((deleted_sessions_id, transaction_entry)))
+    }
+
+    /// Aborts and removes the active transaction for `session_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ErrorCode::NoSuchTransaction` when there is no active
+    /// transaction for the session or when the removal fails.
+    pub async fn abort(&self, session_id: &[u8]) -> Result<()> {
+        self.remove_transaction_by_session(session_id)
+            .await?
+            .map(|_| ())
+            .ok_or_else(|| {
+                DocumentDBError::documentdb_error(
+                    ErrorCode::NoSuchTransaction,
+                    "No such transaction to abort".to_string(),
+                )
+            })
     }
 
     pub async fn commit(&self, session_id: &[u8]) -> Result<()> {
