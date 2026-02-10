@@ -170,7 +170,7 @@ impl ConnectionContext {
     ///
     /// # Returns
     /// A `String` containing the new UUID, e.g. `"550e8400-e29b-41d4-a716-446655440000"`.
-    pub fn generate_request_activity_id(&mut self, request_id: i32) -> String {
+    pub fn generate_request_activity_id(&self, request_id: i32) -> String {
         let mut activity_id_bytes = *self.connection_id.as_bytes();
         activity_id_bytes[12..].copy_from_slice(&request_id.to_be_bytes());
         Builder::from_bytes(activity_id_bytes)

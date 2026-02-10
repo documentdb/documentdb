@@ -1,6 +1,7 @@
 ### documentdb v0.110-0 (Unreleased) ###
 * Add support for keyword `description` in `$jsonSchema` *[Feature]*
 * Integrate cargo tools to identify dependencies for pg_documentdb_gw *[Feature]* (#263)
+* Add support for killSessions command *[Feature]* (#402)
 
 ### documentdb v0.109-0 (Unreleased) ###
 * Support collation with find positional queries *[Feature]*

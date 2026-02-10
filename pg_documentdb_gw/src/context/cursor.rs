@@ -87,9 +87,16 @@ impl CursorStore {
         self.cursors.retain(|_, v| v.db != db)
     }
 
-    pub async fn invalidate_cursors_by_session(&self, session: &[u8]) {
-        self.cursors
-            .retain(|_, v| v.session_id.as_deref() != Some(session))
+    pub async fn invalidate_cursors_by_session(&self, session: &[u8]) -> Vec<i64> {
+        let mut invalidated_cursor_ids = Vec::new();
+        self.cursors.retain(|&(cursor_id, _), v| {
+            let should_remove = v.session_id.as_deref() == Some(session);
+            if should_remove {
+                invalidated_cursor_ids.push(cursor_id);
+            }
+            !should_remove
+        });
+        invalidated_cursor_ids
     }
 
     pub async fn kill_cursors(&self, user: String, cursors: &[i64]) -> (Vec<i64>, Vec<i64>) {

@@ -1,4 +1,13 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Microsoft Corporation.  All rights reserved.
+ *
+ * tests/killop_tests.rs
+ *
+ *-------------------------------------------------------------------------
+ */
+
 pub mod common;
+
 use mongodb::bson::doc;
 
 #[tokio::test]

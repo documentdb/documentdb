@@ -19,9 +19,12 @@ documentdb_error_code_enum!();
 
 pub enum DocumentDBError {
     IoError(io::Error, Backtrace),
+    #[expect(clippy::enum_variant_names)]
     DocumentDBError(ErrorCode, String, Backtrace),
+    #[expect(clippy::enum_variant_names)]
     UntypedDocumentDBError(i32, String, String, Backtrace),
     PostgresError(tokio_postgres::Error, Backtrace),
+    #[expect(clippy::enum_variant_names)]
     PostgresDocumentDBError(i32, String, Backtrace),
     PoolError(PoolError, Backtrace),
     CreatePoolError(CreatePoolError, Backtrace),

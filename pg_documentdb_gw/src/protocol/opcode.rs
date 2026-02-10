@@ -8,7 +8,7 @@
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum OpCode {
-    INVALID = 0,
+    Invalid = 0,
     Reply = 1,
     Update = 2001,
     Insert = 2002,
@@ -38,7 +38,7 @@ impl OpCode {
             2011 => OpCode::CommandReply,
             2012 => OpCode::Compressed,
             2013 => OpCode::Msg,
-            _ => OpCode::INVALID,
+            _ => OpCode::Invalid,
         }
     }
 }

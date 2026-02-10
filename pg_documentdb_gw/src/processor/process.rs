@@ -313,8 +313,9 @@ pub async fn process_request(
             RequestType::CommitTransaction => transaction::process_commit(connection_context).await,
             RequestType::AbortTransaction => transaction::process_abort(connection_context).await,
             RequestType::ListCommands => constant::list_commands(),
-            RequestType::EndSessions => {
-                session::end_sessions(request_context, connection_context).await
+            RequestType::EndSessions | RequestType::KillSessions => {
+                session::end_or_kill_sessions(request_context, connection_context, &pg_data_client)
+                    .await
             }
             RequestType::ReshardCollection => {
                 data_description::process_shard_collection(
