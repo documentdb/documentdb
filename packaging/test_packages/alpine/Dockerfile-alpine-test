@@ -58,6 +58,12 @@ RUN mkdir -p $PKG_CONFIG_INSTALL_PATH
 # Install Intel Decimal Math Library (needed for make check)
 RUN bash scripts/install_setup_intel_decimal_math_lib.sh
 
+# Install RUM extension from source (needed for make check)
+# RUM is not available as a pre-built Alpine package, so we build it from source
+RUN if [ "${POSTGRES_VERSION}" -lt 18 ]; then \
+        bash scripts/install_setup_rum_oss.sh; \
+    fi
+
 # Copy test entrypoint script
 COPY packaging/test_packages/alpine/test-install-entrypoint-alpine.sh /usr/local/bin/test-install-entrypoint-alpine.sh
 RUN chmod +x /usr/local/bin/test-install-entrypoint-alpine.sh
