@@ -164,6 +164,9 @@ int MaxCursorFileCount = DEFAULT_MAX_CURSOR_FILE_COUNT;
 #define DEFAULT_ALTERNATE_INDEX_HANDLER ""
 char *AlternateIndexHandler = DEFAULT_ALTERNATE_INDEX_HANDLER;
 
+#define DEFAULT_MAX_NON_ORDERED_TERM_SCAN_THRESHOLD -1
+int MaxNonOrderedTermScanThreshold = DEFAULT_MAX_NON_ORDERED_TERM_SCAN_THRESHOLD;
+
 RumLibraryLoadOptions DocumentDBRumLibraryLoadOption = DEFAULT_RUM_LIBRARY_LOAD_OPTION;
 
 #define DEFAULT_ENABLE_STATEMENT_TIMEOUT true
@@ -478,4 +481,12 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 			"The name of the index handler to use as opposed to rum (currently for testing only)."),
 		NULL, &AlternateIndexHandler, DEFAULT_ALTERNATE_INDEX_HANDLER,
 		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.max_non_ordered_term_scan_threshold", prefix),
+		gettext_noop(
+			"The maximum threshold for non-ordered term scans."),
+		NULL, &MaxNonOrderedTermScanThreshold,
+		DEFAULT_MAX_NON_ORDERED_TERM_SCAN_THRESHOLD,
+		-1, INT_MAX, PGC_USERSET, 0, NULL, NULL, NULL);
 }

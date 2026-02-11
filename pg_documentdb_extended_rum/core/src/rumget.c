@@ -4628,17 +4628,17 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 
 	if (so->firstCall)
 	{
+		if (!ScanDirectionIsNoMovement(direction))
+		{
+			so->orderScanDirection = direction;
+		}
+
 		/*
 		 * Set up the scan keys, and check for unsatisfiable query.
 		 */
 		if (RumIsNewKey(scan))
 		{
 			rumNewScanKey(scan);
-		}
-
-		if (!ScanDirectionIsNoMovement(direction))
-		{
-			so->orderScanDirection = direction;
 		}
 
 		so->firstCall = false;

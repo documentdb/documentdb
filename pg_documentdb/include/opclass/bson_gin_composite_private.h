@@ -57,6 +57,23 @@ typedef struct PathScanTermMap
 	int32_t numTermsPerPath;
 } PathScanTermMap;
 
+typedef struct CompositeIndexBoundsSet
+{
+	/* The index path attribute (0 based) */
+	int32_t indexAttribute;
+	int32_t numBounds;
+
+	/* The index path (if it is a wildcard match) */
+	const char *wildcardPath;
+	CompositeIndexBounds bounds[FLEXIBLE_ARRAY_MEMBER];
+} CompositeIndexBoundsSet;
+
+typedef struct VariableIndexBounds
+{
+	/* List of CompositeIndexBoundsSet */
+	List *variableBoundsList;
+} VariableIndexBounds;
+
 typedef struct CompositeQueryMetaInfo
 {
 	int32_t numIndexPaths;
@@ -76,23 +93,6 @@ typedef struct CompositeQueryRunData
 	const char *wildcardPath;
 	CompositeIndexBounds indexBounds[FLEXIBLE_ARRAY_MEMBER];
 } CompositeQueryRunData;
-
-typedef struct CompositeIndexBoundsSet
-{
-	/* The index path attribute (0 based) */
-	int32_t indexAttribute;
-	int32_t numBounds;
-
-	/* The index path (if it is a wildcard match) */
-	const char *wildcardPath;
-	CompositeIndexBounds bounds[FLEXIBLE_ARRAY_MEMBER];
-} CompositeIndexBoundsSet;
-
-typedef struct VariableIndexBounds
-{
-	/* List of CompositeIndexBoundsSet */
-	List *variableBoundsList;
-} VariableIndexBounds;
 
 static inline CompositeIndexBoundsSet *
 CreateCompositeIndexBoundsSet(int32_t numTerms, int32_t indexAttribute,
@@ -141,6 +141,14 @@ void TrimSecondaryVariableBounds(VariableIndexBounds *variableBounds,
 								 CompositeQueryRunData *runData);
 void PickVariableBoundsForOrderedScan(VariableIndexBounds *variableBounds,
 									  CompositeQueryRunData *runData);
+void PopulateTermMetadataForTruncation(IndexTermCreateMetadata *metadata, const
+									   IndexTermCreateMetadata *baseMetadata,
+									   CompositeQueryRunData *runData,
+									   const char *indexPath, uint32_t indexPathLength,
+									   int8_t sortOrder);
+bool UpdateSingleBoundForTruncation(CompositeQueryRunData *runData, int i,
+									CompositeIndexBounds *bound,
+									IndexTermCreateMetadata *metadata);
 
 
 /*

@@ -547,6 +547,57 @@ PickVariableBoundsForOrderedScan(VariableIndexBounds *variableBounds,
 }
 
 
+void
+PopulateTermMetadataForTruncation(IndexTermCreateMetadata *metadata, const
+								  IndexTermCreateMetadata *baseMetadata,
+								  CompositeQueryRunData *runData,
+								  const char *indexPath, uint32_t indexPathLength,
+								  int8_t sortOrder)
+{
+	*metadata = *baseMetadata;
+	metadata->isDescending = (sortOrder < 0);
+	metadata->isWildcard = runData->wildcardPath != NULL;
+
+	if (metadata->isWildcard)
+	{
+		metadata->pathPrefix.string = indexPath;
+		metadata->pathPrefix.length = indexPathLength;
+	}
+}
+
+
+bool
+UpdateSingleBoundForTruncation(CompositeQueryRunData *runData, int i,
+							   CompositeIndexBounds *bound,
+							   IndexTermCreateMetadata *metadata)
+{
+	bool hasTruncation = false;
+	uint32_t termPathLength = 0;
+	const char *termPath = GetTermElementPath(runData, i, &termPathLength);
+	if (bound->lowerBound.bound.value_type != BSON_TYPE_EOD)
+	{
+		ProcessBoundForQuery(&bound->lowerBound,
+							 termPath, termPathLength,
+							 metadata);
+		hasTruncation = hasTruncation ||
+						IsIndexTermTruncated(&bound->lowerBound.
+											 indexTermValue);
+	}
+
+	if (bound->upperBound.bound.value_type != BSON_TYPE_EOD)
+	{
+		ProcessBoundForQuery(&bound->upperBound,
+							 termPath, termPathLength,
+							 metadata);
+		hasTruncation = hasTruncation ||
+						IsIndexTermTruncated(&bound->upperBound.
+											 indexTermValue);
+	}
+
+	return hasTruncation;
+}
+
+
 bool
 UpdateBoundsForTruncation(CompositeQueryRunData *runData,
 						  IndexTermCreateMetadata *basePathMetadata,
@@ -556,38 +607,15 @@ UpdateBoundsForTruncation(CompositeQueryRunData *runData,
 	bool hasTruncation = false;
 	for (int i = 0; i < runData->metaInfo->numIndexPaths; i++)
 	{
-		IndexTermCreateMetadata metadata = *basePathMetadata;
+		IndexTermCreateMetadata metadata;
+		PopulateTermMetadataForTruncation(&metadata, basePathMetadata, runData,
+										  indexPaths[i], indexPathLengths[i],
+										  sortOrders[i]);
 
-		uint32_t termPathLength = 0;
-		const char *termPath = GetTermElementPath(runData, i, &termPathLength);
-		metadata.isDescending = (sortOrders[i] < 0);
-		metadata.isWildcard = runData->wildcardPath != NULL;
-
-		if (metadata.isWildcard)
-		{
-			metadata.pathPrefix.string = indexPaths[i];
-			metadata.pathPrefix.length = indexPathLengths[i];
-		}
-
-		if (runData->indexBounds[i].lowerBound.bound.value_type != BSON_TYPE_EOD)
-		{
-			ProcessBoundForQuery(&runData->indexBounds[i].lowerBound,
-								 termPath, termPathLength,
-								 &metadata);
-			hasTruncation = hasTruncation ||
-							IsIndexTermTruncated(&runData->indexBounds[i].lowerBound.
-												 indexTermValue);
-		}
-
-		if (runData->indexBounds[i].upperBound.bound.value_type != BSON_TYPE_EOD)
-		{
-			ProcessBoundForQuery(&runData->indexBounds[i].upperBound,
-								 termPath, termPathLength,
-								 &metadata);
-			hasTruncation = hasTruncation ||
-							IsIndexTermTruncated(&runData->indexBounds[i].upperBound.
-												 indexTermValue);
-		}
+		bool currentHasTruncation = UpdateSingleBoundForTruncation(runData, i,
+																   &runData->indexBounds[i
+																   ], &metadata);
+		hasTruncation = hasTruncation || currentHasTruncation;
 	}
 
 	return hasTruncation;
