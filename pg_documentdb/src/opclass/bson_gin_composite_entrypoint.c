@@ -44,6 +44,10 @@
  #include "opclass/bson_gin_composite_private.h"
  #include "opclass/bson_gin_composite.h"
 
+/* CodeSync: pg_documentdb_rum.h */
+#define RUM_SEARCH_MODE_ORDERED 4
+#define RUM_SEARCH_MODE_ORDERED_REVERSE 5
+
 typedef enum RumIndexTransformOperation
 {
 	RumIndexTransform_IndexGenerateSkipBound = 1
@@ -146,7 +150,7 @@ static bytea * BuildTermForBounds(CompositeQueryRunData *runData,
 static void ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 									bool *isMultiKey, bool *isOrderedScan,
 									bool *hasCorrelatedReducedTerms,
-									bool *isBackward);
+									bool *isBackward, bool *supportsOrderedOperatorScans);
 static int32_t RunCompareOnBounds(CompositeIndexBounds *bounds,
 								  const BsonIndexTerm *compareValue,
 								  bool hasEqualityPrefix, bool isBackwardScan, bool
@@ -311,8 +315,9 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 
 	/* key that we're doing an ordered scan based off of search mode */
 	bool isOrderedScan = (*searchMode != GIN_SEARCH_MODE_DEFAULT);
-	metaInfo->isBackwardScan = false;
+	metaInfo->isBackwardScan = (*searchMode == RUM_SEARCH_MODE_ORDERED_REVERSE);
 	bool isCorrelatedReducedScan = false;
+	bool supportsOrderedOperatorScans = false;
 	if (isOrderedScan)
 	{
 		*searchMode = GIN_SEARCH_MODE_DEFAULT;
@@ -348,7 +353,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 		pgbsonelement singleElement;
 		ParseCompositeQuerySpec(query, &singleElement, &hasArrayPaths, &isOrderedScan,
 								&isCorrelatedReducedScan,
-								&metaInfo->isBackwardScan);
+								&metaInfo->isBackwardScan, &supportsOrderedOperatorScans);
 		ParseBoundsForCompositeOperator(&singleElement, indexPaths, indexPathLengths,
 										numPaths,
 										metaInfo->wildcardPathIndex, &variableBounds);
@@ -2187,7 +2192,7 @@ DetermineCompositeScanDirection(bytea *compositeScanOptions,
 
 Datum
 FormCompositeDatumFromQuals(List *indexQuals, List *indexOrderBy, bool isMultiKey, bool
-							hasCorrelatedReducedTerm)
+							hasCorrelatedReducedTerm, bool supportsOperatorOrderedScans)
 {
 	ScanKeyData *scanKeys = palloc0(sizeof(ScanKeyData) * list_length(indexQuals));
 	ScanKeyData targetScanKey = { 0 };
@@ -2257,7 +2262,8 @@ FormCompositeDatumFromQuals(List *indexQuals, List *indexOrderBy, bool isMultiKe
 	if (!ModifyScanKeysForCompositeScan(scanKeys, list_length(indexQuals), &targetScanKey,
 										isMultiKey, hasCorrelatedReducedTerm,
 										list_length(indexOrderBy) > 0,
-										ForwardScanDirection))
+										ForwardScanDirection,
+										supportsOperatorOrderedScans))
 	{
 		return (Datum) 0;
 	}
@@ -2279,8 +2285,8 @@ FormCompositeDatumFromQuals(List *indexQuals, List *indexOrderBy, bool isMultiKe
 bool
 ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetScanKey,
 							   bool hasArrayKeys, bool hasCorrelatedReducedTerms, bool
-							   hasOrderBys,
-							   ScanDirection scanDirection)
+							   hasOrderBys, ScanDirection scanDirection,
+							   bool supportsOrderedOperatorScans)
 {
 	pgbson_writer querySpecWriter;
 	PgbsonWriterInit(&querySpecWriter);
@@ -2319,6 +2325,11 @@ ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetSca
 		PgbsonWriterAppendBool(&querySpecWriter, "cr", 2, hasCorrelatedReducedTerms);
 	}
 
+	if (supportsOrderedOperatorScans)
+	{
+		PgbsonWriterAppendBool(&querySpecWriter, "oo", 2, true);
+	}
+
 	Datum finalDatum = PointerGetDatum(
 		PgbsonWriterGetPgbson(&querySpecWriter));
 
@@ -2343,7 +2354,7 @@ static void
 ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 						bool *isMultiKey, bool *isOrderBy,
 						bool *hasCorrelatedReducedTerms,
-						bool *isBackward)
+						bool *isBackward, bool *supportsOrderedOperatorScans)
 {
 	bson_iter_t queryIter;
 	PgbsonInitIterator(querySpec, &queryIter);
@@ -2371,6 +2382,11 @@ ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 		{
 			*hasCorrelatedReducedTerms = *hasCorrelatedReducedTerms || bson_iter_bool(
 				&queryIter);
+		}
+		else if (strcmp(key, "oo") == 0)
+		{
+			*supportsOrderedOperatorScans = *supportsOrderedOperatorScans ||
+											bson_iter_bool(&queryIter);
 		}
 		else if (strcmp(key, "db") == 0)
 		{

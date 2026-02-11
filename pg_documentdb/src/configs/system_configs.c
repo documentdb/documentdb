@@ -161,6 +161,9 @@ int MaxCursorFileCount = DEFAULT_MAX_CURSOR_FILE_COUNT;
 #define DEFAULT_RUM_LIBRARY_LOAD_OPTION RumLibraryLoadOption_None
 #endif
 
+#define DEFAULT_ALTERNATE_INDEX_HANDLER ""
+char *AlternateIndexHandler = DEFAULT_ALTERNATE_INDEX_HANDLER;
+
 RumLibraryLoadOptions DocumentDBRumLibraryLoadOption = DEFAULT_RUM_LIBRARY_LOAD_OPTION;
 
 #define DEFAULT_ENABLE_STATEMENT_TIMEOUT true
@@ -467,5 +470,12 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 		gettext_noop(
 			"Whether to enable per statement backend timeout override in the backend."),
 		NULL, &EnableBackendStatementTimeout, DEFAULT_ENABLE_STATEMENT_TIMEOUT,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomStringVariable(
+		psprintf("%s.alternate_index_handler_name", prefix),
+		gettext_noop(
+			"The name of the index handler to use as opposed to rum (currently for testing only)."),
+		NULL, &AlternateIndexHandler, DEFAULT_ALTERNATE_INDEX_HANDLER,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }

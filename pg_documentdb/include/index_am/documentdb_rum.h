@@ -53,9 +53,6 @@ typedef enum RumLibraryLoadOptions
 	RumLibraryLoadOption_RequireDocumentDBRum = 2,
 } RumLibraryLoadOptions;
 
-
-typedef bool (*CanOrderInIndexScan)(IndexScanDesc scan);
-
 extern RumLibraryLoadOptions DocumentDBRumLibraryLoadOption;
 void LoadRumRoutine(void);
 
@@ -64,9 +61,7 @@ IndexScanDesc extension_rumbeginscan_core(Relation rel, int nkeys, int norderbys
 void extension_rumendscan_core(IndexScanDesc scan, IndexAmRoutine *coreRoutine);
 void extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 							  ScanKey orderbys, int norderbys,
-							  IndexAmRoutine *coreRoutine,
-							  GetMultikeyStatusFunc multiKeyStatusFunc,
-							  CanOrderInIndexScan indexScanOrderedFunc);
+							  IndexAmRoutine *coreRoutine);
 int64 extension_rumgetbitmap_core(IndexScanDesc scan, TIDBitmap *tbm,
 								  IndexAmRoutine *coreRoutine);
 bool extension_rumgettuple_core(IndexScanDesc scan, ScanDirection direction,

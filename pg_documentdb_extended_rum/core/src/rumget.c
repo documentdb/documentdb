@@ -1881,7 +1881,7 @@ startScan(IndexScanDesc scan)
 		scanType = RumOrderedScan;
 		startOrderedScanEntries(scan, rumstate, so);
 	}
-	else if (so->norderbys > 0 &&
+	else if ((so->norderbys > 0 || RumEnableOrderedOperatorScans) &&
 			 so->willSort && !rumstate->useAlternativeOrder)
 	{
 		scanType = RumOrderedScan;

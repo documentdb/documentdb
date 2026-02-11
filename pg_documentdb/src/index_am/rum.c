@@ -137,9 +137,6 @@ static IndexAmRoutine * GetRumIndexHandler(PG_FUNCTION_ARGS);
 
 static bool RumGetMultiKeyStatusSlow(Relation relation);
 
-static bool RumScanOrderedFalse(IndexScanDesc scan);
-static CanOrderInIndexScan rum_index_scan_ordered = RumScanOrderedFalse;
-
 static Datum (*rum_extract_tsquery_func)(PG_FUNCTION_ARGS) = NULL;
 static Datum (*rum_tsquery_consistent_func)(PG_FUNCTION_ARGS) = NULL;
 static Datum (*rum_tsvector_config_func)(PG_FUNCTION_ARGS) = NULL;
@@ -519,7 +516,7 @@ LoadRumRoutine(void)
 							   ignoreLibFileHandle);
 	if (scanOrderedFunc != NULL)
 	{
-		rum_index_scan_ordered = scanOrderedFunc;
+		RumIndexAmEntry.can_order_in_index_scans = scanOrderedFunc;
 	}
 
 	void (*setRumUnredactedLogEmitHookFunc)(format_log_hook hook) = NULL;
@@ -702,13 +699,6 @@ CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath)
 
 	/* can only support index only scan if the index is not multikey and there are no truncated terms. */
 	return !multiKeyStatus && !hasTruncatedTerms;
-}
-
-
-static bool
-RumScanOrderedFalse(IndexScanDesc scan)
-{
-	return false;
 }
 
 
@@ -973,19 +963,21 @@ extension_rumrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 {
 	EnsureRumLibLoaded();
 	extension_rumrescan_core(scan, scankey, nscankeys,
-							 orderbys, norderbys, &rum_index_routine,
-							 rum_index_multi_key_get_func, rum_index_scan_ordered);
+							 orderbys, norderbys, &rum_index_routine);
 }
 
 
 void
 extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 						 ScanKey orderbys, int norderbys,
-						 IndexAmRoutine *coreRoutine,
-						 GetMultikeyStatusFunc multiKeyStatusFunc,
-						 CanOrderInIndexScan isIndexScanOrdered)
+						 IndexAmRoutine *coreRoutine)
 {
-	if (IsCompositeOpClass(scan->indexRelation))
+	bool supportsOrderedOperatorScans = false;
+	GetMultikeyStatusFunc multiKeyStatusFunc = NULL;
+	CanOrderInIndexScan isIndexScanOrdered = NULL;
+	if (GetCompositeOpClassWithProps(scan->indexRelation,
+									 &supportsOrderedOperatorScans, &multiKeyStatusFunc,
+									 &isIndexScanOrdered))
 	{
 		/* Copy the scan keys to our scan */
 		if (scankey && scan->numberOfKeys > 0)
@@ -1056,7 +1048,8 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 										   IndexMultiKeyStatus_HasArrays,
 										   outerScanState->hasCorrelatedReducedTerms,
 										   nInnerorderbys > 0,
-										   outerScanState->scanDirection))
+										   outerScanState->scanDirection,
+										   supportsOrderedOperatorScans))
 		{
 			innerScanKey = &outerScanState->compositeKey;
 			nInnerScanKeys = 1;
@@ -1448,7 +1441,11 @@ void
 ExplainRawCompositeScan(Relation index_rel, List *indexQuals, List *indexOrderBy,
 						ScanDirection indexScanDir, struct ExplainState *es)
 {
-	if (!IsCompositeOpClass(index_rel))
+	bool supportsOrderedOperatorScans = false;
+	GetMultikeyStatusFunc multiKeyStatusFunc = NULL;
+	CanOrderInIndexScan isIndexScanOrdered = NULL;
+	if (!GetCompositeOpClassWithProps(index_rel, &supportsOrderedOperatorScans,
+									  &multiKeyStatusFunc, &isIndexScanOrdered))
 	{
 		return;
 	}
@@ -1465,7 +1462,8 @@ ExplainRawCompositeScan(Relation index_rel, List *indexQuals, List *indexOrderBy
 			options->enableCompositeReducedCorrelatedTerms;
 	}
 
-	bool isMultiKey = RumGetMultiKeyStatusSlow(index_rel);
+	bool isMultiKey = multiKeyStatusFunc ? multiKeyStatusFunc(index_rel) :
+					  RumGetMultiKeyStatusSlow(index_rel);
 	ExplainPropertyBool("isMultiKey", isMultiKey, es);
 
 	bool hasCorrelatedTerms = false;
@@ -1482,7 +1480,8 @@ ExplainRawCompositeScan(Relation index_rel, List *indexQuals, List *indexOrderBy
 	}
 
 	Datum compositeDatum = FormCompositeDatumFromQuals(indexQuals, indexOrderBy,
-													   isMultiKey, hasCorrelatedTerms);
+													   isMultiKey, hasCorrelatedTerms,
+													   supportsOrderedOperatorScans);
 	if (compositeDatum != 0)
 	{
 		List *boundsList = GetIndexBoundsForExplain(index_rel, compositeDatum,
