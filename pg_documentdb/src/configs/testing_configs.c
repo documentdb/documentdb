@@ -68,9 +68,6 @@ bool ForceDisableSeqScan = DEFAULT_FORCE_DISABLE_SEQ_SCAN;
 #define DEFAULT_CURRENTOP_ADD_SQL_COMMAND false
 bool CurrentOpAddSqlCommand = DEFAULT_CURRENTOP_ADD_SQL_COMMAND;
 
-#define DEFAULT_ALTERNATE_INDEX_HANDLER ""
-char *AlternateIndexHandler = DEFAULT_ALTERNATE_INDEX_HANDLER;
-
 #define DEFAULT_LOG_RELATION_INDEXES_ORDER false
 bool EnableLogRelationIndexesOrder = DEFAULT_LOG_RELATION_INDEXES_ORDER;
 
@@ -264,13 +261,6 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		gettext_noop(
 			"Whether to add the SQL command to the current operation view."),
 		NULL, &CurrentOpAddSqlCommand, DEFAULT_CURRENTOP_ADD_SQL_COMMAND,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomStringVariable(
-		psprintf("%s.alternate_index_handler_name", prefix),
-		gettext_noop(
-			"The name of the index handler to use as opposed to rum (currently for testing only)."),
-		NULL, &AlternateIndexHandler, DEFAULT_ALTERNATE_INDEX_HANDLER,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

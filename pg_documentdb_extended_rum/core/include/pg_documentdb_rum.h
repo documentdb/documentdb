@@ -314,6 +314,8 @@ typedef signed char RumNullCategory;
 #define GIN_SEARCH_MODE_INCLUDE_EMPTY 1
 #define GIN_SEARCH_MODE_ALL 2
 #define GIN_SEARCH_MODE_EVERYTHING 3        /* for internal use only */
+#define RUM_SEARCH_MODE_ORDERED 4
+#define RUM_SEARCH_MODE_ORDERED_REVERSE 5
 
 /*
  * Access macros for null category byte in entry tuples
@@ -1101,6 +1103,7 @@ extern PGDLLIMPORT bool RumNewBulkDeleteInlineDataPages;
 extern PGDLLIMPORT bool RumVacuumSkipPrunePostingTreePages;
 extern PGDLLIMPORT bool RumEnableSupportDeadIndexItems;
 extern PGDLLIMPORT bool RumSkipResetOnDeadEntryPage;
+extern PGDLLIMPORT bool RumEnableOrderedOperatorScans;
 
 /*
  * Functions for reading ItemPointers with additional information. Used in

@@ -77,6 +77,8 @@ static BsonIndexAmEntry DocumentDBIndexAmEntry = {
 	.get_opclass_internal_catalog_schema = GetDocumentDBCatalogSchema,
 	.get_multikey_status = documentdb_rum_get_multi_key_status,
 	.get_truncation_status = RumGetTruncationStatus,
+	.can_order_in_index_scans = can_documentdb_rum_index_scan_ordered,
+	.supports_ordered_operator_scans = true,
 };
 static DocumentDBRumOidCacheData Cache = { 0 };
 static bool has_custom_routine = false;
@@ -147,9 +149,7 @@ extension_documentdb_extended_rumrescan(IndexScanDesc scan, ScanKey scankey, int
 {
 	EnsureDocumentDBExtendedRumLib();
 	extension_rumrescan_core(scan, scankey, nscankeys,
-							 orderbys, norderbys, &core_rum_routine,
-							 documentdb_rum_get_multi_key_status,
-							 can_documentdb_rum_index_scan_ordered);
+							 orderbys, norderbys, &core_rum_routine);
 }
 
 

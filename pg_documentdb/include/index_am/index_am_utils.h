@@ -68,4 +68,10 @@ bool GetIndexAmSupportsIndexOnlyScan(Oid indexAm, Oid opFamilyOid,
 
 void TryExplainByIndexAm(struct IndexScanDescData *scan, struct ExplainState *es);
 
+
+bool GetCompositeOpClassWithProps(Relation indexRelation,
+								  bool *supportsOrderedOperatorScans,
+								  GetMultikeyStatusFunc *multiKeyStatusFunc,
+								  CanOrderInIndexScan *isIndexScanOrdered);
+
 #endif
