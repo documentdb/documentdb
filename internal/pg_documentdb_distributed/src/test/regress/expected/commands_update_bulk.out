@@ -1618,7 +1618,7 @@ CALL documentdb_api.update_bulk('update_bulk', '{ "update": "single", "updates":
 CALL documentdb_api.update_bulk('update_bulk', '{ "update": "single", "updates": [ { "q": { "_id":8010 }, "u": { "value": "1" }, "upsert": true }] }');
                                                   p_result                                                  | p_success 
 ---------------------------------------------------------------------
- { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "1" } } | t
+ { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } } | t
 (1 row)
 
 -- this will collide and produce a unique conflict.
@@ -1633,7 +1633,7 @@ CALL documentdb_api.update_bulk('update_bulk', '{ "update": "single", "updates":
 CALL documentdb_api.update_bulk('update_bulk', '{ "update": "single", "updates": [ { "q": { "_id":8010 }, "u": { "value": "1" }, "upsert": true }] }');
                                                   p_result                                                  | p_success 
 ---------------------------------------------------------------------
- { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "1" } } | t
+ { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } } | t
 (1 row)
 
 -- this will collide and produce a unique conflict.
@@ -1648,7 +1648,7 @@ CALL documentdb_api.update_bulk('update_bulk', '{ "update": "single", "updates":
 CALL documentdb_api.update_bulk('update_bulk', '{ "update": "single", "updates": [ { "q": { "_id":8010 }, "u": { "value": "1" }, "upsert": true }] }');
                                                   p_result                                                  | p_success 
 ---------------------------------------------------------------------
- { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "1" } } | t
+ { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } } | t
 (1 row)
 
 -- this will collide and produce a unique conflict.

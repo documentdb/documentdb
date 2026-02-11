@@ -2693,7 +2693,7 @@ SELECT documentdb_api.shard_collection('db', 'upShardTest', '{"b": "hashed"}', f
 select documentdb_api.update('db', '{"update":"upShardTest", "updates":[{"q":{"_id":1},"u":{"b":1},"multi":false}]}');
                                                                update                                                               
 ---------------------------------------------------------------------
- ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
 (1 row)
 
 -- $in: []

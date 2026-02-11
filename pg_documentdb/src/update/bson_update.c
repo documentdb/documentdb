@@ -397,13 +397,9 @@ BsonUpdateDocumentCore(pgbson *sourceDocument, const bson_value_t *updateSpec,
 	{
 		case UpdateType_ReplaceDocument:
 		{
+			/* Replacement is always treated as modified document, even if the content is the same */
 			document = ProcessReplaceDocument(sourceDocument, updateSpec,
 											  isUpsert);
-			if (PgbsonEquals(sourceDocument, document) && !isUpsert)
-			{
-				/* signal that update was a no-op */
-				document = NULL;
-			}
 			break;
 		}
 
@@ -419,10 +415,11 @@ BsonUpdateDocumentCore(pgbson *sourceDocument, const bson_value_t *updateSpec,
 
 		case UpdateType_AggregationPipeline:
 		{
+			bool isReplacement = false;
 			document = ProcessAggregationPipelineUpdate(sourceDocument,
 														updateMetadata->
 														aggregationState,
-														isUpsert);
+														isUpsert, &isReplacement);
 
 			/*
 			 * TODO: Using PgbsonEquals() here might result in incorrectly deciding
@@ -439,7 +436,8 @@ BsonUpdateDocumentCore(pgbson *sourceDocument, const bson_value_t *updateSpec,
 			 *       To do that, we might want to use a single update-spec tree
 			 *       across all the stages in ProcessAggregationPipelineUpdate().
 			 */
-			if (PgbsonEquals(sourceDocument, document) && !isUpsert)
+			if (!isReplacement && !isUpsert &&
+				PgbsonEquals(sourceDocument, document))
 			{
 				/* signal that update was a no-op */
 				document = NULL;

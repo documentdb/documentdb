@@ -2779,3 +2779,16 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 2, "key": 2,"x": {"
  { "_id" : { "$numberInt" : "2" }, "x" : {  }, "newName" : { "$numberInt" : "2" }, "z" : { "$numberInt" : "1" }, "k" : { "$numberInt" : "2" } }
 (1 row)
 
+-- Other stages with $replaceRoot/$replaceWith
+SELECT documentdb_api_internal.update_bson_document('{ "_id": 1, "a": { "b": 3 } }', '{ "": [ { "$set": { "a.b": 5 } }, { "$replaceWith": "$a" } ] }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+                       update_bson_document                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "5" } }
+(1 row)
+
+SELECT documentdb_api_internal.update_bson_document('{ "_id": 1, "a": { "b": 3 } }', '{ "": [ { "$set": { "a.b": 5 } }, { "$replaceRoot": { "newRoot": "$a" } } ] }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+                       update_bson_document                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "5" } }
+(1 row)
+

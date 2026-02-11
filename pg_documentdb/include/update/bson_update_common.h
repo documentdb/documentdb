@@ -116,7 +116,8 @@ struct AggregationPipelineUpdateState * GetAggregationPipelineUpdateState(const
 pgbson * ProcessAggregationPipelineUpdate(pgbson *sourceDoc,
 										  const struct AggregationPipelineUpdateState *
 										  updateState,
-										  bool isUpsert);
+										  bool isUpsert,
+										  bool *isReplacement);
 
 
 /* Update workflows */

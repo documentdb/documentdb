@@ -930,3 +930,7 @@ SELECT documentdb_api_internal.update_bson_document('{"a": 1, "f": 1}', '{ "": {
 --$rename working complex cases
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": 1,"key2": 2,"f": {"g": 1, "h": 1},"h":1}', '{ "": { "$rename": { "key": "f.g"} } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
 SELECT documentdb_api_internal.update_bson_document('{"_id": 2, "key": 2,"x": {"y": 1, "z": 2}}', '{ "": { "$rename": { "key": "newName","x.y":"z","x.z":"k"} } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+
+-- Other stages with $replaceRoot/$replaceWith
+SELECT documentdb_api_internal.update_bson_document('{ "_id": 1, "a": { "b": 3 } }', '{ "": [ { "$set": { "a.b": 5 } }, { "$replaceWith": "$a" } ] }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+SELECT documentdb_api_internal.update_bson_document('{ "_id": 1, "a": { "b": 3 } }', '{ "": [ { "$set": { "a.b": 5 } }, { "$replaceRoot": { "newRoot": "$a" } } ] }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
