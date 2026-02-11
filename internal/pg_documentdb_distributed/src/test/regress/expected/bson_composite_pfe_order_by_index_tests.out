@@ -286,7 +286,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
 (11 rows)
 
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "f": { "$gt": 10 } }, "sort": { "f": 1 } }');
-                                                                             QUERY PLAN                                                                             
+                                                                              QUERY PLAN                                                                               
 ---------------------------------------------------------------------
  Sort (actual rows=90 loops=1)
    Sort Key: (bson_orderby(document, '{ "f" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
@@ -300,7 +300,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 90)]
          ->  Bitmap Heap Scan on documents_68701_687002 collection (actual rows=90 loops=1)
-               Recheck Cond: (bson_dollar_fullscan(document, '{ "f" : { "$numberInt" : "1" } }'::bson) AND (document @> '{ "f" : { "$numberInt" : "10" } }'::bson))
+               Recheck Cond: ((document @<> '{ "f" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @> '{ "f" : { "$numberInt" : "10" } }'::bson))
                Heap Blocks: exact=2
                ->  Bitmap Index Scan on f_1 (actual rows=90 loops=1)
                      Index Cond: (document @<> '{ "f" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
