@@ -733,9 +733,9 @@ SELECT documentdb_api.find_and_modify('db', '{"findAndModify": "find_and_modify_
 (1 row)
 
 SELECT documentdb_api.find_and_modify('db', '{"findAndModify": "find_and_modify_let", "query": {"$expr": {"$lte": [{ "$toInt": "$$varRef" }, "$_id"] } }, "sort": {"a": 1}, "update": {"c": "camel"}, "let": {"varRef": "4"}}');
-                                                                                                    find_and_modify                                                                                                     
+                                                                                                    find_and_modify                                                                                                    
 ---------------------------------------------------------------------
- ("{ ""lastErrorObject"" : { ""n"" : { ""$numberInt"" : ""0"" }, ""updatedExisting"" : false }, ""value"" : { ""_id"" : { ""$numberInt"" : ""4"" }, ""c"" : ""camel"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+ ("{ ""lastErrorObject"" : { ""n"" : { ""$numberInt"" : ""1"" }, ""updatedExisting"" : true }, ""value"" : { ""_id"" : { ""$numberInt"" : ""4"" }, ""c"" : ""camel"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
 SELECT documentdb_api.find_and_modify('db', '{"findAndModify": "find_and_modify_let", "query": {"$expr": {"$and": [{"$eq": ["$_id", "$$varRef1"]}, {"$eq": ["$c", "$$varRef2"]}]}}, "sort": {"a": 1}, "update": {"c": "peacock"}, "let": {"varRef1": 4, "varRef2": "camel"}}');

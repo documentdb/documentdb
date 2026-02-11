@@ -1365,7 +1365,7 @@ CALL documentdb_api.update_txn_proc('update_txn_proc', '{"update":"multi", "upda
 CALL documentdb_api.update_txn_proc('bulktest@', '{ "update" : "shell_wc_a", "ordered" : true, "updates" : [ { "q" : { "_id" : 1.0 }, "u" : { "_id" : 1.0 }, "multi" : false, "upsert" : true } ] }');
                                                   p_result                                                  | p_success 
 ---------------------------------------------------------------------
- { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "1" } } | t
+ { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } } | t
 (1 row)
 
 --upsert with $expr
@@ -1617,7 +1617,7 @@ CALL documentdb_api.update_txn_proc('update_txn_proc', '{ "update": "single", "u
 CALL documentdb_api.update_txn_proc('update_txn_proc', '{ "update": "single", "updates": [ { "q": { "_id":8010 }, "u": { "value": "1" }, "upsert": true }] }');
                                                   p_result                                                  | p_success 
 ---------------------------------------------------------------------
- { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "1" } } | t
+ { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } } | t
 (1 row)
 
 -- this will collide and produce a unique conflict.
@@ -1632,7 +1632,7 @@ CALL documentdb_api.update_txn_proc('update_txn_proc', '{ "update": "single", "u
 CALL documentdb_api.update_txn_proc('update_txn_proc', '{ "update": "single", "updates": [ { "q": { "_id":8010 }, "u": { "value": "1" }, "upsert": true }] }');
                                                   p_result                                                  | p_success 
 ---------------------------------------------------------------------
- { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "1" } } | t
+ { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } } | t
 (1 row)
 
 -- this will collide and produce a unique conflict.
@@ -1647,7 +1647,7 @@ CALL documentdb_api.update_txn_proc('update_txn_proc', '{ "update": "single", "u
 CALL documentdb_api.update_txn_proc('update_txn_proc', '{ "update": "single", "updates": [ { "q": { "_id":8010 }, "u": { "value": "1" }, "upsert": true }] }');
                                                   p_result                                                  | p_success 
 ---------------------------------------------------------------------
- { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "1" } } | t
+ { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } } | t
 (1 row)
 
 -- this will collide and produce a unique conflict.

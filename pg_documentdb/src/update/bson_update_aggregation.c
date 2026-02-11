@@ -273,7 +273,7 @@ pgbson *
 ProcessAggregationPipelineUpdate(pgbson *sourceDoc,
 								 const AggregationPipelineUpdateState *
 								 updateState,
-								 bool isUpsert)
+								 bool isUpsert, bool *isReplacement)
 {
 	bson_iter_t sourceDocIterator;
 	bson_iter_t finalDocIterator;
@@ -298,7 +298,10 @@ ProcessAggregationPipelineUpdate(pgbson *sourceDoc,
 	foreach(stageCell, updateState->aggregationStages)
 	{
 		UpdateAggregationStageData *stageData = lfirst(stageCell);
-
+		if (stageData->state.isReplaceStage)
+		{
+			*isReplacement = true;
+		}
 		stageData->updateFunc(&finalDocument, &stageData->state);
 	}
 
