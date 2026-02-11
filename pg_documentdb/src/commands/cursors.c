@@ -1243,13 +1243,15 @@ FetchTailableCursorAndWriteUntilPageOrSize(Portal portal, int32_t batchSize,
 
 			/*
 			 * For tailable cursors, if the cursor is terminated due to batch/size limit, just
-			 * return the continuation token, sicne the cursor is never fully drained for tailable
+			 * return the continuation token, since the cursor is never fully drained for tailable
 			 * cursors. we just stop here and return the last continuation token to the user
 			 * to resume the cursor at this point later.
 			 */
 			if (isCursorTerminated)
 			{
-				return continuationToken;
+				/* Return the last continuation token in the writer context. */
+				return CopyPgbsonIntoMemoryContext(continuationToken,
+												   writerContext);
 			}
 
 			/*
