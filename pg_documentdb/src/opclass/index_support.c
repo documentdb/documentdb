@@ -225,6 +225,8 @@ static bool IsMatchingPathForQueryOperator(RelOptInfo *rel, Path *path,
 static Expr * ProcessFullScanForOrderBy(SupportRequestIndexCondition *req, List *args);
 static OpExpr * CreateFullScanOpExpr(Expr *documentExpr, const char *sourcePath, uint32_t
 									 sourcePathLength, int32_t orderByScanDirection);
+static Expr * CreateKnownFullScanExpr(Datum queryValue, Expr *documentExpr, int
+									  sortDirection);
 static OpExpr * CreateExistsTrueOpExpr(Expr *documentExpr, const char *sourcePath,
 									   uint32_t sourcePathLength);
 static List * GetSortDetails(PlannerInfo *root, Index rti,
@@ -3368,18 +3370,34 @@ ProcessRestrictionInfoAndRewriteFuncExpr(Expr *clause,
 			return (Expr *) GetOpExprClauseFromIndexOperator(operator, args,
 															 NULL);
 		}
-		else if (trimClauses && IsA(clause, FuncExpr))
+		else if (IsA(clause, FuncExpr))
 		{
 			FuncExpr *funcExpr = (FuncExpr *) clause;
-			if (funcExpr->funcid == BsonFullScanFunctionOid())
+			if (funcExpr->funcid == BsonFullScanFunctionOid() ||
+				funcExpr->funcid == BsonIndexHintFunctionOid())
 			{
-				/* Trim these */
-				return NULL;
-			}
-			else if (funcExpr->funcid == BsonIndexHintFunctionOid())
-			{
-				/* Trim these */
-				return NULL;
+				if (trimClauses)
+				{
+					/* Trim these */
+					return NULL;
+				}
+				else if (funcExpr->funcid == BsonFullScanFunctionOid())
+				{
+					Expr *firstArg = linitial(funcExpr->args);
+					Expr *secondArg = lsecond(funcExpr->args);
+					if (!IsA(secondArg, Const))
+					{
+						return clause;
+					}
+
+					Const *secondConst = (Const *) secondArg;
+
+					/* Use the sort direction from the spec */
+					int querySortDirection = 0;
+					return CreateKnownFullScanExpr(
+						secondConst->constvalue,
+						firstArg, querySortDirection);
+				}
 			}
 		}
 	}
@@ -4763,12 +4781,24 @@ ProcessFullScanForOrderBy(SupportRequestIndexCondition *req, List *args)
 		return NULL;
 	}
 
+	return CreateKnownFullScanExpr(queryValue, linitial(args), querySortDirection);
+}
+
+
+static Expr *
+CreateKnownFullScanExpr(Datum queryValue, Expr *documentExpr, int sortDirection)
+{
 	/* If the index is valid for the function, convert it to an OpExpr for a
 	 * $range full scan.
 	 */
 	pgbsonelement sourceElement;
 	PgbsonToSinglePgbsonElement(DatumGetPgBson(queryValue), &sourceElement);
 
-	return (Expr *) CreateFullScanOpExpr(
-		linitial(args), sourceElement.path, sourceElement.pathLength, querySortDirection);
+	if (sortDirection == 0)
+	{
+		sortDirection = BsonValueAsInt32(&sourceElement.bsonValue);
+	}
+
+	return (Expr *) CreateFullScanOpExpr(documentExpr, sourceElement.path,
+										 sourceElement.pathLength, sortDirection);
 }

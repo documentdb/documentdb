@@ -2381,3 +2381,62 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
                Rows Removed by Filter: 585
 (14 rows)
 
+-- test filter pushdown with order by scan
+SELECT COUNT(documentdb_api.insert_one('comp_db', 'testbitmaponorder', FORMAT('{ "_id": %s, "a": "%s%s", "b": "%s%s" }', i, repeat('a', 10000), i, repeat('a', 10000), i)::bson)) FROM generate_series(1, 10000) i;
+NOTICE:  creating collection
+ count 
+---------------------------------------------------------------------
+ 10000
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{ "createIndexes": "testbitmaponorder", "indexes": [ { "key": { "b": 1, "c": 1, "a": 1 }, "name": "b_c_a_1", "enableOrderedIndex": true } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('comp_db', 'testbitmaponorder');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+\d documentdb_data.documents_68013
+          Table "documentdb_data.documents_68013"
+     Column      |  Type  | Collation | Nullable | Default 
+---------------------------------------------------------------------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "documents_rum_index_68035" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "b", "c", "a" ]', tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '68013'::bigint)
+
+ANALYZE documentdb_data.documents_68013;
+set documentdb.forceDisableSeqScan to off;
+set documentdb.enableExtendedExplainPlans to off;
+set enable_indexscan to off;
+set enable_bitmapscan to on;
+set seq_page_cost to 1000;
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('comp_db', '{ "find": "testbitmaponorder", "filter": { "a": { "$gt": "" }  }, "sort": { "b": 1 } }');
+                                                                              QUERY PLAN                                                                              
+---------------------------------------------------------------------
+ Sort
+   Output: document, (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Bitmap Heap Scan on documentdb_data.documents_68013_680026 collection
+         Output: document, bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)
+         Recheck Cond: ((collection.document @> '{ "a" : "" }'::bson) AND (collection.document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+         ->  Bitmap Index Scan on b_c_a_1
+               Index Cond: ((collection.document @> '{ "a" : "" }'::bson) AND (collection.document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+(8 rows)
+
+set work_mem to '64';
+WITH r1 AS (SELECT document FROM bson_aggregation_find('comp_db', '{ "find": "testbitmaponorder", "filter": { "a": { "$gt": "" }  }, "sort": { "b": 1 } }'))
+SELECT COUNT(*) FROM r1;
+ count 
+---------------------------------------------------------------------
+ 10000
+(1 row)
+
