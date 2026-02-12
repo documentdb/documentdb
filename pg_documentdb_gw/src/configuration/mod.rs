@@ -42,7 +42,13 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
     fn postgres_port(&self) -> u16;
 
     /// Returns the system user for connecting to the backend PostgreSQL server.
-    fn postgres_system_user(&self) -> String;
+    fn postgres_system_user(&self) -> &str;
+
+    /// Returns the data user for connecting to the backend PostgreSQL server.
+    fn postgres_data_user(&self) -> &str;
+
+    /// Returns the password for the data user to connect to the backend PostgreSQL server.
+    fn postgres_data_user_password(&self) -> Option<&str>;
 
     /// Returns the timeout duration (in seconds) for transactions.
     fn transaction_timeout_secs(&self) -> u64;

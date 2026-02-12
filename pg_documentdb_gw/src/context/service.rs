@@ -11,17 +11,16 @@ use std::{sync::Arc, time::Duration};
 use crate::{
     configuration::{DynamicConfiguration, SetupConfiguration},
     context::{CursorStore, TransactionStore},
-    postgres::{PoolManager, QueryCatalog},
+    postgres::{conn_mgmt::PoolManager, QueryCatalog},
     service::TlsProvider,
 };
 
 pub struct ServiceContextInner {
     pub setup_configuration: Box<dyn SetupConfiguration>,
     pub dynamic_configuration: Arc<dyn DynamicConfiguration>,
-    pub connection_pool_manager: PoolManager,
+    pub connection_pool_manager: Arc<PoolManager>,
     pub cursor_store: CursorStore,
     pub transaction_store: TransactionStore,
-    pub query_catalog: QueryCatalog,
     pub tls_provider: TlsProvider,
 }
 
@@ -32,12 +31,9 @@ impl ServiceContext {
     pub fn new(
         setup_configuration: Box<dyn SetupConfiguration>,
         dynamic_configuration: Arc<dyn DynamicConfiguration>,
-        query_catalog: QueryCatalog,
-        connection_pool_manager: PoolManager,
+        connection_pool_manager: Arc<PoolManager>,
         tls_provider: TlsProvider,
     ) -> Self {
-        tracing::info!("Initial dynamic configuration: {dynamic_configuration:?}");
-
         let timeout_secs = setup_configuration.transaction_timeout_secs();
         let cursor_store = CursorStore::new(dynamic_configuration.clone(), true);
 
@@ -47,7 +43,6 @@ impl ServiceContext {
             connection_pool_manager,
             cursor_store,
             transaction_store: TransactionStore::new(Duration::from_secs(timeout_secs)),
-            query_catalog,
             tls_provider,
         };
         ServiceContext(Arc::new(inner))
@@ -70,7 +65,7 @@ impl ServiceContext {
     }
 
     pub fn query_catalog(&self) -> &QueryCatalog {
-        &self.0.query_catalog
+        self.0.connection_pool_manager.query_catalog()
     }
 
     pub fn tls_provider(&self) -> &TlsProvider {

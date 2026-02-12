@@ -10,7 +10,7 @@ use bson::RawDocumentBuf;
 use once_cell::sync::Lazy;
 use regex::{CaptureMatches, Regex};
 
-use crate::QueryCatalog;
+use crate::postgres::QueryCatalog;
 
 static SHARD_KEY_VALUE_EXTRACT: Lazy<Regex> = Lazy::new(|| {
     Regex::new("shard_key_value (OPERATOR\\(pg_catalog.=\\)|=) '(\\d+)'::bigint")

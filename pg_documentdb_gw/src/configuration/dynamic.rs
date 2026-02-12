@@ -11,7 +11,7 @@ use std::fmt::Debug;
 use async_trait::async_trait;
 use bson::RawBson;
 
-use crate::{configuration::Version, postgres};
+use crate::{configuration::Version, postgres::conn_mgmt};
 
 pub const POSTGRES_RECOVERY_KEY: &str = "IsPostgresInRecovery";
 
@@ -116,12 +116,37 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     }
 
     async fn system_connection_budget(&self) -> usize {
-        let min_system_connections = (postgres::SYSTEM_REQUESTS_MAX_CONNECTIONS
-            + postgres::AUTHENTICATION_MAX_CONNECTIONS) as i32;
+        let min_system_connections = (conn_mgmt::SYSTEM_REQUESTS_MAX_CONNECTIONS
+            + conn_mgmt::AUTHENTICATION_MAX_CONNECTIONS)
+            as i32;
         let system_connection_budget = self
             .get_i32("systemConnectionBudget", min_system_connections)
             .await;
         system_connection_budget as usize
+    }
+
+    async fn gateway_connection_idle_lifetime_sec(&self) -> u64 {
+        self.get_u64(
+            "gatewayConnectionIdleLifetimeSec",
+            conn_mgmt::CONN_IDLE_LIFETIME_SECS,
+        )
+        .await
+    }
+
+    async fn gateway_connection_pruning_interval_sec(&self) -> u64 {
+        self.get_u64(
+            "gatewayConnectionPruningIntervalSec",
+            conn_mgmt::CONN_PRUNE_INTERVAL_SECS,
+        )
+        .await
+    }
+
+    async fn gateway_connection_lifetime_sec(&self) -> u64 {
+        self.get_u64(
+            "gatewayConnectionLifetimeSec",
+            conn_mgmt::CONN_LIFETIME_SECS,
+        )
+        .await
     }
 
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

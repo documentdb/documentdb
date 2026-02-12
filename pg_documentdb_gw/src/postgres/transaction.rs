@@ -10,8 +10,10 @@ use std::sync::Arc;
 
 use tokio_postgres::IsolationLevel;
 
-use super::{Connection, QueryCatalog};
-use crate::error::{DocumentDBError, Result};
+use crate::{
+    error::{DocumentDBError, Result},
+    postgres::{conn_mgmt::Connection, QueryCatalog},
+};
 
 pub struct Transaction {
     conn: Arc<Connection>,

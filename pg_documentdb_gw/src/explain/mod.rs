@@ -18,11 +18,10 @@ use serde_json::Value;
 use crate::{
     context::{ConnectionContext, RequestContext},
     error::{DocumentDBError, Result},
-    postgres::PgDataClient,
+    postgres::{PgDataClient, QueryCatalog},
     protocol::OK_SUCCEEDED,
     requests::{Request, RequestInfo, RequestType},
     responses::{RawResponse, Response},
-    QueryCatalog,
 };
 
 mod model;

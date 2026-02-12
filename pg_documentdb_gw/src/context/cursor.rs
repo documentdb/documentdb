@@ -15,7 +15,7 @@ use tokio::{
     time::{Duration, Instant},
 };
 
-use crate::{configuration::DynamicConfiguration, postgres::Connection};
+use crate::{configuration::DynamicConfiguration, postgres::conn_mgmt::Connection};
 
 #[derive(Debug)]
 pub struct Cursor {

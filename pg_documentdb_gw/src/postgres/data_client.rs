@@ -17,11 +17,9 @@ use crate::{
     context::{ConnectionContext, Cursor, RequestContext, ServiceContext},
     error::Result,
     explain::Verbosity,
-    postgres::Transaction,
+    postgres::{conn_mgmt::Connection, PgDocument, QueryCatalog, Transaction},
     responses::{PgResponse, Response},
 };
-
-use super::{Connection, PgDocument, QueryCatalog};
 
 #[async_trait]
 pub trait PgDataClient: Send + Sync {

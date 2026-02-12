@@ -46,7 +46,6 @@ pub struct AuthState {
     authorized: Arc<RwLock<bool>>,
     first_state: Option<ScramFirstState>,
     username: Option<String>,
-    pub password: Option<String>,
     user_oid: Option<u32>,
     auth_kind: Option<AuthKind>,
     timer_initialized: Arc<RwLock<bool>>,
@@ -64,7 +63,6 @@ impl AuthState {
             authorized: Arc::new(RwLock::new(false)),
             first_state: None,
             username: None,
-            password: None,
             user_oid: None,
             auth_kind: None,
             timer_initialized: Arc::new(RwLock::new(false)),
@@ -391,13 +389,16 @@ async fn handle_oidc_token_authentication(
     };
 
     connection_context.auth_state.set_username(&oid);
-    connection_context.auth_state.password = Some(token_string.to_string());
     connection_context.auth_state.user_oid = Some(get_user_oid(connection_context, &oid).await?);
 
     *connection_context.auth_state.is_authorized().write().await = true;
     connection_context
         .auth_state
         .set_auth_kind(AuthKind::ExternalIdentity)?;
+
+    // Allocate a connection pool for the user after successful authentication, which will be used for subsequent requests on this connection.
+    // The pool will be deallocated after a period of inactivity.
+    connection_context.allocate_data_pool(token_string).await?;
 
     /* We are setting a timer for the time until token expiry, which will set authorized to false at the end */
     let connection_activity_id = connection_context.connection_id.to_string();
@@ -586,11 +587,11 @@ async fn handle_sasl_continue(
             bytes: format!("v={server_signature}").as_bytes().to_vec(),
         };
 
-        connection_context.auth_state.password = Some("".to_string());
         connection_context.auth_state.user_oid =
             Some(get_user_oid(connection_context, username).await?);
 
         *connection_context.auth_state.is_authorized().write().await = true;
+        connection_context.allocate_data_pool("").await?;
 
         Ok(Response::Raw(RawResponse(rawdoc! {
             "payload": payload,

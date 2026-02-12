@@ -29,7 +29,11 @@ pub struct DocumentDBSetupConfiguration {
     pub enforce_tls: Option<bool>,
 
     // Postgres configuration
-    pub postgres_system_user: Option<String>,
+    #[serde(default = "default_user")]
+    pub postgres_system_user: String,
+    #[serde(default = "default_user")]
+    pub postgres_data_user: String,
+    pub postgres_data_user_password: Option<String>,
     pub postgres_host_name: Option<String>,
     pub postgres_port: Option<u16>,
     pub postgres_database: Option<String>,
@@ -44,7 +48,6 @@ pub struct DocumentDBSetupConfiguration {
     pub dynamic_configuration_refresh_interval_secs: Option<u32>,
     pub postgres_command_timeout_secs: Option<u64>,
     pub postgres_startup_wait_time_seconds: Option<u64>,
-    pub postgres_idle_connection_timeout_minutes: Option<u64>,
 
     // Runtime configuration
     pub async_runtime_worker_threads: Option<usize>,
@@ -88,6 +91,10 @@ impl DocumentDBSetupConfiguration {
     }
 }
 
+fn default_user() -> String {
+    whoami::username()
+}
+
 impl SetupConfiguration for DocumentDBSetupConfiguration {
     // Needed to downcast to concrete type
     fn as_any(&self) -> &dyn std::any::Any {
@@ -106,10 +113,16 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
         self.postgres_database.as_deref().unwrap_or("postgres")
     }
 
-    fn postgres_system_user(&self) -> String {
-        self.postgres_system_user
-            .clone()
-            .unwrap_or(whoami::username())
+    fn postgres_system_user(&self) -> &str {
+        &self.postgres_system_user
+    }
+
+    fn postgres_data_user(&self) -> &str {
+        &self.postgres_data_user
+    }
+
+    fn postgres_data_user_password(&self) -> Option<&str> {
+        self.postgres_data_user_password.as_deref()
     }
 
     fn dynamic_configuration_file(&self) -> String {
