@@ -49,7 +49,7 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     }
 
     async fn enable_connection_status(&self) -> bool {
-        self.get_bool("enableConnectionStatus", false).await
+        self.get_bool("enableConnectionStatus", true).await
     }
 
     async fn enable_verbose_logging_in_gateway(&self) -> bool {
