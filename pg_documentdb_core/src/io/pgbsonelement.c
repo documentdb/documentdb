@@ -298,6 +298,8 @@ FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element
 						skipLengthOffset)
 {
 #if BSON_BYTE_ORDER == BSON_BIG_ENDIAN
+	bson_iter_t iterator;
+
 	if (!bson_iter_init_from_data(&iterator,
 								  data,
 								  data_len))
