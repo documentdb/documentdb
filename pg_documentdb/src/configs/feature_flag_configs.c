@@ -226,6 +226,11 @@ bool EnableUseForeignKeyLookupInline = DEFAULT_USE_FOREIGN_KEY_LOOKUP_INLINE;
 #define DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE true
 bool EnableAddToSetAggregationRewrite = DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE;
 
+/* Remove after 112*/
+#define DEFAULT_ENABLE_ID_INDEX_PUSHDOWN_FOR_QUERY_OP true
+bool EnableIdIndexPushdownForQueryOp =
+	DEFAULT_ENABLE_ID_INDEX_PUSHDOWN_FOR_QUERY_OP;
+
 /*
  * SECTION: Let support feature flags
  */
@@ -790,6 +795,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to use new inline method for $project in $lookup."),
 		NULL, &EnableUseLookupNewProjectInlineMethod,
 		DEFAULT_USE_LOOKUP_NEW_PROJECT_INLINE_METHOD,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableIdIndexPushdownForQueryOp", newGucPrefix),
+		gettext_noop(
+			"Whether to enable index push down for _id index."),
+		NULL, &EnableIdIndexPushdownForQueryOp,
+		DEFAULT_ENABLE_ID_INDEX_PUSHDOWN_FOR_QUERY_OP,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

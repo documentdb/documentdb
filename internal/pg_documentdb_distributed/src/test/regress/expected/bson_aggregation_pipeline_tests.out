@@ -2467,9 +2467,79 @@ SELECT document FROM bson_aggregation_find('db', '{
 (0 rows)
 
 -- drop collection
-SELECT documentdb_api.drop_collection('db', 'collTestEmptyIn')
+SELECT documentdb_api.drop_collection('db', 'collTestEmptyIn');
  drop_collection 
 ---------------------------------------------------------------------
  t
 (1 row)
+
+/* primary Index pushdown test for select*/
+SELECT documentdb_api.insert_one('db','indexPushDownTest','{ "_id": 1, "name": "Alex Veridian" }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+select collection_id  from documentdb_api_catalog.collections where collection_name = 'indexPushDownTest';
+ collection_id 
+---------------------------------------------------------------------
+          4120
+(1 row)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : 1}';
+                                                                        QUERY PLAN                                                                        
+---------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_4120_411158
+   Output: shard_key_value, object_id, document
+   Index Cond: ((documents_4120_411158.shard_key_value = '4120'::bigint) AND (documents_4120_411158.object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
+(3 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$eq" : 1}}';
+                                                                        QUERY PLAN                                                                        
+---------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_4120_411158
+   Output: shard_key_value, object_id, document
+   Index Cond: ((documents_4120_411158.shard_key_value = '4120'::bigint) AND (documents_4120_411158.object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
+(3 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$gt" : 1}}';
+                                                                                                                     QUERY PLAN                                                                                                                      
+---------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_4120_411158
+   Output: shard_key_value, object_id, document
+   Index Cond: ((documents_4120_411158.shard_key_value = '4120'::bigint) AND (documents_4120_411158.object_id > '{ "" : { "$numberInt" : "1" } }'::bson) AND (documents_4120_411158.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(3 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$lt" : 1}}';
+                                                                                                                      QUERY PLAN                                                                                                                      
+---------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_4120_411158
+   Output: shard_key_value, object_id, document
+   Index Cond: ((documents_4120_411158.shard_key_value = '4120'::bigint) AND (documents_4120_411158.object_id < '{ "" : { "$numberInt" : "1" } }'::bson) AND (documents_4120_411158.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(3 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$lte" : 1}}';
+                                                                                                                      QUERY PLAN                                                                                                                       
+---------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_4120_411158
+   Output: shard_key_value, object_id, document
+   Index Cond: ((documents_4120_411158.shard_key_value = '4120'::bigint) AND (documents_4120_411158.object_id <= '{ "" : { "$numberInt" : "1" } }'::bson) AND (documents_4120_411158.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(3 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$gte" : 1}}';
+                                                                                                                      QUERY PLAN                                                                                                                      
+---------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_4120_411158
+   Output: shard_key_value, object_id, document
+   Index Cond: ((documents_4120_411158.shard_key_value = '4120'::bigint) AND (documents_4120_411158.object_id >= '{ "" : { "$numberInt" : "1" } }'::bson) AND (documents_4120_411158.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(3 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$in" : [1,2,3,4,5]}}';
+                                                                                                                                                                 QUERY PLAN                                                                                                                                                                 
+---------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_4120_411158
+   Output: shard_key_value, object_id, document
+   Index Cond: ((documents_4120_411158.shard_key_value = '4120'::bigint) AND (documents_4120_411158.object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"1\" } }","{ \"\" : { \"$numberInt\" : \"2\" } }","{ \"\" : { \"$numberInt\" : \"3\" } }","{ \"\" : { \"$numberInt\" : \"4\" } }","{ \"\" : { \"$numberInt\" : \"5\" } }"}'::bson[])))
+(3 rows)
 

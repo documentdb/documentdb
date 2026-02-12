@@ -1320,4 +1320,350 @@ SELECT documentdb_api.delete('db', '{ "delete": "coll_delete", "deletes": [ { "q
 (1 row)
 
 ROLLBACK;
+-- Check for index pushdown
+BEGIN;
+select  documentdb_api.insert('datab', '{"insert":"deleteIndex", "documents":[{"_id":1}]}');
+NOTICE:  creating collection
+                                         insert                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select  documentdb_api.insert('datab', '{"insert":"deleteIndex", "documents":[{"_id":2}]}');
+                                         insert                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SET LOCAL citus.log_remote_commands TO ON;
+SET LOCAL enable_seqscan TO OFF;
+select  documentdb_api.insert('datab', '{"insert":"deleteIndex", "documents":[{"_id":3}]}');
+NOTICE:  executing the command locally: INSERT INTO documentdb_data.documents_6397_639072 AS collection (shard_key_value, object_id, document) VALUES ('6397'::bigint,'{ "" : { "$numberInt" : "3" } }'::documentdb_core.bson,'{ "_id" : { "$numberInt" : "3" } }'::documentdb_core.bson) RETURNING 1 AS "intVal"
+                                         insert                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SET LOCAL documentdb.useLocalExecutionShardQueries TO off;
+-- explain plan should show index scan with delete pushdown
+-- 1. bson_query_match with $lt, $lte, $gt, $gte, $eq and $in
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, NULL::text);
+                                                                           QUERY PLAN                                                                            
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6397_639072
+   ->  Index Scan using _id_ on documentdb_data.documents_6397_639072
+         Output: ctid
+         Index Cond: ((documents_6397_639072.shard_key_value = '6397'::bigint) AND (documents_6397_639072.object_id = '{ "" : { "$numberInt" : "10" } }'::bson))
+(4 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : 10}', NULL, NULL::text);
+                                                                           QUERY PLAN                                                                            
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6397_639072
+   ->  Index Scan using _id_ on documentdb_data.documents_6397_639072
+         Output: ctid
+         Index Cond: ((documents_6397_639072.shard_key_value = '6397'::bigint) AND (documents_6397_639072.object_id = '{ "" : { "$numberInt" : "10" } }'::bson))
+(4 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gt" : 10}}', NULL, NULL::text);
+                                                                                                                         QUERY PLAN                                                                                                                         
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6397_639072
+   ->  Index Scan using _id_ on documentdb_data.documents_6397_639072
+         Output: ctid
+         Index Cond: ((documents_6397_639072.shard_key_value = '6397'::bigint) AND (documents_6397_639072.object_id > '{ "" : { "$numberInt" : "10" } }'::bson) AND (documents_6397_639072.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(4 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : 10}}', NULL, NULL::text);
+                                                                                                                         QUERY PLAN                                                                                                                          
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6397_639072
+   ->  Index Scan using _id_ on documentdb_data.documents_6397_639072
+         Output: ctid
+         Index Cond: ((documents_6397_639072.shard_key_value = '6397'::bigint) AND (documents_6397_639072.object_id < '{ "" : { "$numberInt" : "10" } }'::bson) AND (documents_6397_639072.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(4 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte" : 10}}', NULL, NULL::text);
+                                                                                                                         QUERY PLAN                                                                                                                          
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6397_639072
+   ->  Index Scan using _id_ on documentdb_data.documents_6397_639072
+         Output: ctid
+         Index Cond: ((documents_6397_639072.shard_key_value = '6397'::bigint) AND (documents_6397_639072.object_id >= '{ "" : { "$numberInt" : "10" } }'::bson) AND (documents_6397_639072.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(4 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte" : 10}}', NULL, NULL::text);
+                                                                                                                          QUERY PLAN                                                                                                                          
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6397_639072
+   ->  Index Scan using _id_ on documentdb_data.documents_6397_639072
+         Output: ctid
+         Index Cond: ((documents_6397_639072.shard_key_value = '6397'::bigint) AND (documents_6397_639072.object_id <= '{ "" : { "$numberInt" : "10" } }'::bson) AND (documents_6397_639072.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(4 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}', NULL, NULL::text) ;
+                                                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                                                         
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6397_639072
+   ->  Index Scan using _id_ on documentdb_data.documents_6397_639072
+         Output: ctid
+         Index Cond: ((documents_6397_639072.shard_key_value = '6397'::bigint) AND (documents_6397_639072.object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"1\" } }","{ \"\" : { \"$numberInt\" : \"2\" } }","{ \"\" : { \"$numberInt\" : \"3\" } }","{ \"\" : { \"$numberInt\" : \"4\" } }","{ \"\" : { \"$numberInt\" : \"5\" } }","{ \"\" : { \"$numberInt\" : \"6\" } }","{ \"\" : { \"$numberInt\" : \"7\" } }","{ \"\" : { \"$numberInt\" : \"8\" } }","{ \"\" : { \"$numberInt\" : \"9\" } }","{ \"\" : { \"$numberInt\" : \"10\" } }"}'::bson[])))
+(4 rows)
+
+-- 2. document @@ with $in
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE document @@ '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}';
+                                                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                                                         
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6397_639072
+   ->  Index Scan using _id_ on documentdb_data.documents_6397_639072
+         Output: ctid
+         Index Cond: ((documents_6397_639072.shard_key_value = '6397'::bigint) AND (documents_6397_639072.object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"1\" } }","{ \"\" : { \"$numberInt\" : \"2\" } }","{ \"\" : { \"$numberInt\" : \"3\" } }","{ \"\" : { \"$numberInt\" : \"4\" } }","{ \"\" : { \"$numberInt\" : \"5\" } }","{ \"\" : { \"$numberInt\" : \"6\" } }","{ \"\" : { \"$numberInt\" : \"7\" } }","{ \"\" : { \"$numberInt\" : \"8\" } }","{ \"\" : { \"$numberInt\" : \"9\" } }","{ \"\" : { \"$numberInt\" : \"10\" } }"}'::bson[])))
+(4 rows)
+
+-- 3. with variableSpec
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : "$$varRef1"}}', '{ "let": {"varRef1": 2, "varRef2": 2} }', NULL::text);
+                                                                                                    QUERY PLAN                                                                                                    
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6397_639072
+   ->  Index Scan using _id_ on documentdb_data.documents_6397_639072
+         Output: ctid
+         Index Cond: ((documents_6397_639072.shard_key_value = '6397'::bigint) AND (documents_6397_639072.object_id < '{ "" : "$$varRef1" }'::bson) AND (documents_6397_639072.object_id >= '{ "" : "" }'::bson))
+(4 rows)
+
+-- 4. with collation 
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, 'en-u-ks-level1');
+                                                                           QUERY PLAN                                                                            
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6397_639072
+   ->  Index Scan using _id_ on documentdb_data.documents_6397_639072
+         Output: ctid
+         Index Cond: ((documents_6397_639072.shard_key_value = '6397'::bigint) AND (documents_6397_639072.object_id = '{ "" : { "$numberInt" : "10" } }'::bson))
+(4 rows)
+
+ROLLBACK;
+-- 5. Now shard collection and run all again to make sure we get index scan with delete pushdown on sharded collection as well
+select documentdb_api.shard_collection('datab', 'deleteIndex', '{"a":"hashed"}', false);
+NOTICE:  creating collection
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+BEGIN;
+select  documentdb_api.insert('datab', '{"insert":"deleteIndex", "documents":[{"_id":1}]}');
+                                         insert                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select  documentdb_api.insert('datab', '{"insert":"deleteIndex", "documents":[{"_id":2}]}');
+                                         insert                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SET LOCAL citus.log_remote_commands TO ON;
+SET LOCAL enable_seqscan TO OFF;
+SELECT  documentdb_api.insert('datab', '{"insert":"deleteIndex", "documents":[{"_id":3}]}');
+NOTICE:  executing the command locally: INSERT INTO documentdb_data.documents_6399_639079 AS collection (shard_key_value, object_id, document) VALUES ('-4514028574017177401'::bigint,$1,$2) RETURNING 1 AS "intVal"
+                                         insert                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SET LOCAL documentdb.useLocalExecutionShardQueries to off;
+-- 6. bson_query_match with $lt, $lte, $gt, $gte, $eq and $in
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, NULL::text);
+                                                QUERY PLAN                                                 
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+(6 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : 10}', NULL, NULL::text);
+                                                QUERY PLAN                                                 
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+(6 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gt" : 10}}', NULL, NULL::text);
+                                                QUERY PLAN                                                 
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @> '{ "_id" : { "$numberInt" : "10" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @> '{ "_id" : { "$numberInt" : "10" } }'::bson)
+(6 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : 10}}', NULL, NULL::text);
+                                                QUERY PLAN                                                 
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @< '{ "_id" : { "$numberInt" : "10" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @< '{ "_id" : { "$numberInt" : "10" } }'::bson)
+(6 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte" : 10}}', NULL, NULL::text);
+                                                 QUERY PLAN                                                 
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @>= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @>= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+(6 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte" : 10}}', NULL, NULL::text);
+                                                 QUERY PLAN                                                 
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @<= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @<= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+(6 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}', NULL, NULL::text) ;
+                                                                                                                                                               QUERY PLAN                                                                                                                                                               
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @*= '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" }, { "$numberInt" : "10" } ] }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @*= '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" }, { "$numberInt" : "10" } ] }'::bson)
+(6 rows)
+
+-- 7. document @@ with $in
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE document @@ '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}';
+                                                                                                                                                               QUERY PLAN                                                                                                                                                               
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @*= '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" }, { "$numberInt" : "10" } ] }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @*= '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" }, { "$numberInt" : "10" } ] }'::bson)
+(6 rows)
+
+-- 8. with variableSpec
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : "$$varRef1"}}', '{ "let": {"varRef1": 2, "varRef2": 2} }', NULL::text);
+                                          QUERY PLAN                                           
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @< '{ "_id" : "$$varRef1" }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @< '{ "_id" : "$$varRef1" }'::bson)
+(6 rows)
+
+-- 9. with collation 
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, 'en-u-ks-level1');
+                                                QUERY PLAN                                                 
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+(6 rows)
+
+-- explain plan should show seq scan without delete pushdown
+SET LOCAL documentdb.enableIdIndexPushdownForQueryOp to OFF;
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE document @@ '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}';
+                                                                                                                                                               QUERY PLAN                                                                                                                                                               
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @*= '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" }, { "$numberInt" : "10" } ] }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @*= '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" }, { "$numberInt" : "10" } ] }'::bson)
+(6 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}', NULL, NULL::text);
+                                                                                                                                                               QUERY PLAN                                                                                                                                                               
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @*= '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" }, { "$numberInt" : "10" } ] }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @*= '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" }, { "$numberInt" : "10" } ] }'::bson)
+(6 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, NULL::text);
+                                                QUERY PLAN                                                 
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+(6 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : 10}', NULL, NULL::text);
+                                                QUERY PLAN                                                 
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+(6 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : 10}}', NULL, NULL::text);
+                                                QUERY PLAN                                                 
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @< '{ "_id" : { "$numberInt" : "10" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @< '{ "_id" : { "$numberInt" : "10" } }'::bson)
+(6 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte" : 10}}', NULL, NULL::text);
+                                                 QUERY PLAN                                                 
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @>= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @>= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+(6 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte" : 10}}', NULL, NULL::text);
+                                                 QUERY PLAN                                                 
+---------------------------------------------------------------------
+ Delete on documentdb_data.documents_6399_639079
+   ->  Bitmap Heap Scan on documentdb_data.documents_6399_639079
+         Output: ctid
+         Recheck Cond: (documents_6399_639079.document @<= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (documents_6399_639079.document @<= '{ "_id" : { "$numberInt" : "10" } }'::bson)
+(6 rows)
+
+ROLLBACK;
 RESET documentdb.enableVariablesSupportForWriteCommands;

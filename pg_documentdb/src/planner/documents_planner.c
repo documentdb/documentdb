@@ -1441,33 +1441,6 @@ HasUnresolvedExternParamsWalker(Node *expression, ParamListInfo boundParams)
 }
 
 
-static bool
-CheckRelNameValidity(const char *relName, uint64_t *collectionId)
-{
-	if (relName == NULL ||
-		strncmp(relName, "documents_", 10) != 0)
-	{
-		return false;
-	}
-
-	/* We use strtoull since it returns the first character that didn't match
-	 * We expect this to return the '_' character when it's a collection shard
-	 * like ApiDataSchemaName.documents_1_111 and the parsed value will be 1.
-	 * Alternatively, this will be \0 and the parsed value will be 1 if the
-	 * table is documents_1 (parent table).
-	 */
-	char *numEndPointer = NULL;
-	uint64 parsedCollectionId = strtoull(&relName[10], &numEndPointer, 10);
-	if (IsShardTableForDocumentDbTable(relName, numEndPointer))
-	{
-		*collectionId = parsedCollectionId;
-		return true;
-	}
-
-	return false;
-}
-
-
 /*
  * Returns true if the relation of RTE pointed to
  * is a DocumentDB table base collection. e.g.
