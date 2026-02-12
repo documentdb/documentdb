@@ -197,16 +197,8 @@ gin_bson_extract_query(PG_FUNCTION_ARGS)
 
 	pgbson *queryBson = DatumGetPgBsonPacked(query);
 	pgbsonelement filterElement;
-	const char *collationString = NULL;
-	if (EnableCollation)
-	{
-		collationString = PgbsonToSinglePgbsonElementWithCollation(queryBson,
-																   &filterElement);
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement(queryBson, &filterElement);
-	}
+	const char *collationString = PgbsonToSinglePgbsonElementWithCollation(queryBson,
+																		   &filterElement);
 
 	BsonExtractQueryArgs args =
 	{
@@ -901,21 +893,13 @@ ValidateIndexForQualifierValue(bytea *indexOptions, Datum queryValue, BsonIndexS
 
 	queryBson = DatumGetPgBson(queryValue);
 
-	if (EnableCollation)
-	{
-		const char *collationString = PgbsonToSinglePgbsonElementWithCollation(queryBson,
-																			   &
-																			   filterElement);
+	const char *collationString = PgbsonToSinglePgbsonElementWithCollation(queryBson,
+																		   &filterElement);
 
-		if (IsCollationValid(collationString))
-		{
-			/* We don't yet support collated index, until then we can't use index */
-			return false;
-		}
-	}
-	else
+	if (IsCollationValid(collationString))
 	{
-		PgbsonToSinglePgbsonElement(queryBson, &filterElement);
+		/* We don't yet support collated index, until then we can't use index */
+		return false;
 	}
 
 	return ValidateIndexForQualifierElement(indexOptions, &filterElement, strategy);

@@ -998,15 +998,9 @@ GinBsonExtractQueryOrderBy(PG_FUNCTION_ARGS)
 
 	Datum *entries;
 	pgbsonelement filterElement;
-	if (EnableCollation)
-	{
-		PgbsonToSinglePgbsonElementWithCollation(query, &filterElement);
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement(query, &filterElement); /* TODO: collation index support */
-	}
 
+	/* TODO: collation index support */
+	PgbsonToSinglePgbsonElementWithCollation(query, &filterElement);
 	filterElement.bsonValue.value_type = BSON_TYPE_MINKEY;
 
 	*nentries = 3;
@@ -2024,14 +2018,8 @@ GinBsonExtractQueryDollarRange(BsonExtractQueryArgs *args)
 
 	pgbson *emptyArrayBson = PgbsonWriterGetPgbson(&writer);
 
-	if (EnableCollation)
-	{
-		PgbsonToSinglePgbsonElementWithCollation(emptyArrayBson, &minElement);
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement(emptyArrayBson, &minElement); /* TODO: collation index support */
-	}
+	/* TODO: collation index support */
+	PgbsonToSinglePgbsonElementWithCollation(emptyArrayBson, &minElement);
 
 	entries[1] = PointerGetDatum(SerializeBsonIndexTerm(&minElement,
 														&args->termMetadata).indexTermVal);
@@ -3319,14 +3307,7 @@ GinBsonComparePartialCore(BsonIndexStrategy strategy, BsonIndexTerm *queryValue,
 			pgbson *modArrayData = (pgbson *) extraData;
 			pgbsonelement modArray;
 
-			if (EnableCollation)
-			{
-				PgbsonToSinglePgbsonElementWithCollation(modArrayData, &modArray);
-			}
-			else
-			{
-				PgbsonToSinglePgbsonElement(modArrayData, &modArray); /* TODO: collation index support */
-			}
+			PgbsonToSinglePgbsonElement(modArrayData, &modArray);
 			return GinBsonComparePartialMod(queryValue, compareValue, &modArray);
 		}
 
@@ -3376,14 +3357,7 @@ GinBsonComparePartialCore(BsonIndexStrategy strategy, BsonIndexTerm *queryValue,
 		{
 			pgbson *queryBson = (pgbson *) extraData;
 			pgbsonelement filterElement;
-			if (EnableCollation)
-			{
-				PgbsonToSinglePgbsonElementWithCollation(queryBson, &filterElement);
-			}
-			else
-			{
-				PgbsonToSinglePgbsonElement(queryBson, &filterElement); /* TODO: collation index support */
-			}
+			PgbsonToSinglePgbsonElement(queryBson, &filterElement);
 			return GinBsonComparePartialBitsWiseOperator(queryValue, compareValue,
 														 &filterElement,
 														 CompareArrayForBitsAllClear);
@@ -3394,15 +3368,7 @@ GinBsonComparePartialCore(BsonIndexStrategy strategy, BsonIndexTerm *queryValue,
 			pgbson *queryBson = (pgbson *) extraData;
 			pgbsonelement filterElement;
 
-			if (EnableCollation)
-			{
-				PgbsonToSinglePgbsonElementWithCollation(queryBson, &filterElement);
-			}
-			else
-			{
-				PgbsonToSinglePgbsonElement(queryBson, &filterElement); /* TODO: collation index support */
-			}
-
+			PgbsonToSinglePgbsonElement(queryBson, &filterElement);
 			return GinBsonComparePartialBitsWiseOperator(queryValue, compareValue,
 														 &filterElement,
 														 CompareArrayForBitsAnyClear);
@@ -3413,15 +3379,7 @@ GinBsonComparePartialCore(BsonIndexStrategy strategy, BsonIndexTerm *queryValue,
 			pgbson *queryBson = (pgbson *) extraData;
 			pgbsonelement filterElement;
 
-			if (EnableCollation)
-			{
-				PgbsonToSinglePgbsonElementWithCollation(queryBson, &filterElement);
-			}
-			else
-			{
-				PgbsonToSinglePgbsonElement(queryBson, &filterElement); /* TODO: collation index support */
-			}
-
+			PgbsonToSinglePgbsonElement(queryBson, &filterElement);
 			return GinBsonComparePartialBitsWiseOperator(queryValue, compareValue,
 														 &filterElement,
 														 CompareArrayForBitsAllSet);
@@ -3432,15 +3390,7 @@ GinBsonComparePartialCore(BsonIndexStrategy strategy, BsonIndexTerm *queryValue,
 			pgbson *queryBson = (pgbson *) extraData;
 			pgbsonelement filterElement;
 
-			if (EnableCollation)
-			{
-				PgbsonToSinglePgbsonElementWithCollation(queryBson, &filterElement);
-			}
-			else
-			{
-				PgbsonToSinglePgbsonElement(queryBson, &filterElement); /* TODO: collation index support */
-			}
-
+			PgbsonToSinglePgbsonElement(queryBson, &filterElement);
 			return GinBsonComparePartialBitsWiseOperator(queryValue, compareValue,
 														 &filterElement,
 														 CompareArrayForBitsAnySet);

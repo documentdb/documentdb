@@ -4007,25 +4007,18 @@ CheckAndAddIdFilter(List *opArgs, IdFilterWalkerContext *context,
 		   secondConst->consttype == BsonQueryTypeId());
 
 	pgbson *qual = DatumGetPgBson(secondConst->constvalue);
-
 	pgbsonelement qualElement;
-	if (EnableCollation)
-	{
-		PgbsonToSinglePgbsonElementWithCollation(qual, &qualElement);
+	const char *collationString = PgbsonToSinglePgbsonElementWithCollation(qual,
+																		   &qualElement);
 
-		/*  regex. _id can take Code, but Code is agnostic to collation
-		 * _id can't be array accrording to mongo senmantics, but it can
-		 * be an array in documentdb since we rewrite $or conditions on _id as $in. */
-		if (qualElement.bsonValue.value_type == BSON_TYPE_UTF8 ||
-			qualElement.bsonValue.value_type == BSON_TYPE_DOCUMENT ||
-			qualElement.bsonValue.value_type == BSON_TYPE_ARRAY)
-		{
-			context->isCollationAware = true;
-		}
-	}
-	else
+	/*  regex. _id can take Code, but Code is agnostic to collation
+	 * _id can't be array accrording to mongo senmantics, but it can
+	 * be an array in documentdb since we rewrite $or conditions on _id as $in. */
+	if (qualElement.bsonValue.value_type == BSON_TYPE_UTF8 ||
+		qualElement.bsonValue.value_type == BSON_TYPE_DOCUMENT ||
+		qualElement.bsonValue.value_type == BSON_TYPE_ARRAY)
 	{
-		PgbsonToSinglePgbsonElement(qual, &qualElement);
+		context->isCollationAware = IsCollationApplicable(collationString);
 	}
 
 	if (qualElement.pathLength == IdFieldStringView.length &&
@@ -4838,16 +4831,9 @@ TryProcessOrIntoDollarIn(BsonQueryOperatorContext *context,
 		pgbson *value = DatumGetPgBson(argConst->constvalue);
 		pgbsonelement valueElement;
 
-		if (IsCollationApplicable(context->collationString))
-		{
-			/* we can safely ignore any appended collation string here */
-			/* as it will be appended when creating the funcExpr */
-			PgbsonToSinglePgbsonElementWithCollation(value, &valueElement);
-		}
-		else
-		{
-			PgbsonToSinglePgbsonElement(value, &valueElement);
-		}
+		/* we can safely ignore any appended collation string here */
+		/* as it will be appended when creating the funcExpr */
+		PgbsonToSinglePgbsonElement(value, &valueElement);
 
 		StringView currentPath = {
 			.length = valueElement.pathLength, .string = valueElement.path
@@ -4969,16 +4955,9 @@ TryOptimizeDollarOrExpr(BsonQueryOperatorContext *context,
 		pgbson *value = DatumGetPgBson(argConst->constvalue);
 		pgbsonelement valueElement;
 
-		if (EnableCollation)
-		{
-			/* Since, we are optimizing Or expression not br rewriting a the expression, but by getting rid of
-			 * redundant quals from the Quals list, we can ignore the collation*/
-			PgbsonToSinglePgbsonElementWithCollation(value, &valueElement);
-		}
-		else
-		{
-			PgbsonToSinglePgbsonElement(value, &valueElement);
-		}
+		/* Since, we are optimizing Or expression not br rewriting a the expression, but by getting rid of
+		 * redundant quals from the Quals list, we can ignore the collation*/
+		PgbsonToSinglePgbsonElement(value, &valueElement);
 
 		if (funcId == eqop->postgresRuntimeFunctionOidLookup())
 		{

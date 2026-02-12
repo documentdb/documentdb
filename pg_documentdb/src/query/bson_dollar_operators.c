@@ -504,16 +504,8 @@ CompareBsonValueAgainstQuery(const pgbsonelement *element,
 	TraverseElementValidateState elementValidationState = { 0 };
 
 	pgbsonelement filterElement;
-
-	if (EnableCollation)
-	{
-		elementValidationState.collationString = PgbsonToSinglePgbsonElementWithCollation(
-			filter, &filterElement);
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement(filter, &filterElement);
-	}
+	elementValidationState.collationString = PgbsonToSinglePgbsonElementWithCollation(
+		filter, &filterElement);
 
 	elementValidationState.traverseState.matchFunc = compareFunc;
 	elementValidationState.filter = &filterElement;
@@ -1251,27 +1243,18 @@ bson_dollar_range(PG_FUNCTION_ARGS)
 	 */
 
 	pgbsonelement filterElement;
+	const char *collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
+																		   &filterElement);
 
-	if (EnableCollation)
+	if (IsCollationValid(collationString))
 	{
-		const char *collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
-																			   &
-																			   filterElement);
-
-		if (IsCollationValid(collationString))
-		{
-			/* TODO (workitem=3423305): Index pushdwon on $range operator with collation (see method description for more details) */
-			/* This code path is not expected to be excercised until $range with collation is pushed down to the index. */
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR), errmsg(
-								"operator $range or operators that can be optimized to $range is not supported with collation"),
-							errdetail_log(
-								"operator $range or operators that can be optimized to $range is not supported with collation : %s",
-								collationString)));
-		}
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement(filter, &filterElement);
+		/* TODO (workitem=3423305): Index pushdwon on $range operator with collation (see method description for more details) */
+		/* This code path is not expected to be excercised until $range with collation is pushed down to the index. */
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR), errmsg(
+							"operator $range or operators that can be optimized to $range is not supported with collation"),
+						errdetail_log(
+							"operator $range or operators that can be optimized to $range is not supported with collation : %s",
+							collationString)));
 	}
 
 	rangeState.elementState.filter = &filterElement;
@@ -2888,15 +2871,8 @@ CompareBsonAgainstQuery(const pgbson *element,
 	TraverseElementValidateState state = { 0 };
 	PgbsonInitIterator(element, &documentIterator);
 
-	if (EnableCollation)
-	{
-		state.collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
-																		 &filterElement);
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement(filter, &filterElement);
-	}
+	state.collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
+																	 &filterElement);
 
 	filterElement.pathLength = 0;
 	state.filter = &filterElement;
@@ -3427,15 +3403,8 @@ PopulateRegexState(PG_FUNCTION_ARGS, TraverseRegexValidateState *state)
 	const RegexData *regexState;
 	pgbsonelement filterElement;
 
-	if (EnableCollation)
-	{
-		/* collation does not take effect on $regex  */
-		PgbsonToSinglePgbsonElementWithCollation(filter, &filterElement);
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement(filter, &filterElement);
-	}
+	/* collation does not take effect on $regex  */
+	PgbsonToSinglePgbsonElement(filter, &filterElement);
 
 	/* State populated if and only if cached state is unusable */
 	SetCachedFunctionState(regexState, RegexData, 1, PopulateRegexFromQuery,
@@ -3531,15 +3500,8 @@ static void
 PopulateElemMatchStateFromQuery(BsonElemMatchQueryState *state, const pgbson *filter)
 {
 	pgbsonelement filterElement;
-	if (EnableCollation)
-	{
-		state->collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
-																		  &filterElement);
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement(filter, &filterElement);
-	}
+	state->collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
+																	  &filterElement);
 
 	state->isEmptyElemMatch = IsBsonValueEmptyDocument(&filterElement.bsonValue);
 	state->expressionEvaluationState = GetExpressionEvalStateWithCollation(
@@ -3622,16 +3584,9 @@ PopulateDollarAllStateFromQuery(BsonDollarAllQueryState *dollarAllState,
 								const pgbson *filter)
 {
 	pgbsonelement filterElement;
-	if (EnableCollation)
-	{
-		dollarAllState->collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
-																				   &
-																				   filterElement);
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement(filter, &filterElement);
-	}
+	dollarAllState->collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
+																			   &
+																			   filterElement);
 
 	if (filterElement.bsonValue.value_type != BSON_TYPE_ARRAY)
 	{
@@ -3831,19 +3786,10 @@ PopulateDollarInStateFromQuery(BsonDollarInQueryState *dollarInState,
 {
 	pgbsonelement filterElement;
 	bson_iter_t arrayIterator;
-	const char *collationString = NULL;
+	const char *collationString = PgbsonToSinglePgbsonElementWithCollation(
+		(pgbson *) filter, &filterElement);
 
-	if (EnableCollation)
-	{
-		collationString = PgbsonToSinglePgbsonElementWithCollation(
-			(pgbson *) filter, &filterElement);
-
-		dollarInState->collationString = collationString;
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement((pgbson *) filter, &filterElement);
-	}
+	dollarInState->collationString = collationString;
 
 	BsonValueInitIterator(&filterElement.bsonValue, &arrayIterator);
 
