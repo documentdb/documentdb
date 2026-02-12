@@ -28,7 +28,7 @@ use tokio::{
 use crate::{
     configuration::{dynamic::POSTGRES_RECOVERY_KEY, DynamicConfiguration, SetupConfiguration},
     error::{DocumentDBError, Result},
-    postgres::{Connection, ConnectionPool, QueryCatalog},
+    postgres::conn_mgmt::PoolManager,
     requests::request_tracker::RequestTracker,
 };
 
@@ -44,15 +44,14 @@ pub struct HostConfig {
 /// Inner struct that holds the dependencies needed for loading configurations.
 #[derive(Debug, Clone)]
 struct PgConfigurationInner {
-    query_catalog: QueryCatalog,
     dynamic_config_file: String,
     settings_prefixes: Vec<String>,
-    system_requests_pool: Arc<ConnectionPool>,
+    pool_manager: Arc<PoolManager>,
 }
 
 impl PgConfigurationInner {
     /// Loads configurations from the database and config file using the provided connection.
-    pub async fn load_configurations(&self, conn: &Connection) -> Result<HashMap<String, String>> {
+    pub async fn load_configurations(&self) -> Result<HashMap<String, String>> {
         let mut configs = HashMap::new();
 
         match Self::load_host_config(&self.dynamic_config_file).await {
@@ -70,15 +69,19 @@ impl PgConfigurationInner {
         }
 
         let request_tracker = RequestTracker::new();
-        let pg_config_rows = conn
+        let pg_config_rows = self
+            .pool_manager
+            .system_requests_connection()
+            .await?
             .query(
-                self.query_catalog.pg_settings(),
+                self.pool_manager.query_catalog().pg_settings(),
                 &[],
                 &[],
                 None,
                 &request_tracker,
             )
             .await?;
+
         for pg_config in pg_config_rows {
             let mut key = pg_config.get::<_, String>(0);
 
@@ -98,15 +101,19 @@ impl PgConfigurationInner {
             configs.insert(key.to_owned(), value);
         }
 
-        let pg_is_in_recovery_row = conn
+        let pg_is_in_recovery_row = self
+            .pool_manager
+            .system_requests_connection()
+            .await?
             .query(
-                self.query_catalog.pg_is_in_recovery(),
+                self.pool_manager.query_catalog().pg_is_in_recovery(),
                 &[],
                 &[],
                 None,
                 &request_tracker,
             )
             .await?;
+
         let in_recovery: bool = pg_is_in_recovery_row.first().is_some_and(|row| row.get(0));
         configs.insert(POSTGRES_RECOVERY_KEY.to_string(), in_recovery.to_string());
 
@@ -144,52 +151,29 @@ impl PgConfiguration {
             loop {
                 interval.tick().await;
 
-                Self::reload_configuration(configuration.clone()).await;
+                Self::reload_configuration(Arc::clone(&configuration)).await;
             }
         });
     }
 
     async fn reload_configuration(configuration: Arc<PgConfiguration>) {
-        match configuration
-            .inner
-            .system_requests_pool
-            .acquire_connection()
-            .await
-        {
-            Ok(inner_conn) => {
-                let connection = Connection::new(inner_conn, false);
-                if let Err(e) = configuration
-                    .reload_configuration_with_connection(&connection)
-                    .await
-                {
-                    tracing::error!("Config reload failed! {e}");
-                }
-            }
-            Err(e) => {
-                tracing::error!(
-                    "Failed to acquire postgres connection to refresh configuration: {e}"
-                )
-            }
+        if let Err(e) = configuration.refresh_configuration().await {
+            tracing::error!("Config reload failed! {e}");
         }
     }
 
     pub async fn new(
-        query_catalog: &QueryCatalog,
         setup_configuration: &dyn SetupConfiguration,
-        system_requests_pool: &Arc<ConnectionPool>,
+        pool_manager: Arc<PoolManager>,
         settings_prefixes: Vec<String>,
     ) -> Result<Arc<Self>> {
-        let connection = Connection::new(system_requests_pool.acquire_connection().await?, false);
-        let dynamic_config_file = setup_configuration.dynamic_configuration_file();
-
         let inner = PgConfigurationInner {
-            query_catalog: query_catalog.clone(),
-            dynamic_config_file,
+            dynamic_config_file: setup_configuration.dynamic_configuration_file(),
             settings_prefixes,
-            system_requests_pool: system_requests_pool.clone(),
+            pool_manager,
         };
 
-        let values = RwLock::new(inner.load_configurations(&connection).await?);
+        let values = RwLock::new(inner.load_configurations().await?);
 
         let configuration = Arc::new(PgConfiguration {
             inner,
@@ -207,8 +191,8 @@ impl PgConfiguration {
         *self.last_update_at.read().await
     }
 
-    pub async fn reload_configuration_with_connection(&self, conn: &Connection) -> Result<()> {
-        let new_config = match self.inner.load_configurations(conn).await {
+    pub async fn refresh_configuration(&self) -> Result<()> {
+        let new_config = match self.inner.load_configurations().await {
             Ok(config) => config,
             Err(e) => {
                 tracing::error!("Failed to reload configuration: {e}");
@@ -303,7 +287,7 @@ impl PgConfiguration {
 
             // debounce window
             sleep(Duration::from_millis(300)).await;
-            Self::reload_configuration(configuration.clone()).await;
+            Self::reload_configuration(configuration).await;
         });
     }
 }

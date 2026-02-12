@@ -14,65 +14,28 @@ use crate::{
     configuration::{DynamicConfiguration, SetupConfiguration},
     context::ServiceContext,
     error::Result,
-    postgres::{self, ConnectionPool, PoolManager, QueryCatalog},
+    postgres::conn_mgmt::{self, PoolManager},
     service::TlsProvider,
 };
 
 pub fn get_service_context(
     setup_configuration: Box<dyn SetupConfiguration>,
     dynamic_configuration: Arc<dyn DynamicConfiguration>,
-    query_catalog: QueryCatalog,
-    system_requests_pool: Arc<ConnectionPool>,
-    authentication_pool: ConnectionPool,
+    connection_pool_manager: Arc<PoolManager>,
     tls_provider: TlsProvider,
 ) -> ServiceContext {
     tracing::info!("Initial dynamic configuration: {dynamic_configuration:?}");
 
-    let connection_pool_manager = PoolManager::new(
-        query_catalog.clone(),
-        setup_configuration.clone(),
-        Arc::clone(&dynamic_configuration),
-        system_requests_pool,
-        authentication_pool,
-    );
-
     let service_context = ServiceContext::new(
         setup_configuration.clone(),
         Arc::clone(&dynamic_configuration),
-        query_catalog.clone(),
         connection_pool_manager,
         tls_provider,
     );
 
-    postgres::clean_unused_pools(service_context.clone());
+    conn_mgmt::clean_unused_pools(service_context.clone());
 
     service_context
-}
-
-pub async fn get_system_connection_pool(
-    setup_configuration: &dyn SetupConfiguration,
-    query_catalog: &QueryCatalog,
-    pool_name: &str,
-    max_size: usize,
-) -> ConnectionPool {
-    // Capture necessary values to avoid lifetime issues
-    let postgres_system_user = setup_configuration.postgres_system_user();
-    let full_pool_name = format!("{}-{}", setup_configuration.application_name(), pool_name);
-
-    create_postgres_object(
-        || async {
-            ConnectionPool::new_with_user(
-                setup_configuration,
-                query_catalog,
-                &postgres_system_user,
-                None,
-                full_pool_name.clone(),
-                max_size,
-            )
-        },
-        setup_configuration,
-    )
-    .await
 }
 
 pub async fn create_postgres_object<T, F, Fut>(

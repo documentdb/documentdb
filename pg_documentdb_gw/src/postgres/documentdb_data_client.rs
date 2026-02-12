@@ -17,11 +17,12 @@ use crate::{
     context::{ConnectionContext, Cursor, RequestContext, ServiceContext},
     error::{DocumentDBError, Result},
     explain::Verbosity,
-    postgres::{PgDataClient, PoolConnection},
+    postgres::{
+        conn_mgmt::{Connection, ConnectionPool, PoolConnection, Timeout},
+        PgDataClient, PgDocument,
+    },
     responses::{PgResponse, Response},
 };
-
-use super::{Connection, ConnectionPool, PgDocument, Timeout};
 
 pub struct DocumentDBDataClient {
     connection_pool: Option<Arc<ConnectionPool>>,
@@ -46,16 +47,12 @@ impl PgDataClient for DocumentDBDataClient {
         authorization: &AuthState,
     ) -> Result<Self> {
         let user = authorization.username()?;
-        let pass = authorization
-            .password
-            .as_ref()
-            .ok_or(DocumentDBError::internal_error(
-                "Password is missing on pg data pool acquisition".to_string(),
-            ))?;
+        let dynamic_configuration = service_context.dynamic_configuration();
+
         let connection_pool = Some(
             service_context
                 .connection_pool_manager()
-                .get_data_pool(user, pass)
+                .get_data_pool(user, dynamic_configuration.as_ref())
                 .await?,
         );
 

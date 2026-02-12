@@ -19,7 +19,7 @@ use crate::{
     configuration::DynamicConfiguration,
     context::{ConnectionContext, CursorStore},
     error::{DocumentDBError, ErrorCode, Result},
-    postgres::{self, Connection, PgDataClient},
+    postgres::{self, conn_mgmt::Connection, PgDataClient},
 };
 
 #[derive(Debug)]

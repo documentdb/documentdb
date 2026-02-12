@@ -22,8 +22,6 @@ pub mod shutdown_controller;
 pub mod startup;
 pub mod telemetry;
 
-pub use crate::postgres::QueryCatalog;
-
 use std::{net::IpAddr, pin::Pin, sync::Arc};
 
 use either::Either::{Left, Right};
@@ -592,9 +590,6 @@ where
             return Ok(response);
         }
     }
-
-    // Once authorized, make sure that there is a pool of pg clients for the user/password.
-    connection_context.allocate_data_pool().await?;
 
     let service_context = Arc::clone(&connection_context.service_context);
     let data_client = T::new_authorized(&service_context, &connection_context.auth_state).await?;

@@ -13,7 +13,7 @@ use bson::{rawdoc, RawArrayBuf};
 use crate::{
     context::{ConnectionContext, Cursor, CursorStoreEntry, RequestContext},
     error::{DocumentDBError, ErrorCode, Result},
-    postgres::{Connection, PgDataClient, PgDocument},
+    postgres::{conn_mgmt::Connection, PgDataClient, PgDocument},
     protocol::OK_SUCCEEDED,
     requests::RequestInfo,
     responses::{PgResponse, RawResponse, Response},

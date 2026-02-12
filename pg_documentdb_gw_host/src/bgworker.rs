@@ -6,13 +6,12 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 use documentdb_gateway::{
     configuration::{DocumentDBSetupConfiguration, PgConfiguration, SetupConfiguration},
     postgres::{
-        create_query_catalog, DocumentDBDataClient, AUTHENTICATION_MAX_CONNECTIONS,
-        SYSTEM_REQUESTS_MAX_CONNECTIONS,
+        conn_mgmt::create_connection_pool_manager, create_query_catalog, DocumentDBDataClient,
     },
     run_gateway,
     service::TlsProvider,
     shutdown_controller::SHUTDOWN_CONTROLLER,
-    startup::{create_postgres_object, get_service_context, get_system_connection_pool},
+    startup::{create_postgres_object, get_service_context},
 };
 
 use crate::gucs::{PG_DOCUMENTDB_GATEWAY_DATABASE, PG_DOCUMENTDB_SETUP_CONFIGURATION};
@@ -84,6 +83,12 @@ async fn run_docdb_gateway(setup_configuration_file: &str) {
     let setup_configuration =
         DocumentDBSetupConfiguration::new(&cfg_file).expect("Failed to load configuration.");
 
+    // Initialize tracing subscriber to handle all tracing events
+    tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
     tracing::info!("Starting server with configuration: {setup_configuration:?}");
 
     let tls_provider = TlsProvider::new(
@@ -94,31 +99,17 @@ async fn run_docdb_gateway(setup_configuration_file: &str) {
     .await
     .expect("Failed to create TLS provider.");
 
-    // Initialize tracing subscriber to handle all tracing events
-    tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
-        .with(tracing_subscriber::fmt::layer())
-        .init();
-
-    let query_catalog = create_query_catalog();
-
-    let system_requests_pool = Arc::new(
-        get_system_connection_pool(
-            &setup_configuration,
-            &query_catalog,
-            "SystemRequests",
-            SYSTEM_REQUESTS_MAX_CONNECTIONS,
-        )
-        .await,
-    );
-    tracing::info!("System requests pool initialized");
+    let connection_pool_manager = create_connection_pool_manager(
+        create_query_catalog(),
+        Box::new(setup_configuration.clone()),
+    )
+    .await;
 
     let dynamic_configuration = create_postgres_object(
         || async {
             PgConfiguration::new(
-                &query_catalog,
                 &setup_configuration,
-                &system_requests_pool,
+                Arc::clone(&connection_pool_manager),
                 vec!["documentdb.".to_string()],
             )
             .await
@@ -127,21 +118,10 @@ async fn run_docdb_gateway(setup_configuration_file: &str) {
     )
     .await;
 
-    let authentication_pool = get_system_connection_pool(
-        &setup_configuration,
-        &query_catalog,
-        "PreAuthRequests",
-        AUTHENTICATION_MAX_CONNECTIONS,
-    )
-    .await;
-    tracing::info!("Authentication pool initialized");
-
     let service_context = get_service_context(
         Box::new(setup_configuration),
         dynamic_configuration,
-        query_catalog,
-        system_requests_pool,
-        authentication_pool,
+        connection_pool_manager,
         tls_provider,
     );
 

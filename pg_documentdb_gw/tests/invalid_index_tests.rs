@@ -11,7 +11,7 @@ use mongodb::error::WriteFailure;
 
 mod common;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 async fn test_index_key_too_large_error() -> Result<(), mongodb::error::Error> {
     let db_name = "test_index_key_db";
     let coll_name = "test_index_key_coll";

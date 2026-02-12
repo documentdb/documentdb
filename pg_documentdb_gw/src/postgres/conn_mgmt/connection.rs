@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
- * src/postgres/connections.rs
+ * src/postgres/conn_mgmt/connection.rs
  *
  *-------------------------------------------------------------------------
  */
@@ -14,7 +14,7 @@ use tokio_postgres::{
 
 use crate::{
     error::Result,
-    postgres::{PgDocument, PoolConnection},
+    postgres::{conn_mgmt::PoolConnection, PgDocument},
     requests::{request_tracker::RequestTracker, RequestIntervalKind},
 };
 

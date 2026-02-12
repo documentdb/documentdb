@@ -8,18 +8,18 @@
 
 pub mod common;
 
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use bson::{rawbson, RawBson};
 use documentdb_gateway::{
     configuration::{DynamicConfiguration, SetupConfiguration},
     postgres::{
-        create_query_catalog, ConnectionPool, PoolManager, AUTHENTICATION_MAX_CONNECTIONS,
-        SYSTEM_REQUESTS_MAX_CONNECTIONS,
+        conn_mgmt::{
+            ConnectionPool, PgPoolSettings, PoolManager, AUTHENTICATION_MAX_CONNECTIONS,
+            SYSTEM_REQUESTS_MAX_CONNECTIONS,
+        },
+        create_query_catalog,
     },
 };
 
@@ -88,45 +88,42 @@ impl DynamicConfiguration for MaxConnectionConfig {
     }
 }
 
-fn test_pool_manager(dynamic_configuration: Arc<MaxConnectionConfig>) -> PoolManager {
+fn test_pool_manager() -> PoolManager {
     let query_catalog = create_query_catalog();
     let setup_config = common::setup_configuration();
     let postgres_system_user = setup_config.postgres_system_user();
+
     let system_requests_pool = ConnectionPool::new_with_user(
         &setup_config,
         &query_catalog,
-        &postgres_system_user,
+        postgres_system_user,
         None,
         format!("{}-SystemRequests", setup_config.application_name()),
-        SYSTEM_REQUESTS_MAX_CONNECTIONS,
+        PgPoolSettings::system_pool_settings(SYSTEM_REQUESTS_MAX_CONNECTIONS),
     )
-    .expect("Failed to create system pool");
+    .expect("Failed to create system requests pool");
 
     let authentication_pool = ConnectionPool::new_with_user(
         &setup_config,
         &query_catalog,
-        &postgres_system_user,
+        postgres_system_user,
         None,
         format!("{}-PreAuthRequests", setup_config.application_name()),
-        AUTHENTICATION_MAX_CONNECTIONS,
+        PgPoolSettings::system_pool_settings(AUTHENTICATION_MAX_CONNECTIONS),
     )
     .expect("Failed to create authentication pool");
 
     PoolManager::new(
         query_catalog,
-        Box::new(setup_config),
-        dynamic_configuration,
-        Arc::new(system_requests_pool),
+        Box::new(setup_config.clone()),
+        system_requests_pool,
         authentication_pool,
     )
 }
 
 #[tokio::test]
 async fn validate_pool_reusage() {
-    let dynamic_configuration = Arc::new(MaxConnectionConfig {
-        max_conn: 100.into(),
-    });
-    let pool_manager = test_pool_manager(Arc::clone(&dynamic_configuration));
+    let pool_manager = test_pool_manager();
 
     assert_eq!(
         2,
@@ -134,8 +131,14 @@ async fn validate_pool_reusage() {
         "by default only 2 system pools exist"
     );
 
+    let dynamic_configuration = MaxConnectionConfig {
+        max_conn: 100.into(),
+    };
+
     for _ in 0..10 {
-        let shared_pool_result = pool_manager.get_system_shared_pool().await;
+        let shared_pool_result = pool_manager
+            .get_system_shared_pool(&dynamic_configuration)
+            .await;
         assert!(
             shared_pool_result.is_ok(),
             "Couldn't allocate shared system pool"
@@ -158,17 +161,23 @@ async fn validate_pool_reusage() {
 
 #[tokio::test]
 async fn validate_max_conn_change() {
-    let dynamic_configuration = Arc::new(MaxConnectionConfig {
+    let dynamic_configuration = MaxConnectionConfig {
         max_conn: 100.into(),
-    });
-    let pool_manager = test_pool_manager(Arc::clone(&dynamic_configuration));
+    };
+    let pool_manager = test_pool_manager();
 
-    let shared_pool = pool_manager.get_system_shared_pool().await.unwrap();
+    let shared_pool = pool_manager
+        .get_system_shared_pool(&dynamic_configuration)
+        .await
+        .unwrap();
 
     // change the max connection
     dynamic_configuration.set_max_conn(42);
 
-    let new_shared_pool = pool_manager.get_system_shared_pool().await.unwrap();
+    let new_shared_pool = pool_manager
+        .get_system_shared_pool(&dynamic_configuration)
+        .await
+        .unwrap();
 
     assert_ne!(
         shared_pool.status().status().max_size,
@@ -185,15 +194,15 @@ async fn validate_max_conn_change() {
 
 #[tokio::test]
 async fn validate_user_pwd_change() {
-    let dynamic_configuration = Arc::new(MaxConnectionConfig {
+    let dynamic_configuration = MaxConnectionConfig {
         max_conn: 100.into(),
-    });
-    let pool_manager = test_pool_manager(Arc::clone(&dynamic_configuration));
+    };
+    let pool_manager = test_pool_manager();
 
     // on first iteration it will allocate the user pool and all the rest iterations will be no-op
     for _ in 0..10 {
         pool_manager
-            .allocate_data_pool("user", "before")
+            .allocate_data_pool("user", "before", &dynamic_configuration)
             .await
             .unwrap();
 
@@ -204,8 +213,11 @@ async fn validate_user_pwd_change() {
         );
     }
 
+    // but now let's change the system settings and validate that it creates a new pool with same credentials
+    dynamic_configuration.set_max_conn(42);
+
     pool_manager
-        .allocate_data_pool("user", "after")
+        .allocate_data_pool("user", "after", &dynamic_configuration)
         .await
         .unwrap();
 

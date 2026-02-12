@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
- * src/postgres/connection_pool.rs
+ * src/postgres/conn_mgmt/connection_pool.rs
  *
  *-------------------------------------------------------------------------
  */
@@ -14,13 +14,16 @@ use std::{
 use deadpool_postgres::{Manager, Pool, Runtime, Status};
 use tokio::{
     sync::RwLock,
+    task::JoinHandle,
     time::{Duration, Instant},
 };
 use tokio_postgres::NoTls;
 
-use crate::{configuration::SetupConfiguration, error::Result, QueryCatalog};
-
-const POOL_PRUNE_INTERVAL_SECS: u64 = 10;
+use crate::{
+    configuration::SetupConfiguration,
+    error::Result,
+    postgres::{conn_mgmt::PgPoolSettings, QueryCatalog},
+};
 
 fn pg_configuration(
     setup_configuration: &dyn SetupConfiguration,
@@ -84,6 +87,7 @@ pub struct ConnectionPool {
     pool: Pool,
     last_used: RwLock<Instant>,
     identifier: String,
+    prune_task: JoinHandle<()>,
 }
 
 impl ConnectionPool {
@@ -93,7 +97,7 @@ impl ConnectionPool {
         user: &str,
         password: Option<&str>,
         application_name: String,
-        max_size: usize,
+        pool_settings: PgPoolSettings,
     ) -> Result<Self> {
         let config = pg_configuration(
             setup_configuration,
@@ -107,7 +111,7 @@ impl ConnectionPool {
 
         let pool_builder = Pool::builder(manager)
             .runtime(Runtime::Tokio1)
-            .max_size(max_size)
+            .max_size(pool_settings.adjusted_max_connections())
             // The time to wait while trying to establish a connection before terminating the attempt
             // Should be the same as the command timeout
             .wait_timeout(Some(Duration::from_secs(
@@ -117,30 +121,35 @@ impl ConnectionPool {
 
         let pool_copy = pool.clone();
 
-        // how long a connection can be idle before it is pruned
-        let idle_connection_max_age = Duration::from_secs(
-            setup_configuration.postgres_idle_connection_timeout_minutes() * 60,
-        );
-
-        tokio::spawn(async move {
-            // how many seconds to wait before pruning idle connections that are beyond idle lifetime
+        let prune_task = tokio::spawn(async move {
+            // how many seconds to wait before pruning idle or old connections that are beyond idle lifetime
             let mut prune_interval =
-                tokio::time::interval(Duration::from_secs(POOL_PRUNE_INTERVAL_SECS));
+                tokio::time::interval(pool_settings.connection_pruning_interval());
 
             loop {
                 prune_interval.tick().await;
-                pool_copy
-                    .retain(|_, conn_metrics| conn_metrics.last_used() < idle_connection_max_age);
+
+                // Prune idle connections that have exceeded idle lifetime or total lifetime
+                pool_copy.retain(|_, conn_metrics| {
+                    conn_metrics.last_used() < pool_settings.connection_idle_lifetime()
+                        && conn_metrics.age() < pool_settings.connection_lifetime()
+                });
             }
         });
+
         let mut hasher = DefaultHasher::new();
         user.hash(&mut hasher);
-        let pool_identifier = format!("{:x}-{application_name}-{max_size}", hasher.finish());
+        let pool_identifier = format!(
+            "{:x}-{application_name}-{}",
+            hasher.finish(),
+            pool_settings.adjusted_max_connections()
+        );
 
         Ok(ConnectionPool {
             pool,
             last_used: RwLock::new(Instant::now()),
             identifier: pool_identifier,
+            prune_task,
         })
     }
 
@@ -160,5 +169,12 @@ impl ConnectionPool {
             identifier: self.identifier.clone(),
             status: self.pool.status(),
         }
+    }
+}
+
+impl Drop for ConnectionPool {
+    fn drop(&mut self) {
+        // Stop the background pruner when the pool is dropped.
+        self.prune_task.abort();
     }
 }

@@ -20,8 +20,8 @@ use crate::{
     auth::AuthState,
     configuration::DynamicConfiguration,
     context::{Cursor, CursorStoreEntry, ServiceContext},
-    error::{DocumentDBError, Result},
-    postgres::Connection,
+    error::Result,
+    postgres::conn_mgmt::Connection,
     telemetry::TelemetryProvider,
 };
 
@@ -137,19 +137,16 @@ impl ConnectionContext {
             .await
     }
 
-    pub async fn allocate_data_pool(&self) -> Result<()> {
+    pub async fn allocate_data_pool(&self, password: &str) -> Result<()> {
         let username = self.auth_state.username()?;
-        let password = self
-            .auth_state
-            .password
-            .as_ref()
-            .ok_or(DocumentDBError::internal_error(
-                "Password is missing on pg connection acquisition".to_string(),
-            ))?;
 
         self.service_context
             .connection_pool_manager()
-            .allocate_data_pool(username, password)
+            .allocate_data_pool(
+                username,
+                password,
+                self.service_context.dynamic_configuration().as_ref(),
+            )
             .await
     }
 
