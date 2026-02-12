@@ -1,16 +1,17 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
- * tests/command/rbac/usersinfo_tests.rs
+ * tests/command_rbac_usersinfo_tests.rs
  *
  *-------------------------------------------------------------------------
  */
 
-use bson::{doc, Bson, Document};
+pub mod common;
+
+use bson::doc;
 use uuid::Uuid;
 
-pub mod common;
-pub use crate::common::rbac_utils::user_exists;
+use crate::common::rbac_utils;
 
 #[tokio::test]
 async fn test_users_info() -> Result<(), mongodb::error::Error> {
@@ -40,17 +41,17 @@ async fn test_users_info() -> Result<(), mongodb::error::Error> {
     );
 
     assert!(
-        user_exists(&users, &user_id),
+        rbac_utils::user_exists(&users, &user_id),
         "test user should be returned in usersInfo"
     );
 
     assert!(
-        !user_exists(&users, "documentdb_bg_worker_role"),
+        !rbac_utils::user_exists(&users, "documentdb_bg_worker_role"),
         "documentdb_bg_worker_role should not be returned in usersInfo"
     );
 
     assert!(
-        !user_exists(&users, "documentdb_admin_role"),
+        !rbac_utils::user_exists(&users, "documentdb_admin_role"),
         "documentdb_admin_role should not be returned in usersInfo"
     );
 

@@ -91,7 +91,8 @@ static DropIndexesResult ProcessDropIndexesRequest(char *dbName, DropIndexesArg
 												   dropIndexesArg,
 												   bool dropIndexConcurrently);
 static pgbson * MakeDropIndexesMsg(DropIndexesResult *result);
-static void ExecuteDropIndexCommand(char *cmd, bool unique, bool concurrently);
+static void ExecuteDropIndexCommand(char *cmd, bool unique, bool concurrently, bool
+									forceReadWrite);
 static char * CreateDropIndexCommand(uint64 collectionId, int indexId, bool unique, bool
 									 concurrently,
 									 bool missingOk);
@@ -193,12 +194,13 @@ ProcessDropIndexesRequest(char *dbName, DropIndexesArg dropIndexesArg, bool
 
 			bool missingOk = true;
 			bool concurrently = false;
+			bool forceReadWrite = false;
 			if (!dropIndexConcurrently)
 			{
 				DropPostgresIndex(collectionId, indexDetails->indexId,
 								  indexDetails->indexSpec.indexUnique ==
 								  BoolIndexOption_True,
-								  concurrently, missingOk);
+								  concurrently, forceReadWrite, missingOk);
 				DeleteCollectionIndexRecord(collectionId, indexDetails->indexId);
 			}
 			else
@@ -305,6 +307,7 @@ ProcessDropIndexesRequest(char *dbName, DropIndexesArg dropIndexesArg, bool
 
 		bool missingOk = true;
 		bool concurrently = false;
+		bool forceReadWrite = false;
 		if (dropIndexConcurrently)
 		{
 			concurrently = true;
@@ -344,7 +347,7 @@ ProcessDropIndexesRequest(char *dbName, DropIndexesArg dropIndexesArg, bool
 			DropPostgresIndex(collectionId, matchingIndexDetails->indexId,
 							  matchingIndexDetails->indexSpec.indexUnique ==
 							  BoolIndexOption_True,
-							  concurrently, missingOk);
+							  concurrently, forceReadWrite, missingOk);
 			DeleteCollectionIndexRecord(collectionId, matchingIndexDetails->indexId);
 		}
 	}
@@ -688,11 +691,11 @@ DropIndexesArgExpandIndexNameList(uint64 collectionId, DropIndexesArg *dropIndex
  */
 void
 DropPostgresIndex(uint64 collectionId, int indexId, bool unique, bool concurrently,
-				  bool missingOk)
+				  bool forceReadWrite, bool missingOk)
 {
 	char *cmd = CreateDropIndexCommand(collectionId, indexId, unique, concurrently,
 									   missingOk);
-	ExecuteDropIndexCommand(cmd, unique, concurrently);
+	ExecuteDropIndexCommand(cmd, unique, concurrently, forceReadWrite);
 }
 
 
@@ -821,7 +824,7 @@ CreateDropIndexCommand(uint64 collectionId, int indexId, bool unique, bool concu
  * Actually executes DROP INDEX postgres command.
  */
 static void
-ExecuteDropIndexCommand(char *cmd, bool unique, bool concurrently)
+ExecuteDropIndexCommand(char *cmd, bool unique, bool concurrently, bool forceReadWrite)
 {
 	if (unique)
 	{
@@ -834,7 +837,14 @@ ExecuteDropIndexCommand(char *cmd, bool unique, bool concurrently)
 	{
 		if (concurrently)
 		{
-			ExtensionExecuteQueryOnLocalhostViaLibPQ(cmd);
+			if (forceReadWrite)
+			{
+				ExtensionExecuteForcedReadWriteQueryOnLocalhostViaLibPQ(cmd);
+			}
+			else
+			{
+				ExtensionExecuteQueryOnLocalhostViaLibPQ(cmd);
+			}
 		}
 		else
 		{
@@ -872,7 +882,8 @@ HandleDropIndexConcurrently(uint64 collectionId, int indexId, bool unique, bool
 	{
 		char *cmd = CreateDropIndexCommand(collectionId, indexId, unique, concurrently,
 										   missingOk);
-		ExecuteDropIndexCommand(cmd, unique, concurrently);
+		bool forceReadWrite = false;
+		ExecuteDropIndexCommand(cmd, unique, concurrently, forceReadWrite);
 		indexDropped = true;
 	}
 	PG_CATCH();

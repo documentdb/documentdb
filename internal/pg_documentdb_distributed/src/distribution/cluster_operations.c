@@ -70,6 +70,7 @@ static void GetInstalledVersion(ExtensionVersion *installedVersion);
 static void ParseVersionString(ExtensionVersion *extensionVersion, char *versionString);
 static bool SetupCluster(bool isInitialize);
 static void SetPermissionsForReadOnlyRole(void);
+static void SetPermissionsForReadWriteRole(void);
 static void CheckAndReplicateReferenceTable(const char *schema, const char *tableName);
 static void UpdateChangesTableOwnerToAdminRole(void);
 
@@ -333,6 +334,11 @@ SetupCluster(bool isInitialize)
 		bool includeOptions = true;
 		bool includeDropCommandType = true;
 		CreateIndexBuildsTable(includeOptions, includeDropCommandType);
+	}
+
+	if (ShouldRunSetupForVersion(&versions, DocDB_V0, 110, 0))
+	{
+		SetPermissionsForReadWriteRole();
 	}
 
 	/* we call the post setup cluster hook to allow the extension to do any additional setup */
@@ -858,6 +864,64 @@ SetPermissionsForReadOnlyRole()
 		ExtensionExecuteQueryViaSPI(cmdStr->data, readOnly, SPI_OK_UTILITY,
 									&isNull);
 	}
+}
+
+
+/*
+ * SetPermissionsForReadWriteRole - Set the right permissions for ApiReadWriteRole
+ */
+static void
+SetPermissionsForReadWriteRole()
+{
+	StringInfo cmdStr = makeStringInfo();
+	bool isNull = false;
+	appendStringInfo(cmdStr,
+					 "GRANT ALL ON TABLE %s TO %s",
+					 GetIndexQueueName(),
+					 ApiReadWriteRole);
+
+	ExtensionExecuteQueryViaSPI(cmdStr->data, false, SPI_OK_UTILITY,
+								&isNull);
+
+	resetStringInfo(cmdStr);
+	appendStringInfo(cmdStr,
+					 "GRANT SELECT, INSERT, DELETE, UPDATE ON TABLE  %s.collections TO %s",
+					 ApiCatalogSchemaName,
+					 ApiReadWriteRole);
+	ExtensionExecuteQueryViaSPI(cmdStr->data, false, SPI_OK_UTILITY,
+								&isNull);
+
+	resetStringInfo(cmdStr);
+	appendStringInfo(cmdStr,
+					 "GRANT SELECT, INSERT, DELETE, UPDATE ON TABLE %s.collection_indexes TO %s",
+					 ApiCatalogSchemaName,
+					 ApiReadWriteRole);
+	ExtensionExecuteQueryViaSPI(cmdStr->data, false, SPI_OK_UTILITY,
+								&isNull);
+
+	resetStringInfo(cmdStr);
+	appendStringInfo(cmdStr,
+					 "GRANT USAGE, SELECT, UPDATE ON TABLE %s.collections_collection_id_seq TO %s",
+					 ApiCatalogSchemaName,
+					 ApiReadWriteRole);
+	ExtensionExecuteQueryViaSPI(cmdStr->data, false, SPI_OK_UTILITY,
+								&isNull);
+	resetStringInfo(cmdStr);
+
+	appendStringInfo(cmdStr,
+					 "GRANT USAGE, SELECT, UPDATE ON TABLE %s.collection_indexes_index_id_seq TO %s",
+					 ApiCatalogSchemaName,
+					 ApiReadWriteRole);
+	ExtensionExecuteQueryViaSPI(cmdStr->data, false, SPI_OK_UTILITY,
+								&isNull);
+	resetStringInfo(cmdStr);
+
+	appendStringInfo(cmdStr,
+					 "GRANT SELECT ON TABLE %s.%s_cluster_data TO %s;",
+					 ApiDistributedSchemaName, ExtensionObjectPrefix, ApiReadWriteRole);
+	ExtensionExecuteQueryViaSPI(cmdStr->data, false, SPI_OK_UTILITY,
+								&isNull);
+	resetStringInfo(cmdStr);
 }
 
 

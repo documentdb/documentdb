@@ -51,8 +51,8 @@ SELECT documentdb_api.insert_one('db','bsoexplainnorderby', '{"_id": 13, "a" : [
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b": 1 }');
-                                                        QUERY PLAN                                                         
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b": 1 }') $cmd$);
+                                                        run_explain_and_trim                                                         
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -67,8 +67,8 @@ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('d
                            Index Cond: (shard_key_value = '3400'::bigint)
 (11 rows)
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b": -1 }') DESC;
-                                                           QUERY PLAN                                                            
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b": -1 }') DESC $cmd$);
+                                                           run_explain_and_trim                                                            
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -83,8 +83,8 @@ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('d
                            Index Cond: (shard_key_value = '3400'::bigint)
 (11 rows)
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b.0": -1 }') DESC;
-                                                            QUERY PLAN                                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b.0": -1 }') DESC $cmd$);
+                                                            run_explain_and_trim                                                             
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -99,8 +99,8 @@ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('d
                            Index Cond: (shard_key_value = '3400'::bigint)
 (11 rows)
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b.1": 1 }');
-                                                         QUERY PLAN                                                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b.1": 1 }') $cmd$);
+                                                         run_explain_and_trim                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -115,8 +115,8 @@ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('d
                            Index Cond: (shard_key_value = '3400'::bigint)
 (11 rows)
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.0": 1 }');
-                                                                                                           QUERY PLAN                                                                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.0": 1 }') $cmd$);
+                                                                                                                run_explain_and_trim                                                                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -131,8 +131,8 @@ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('d
                            Index Cond: (shard_key_value = '3400'::bigint)
 (11 rows)
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.0": -1 }') DESC;
-                                                                                                              QUERY PLAN                                                                                                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.0": -1 }') DESC $cmd$);
+                                                                                                                   run_explain_and_trim                                                                                                                   
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -147,8 +147,8 @@ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('d
                            Index Cond: (shard_key_value = '3400'::bigint)
 (11 rows)
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b": { "$gt": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }');
-                                                         QUERY PLAN                                                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b": { "$gt": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }') $cmd$);
+                                                         run_explain_and_trim                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -164,8 +164,8 @@ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('d
                            Index Cond: (shard_key_value = '3400'::bigint)
 (12 rows)
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b.0": { "$gte": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }');
-                                                           QUERY PLAN                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b.0": { "$gte": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }') $cmd$);
+                                                           run_explain_and_trim                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -181,8 +181,8 @@ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('d
                            Index Cond: (shard_key_value = '3400'::bigint)
 (12 rows)
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b.0": { "$gte": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.0": 1 }');
-                                                                                                           QUERY PLAN                                                                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b.0": { "$gte": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.0": 1 }') $cmd$);
+                                                                                                                run_explain_and_trim                                                                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -198,8 +198,8 @@ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('d
                            Index Cond: (shard_key_value = '3400'::bigint)
 (12 rows)
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b.0": { "$gte": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.1": 1 }');
-                                                                                                           QUERY PLAN                                                                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b.0": { "$gte": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.1": 1 }') $cmd$);
+                                                                                                                run_explain_and_trim                                                                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -215,8 +215,8 @@ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('d
                            Index Cond: (shard_key_value = '3400'::bigint)
 (12 rows)
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b": { "$gte": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.1": 1 }');
-                                                                                                           QUERY PLAN                                                                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b": { "$gte": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.1": 1 }') $cmd$);
+                                                                                                                run_explain_and_trim                                                                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -232,8 +232,8 @@ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('d
                            Index Cond: (shard_key_value = '3400'::bigint)
 (12 rows)
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a": { "$gte": { "b": 0 } } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }');
-                                                              QUERY PLAN                                                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a": { "$gte": { "b": 0 } } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }') $cmd$);
+                                                              run_explain_and_trim                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1

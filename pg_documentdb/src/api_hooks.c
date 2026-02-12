@@ -400,7 +400,8 @@ TryGetShardNameForUnshardedCollection(Oid relationOid, uint64 collectionId, cons
 																tableName);
 	}
 
-	return NULL;
+	/* Single node: return tableName to enable direct Executor path */
+	return tableName;
 }
 
 

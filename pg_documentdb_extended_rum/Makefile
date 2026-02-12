@@ -36,7 +36,7 @@ include $(OSS_SRC_DIR)/Makefile.cflags
 
 PG_LDFLAGS += -l:$(RUM_CORE_LIB_NAME) -L$(RUM_CORE_LIB_DIR)
 
-PG_CPPFLAGS += -I $(CURDIR)/core/src/
+PG_CPPFLAGS += -I $(CURDIR)/core/include/
 PG_CFLAGS += -Wno-sign-compare -Wno-type-limits
 
 include $(OSS_SRC_DIR)/Makefile.global

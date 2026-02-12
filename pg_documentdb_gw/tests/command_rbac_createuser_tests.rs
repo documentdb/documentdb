@@ -1,19 +1,20 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
- * tests/command/rbac/updateuser_tests.rs
+ * tests/command_rbac_createuser_tests.rs
  *
  *-------------------------------------------------------------------------
  */
 
-use bson::{doc, Bson, Document};
+pub mod common;
+
+use bson::doc;
 use uuid::Uuid;
 
-pub mod common;
-pub use crate::common::rbac_utils::{user_exists, validate_user};
+use crate::common::rbac_utils;
 
 #[tokio::test]
-async fn test_update_user_password() -> Result<(), mongodb::error::Error> {
+async fn test_create_user() -> Result<(), mongodb::error::Error> {
     let client = common::initialize().await;
     let db_name = "admin";
     let db = client.database(db_name);
@@ -28,27 +29,13 @@ async fn test_update_user_password() -> Result<(), mongodb::error::Error> {
     })
     .await?;
 
-    let users_before = db
+    let users = db
         .run_command(doc! {
             "usersInfo": &username
         })
         .await?;
 
-    assert!(user_exists(&users_before, &user_id));
-
-    db.run_command(doc! {
-        "updateUser": &username,
-        "pwd": "Other$1Pass",
-    })
-    .await?;
-
-    let users_after = db
-        .run_command(doc! {
-            "usersInfo": &username
-        })
-        .await?;
-
-    validate_user(&users_after, &user_id, &username, db_name, role);
+    rbac_utils::validate_user(&users, &user_id, &username, db_name, role);
 
     db.run_command(doc! {
         "dropUser": &username

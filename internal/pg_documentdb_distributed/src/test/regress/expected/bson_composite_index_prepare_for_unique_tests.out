@@ -62,8 +62,8 @@ set citus.propagate_set_commands to 'local';
 BEGIN;
 set local documentdb.enableExtendedExplainPlans to on;
 set local enable_seqscan to off;
-EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, TIMING OFF, SUMMARY OFF) select document FROM bson_aggregation_find('prep_unique_db', '{ "find": "collection", "filter": {"a": {"$gt": 2}} }');
-                                                                                                                                 QUERY PLAN                                                                                                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) select document FROM bson_aggregation_find('prep_unique_db', '{ "find": "collection", "filter": {"a": {"$gt": 2}} }') $cmd$);
+                                                                                                                            run_explain_and_trim                                                                                                                            
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=99 loops=1)
    Output: remote_scan.document
@@ -92,8 +92,8 @@ ROLLBACK;
 BEGIN;
 set local documentdb.enableExtendedExplainPlans to on;
 set local documentdb.enableIndexOrderByPushdown to on;
-EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, TIMING OFF, SUMMARY OFF) select document FROM bson_aggregation_find('prep_unique_db', '{ "find": "collection", "filter": {"a": {"$gt": 2}}, "sort": {"a": 1} }');
-                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) select document FROM bson_aggregation_find('prep_unique_db', '{ "find": "collection", "filter": {"a": {"$gt": 2}}, "sort": {"a": 1} }') $cmd$);
+                                                                                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                                                                                      
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=99 loops=1)
    Output: remote_scan.document
@@ -155,8 +155,8 @@ ANALYZE documentdb_data.documents_588001;
 BEGIN;
 set local documentdb.enableExtendedExplainPlans to on;
 set local enable_seqscan to off;
-EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, TIMING OFF, SUMMARY OFF) select document FROM bson_aggregation_find('prep_unique_db', '{ "find": "collection", "filter": {"a": {"$gt": 2}, "b": 3} }');
-                                                                                                                                                                                         QUERY PLAN                                                                                                                                                                                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) select document FROM bson_aggregation_find('prep_unique_db', '{ "find": "collection", "filter": {"a": {"$gt": 2}, "b": 3} }') $cmd$);
+                                                                                                                                                                                    run_explain_and_trim                                                                                                                                                                                     
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Output: remote_scan.document

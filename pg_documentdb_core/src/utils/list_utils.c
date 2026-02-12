@@ -22,6 +22,8 @@
 
 static int StringListComparator(const ListCell *leftListCell,
 								const ListCell *rightListCell);
+static int StringListVoidComparator(const void *leftListCell,
+									const void *rightListCell);
 
 
 /*
@@ -69,6 +71,17 @@ StringListComparator(const ListCell *leftListCell, const ListCell *rightListCell
 
 
 /*
+ * StringListComparator compares two string list cells using strcmp().
+ */
+static int
+StringListVoidComparator(const void *left, const void *searchCell)
+{
+	const char *key = (const char *) left;
+	return strcmp(key, lfirst((ListCell *) searchCell));
+}
+
+
+/*
  * StringListsAreEqual returns true if given two string lists are same.
  */
 bool
@@ -90,6 +103,24 @@ StringListsAreEqual(const List *leftStringList, const List *rightStringList)
 	}
 
 	return true;
+}
+
+
+/*
+ * StringListBinarySearch returns true if target exists in the given
+ * string list which must be sorted in ascending order.
+ */
+bool
+StringListBinarySearch(const List *stringList, const char *target)
+{
+	if (stringList == NIL)
+	{
+		return false;
+	}
+
+	ListCell *cell = bsearch(target, stringList->elements, list_length(stringList),
+							 sizeof(ListCell), StringListVoidComparator);
+	return cell != NULL;
 }
 
 

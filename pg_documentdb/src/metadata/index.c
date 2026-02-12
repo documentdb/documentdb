@@ -390,6 +390,7 @@ IndexSpecOptionsAreEquivalent(const IndexSpec *leftIndexSpec,
 		return IndexOptionsEquivalency_NotEquivalent;
 	}
 
+	bool convertSupportedInToScalarArrayOp = true;
 	if (leftIndexSpec->indexPFEDocument == NULL &&
 		rightIndexSpec->indexPFEDocument == NULL)
 	{
@@ -402,7 +403,8 @@ IndexSpecOptionsAreEquivalent(const IndexSpec *leftIndexSpec,
 		return IndexOptionsEquivalency_NotEquivalent;
 	}
 	else if (!QueryDocumentsAreEquivalent(leftIndexSpec->indexPFEDocument,
-										  rightIndexSpec->indexPFEDocument))
+										  rightIndexSpec->indexPFEDocument,
+										  convertSupportedInToScalarArrayOp))
 	{
 		return IndexOptionsEquivalency_NotEquivalent;
 	}
@@ -2701,6 +2703,18 @@ AreIndexOptionsStillEquivalent(const char *path, const bson_value_t *left,
 			}
 
 			areEquivalent = buildAsUniqueLeft == buildAsUniqueRight;
+		}
+	}
+
+	if (areEquivalent && strcmp(path, "collation") == 0)
+	{
+		if (left == NULL || right == NULL)
+		{
+			areEquivalent = left == right;
+		}
+		else
+		{
+			areEquivalent = BsonValueEquals(left, right);
 		}
 	}
 

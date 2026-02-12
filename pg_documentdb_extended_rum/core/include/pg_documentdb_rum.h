@@ -453,6 +453,8 @@ typedef struct RumConfig
 		StrategyNumber strategy;
 		ScanDirection direction;
 	}       strategyInfo[MAX_STRATEGIES];
+
+	bool skipGenerateEmptyEntries;
 }   RumConfig;
 
 /*
@@ -512,6 +514,8 @@ typedef struct RumState
 
 	/* Collations to pass to the support functions */
 	Oid supportCollation[INDEX_MAX_KEYS];
+
+	bool skipGenerateEmptyEntries[INDEX_MAX_KEYS];
 }   RumState;
 
 /* Accessor for the i'th attribute of tupdesc. */
@@ -1074,9 +1078,6 @@ extern RumItem * rumGetBAEntry(BuildAccumulator *accum,
 /* NProcs changes for documentdb from 10 to 12 */
 #define RUMNProcs 12
 
-#define RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT true
-#define RUM_DEFAULT_FIX_INCOMPLETE_SPLIT true
-
 /* GUC parameters */
 extern PGDLLIMPORT int RumFuzzySearchLimit;
 extern PGDLLIMPORT int RumDataPageIntermediateSplitSize;
@@ -1094,7 +1095,6 @@ extern PGDLLIMPORT bool RumPruneEmptyPages;
 extern PGDLLIMPORT bool RumTrackIncompleteSplit;
 extern PGDLLIMPORT bool RumFixIncompleteSplit;
 extern PGDLLIMPORT bool RumInjectPageSplitIncomplete;
-extern PGDLLIMPORT bool RumEnableParallelVacuumFlags;
 extern PGDLLIMPORT bool RumEnableCustomCostEstimate;
 extern PGDLLIMPORT bool RumEnableNewBulkDelete;
 extern PGDLLIMPORT bool RumNewBulkDeleteInlineDataPages;

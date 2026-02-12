@@ -252,8 +252,8 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 -- test elemMatch behavior
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkey_db', '{ "find": "mkey_coll", "filter": { "a": { "$elemMatch": { "b": 1, "c": 2 } } }}') $cmd$);
-                                                                                run_explain_and_trim                                                                                 
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                run_explain_and_trim                                                                                                                                                                 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
    indexName: a_b_c_1
    indexKey: {"a.b": 1,"a.c": 1}
@@ -265,13 +265,13 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
          Rows Removed by Filter: 1
          Heap Blocks: exact=1
          ->  Bitmap Index Scan on a_b_c_1 (actual rows=1 loops=1)
-               Index Cond: (document @<> '{ "a.b" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" }, "isTopLevel" : false } ] } }'::bson)
+               Index Cond: ((document @<> '{ "a.b" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" }, "isTopLevel" : false } ] } }'::bson) AND (document @<> '{ "a.c" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "2" }, "isTopLevel" : false } ] } }'::bson))
 (12 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkey_db', '{ "find": "mkey_coll", "filter": { "a": { "$elemMatch": { "b": 2, "c": 2 } } }}') $cmd$);
-                                                                                run_explain_and_trim                                                                                 
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                run_explain_and_trim                                                                                                                                                                 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
    indexName: a_b_c_1
    indexKey: {"a.b": 1,"a.c": 1}
@@ -282,7 +282,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
          Filter: (document @#? '{ "a" : { "b" : { "$numberInt" : "2" }, "c" : { "$numberInt" : "2" } } }'::bson)
          Heap Blocks: exact=1
          ->  Bitmap Index Scan on a_b_c_1 (actual rows=1 loops=1)
-               Index Cond: (document @<> '{ "a.b" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "2" }, "isTopLevel" : false } ] } }'::bson)
+               Index Cond: ((document @<> '{ "a.b" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "2" }, "isTopLevel" : false } ] } }'::bson) AND (document @<> '{ "a.c" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "2" }, "isTopLevel" : false } ] } }'::bson))
 (11 rows)
 
 -- multikey on a.b - query on a.c can be pushed
@@ -322,19 +322,19 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 -- none of these since "a" is not an array.
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkey_db', '{ "find": "mkey_coll", "filter": { "a": { "$elemMatch": { "b": 1, "c": 2 } } }}') $cmd$);
-                                                                                run_explain_and_trim                                                                                 
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                run_explain_and_trim                                                                                                                                                                 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
    indexName: a_b_c_1
    indexKey: {"a.b": 1,"a.c": 1}
    isMultiKey: true
-   indexBounds: ["a.b": [1, 1], "a.c": (MinKey, MaxKey)]
+   indexBounds: ["a.b": [1, 1], "a.c": [2, 2]]
    ->  Bitmap Heap Scan on documents_501 collection (actual rows=0 loops=1)
          Filter: (document @#? '{ "a" : { "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "2" } } }'::bson)
          Rows Removed by Filter: 1
          Heap Blocks: exact=1
          ->  Bitmap Index Scan on a_b_c_1 (actual rows=1 loops=1)
-               Index Cond: (document @<> '{ "a.b" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" }, "isTopLevel" : false } ] } }'::bson)
+               Index Cond: ((document @<> '{ "a.b" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" }, "isTopLevel" : false } ] } }'::bson) AND (document @<> '{ "a.c" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "2" }, "isTopLevel" : false } ] } }'::bson))
 (11 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$

@@ -810,7 +810,9 @@ GetTextIndexTraverseOption(void *contextOptions,
 	IndexTraverseOption overallOption = IndexTraverse_Invalid;
 	for (uint32_t i = 0; i < pathCount; i++)
 	{
-		uint32_t indexPathLength = *(uint32_t *) pathSpecBytes;
+		/* Use memcpy to avoid misaligned memory access - buffer may not be 4-byte aligned */
+		uint32_t indexPathLength;
+		memcpy(&indexPathLength, pathSpecBytes, sizeof(uint32_t));
 		const char *indexPath = pathSpecBytes + sizeof(uint32_t);
 
 		/* Skip through other metadata */
@@ -1110,7 +1112,9 @@ FillWeightsSpec(const char *weightsSpec, void *buffer)
 	if (buffer != NULL)
 	{
 		char *bufferPtr = (char *) buffer;
-		*((uint32_t *) bufferPtr) = pathCount;
+
+		/* Use memcpy to avoid misaligned memory access - buffer may not be 4-byte aligned */
+		memcpy(bufferPtr, &pathCount, sizeof(uint32_t));
 		bufferPtr += sizeof(uint32_t);
 
 		/* Save space for the weights array */
@@ -1396,7 +1400,9 @@ GenerateTsVectorWithOptions(pgbson *document,
 			pathSpecBytes += sizeof(Datum) * 4;
 			for (uint32_t i = 0; i < pathCount; i++)
 			{
-				uint32_t indexPathLength = *(uint32_t *) pathSpecBytes;
+				/* Use memcpy to avoid misaligned memory access - buffer may not be 4-byte aligned */
+				uint32_t indexPathLength;
+				memcpy(&indexPathLength, pathSpecBytes, sizeof(uint32_t));
 				const char *indexPath = pathSpecBytes + sizeof(uint32_t);
 				char pathWeight = *(char *) (pathSpecBytes + indexPathLength +
 											 sizeof(uint32_t));

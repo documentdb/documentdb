@@ -24,3 +24,15 @@
 \d documentdb_api_catalog.*
 
 \d documentdb_data.*
+
+-- show all functions, procedures, aggregates and window aggregates in documentdb_api_v2.
+\df documentdb_api_v2.*
+
+-- show all functions, procedures, aggregates and window aggregates in documentdb_api_internal_readonly.
+\df documentdb_api_internal_readonly.*
+
+-- show all functions, procedures, aggregates and window aggregates in documentdb_api_internal_readwrite.
+\df documentdb_api_internal_readwrite.*
+
+-- show all functions, procedures, aggregates and window aggregates in documentdb_api_internal_admin.
+\df documentdb_api_internal_admin.*

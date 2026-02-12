@@ -32,93 +32,11 @@
 
 #include "pg_documentdb_rum.h"
 
-PG_MODULE_MAGIC;
-
-void _PG_init(void);
-
 PG_FUNCTION_INFO_V1(documentdb_rumhandler);
 extern PGDLLIMPORT void InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 													   char *documentDBRumGucPrefix);
 
 static char * rumbuildphasename(int64 phasenum);
-
-extern PGDLLIMPORT bool DocumentDBRumLoadCommonGUCs;
-
-extern PGDLLIMPORT bool RumThrowErrorOnInvalidDataPage;
-
-extern PGDLLIMPORT bool RumUseNewItemPtrDecoding;
-extern PGDLLIMPORT bool RumEnableParallelVacuumFlags;
-
-/*
- * Module load callback
- */
-PGDLLEXPORT void
-_PG_init(void)
-{
-#define RUM_GUC_PREFIX "documentdb_rum"
-#define DOCUMENTDB_RUM_GUC_PREFIX "documentdb_rum"
-
-	/* Assert things about the storage format */
-	StaticAssertExpr(offsetof(RumPageOpaqueData, dataPageMaxoff) == sizeof(uint64_t),
-					 "maxoff must be the 3rd field with a specific offset");
-	StaticAssertExpr(offsetof(RumPageOpaqueData, entryPageUnused) == sizeof(uint64_t),
-					 "entryPageCycleId must be the 3rd field with a specific offset");
-	StaticAssertExpr(offsetof(RumPageOpaqueData, dataPageFreespace) == sizeof(uint64_t) +
-					 sizeof(uint16_t),
-					 "freespace must be the 3rd field with a specific offset");
-	StaticAssertExpr(offsetof(RumPageOpaqueData, flags) == sizeof(uint64_t) +
-					 sizeof(uint32_t),
-					 "flags must be the 3rd field with a specific offset");
-
-	StaticAssertExpr(offsetof(RumPageOpaqueData, cycleId) == sizeof(uint64_t) +
-					 sizeof(uint32_t) + sizeof(uint16_t),
-					 "cycleId must be the 4th field with a specific offset");
-	StaticAssertExpr(sizeof(RumPageOpaqueData) == sizeof(uint64_t) + sizeof(uint64_t),
-					 "RumPageOpaqueData must be the 2 bigint fields worth");
-
-	StaticAssertExpr(sizeof(RumItem) == 16 && MAXALIGN(sizeof(RumItem)) == 16,
-					 "rum item aligned should be 16 bytes");
-	StaticAssertExpr(sizeof(RumDataLeafItemIndex) == 24, "LeafItemIndex is 24 bytes");
-
-	if (!process_shared_preload_libraries_in_progress)
-	{
-		ereport(ERROR, (errmsg(
-							"pg_documentdb_extended_rum_core can only be loaded via shared_preload_libraries"),
-						errdetail_log(
-							"Add the caller library to shared_preload_libraries configuration "
-							"variable in postgresql.conf. ")));
-	}
-
-	InitializeRumVacuumState();
-
-	/* Define custom GUC variables. */
-	RumTrackIncompleteSplit = RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT;
-	DefineCustomBoolVariable(
-		DOCUMENTDB_RUM_GUC_PREFIX ".track_incomplete_split",
-		"Sets whether or not to track incomplete splits",
-		NULL,
-		&RumTrackIncompleteSplit,
-		RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT,
-		PGC_USERSET, 0,
-		NULL, NULL, NULL);
-
-	RumFixIncompleteSplit = RUM_DEFAULT_FIX_INCOMPLETE_SPLIT;
-	DefineCustomBoolVariable(
-		DOCUMENTDB_RUM_GUC_PREFIX ".fix_incomplete_split",
-		"Sets whether or not to fix incomplete splits",
-		NULL,
-		&RumFixIncompleteSplit,
-		RUM_DEFAULT_FIX_INCOMPLETE_SPLIT,
-		PGC_USERSET, 0,
-		NULL, NULL, NULL);
-
-	if (DocumentDBRumLoadCommonGUCs)
-	{
-		InitializeCommonDocumentDBGUCs(RUM_GUC_PREFIX, DOCUMENTDB_RUM_GUC_PREFIX);
-	}
-
-	MarkGUCPrefixReserved(DOCUMENTDB_RUM_GUC_PREFIX);
-}
 
 
 /*
@@ -156,14 +74,9 @@ documentdb_rumhandler(PG_FUNCTION_ARGS)
 	amroutine->amcanbuildparallel = RumEnableParallelIndexBuild;
 #endif
 	amroutine->amkeytype = InvalidOid;
-
-	if (RumEnableParallelVacuumFlags)
-	{
-		amroutine->amusemaintenanceworkmem = true;
-		amroutine->amparallelvacuumoptions =
-			VACUUM_OPTION_PARALLEL_BULKDEL | VACUUM_OPTION_PARALLEL_CLEANUP;
-	}
-
+	amroutine->amusemaintenanceworkmem = true;
+	amroutine->amparallelvacuumoptions =
+		VACUUM_OPTION_PARALLEL_BULKDEL | VACUUM_OPTION_PARALLEL_CLEANUP;
 	amroutine->ambuild = rumbuild;
 	amroutine->ambuildempty = rumbuildempty;
 	amroutine->aminsert = ruminsert;
@@ -288,6 +201,7 @@ initRumState(RumState *state, Relation index)
 		Form_pg_attribute origAttr = RumTupleDescAttr(origTupdesc, i);
 
 		rumConfig->addInfoTypeOid = InvalidOid;
+		rumConfig->skipGenerateEmptyEntries = false;
 
 		if (index_getprocid(index, i + 1, RUM_CONFIG_PROC) != InvalidOid)
 		{
@@ -897,6 +811,15 @@ rumExtractEntries(RumState *rumstate, OffsetNumber attnum,
 	 */
 	if (entries == NULL || *nentries <= 0)
 	{
+		if (rumstate->rumConfig[attnum - 1].skipGenerateEmptyEntries)
+		{
+			*nentries = 0;
+			*categories = NULL;
+			*addInfo = NULL;
+			*addInfoIsNull = NULL;
+			return NULL;
+		}
+
 		*nentries = 1;
 		entries = (Datum *) palloc(sizeof(Datum));
 		entries[0] = (Datum) 0;

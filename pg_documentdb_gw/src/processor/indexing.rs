@@ -7,24 +7,23 @@
  */
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use bson::{Document, RawDocumentBuf};
+use tokio::time::{Duration, Instant};
 
-use crate::postgres::PgDataClient;
-use crate::responses::constant::pg_returned_invalid_response_message;
 use crate::{
     configuration::DynamicConfiguration,
     context::{ConnectionContext, RequestContext},
     error::{DocumentDBError, ErrorCode, Result},
-    postgres::PgDocument,
-    responses::{PgResponse, RawResponse, Response},
+    postgres::{PgDataClient, PgDocument},
+    processor::cursor::save_cursor,
+    responses::{
+        constant::pg_returned_invalid_response_message, PgResponse, RawResponse, Response,
+    },
 };
 
-use super::cursor::save_cursor;
-
 pub async fn process_create_indexes(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     dynamic_config: &Arc<dyn DynamicConfiguration>,
     pg_data_client: &impl PgDataClient,
@@ -61,7 +60,7 @@ pub async fn process_create_indexes(
 }
 
 pub async fn wait_for_index(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     create_result: PgResponse,
     connection_context: &ConnectionContext,
     dynamic_config: &Arc<dyn DynamicConfiguration>,
@@ -152,7 +151,7 @@ fn parse_create_index_error(response: &PgResponse) -> Result<Response> {
 }
 
 pub async fn process_reindex(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -162,7 +161,7 @@ pub async fn process_reindex(
 }
 
 pub async fn process_drop_indexes(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
@@ -199,7 +198,7 @@ pub async fn process_drop_indexes(
 }
 
 pub async fn process_list_indexes(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {

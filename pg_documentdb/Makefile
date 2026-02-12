@@ -13,22 +13,26 @@ BUILD_SCRIPT_DIR = ../
 OSS_SRC_DIR = ../
 OSS_COMMON_SQL_HEADER = $(wildcard $(OSS_SRC_DIR)/common_header.sql)
 
-# Extension defines
-API_SCHEMA_NAME=documentdb_api
-API_SCHEMA_NAME_V2=documentdb_api
-API_SCHEMA_INTERNAL_NAME=documentdb_api_internal
-API_SCHEMA_INTERNAL_NAME_V2=documentdb_api_internal
-API_CATALOG_SCHEMA_NAME=documentdb_api_catalog
-API_CATALOG_SCHEMA_NAME_V2=documentdb_api_catalog
-CORE_SCHEMA_NAME=documentdb_core
-API_DATA_SCHEMA_NAME=documentdb_data
-API_ADMIN_ROLE=documentdb_admin_role
-API_READONLY_ROLE=documentdb_readonly_role
-API_BG_WORKER_ROLE=documentdb_bg_worker_role
-POSTGIS_SCHEMA_NAME=public
-EXTENSION_OBJECT_PREFIX=documentdb
+# Prefixes
 API_GUC_PREFIX=documentdb
 API_GUC_PREFIX_V2=documentdb
+EXTENSION_OBJECT_PREFIX=documentdb
+
+# Schema Names
+API_CATALOG_SCHEMA_NAME=documentdb_api_catalog
+API_CATALOG_SCHEMA_NAME_V2=documentdb_api_catalog
+API_DATA_SCHEMA_NAME=documentdb_data
+API_SCHEMA_INTERNAL_NAME=documentdb_api_internal
+API_SCHEMA_INTERNAL_NAME_V2=documentdb_api_internal
+API_SCHEMA_NAME=documentdb_api
+API_SCHEMA_NAME_V2=documentdb_api
+CORE_SCHEMA_NAME=documentdb_core
+POSTGIS_SCHEMA_NAME=public
+
+# Built-in roles
+API_ADMIN_ROLE=documentdb_admin_role
+API_BG_WORKER_ROLE=documentdb_bg_worker_role
+API_READONLY_ROLE=documentdb_readonly_role
 
 # TODO: Need to remove this with PG16 and expose only valid exports
 ALLOW_DEFAULT_VISIBILITY=yes
@@ -47,6 +51,8 @@ DEBUG ?= no
 ifeq ($(DEBUG),yes)
   PG_CPPFLAGS += -ggdb -O0 -g
   PG_CFLAGS += -ggdb -O0 -g
+  override CFLAGS += -O0
+  override CPPFLAGS += -O0
 endif
 
 SHLIB_LINK = $(libpq)

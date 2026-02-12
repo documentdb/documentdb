@@ -360,7 +360,11 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('my_db', create_i
   ]
 }
 '), true);
-ERROR:  Error in specification { "key" : { "c.d" : 1 }, "name" : "new_idx", "partialFilterExpression" : { "$and" : [ { "b" : 3 }, { "a" : { "$in" : [ 2 ] } }, { "c" : 4 } ] } }:Expression not supported in partial index: a $in [ 2 ]
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('my_db', create_index_arg_using_pfe('
 {

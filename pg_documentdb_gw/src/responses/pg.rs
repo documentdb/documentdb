@@ -114,7 +114,7 @@ impl PgResponse {
             DocumentDBError::internal_error(pg_returned_invalid_response_message(e))
         })?;
 
-        if let Some((known, opt, error_code)) = PgResponse::known_pg_error(
+        if let Some((known, opt, error_message)) = PgResponse::known_pg_error(
             context,
             &PgResponse::i32_to_postgres_sqlstate(code)?,
             &msg,
@@ -129,14 +129,14 @@ impl PgResponse {
             {
                 return Err(DocumentDBError::UntypedDocumentDBError(
                     known,
+                    error_message.to_string(),
                     opt.unwrap_or_default().to_string(),
-                    error_code.to_string(),
                     std::backtrace::Backtrace::capture(),
                 ));
             }
 
             *code = known;
-            doc.insert("errmsg", error_code);
+            doc.insert("errmsg", error_message);
         }
         Ok(())
     }
@@ -290,7 +290,7 @@ impl PgResponse {
                         "index creation requires resources too large to fit in the resource memory limit, please try creating index with less number of documents or creating index before inserting documents into collection"
                     ))
                 } else if msg.contains("index row size") && msg.contains("exceeds maximum") {
-                    let error_message = "Index key is too large";
+                    let error_message = "Index key is too large.";
                     tracing::error!(activity_id = activity_id, "{error_message}");
                     Some((
                         ErrorCode::CannotBuildIndexKeys as i32,
@@ -384,12 +384,12 @@ impl PgResponse {
             SqlState::INSUFFICIENT_PRIVILEGE => Some((
                 ErrorCode::Unauthorized as i32,
                 Some("Unauthorized".to_string()),
-                "Unauthorized",
+                "User is not authorized to perform this action",
             )),
             SqlState::T_R_DEADLOCK_DETECTED => Some((
                 ErrorCode::WriteConflict as i32,
-                Some("Could not acquire lock for operation due to deadlock".to_string()),
-                msg,
+                Some("WriteConflict".to_string()),
+                "Could not acquire lock for operation due to deadlock",
             )),
             SqlState::UNDEFINED_OBJECT => Some((
                 ErrorCode::UserNotFound as i32,

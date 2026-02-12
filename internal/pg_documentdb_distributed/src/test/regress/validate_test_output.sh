@@ -114,6 +114,19 @@ for validationFile in $(ls $scriptDir/expected/*.out); do
 
     # check if the base file is in the schedule
     findResult=""
+    # Check RBAC schedules for RBAC test files
+    if [[ "$fileNameBase" =~ ^rbac_ ]]; then
+        for schedule in rbac_tests_schedule; do
+            findResult=$(grep "$fileNameBase" $schedule || true)
+            [ -n "$findResult" ] && break
+        done
+
+        # Skip the basic_schedule_core check if found in RBAC schedules
+        if [ -n "$findResult" ]; then
+            continue
+        fi
+    fi
+
     for macro in "" "!PG16_OR_HIGHER!" "!PG17_OR_HIGHER!"; do
         fileNameMod=$(echo "$fileNameBase" | sed -E "s/_tests/${macro}_tests/g")
         findResult=$(grep "$fileNameMod" basic_schedule_core || true)

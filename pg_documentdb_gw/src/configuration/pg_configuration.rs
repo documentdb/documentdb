@@ -6,14 +6,23 @@
  *-------------------------------------------------------------------------
  */
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
+};
 
 use async_trait::async_trait;
 use bson::{rawbson, RawBson};
+use notify::{event::ModifyKind, Error, Event, EventKind, RecursiveMode, Watcher};
 use serde::Deserialize;
 use tokio::{
+    runtime::Handle,
     sync::RwLock,
-    time::{Duration, Instant},
+    time::{sleep, Duration, Instant},
 };
 
 use crate::{
@@ -60,14 +69,14 @@ impl PgConfigurationInner {
             Err(e) => tracing::warn!("Host Config file not able to be loaded: {e}"),
         }
 
-        let mut request_tracker = RequestTracker::new();
+        let request_tracker = RequestTracker::new();
         let pg_config_rows = conn
             .query(
                 self.query_catalog.pg_settings(),
                 &[],
                 &[],
                 None,
-                &mut request_tracker,
+                &request_tracker,
             )
             .await?;
         for pg_config in pg_config_rows {
@@ -95,7 +104,7 @@ impl PgConfigurationInner {
                 &[],
                 &[],
                 None,
-                &mut request_tracker,
+                &request_tracker,
             )
             .await?;
         let in_recovery: bool = pg_is_in_recovery_row.first().is_some_and(|row| row.get(0));
@@ -121,6 +130,8 @@ pub struct PgConfiguration {
     last_update_at: RwLock<Instant>,
 }
 
+static DEBOUNCE_RELOAD_SCHEDULED: AtomicBool = AtomicBool::new(false);
+
 impl PgConfiguration {
     fn start_dynamic_configuration_refresh_thread(
         configuration: Arc<PgConfiguration>,
@@ -133,29 +144,33 @@ impl PgConfiguration {
             loop {
                 interval.tick().await;
 
-                match configuration
-                    .inner
-                    .system_requests_pool
-                    .acquire_connection()
-                    .await
-                {
-                    Ok(inner_conn) => {
-                        let connection = Connection::new(inner_conn, false);
-                        if let Err(e) = configuration
-                            .reload_configuration_with_connection(&connection)
-                            .await
-                        {
-                            tracing::error!("Failed to refresh configuration: {e}");
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "Failed to acquire postgres connection to refresh configuration: {e}"
-                        )
-                    }
-                }
+                Self::reload_configuration(configuration.clone()).await;
             }
         });
+    }
+
+    async fn reload_configuration(configuration: Arc<PgConfiguration>) {
+        match configuration
+            .inner
+            .system_requests_pool
+            .acquire_connection()
+            .await
+        {
+            Ok(inner_conn) => {
+                let connection = Connection::new(inner_conn, false);
+                if let Err(e) = configuration
+                    .reload_configuration_with_connection(&connection)
+                    .await
+                {
+                    tracing::error!("Config reload failed! {e}");
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to acquire postgres connection to refresh configuration: {e}"
+                )
+            }
+        }
     }
 
     pub async fn new(
@@ -212,6 +227,84 @@ impl PgConfiguration {
         }
 
         Ok(())
+    }
+
+    pub fn start_config_watcher(
+        dynamic_config_file: String,
+        configuration: Arc<PgConfiguration>,
+        handle: Handle,
+    ) -> notify::Result<notify::RecommendedWatcher> {
+        let (tx, rx) = mpsc::channel::<std::result::Result<Event, Error>>();
+
+        let dynamic_config_file_path = Path::new(&dynamic_config_file);
+
+        let mut watcher = notify::recommended_watcher(move |res| {
+            let _ = tx.send(res);
+        })?;
+
+        watcher.watch(dynamic_config_file_path, RecursiveMode::NonRecursive)?;
+
+        tracing::info!("Config monitoring on: {}", dynamic_config_file);
+
+        std::thread::spawn(move || {
+            for res in rx {
+                match res {
+                    Ok(event) => {
+                        if Self::is_relevant_event(&event) {
+                            Self::on_fs_watcher_notify(
+                                &event,
+                                configuration.clone(),
+                                handle.clone(),
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Config monitoring failed! {:?}", e);
+                    }
+                }
+            }
+        });
+
+        Ok(watcher)
+    }
+
+    fn is_relevant_event(event: &Event) -> bool {
+        matches!(
+            event.kind,
+            // Created (CreationTime, FileName)
+            EventKind::Create(_)
+            // Deleted (FileName)
+            | EventKind::Remove(_)
+            // LastWrite / Size
+            | EventKind::Modify(ModifyKind::Data(_))
+            // Attributes
+            | EventKind::Modify(ModifyKind::Metadata(_))
+        )
+    }
+
+    fn on_fs_watcher_notify(event: &Event, configuration: Arc<PgConfiguration>, handle: Handle) {
+        // Debounce multiple events in quick succession
+        if DEBOUNCE_RELOAD_SCHEDULED.swap(true, Ordering::SeqCst) {
+            return;
+        }
+
+        tracing::info!("Config file changed ({:?})! Reloading.", event.kind);
+
+        handle.spawn(async move {
+            struct ResetFlagGuard;
+
+            impl Drop for ResetFlagGuard {
+                fn drop(&mut self) {
+                    DEBOUNCE_RELOAD_SCHEDULED.store(false, Ordering::SeqCst);
+                }
+            }
+
+            let _guard = ResetFlagGuard;
+
+            // debounce window
+            sleep(Duration::from_millis(300)).await;
+            Self::reload_configuration(configuration.clone()).await;
+        });
     }
 }
 

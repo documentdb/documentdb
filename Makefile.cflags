@@ -41,6 +41,9 @@ else
     PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB)
 endif
 
+# Include the overrides if exists
+-include $(OSS_SRC_DIR)/../Makefile_overrides.cflags
+
 ifneq ($(SKIP_API_SCHEMA),yes)
     ifndef API_SCHEMA_NAME
     $(error API_SCHEMA_NAME is not set)

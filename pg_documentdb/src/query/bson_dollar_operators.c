@@ -29,6 +29,8 @@
 #include "collation/collation.h"
 #include "utils/version_utils.h"
 #include "aggregation/bson_query.h"
+#include "opclass/bson_gin_composite.h"
+#include "opclass/bson_gin_index_term.h"
 
 /*
  * Custom bson_orderBy options to allow specific types when sorting.
@@ -560,15 +562,8 @@ PG_FUNCTION_INFO_V1(bson_dollar_in);
 PG_FUNCTION_INFO_V1(bson_dollar_ne);
 PG_FUNCTION_INFO_V1(bson_dollar_nin);
 PG_FUNCTION_INFO_V1(bson_dollar_exists);
-PG_FUNCTION_INFO_V1(command_bson_orderby);
-PG_FUNCTION_INFO_V1(command_bson_orderby_reverse);
 PG_FUNCTION_INFO_V1(bson_orderby_partition);
 PG_FUNCTION_INFO_V1(bson_vector_orderby);
-PG_FUNCTION_INFO_V1(bson_orderby_compare);
-PG_FUNCTION_INFO_V1(bson_orderby_compare_sort_support);
-PG_FUNCTION_INFO_V1(bson_orderby_lt);
-PG_FUNCTION_INFO_V1(bson_orderby_eq);
-PG_FUNCTION_INFO_V1(bson_orderby_gt);
 
 PG_FUNCTION_INFO_V1(bson_dollar_bits_all_clear);
 PG_FUNCTION_INFO_V1(bson_dollar_bits_any_clear);
@@ -607,6 +602,15 @@ PG_FUNCTION_INFO_V1(bson_value_dollar_bits_all_clear);
 PG_FUNCTION_INFO_V1(bson_value_dollar_bits_any_clear);
 PG_FUNCTION_INFO_V1(bson_value_dollar_bits_all_set);
 PG_FUNCTION_INFO_V1(bson_value_dollar_bits_any_set);
+
+PG_FUNCTION_INFO_V1(command_bson_orderby);
+PG_FUNCTION_INFO_V1(command_bson_orderby_reverse);
+PG_FUNCTION_INFO_V1(bson_orderby_compare);
+PG_FUNCTION_INFO_V1(bson_orderby_compare_sort_support);
+PG_FUNCTION_INFO_V1(bson_orderby_lt);
+PG_FUNCTION_INFO_V1(bson_orderby_eq);
+PG_FUNCTION_INFO_V1(bson_orderby_gt);
+PG_FUNCTION_INFO_V1(command_bson_orderby_index);
 
 /*
  * Traverses the document for a given dot-path notation
@@ -1779,6 +1783,70 @@ command_bson_orderby_reverse(PG_FUNCTION_ARGS)
 	PG_FREE_IF_COPY(document, 0);
 	PG_FREE_IF_COPY(filter, 1);
 	PG_RETURN_DATUM(returnedBson);
+}
+
+
+Datum
+command_bson_orderby_index(PG_FUNCTION_ARGS)
+{
+	pgbson *document = PG_GETARG_PGBSON_PACKED(0);
+	pgbson *sortSpec = PG_GETARG_PGBSON_PACKED(1);
+	StringView collationStringView = { 0 };
+
+	if (EnableCollation && PG_NARGS() > 2 && !PG_ARGISNULL(2))
+	{
+		/* TODO: Remove alloc here */
+		text *collationText = PG_GETARG_TEXT_PP(2);
+		collationStringView.string = text_to_cstring(collationText);
+		collationStringView.length = VARSIZE_ANY_EXHDR(collationText);
+	}
+
+	uint32_t numTerms = 0;
+	Datum *terms = GenerateCompositeTermsFromIndexSpec(document, sortSpec, &numTerms);
+
+	PG_FREE_IF_COPY(document, 0);
+	PG_FREE_IF_COPY(sortSpec, 1);
+
+	if (numTerms == 0)
+	{
+		PG_RETURN_NULL();
+	}
+
+	Datum selectedDatum = terms[0];
+	if (numTerms > 1)
+	{
+		/*
+		 * Pick the min value: Descending should sort the max first due to how comparisons of
+		 * descending terms work - also free unused terms along the way.
+		 */
+		for (uint32_t i = 1; i < numTerms; i++)
+		{
+			int32_t cmp = CompareSerializedBsonIndexTermWithCollation(selectedDatum,
+																	  terms[i],
+																	  collationStringView.
+																	  string);
+			if (cmp > 0)
+			{
+				pfree(DatumGetByteaP(selectedDatum));
+				selectedDatum = terms[i];
+			}
+			else
+			{
+				pfree(DatumGetByteaP(terms[i]));
+			}
+		}
+	}
+
+	pfree(terms);
+	if (collationStringView.string != NULL)
+	{
+		selectedDatum =
+			PointerGetDatum(FormCollatedIndexTerm(DatumGetByteaP(selectedDatum),
+												  collationStringView.string,
+												  collationStringView.length));
+	}
+
+	PG_RETURN_DATUM(selectedDatum);
 }
 
 

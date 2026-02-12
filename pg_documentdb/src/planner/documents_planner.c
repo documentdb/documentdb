@@ -132,7 +132,6 @@ extern bool EnableVariablesSupportForWriteCommands;
 extern bool EnableIndexOrderbyPushdown;
 extern bool ForceDisableSeqScan;
 extern bool EnableExtendedExplainPlans;
-extern bool EnableIndexPriorityOrdering;
 extern bool EnableLogRelationIndexesOrder;
 extern bool ForceBitmapScanForLookup;
 extern bool EnableIndexOnlyScan;
@@ -799,7 +798,7 @@ ExtensionGetRelationInfoHookCore(PlannerInfo *root, Oid relationObjectId,
 		return;
 	}
 
-	if (EnableIndexPriorityOrdering && rel->indexlist != NIL)
+	if (rel->indexlist != NIL)
 	{
 		list_sort(rel->indexlist, CompareIndexOptionsFunc);
 	}

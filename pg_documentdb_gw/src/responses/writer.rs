@@ -10,22 +10,28 @@ use crate::{
     context::ConnectionContext,
     error::{DocumentDBError, Result},
     protocol::{header::Header, opcode::OpCode},
-    CommandError, GwStream, Response,
+    CommandError, Response,
 };
 use bson::RawDocument;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 /// Write a server response to the client stream
-pub async fn write(header: &Header, response: &Response, stream: &mut GwStream) -> Result<()> {
+pub async fn write<S>(header: &Header, response: &Response, stream: &mut S) -> Result<()>
+where
+    S: AsyncWrite + Unpin,
+{
     write_and_flush(header, response.as_raw_document()?, stream).await
 }
 
 /// Write a raw BSON object to the client stream
-pub async fn write_and_flush(
+pub async fn write_and_flush<S>(
     header: &Header,
     response: &RawDocument,
-    stream: &mut GwStream,
-) -> Result<()> {
+    stream: &mut S,
+) -> Result<()>
+where
+    S: AsyncWrite + Unpin,
+{
     // The format of the response will depend on the OP which the client sent
     match header.op_code {
         OpCode::Command => unimplemented!(),
@@ -68,11 +74,10 @@ pub async fn write_and_flush(
 }
 
 /// Serializes the Message to bytes and writes them to `writer`.
-pub async fn write_message(
-    header: &Header,
-    response: &RawDocument,
-    writer: &mut GwStream,
-) -> Result<()> {
+pub async fn write_message<S>(header: &Header, response: &RawDocument, writer: &mut S) -> Result<()>
+where
+    S: AsyncWrite + Unpin,
+{
     let total_length = Header::LENGTH
         + std::mem::size_of::<u32>()
         + std::mem::size_of::<u8>()
@@ -97,12 +102,15 @@ pub async fn write_message(
     Ok(())
 }
 
-pub async fn write_error_without_header(
+pub async fn write_error_without_header<S>(
     connection_context: &ConnectionContext,
     err: DocumentDBError,
-    stream: &mut GwStream,
+    stream: &mut S,
     activity_id: &str,
-) -> Result<()> {
+) -> Result<()>
+where
+    S: AsyncWrite + Unpin,
+{
     let response = CommandError::from_error(connection_context, &err, activity_id)
         .await
         .to_raw_document_buf();

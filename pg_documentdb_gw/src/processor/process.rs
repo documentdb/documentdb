@@ -6,12 +6,10 @@
  *-------------------------------------------------------------------------
  */
 
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
 
 use deadpool_postgres::{HookError, PoolError};
+use tokio::time::{Duration, Instant};
 use tokio_postgres::error::SqlState;
 
 use crate::{
@@ -35,7 +33,7 @@ enum Retry {
 }
 
 pub async fn process_request(
-    request_context: &mut RequestContext<'_>,
+    request_context: &RequestContext<'_>,
     connection_context: &mut ConnectionContext,
     pg_data_client: impl PgDataClient,
 ) -> Result<Response> {
@@ -177,6 +175,11 @@ pub async fn process_request(
                     request_context,
                     connection_context,
                     &pg_data_client,
+                    dynamic_config.enable_write_procedures().await,
+                    dynamic_config
+                        .enable_write_procedures_with_batch_commit()
+                        .await,
+                    dynamic_config.enable_backend_timeout().await,
                 )
                 .await
             }
@@ -221,6 +224,11 @@ pub async fn process_request(
                     request_context,
                     connection_context,
                     &pg_data_client,
+                    dynamic_config.enable_write_procedures().await,
+                    dynamic_config
+                        .enable_write_procedures_with_batch_commit()
+                        .await,
+                    dynamic_config.enable_backend_timeout().await,
                 )
                 .await
             }
@@ -356,6 +364,46 @@ pub async fn process_request(
                 )
                 .await
             }
+            &RequestType::GetShardMap => {
+                data_description::process_get_shard_map(
+                    request_context,
+                    connection_context,
+                    &pg_data_client,
+                )
+                .await
+            }
+            &RequestType::ListShards => {
+                data_description::process_list_shards(
+                    request_context,
+                    connection_context,
+                    &pg_data_client,
+                )
+                .await
+            }
+            &RequestType::BalancerStart => {
+                data_description::process_balancer_start(
+                    request_context,
+                    connection_context,
+                    &pg_data_client,
+                )
+                .await
+            }
+            &RequestType::BalancerStatus => {
+                data_description::process_balancer_status(
+                    request_context,
+                    connection_context,
+                    &pg_data_client,
+                )
+                .await
+            }
+            &RequestType::BalancerStop => {
+                data_description::process_balancer_stop(
+                    request_context,
+                    connection_context,
+                    &pg_data_client,
+                )
+                .await
+            }
         };
 
         if response.is_ok()
@@ -441,6 +489,14 @@ async fn retry_policy(
     error: &tokio_postgres::Error,
     request_type: &RequestType,
 ) -> Retry {
+    if (request_type == &RequestType::Insert || request_type == &RequestType::Update)
+        && dynamic_config
+            .enable_write_procedures_with_batch_commit()
+            .await
+    {
+        // When batch commit are enabled, do not retry on any errors.
+        return Retry::None;
+    }
     if error.is_closed() {
         return Retry::Short;
     }

@@ -633,3 +633,222 @@ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'bsonqu
 (7 rows)
 
 ROLLBACK;
+-- handle null/empty string in pfe index pushdown with $in
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db2',
+  '{ "createIndexes": "pfe_coll_1", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "a_b_c_1", "partialFilterExpression": { "d": "vald", "c": "" } } ] }');
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+set documentdb.forceUseIndexIfAvailable to on;
+set documentdb.forceDisableSeqScan to on;
+-- can push down
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": "", "a": { "$gte": 10 } } }');
+                                                                                                  QUERY PLAN                                                                                                  
+---------------------------------------------------------------------
+ Bitmap Heap Scan on documents_10982_10980026 collection
+   Recheck Cond: ((document @>= '{ "a" : { "$numberInt" : "10" } }'::documentdb_core.bson) AND (document @= '{ "d" : "vald" }'::documentdb_core.bson) AND (document @= '{ "c" : "" }'::documentdb_core.bson))
+   ->  Bitmap Index Scan on a_b_c_1
+         Index Cond: (document @>= '{ "a" : { "$numberInt" : "10" } }'::documentdb_core.bson)
+(4 rows)
+
+-- cannot push down due to null vs empty string
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": null, "a": { "$gte": 10 } } }');
+ERROR:  Could not find any valid index to push down for query
+-- create an index with null in pfe
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db2',
+  '{ "createIndexes": "pfe_coll_1", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "a_b_c_2", "partialFilterExpression": { "d": "vald", "c": null } } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- can push down now  
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": null, "a": { "$gte": 10 } } }');
+                                                                                                   QUERY PLAN                                                                                                   
+---------------------------------------------------------------------
+ Bitmap Heap Scan on documents_10982_10980026 collection
+   Recheck Cond: ((document @>= '{ "a" : { "$numberInt" : "10" } }'::documentdb_core.bson) AND (document @= '{ "d" : "vald" }'::documentdb_core.bson) AND (document @= '{ "c" : null }'::documentdb_core.bson))
+   ->  Bitmap Index Scan on a_b_c_2
+         Index Cond: (document @>= '{ "a" : { "$numberInt" : "10" } }'::documentdb_core.bson)
+(4 rows)
+
+-- not these that overlap with null
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": { "$gte": { "$minKey": 1 }}, "a": { "$gte": 10 } } }');
+ERROR:  Could not find any valid index to push down for query
+-- test null pushdown values.
+reset documentdb.forceDisableSeqScan;
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 1, "a": 15, "b": 20, "c": null, "d": "vald"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 2, "a": 15, "b": 20, "d": "vald"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 3, "a": 15, "b": 20, "c": { "$minKey": 1 }, "d": "vald"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 4, "a": 15, "b": 20, "c": 0, "d": "vald"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 5, "a": 15, "b": 20, "c": "", "d": "vald"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 6, "a": 15, "b": 20, "c": "1", "d": "vald"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 7, "a": 15, "b": 20, "c": [ "1" ], "d": "vald"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 8, "a": 15, "b": 20, "c": [ "", 3 ], "d": "vald"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db2','pfe_coll_1', '{"_id": 9, "a": 15, "b": 20, "c": [ 5, null ], "d": "vald"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+set documentdb.forceDisableSeqScan to on;
+SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": null, "a": { "$gte": 10 } } }');
+                                                                        document                                                                        
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "15" }, "b" : { "$numberInt" : "20" }, "c" : null, "d" : "vald" }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "15" }, "b" : { "$numberInt" : "20" }, "d" : "vald" }
+ { "_id" : { "$numberInt" : "9" }, "a" : { "$numberInt" : "15" }, "b" : { "$numberInt" : "20" }, "c" : [ { "$numberInt" : "5" }, null ], "d" : "vald" }
+(3 rows)
+
+CALL documentdb_api.drop_indexes('db2', '{ "dropIndexes": "pfe_coll_1", "index": [ "a_b_c_1", "a_b_c_2" ] }');
+                          retval                          
+---------------------------------------------------------------------
+ { "ok" : true, "nIndexesWas" : { "$numberLong" : "3" } }
+(1 row)
+
+-- repeat with $in in the filter.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db2',
+  '{ "createIndexes": "pfe_coll_1", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "a_b_c_3", "partialFilterExpression": { "d": "vald", "c": { "$in": [ null, "" ] } } } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+\d documentdb_data.documents_10982
+                 Table "documentdb_data.documents_10982"
+     Column      |         Type         | Collation | Nullable | Default 
+---------------------------------------------------------------------
+ shard_key_value | bigint               |           | not null | 
+ object_id       | documentdb_core.bson |           | not null | 
+ document        | documentdb_core.bson |           | not null | 
+Indexes:
+    "collection_pk_10982" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_10991" documentdb_rum (document bson_rum_single_path_ops (path=a, tl='2691'), document bson_rum_single_path_ops (path=b, tl='2691'), document bson_rum_single_path_ops (path=c, tl='2691')) WHERE document #= '{ "d" : "vald" }'::documentdb_core.bsonquery AND (document #= ANY ('{"{ \"c\" : null }","{ \"c\" : \"\" }"}'::documentdb_core.bsonquery[]))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '10982'::bigint)
+
+-- can push down
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": "", "a": { "$gte": 10 } } }');
+                                                                   QUERY PLAN                                                                    
+---------------------------------------------------------------------
+ Index Scan using a_b_c_3 on documents_10982_10980026 collection
+   Index Cond: ((document @>= '{ "a" : { "$numberInt" : "10" } }'::documentdb_core.bson) AND (document @= '{ "c" : "" }'::documentdb_core.bson))
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": null, "a": { "$gte": 10 } } }');
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------
+ Index Scan using a_b_c_3 on documents_10982_10980026 collection
+   Index Cond: ((document @>= '{ "a" : { "$numberInt" : "10" } }'::documentdb_core.bson) AND (document @= '{ "c" : null }'::documentdb_core.bson))
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": null, "a": { "$gte": 10 } } }');
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------
+ Index Scan using a_b_c_3 on documents_10982_10980026 collection
+   Index Cond: ((document @>= '{ "a" : { "$numberInt" : "10" } }'::documentdb_core.bson) AND (document @= '{ "c" : null }'::documentdb_core.bson))
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": { "$gte": { "$minKey": 1 }}, "a": { "$gte": 10 } } }');
+ERROR:  Could not find any valid index to push down for query
+SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": null, "a": { "$gte": 10 } } }');
+                                                                        document                                                                        
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "15" }, "b" : { "$numberInt" : "20" }, "c" : null, "d" : "vald" }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "15" }, "b" : { "$numberInt" : "20" }, "d" : "vald" }
+ { "_id" : { "$numberInt" : "9" }, "a" : { "$numberInt" : "15" }, "b" : { "$numberInt" : "20" }, "c" : [ { "$numberInt" : "5" }, null ], "d" : "vald" }
+(3 rows)
+
+SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": "", "a": { "$gte": 10 } } }');
+                                                                       document                                                                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "15" }, "b" : { "$numberInt" : "20" }, "c" : "", "d" : "vald" }
+ { "_id" : { "$numberInt" : "8" }, "a" : { "$numberInt" : "15" }, "b" : { "$numberInt" : "20" }, "c" : [ "", { "$numberInt" : "3" } ], "d" : "vald" }
+(2 rows)
+
+-- $in also works here
+SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": { "$in": [ null, "" ] }, "a": { "$gte": 10 } } }');
+                                                                        document                                                                        
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "15" }, "b" : { "$numberInt" : "20" }, "c" : null, "d" : "vald" }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "15" }, "b" : { "$numberInt" : "20" }, "d" : "vald" }
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "15" }, "b" : { "$numberInt" : "20" }, "c" : "", "d" : "vald" }
+ { "_id" : { "$numberInt" : "8" }, "a" : { "$numberInt" : "15" }, "b" : { "$numberInt" : "20" }, "c" : [ "", { "$numberInt" : "3" } ], "d" : "vald" }
+ { "_id" : { "$numberInt" : "9" }, "a" : { "$numberInt" : "15" }, "b" : { "$numberInt" : "20" }, "c" : [ { "$numberInt" : "5" }, null ], "d" : "vald" }
+(5 rows)
+
+-- but $in with elements not covered by the index do not
+SELECT document FROM bson_aggregation_find('db2', '{ "find": "pfe_coll_1", "filter": { "d": "vald", "c": { "$in": [ null, 5 ] }, "a": { "$gte": 10 } } }');
+ERROR:  Could not find any valid index to push down for query
+-- test insertion of documents into unique with PFE wiht a $in
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db2',
+  '{ "createIndexes": "pfe_unique_coll_1", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "unique": true, "partialFilterExpression": { "b": { "$in": [ 1, 2, 3 ] } } } ] }', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db2','pfe_unique_coll_1', '{"_id": 1, "a": 10, "b": 1}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- duplicate error
+SELECT documentdb_api.insert_one('db2','pfe_unique_coll_1', '{"_id": 2, "a": 10, "b": 3}', NULL);
+                                                                                                                       insert_one                                                                                                                       
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index 'a_1'" } ] }
+(1 row)
+
+-- this one is allowed (PFE mismatch)
+SELECT documentdb_api.insert_one('db2','pfe_unique_coll_1', '{"_id": 3, "a": 10, "b": 5}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+

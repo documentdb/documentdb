@@ -12,13 +12,12 @@ use std::{
 };
 
 use bson::{rawdoc, RawArrayBuf, RawDocument, RawDocumentBuf};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::{
     error::{DocumentDBError, Result},
     protocol::{extract_database_and_collection_names, opcode::OpCode},
     requests::{Request, RequestMessage, RequestType},
-    GwStream,
 };
 
 use super::{
@@ -27,7 +26,10 @@ use super::{
 };
 
 /// Read a standard message header from the client stream
-pub async fn read_header(stream: &mut GwStream) -> Result<Option<Header>> {
+pub async fn read_header<S>(stream: &mut S) -> Result<Option<Header>>
+where
+    S: AsyncRead + Unpin,
+{
     match Header::read_from(stream).await {
         Ok(header) => Ok(Some(header)),
         Err(DocumentDBError::IoError(e, b)) => {
@@ -45,7 +47,10 @@ pub async fn read_header(stream: &mut GwStream) -> Result<Option<Header>> {
 }
 
 /// Given an already read header, read the remaining message bytes into a RequestMessage
-pub async fn read_request(header: &Header, stream: &mut GwStream) -> Result<RequestMessage> {
+pub async fn read_request<S>(header: &Header, stream: &mut S) -> Result<RequestMessage>
+where
+    S: AsyncRead + Unpin,
+{
     let message_size = usize::try_from(header.length).map_err(|_| {
         DocumentDBError::bad_value("Message length could not be converted to a usize".to_string())
     })?;

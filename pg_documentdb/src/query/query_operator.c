@@ -57,6 +57,8 @@
 #include "query/bson_dollar_operators.h"
 #include "commands/commands_common.h"
 #include "utils/version_utils.h"
+#include "utils/hashset_utils.h"
+#include "utils/list_utils.h"
 #include "collation/collation.h"
 #include "jsonschema/bson_json_schema_tree.h"
 
@@ -109,10 +111,40 @@ typedef struct IdFilterWalkerContext
 	bool isPointReadQuery;
 } IdFilterWalkerContext;
 
+
+typedef struct MatchNamespaceFiltersContext
+{
+	/* The list of database name filters found in plain path "ns.db"
+	 * e.g. { "ns.db": "testDatabase" } / { "ns.db": { $in: [ "testDatabase1", "testDatabase2" ] } }
+	 * { "ns.db": { $eq: "testDatabase3" } }
+	 */
+
+	List *nsDbPathFilters;
+
+	/* The list of database name filters found in plain path "ns.coll"
+	 * e.g. { "ns.coll": "testCollection" } / { "ns.coll": { $in: [ "testCollection1", "testCollection2" ] } }
+	 * { "ns.coll": { $eq: "testCollection3" } }
+	 */
+	List *nsCollPathFilters;
+
+	/*
+	 * The list of pair of <database> <collection> name filters found in ns field
+	 * e.g. { "ns" : { $in: [
+	 *  { "db" : "db1", "coll": "collection1" },
+	 *  { "db": "db2", "coll": "collection2" }]}}
+	 */
+	List *nsValueFilters;
+
+	bool multipleNSFilters;
+
+	bool isInvalidNSFilters;
+} MatchNamespaceFiltersContext;
+
 extern bool EnableCollation;
 extern bool EnableLetAndCollationForQueryMatch;
 extern bool EnableVariablesSupportForWriteCommands;
 extern bool EnableIdIndexPushdown;
+extern bool EnableDollarInToScalarArrayOpExprConversion;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -205,6 +237,14 @@ static void EnsureValidTypeCodeForDollarType(int64_t typeCode);
 static Expr * WithIndexSupportExpression(Expr *docExpr, Expr *geoOperatorExpr,
 										 const char *path, bool isSpherical);
 static Expr * TryOptimizeNotInnerExpr(Expr *innerExpr, BsonQueryOperatorContext *context);
+static pgbson * FindNamespaceFiltersInMatchSpecCore(bson_iter_t *specIter,
+													MatchNamespaceFiltersContext *context);
+static bool AddNamespaceFilterToList(const bson_value_t *value, List **list);
+static pgbson * AddNamespaceValueFiltersToList(bson_iter_t *valueItr,
+											   List **nsValueFilter,
+											   bool *isDbFound, bool *isCollFound);
+static pgbson * HandleEqualityNamespaceFilter(bson_iter_t *iter, bool *nsInlined,
+											  MatchNamespaceFiltersContext *context);
 
 /* Return true if double value can be represented as fixed integer
  * e.g., 10.023 -> this number can not be represented as fixed integer so return false
@@ -770,6 +810,570 @@ CreateQualForBsonValueExpressionCore(const bson_value_t *expression,
 
 
 /*
+ * Recursively find namespace filters in a $match stage.
+ * Extracts ns.db and ns.coll filters into dbValue and collValue respectively.
+ * Other filters are written back to a new pgbson document which is returned.
+ * e.g. if the match spec is { ns.db: "testdb", ns : { coll: "testcoll" }, age: { $gt: 30 } }
+ * dbValue="testdb", collValue="testcoll" and returned match document = { age: { $gt: 30 } }
+ *
+ * multipleNSFilters flag is used to signal that the parsing found multiple `and ns` filters
+ *
+ * TODO: Handle $or single elemenent ns filters in future if needed.
+ *
+ * Returns NULL for new filter document in case `no valid/ conflicting` ns filters are found
+ */
+pgbson *
+FindNamespaceFiltersInMatchSpec(bson_iter_t *specIter, List **nsFilters,
+								bool *multipleNSFilters,
+								bool *isInvalidNSFilters)
+{
+	if (nsFilters == NULL || specIter == NULL)
+	{
+		return NULL;
+	}
+
+	MatchNamespaceFiltersContext matchNSContext;
+	memset(&matchNSContext, 0, sizeof(MatchNamespaceFiltersContext));
+	pgbson *postInlineFilters = FindNamespaceFiltersInMatchSpecCore(specIter,
+																	&matchNSContext);
+	*multipleNSFilters = matchNSContext.multipleNSFilters;
+	*isInvalidNSFilters = matchNSContext.isInvalidNSFilters;
+
+	if (!matchNSContext.multipleNSFilters && !matchNSContext.isInvalidNSFilters)
+	{
+		int dbPathFiltersCount = list_length(matchNSContext.nsDbPathFilters);
+		int collPathFiltersCount = list_length(matchNSContext.nsCollPathFilters);
+		int nsValueFiltersCount = list_length(matchNSContext.nsValueFilters);
+
+		if (dbPathFiltersCount > 0 && collPathFiltersCount > 0 &&
+			nsValueFiltersCount == 0)
+		{
+			/* Only path filters available, cross join */
+			ListCell *dbCell;
+			foreach(dbCell, matchNSContext.nsDbPathFilters)
+			{
+				ListCell *collCell;
+				foreach(collCell, matchNSContext.nsCollPathFilters)
+				{
+					*nsFilters = lappend(*nsFilters,
+										 list_make2(lfirst(dbCell), lfirst(collCell)));
+				}
+			}
+		}
+		else if (dbPathFiltersCount == 0 && collPathFiltersCount == 0 &&
+				 nsValueFiltersCount > 0)
+		{
+			/* Only value filters available */
+			*nsFilters = matchNSContext.nsValueFilters;
+		}
+		else if ((dbPathFiltersCount > 0 ||
+				  collPathFiltersCount > 0) &&
+				 nsValueFiltersCount > 0)
+		{
+			/* Both path and value filters available, these are AND conditions on namespace,
+			 * so all the filters at the intersection can be applied and inlined.
+			 * If there is no intersection that means this is just an empty result set.
+			 * We don't throw an error for empty set.
+			 *
+			 * Consider a case like this:
+			 * Document : { db: "d1", coll: "c1" }
+			 * {
+			 *      ns.coll: { $in: ["c1"] },
+			 *      ns.db: { $in: ["d1"] },
+			 *      ns: { $in: [ { db: "d2", coll: "c1" } ] }
+			 * }
+			 *
+			 * Since ns is provided as value filter as well with $in we need to make sure we do the intersections
+			 * correctly with indivudual filters in $in, the ns filter actually doesn't match the above doc resulting in empty
+			 * set
+			 */
+
+
+			/* Loop through all the ns value filter pairs and see if they intersect with any path filters
+			 */
+			ListCell *nsValueFilterCell = NULL;
+
+			SortStringList(matchNSContext.nsDbPathFilters);
+			SortStringList(matchNSContext.nsCollPathFilters);
+
+			HTAB *addedNsFilters = CreateStringViewHashSet();
+
+			foreach(nsValueFilterCell, matchNSContext.nsValueFilters)
+			{
+				CHECK_FOR_INTERRUPTS();
+
+				List *nsFilter = (List *) lfirst(nsValueFilterCell);
+				char *dbFilter = list_nth(nsFilter, 0);
+				char *collFilter = list_nth(nsFilter, 1);
+				StringView dbFilterView = CreateStringViewFromString(dbFilter);
+				StringView collFilterView = CreateStringViewFromString(collFilter);
+
+				bool exists = false;
+				exists = StringListBinarySearch(matchNSContext.nsDbPathFilters,
+												dbFilterView.string);
+				if (!exists && dbPathFiltersCount > 0)
+				{
+					continue;
+				}
+
+				exists = StringListBinarySearch(matchNSContext.nsCollPathFilters,
+												collFilterView.string);
+				if (!exists && collPathFiltersCount > 0)
+				{
+					continue;
+				}
+
+				/* Found intersection, only add if there are unique db and coll filters which are not added already */
+				StringView namespaceFilterView = CreateStringViewFromString(
+					psprintf("%s.%s", dbFilterView.string,
+							 collFilterView.string));
+				hash_search(addedNsFilters, &namespaceFilterView, HASH_ENTER, &exists);
+				if (!exists)
+				{
+					*nsFilters = lappend(*nsFilters, nsFilter);
+				}
+			}
+
+			hash_destroy(addedNsFilters);
+
+			if (*nsFilters == NIL)
+			{
+				/* No intersection found, this is empty set because of multiple filter */
+				*multipleNSFilters = true;
+				return NULL;
+			}
+		}
+		else
+		{
+			/* Unknown combination, consider invalid */
+			*isInvalidNSFilters = true;
+			return NULL;
+		}
+	}
+
+	return postInlineFilters;
+}
+
+
+static pgbson *
+HandleEqualityNamespaceFilter(bson_iter_t *iter, bool *nsInlined,
+							  MatchNamespaceFiltersContext *context)
+{
+	bool isDbFound = false;
+	bool isCollFound = false;
+	bool isNsValueFilterEmpty = list_length(context->nsValueFilters) == 0;
+	pgbson *newFilteredDoc = AddNamespaceValueFiltersToList(iter,
+															&context->nsValueFilters,
+															&isDbFound, &isCollFound);
+	if (!isDbFound || !isCollFound)
+	{
+		/*
+		 * Both the filters need to be present in single $eq operator
+		 * to consider it as namespace filter
+		 */
+		context->isInvalidNSFilters = true;
+		return NULL;
+	}
+	else if (!isNsValueFilterEmpty)
+	{
+		/*
+		 * We found a valid filter again when we already had some filters in ns nested value path,
+		 * this is empty set AND
+		 */
+		context->isInvalidNSFilters = true;
+		return NULL;
+	}
+
+	*nsInlined = true;
+	if (!IsPgbsonEmptyDocument(newFilteredDoc))
+	{
+		*nsInlined = false;
+	}
+	return newFilteredDoc;
+}
+
+
+static pgbson *
+FindNamespaceFiltersInMatchSpecCore(bson_iter_t *specIter,
+									MatchNamespaceFiltersContext *matchCtxt)
+{
+	check_stack_depth();
+	CHECK_FOR_INTERRUPTS();
+
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+
+	bool isDbFound;
+	bool isCollFound;
+
+	while (bson_iter_next(specIter))
+	{
+		const char *key = bson_iter_key(specIter);
+		const bson_value_t *value = bson_iter_value(specIter);
+		if (strcmp(key, "$and") == 0 && value->value_type == BSON_TYPE_ARRAY)
+		{
+			bson_iter_t andArrayIter;
+			if (bson_iter_recurse(specIter, &andArrayIter))
+			{
+				/*
+				 * We start a new $and document to see if any of the internal filters of $and
+				 * contains ns filters, if yes then these are removed. consider a case like this
+				 * {$and: [{ns.db: "db"}, {ns.coll: "coll"}]}
+				 *
+				 * Here both the individual filters are for ns and are not involved in final filters
+				 * so we need to add $and filters at the end once we are sure it is not inlined completely.
+				 */
+				pgbson_writer andWriter;
+				PgbsonWriterInit(&andWriter);
+				pgbson_array_writer andArrayWriter;
+				PgbsonWriterStartArray(&andWriter, "$and", 4, &andArrayWriter);
+
+				bool andElementInlined = true;
+				while (bson_iter_next(&andArrayIter))
+				{
+					bson_iter_t andElementIter;
+
+					if (BSON_ITER_HOLDS_DOCUMENT(&andArrayIter) &&
+						bson_iter_recurse(&andArrayIter, &andElementIter))
+					{
+						pgbson *andElementDoc = FindNamespaceFiltersInMatchSpecCore(
+							&andElementIter, matchCtxt);
+
+						if (matchCtxt->isInvalidNSFilters || matchCtxt->multipleNSFilters)
+						{
+							/* Early return in case of invalid or multiple ns filters */
+							return NULL;
+						}
+
+						if (!IsPgbsonEmptyDocument(andElementDoc))
+						{
+							PgbsonArrayWriterWriteDocument(&andArrayWriter,
+														   andElementDoc);
+							andElementInlined = false;
+						}
+					}
+					else
+					{
+						/* Other filters present */
+						andElementInlined = false;
+						PgbsonArrayWriterWriteValue(&andArrayWriter,
+													bson_iter_value(&andArrayIter));
+					}
+				}
+				PgbsonWriterEndArray(&andWriter, &andArrayWriter);
+				if (!andElementInlined)
+				{
+					bson_value_t andDocValue = PgbsonWriterGetValue(&andWriter);
+
+					/* Only concat the remaining portion of $and filters */
+					PgbsonWriterConcatBytes(&writer, andDocValue.value.v_doc.data,
+											andDocValue.value.v_doc.data_len);
+				}
+			}
+		}
+		else if (strcmp(key, "ns.db") == 0)
+		{
+			if (!AddNamespaceFilterToList(bson_iter_value(specIter),
+										  &matchCtxt->nsDbPathFilters))
+			{
+				/* Failed to add db filter because there is invalid match value */
+				matchCtxt->isInvalidNSFilters = true;
+				return NULL;
+			}
+		}
+		else if (strcmp(key, "ns.coll") == 0)
+		{
+			if (!AddNamespaceFilterToList(bson_iter_value(specIter),
+										  &matchCtxt->nsCollPathFilters))
+			{
+				/* Failed to add coll filter because there is invalid match value */
+				matchCtxt->isInvalidNSFilters = true;
+				return NULL;
+			}
+		}
+		else if (strcmp(key, "ns") == 0)
+		{
+			const bson_value_t *nsValue = bson_iter_value(specIter);
+			bson_iter_t nsIter;
+			if (nsValue->value_type == BSON_TYPE_DOCUMENT &&
+				bson_iter_recurse(specIter, &nsIter))
+			{
+				/*
+				 * We do the similar thing here as with $and above. We parse the ns document
+				 * to extract db and coll filters. Other filters are written back to the matchWriter.
+				 */
+				pgbson_writer nsWriter, nsElemWriter;
+				PgbsonWriterInit(&nsWriter);
+				PgbsonWriterStartDocument(&nsWriter, "ns", 2, &nsElemWriter);
+				bool nsInlined = true;
+
+				pgbsonelement nsElement;
+				bool isSingleFilter = TryGetSinglePgbsonElementFromBsonIterator(&nsIter,
+																				&nsElement);
+				bool isOperator = nsElement.pathLength > 0 && nsElement.path[0] == '$';
+				bool isEqOperator = strncmp(nsElement.path, "$eq",
+											nsElement.pathLength) == 0;
+				if (isOperator)
+				{
+					/*
+					 * Don't inline, if its is not a single operator or not $eq/$in
+					 */
+					if (!(isSingleFilter &&
+						  (strcmp(nsElement.path, "$eq") == 0 || strcmp(nsElement.path,
+																		"$in") == 0)))
+					{
+						matchCtxt->isInvalidNSFilters = true;
+						return NULL;
+					}
+
+					if (isEqOperator)
+					{
+						/* $eq operator */
+						if (nsElement.bsonValue.value_type == BSON_TYPE_DOCUMENT)
+						{
+							bson_iter_t eqValueItr;
+							BsonValueInitIterator(&nsElement.bsonValue, &eqValueItr);
+							pgbson *filteredDoc = HandleEqualityNamespaceFilter(
+								&eqValueItr, &nsInlined,
+								matchCtxt);
+							if (!nsInlined && filteredDoc != NULL)
+							{
+								PgbsonWriterConcat(&nsElemWriter, filteredDoc);
+							}
+						}
+						else
+						{
+							/* Invalid $eq value type */
+							matchCtxt->isInvalidNSFilters = true;
+							return NULL;
+						}
+					}
+					else
+					{
+						/* $in operator */
+						if (nsElement.bsonValue.value_type == BSON_TYPE_ARRAY)
+						{
+							bson_iter_t inArrayIter;
+							BsonValueInitIterator(&nsElement.bsonValue, &inArrayIter);
+							pgbson_writer nsInArrayWriter;
+							PgbsonWriterInit(&nsInArrayWriter);
+
+							pgbson_array_writer nsInArrayElemWriter;
+							PgbsonWriterStartArray(&nsInArrayWriter, "$in", 3,
+												   &nsInArrayElemWriter);
+
+							while (bson_iter_next(&inArrayIter))
+							{
+								const bson_value_t *arrayValue = bson_iter_value(
+									&inArrayIter);
+								if (arrayValue->value_type == BSON_TYPE_DOCUMENT)
+								{
+									isDbFound = false;
+									isCollFound = false;
+									bson_iter_t arrayDocItr;
+									BsonValueInitIterator(arrayValue, &arrayDocItr);
+									pgbson *newFilteredDoc =
+										AddNamespaceValueFiltersToList(&arrayDocItr,
+																	   &matchCtxt->
+																	   nsValueFilters,
+																	   &isDbFound,
+																	   &isCollFound);
+
+									/*
+									 * This is $in so invalid filters are not made part of the namespace filters list and are written
+									 * back to the remaining portion of the match document, there can be potential valid filter along
+									 * the list.
+									 */
+									if (!IsPgbsonEmptyDocument(newFilteredDoc))
+									{
+										PgbsonArrayWriterWriteDocument(
+											&nsInArrayElemWriter,
+											newFilteredDoc);
+										nsInlined = false;
+									}
+								}
+							}
+							PgbsonWriterEndArray(&nsInArrayWriter,
+												 &nsInArrayElemWriter);
+							if (!nsInlined)
+							{
+								/* Not inlined completely so write the remaining portion */
+								PgbsonWriterConcat(&nsElemWriter,
+												   PgbsonWriterGetPgbson(
+													   &nsInArrayWriter));
+							}
+						}
+						else
+						{
+							matchCtxt->isInvalidNSFilters = true;
+							return NULL;
+						}
+					}
+				}
+				else
+				{
+					/* regular document filter, it is similar to $eq condition above */
+					bson_iter_t nsValueItr;
+					BsonValueInitIterator(nsValue, &nsValueItr);
+					pgbson *filteredDoc = HandleEqualityNamespaceFilter(&nsValueItr,
+																		&nsInlined,
+																		matchCtxt);
+					if (!nsInlined && filteredDoc != NULL)
+					{
+						PgbsonWriterConcat(&nsElemWriter, filteredDoc);
+					}
+				}
+				PgbsonWriterEndDocument(&nsWriter, &nsElemWriter);
+				if (!nsInlined)
+				{
+					PgbsonWriterConcat(&writer, PgbsonWriterGetPgbson(&nsWriter));
+				}
+			}
+			else
+			{
+				matchCtxt->isInvalidNSFilters = true;
+				return NULL;
+			}
+		}
+		else
+		{
+			/* Other filters present */
+			PgbsonWriterAppendValue(&writer, key, strlen(key),
+									bson_iter_value(specIter));
+		}
+	}
+
+	return PgbsonWriterGetPgbson(&writer);
+}
+
+
+/*
+ * Iterates through the iterator and add `db` or `coll` UTF8 values to list,
+ * other values are ignored.
+ */
+static pgbson *
+AddNamespaceValueFiltersToList(bson_iter_t *valueItr, List **nsValueList,
+							   bool *isDbFound, bool *isCollFound)
+{
+	pgbson_writer newFilters;
+	PgbsonWriterInit(&newFilters);
+
+	*isDbFound = false;
+	*isCollFound = false;
+	bson_value_t dbFilter = { 0 };
+	bson_value_t collFilter = { 0 };
+	while (bson_iter_next(valueItr))
+	{
+		const char *key = bson_iter_key(valueItr);
+		const bson_value_t *value = bson_iter_value(valueItr);
+		if (strcmp(key, "db") == 0)
+		{
+			if (value->value_type == BSON_TYPE_UTF8)
+			{
+				dbFilter = *value;
+			}
+		}
+		else if (strcmp(key, "coll") == 0)
+		{
+			if (value->value_type == BSON_TYPE_UTF8)
+			{
+				collFilter = *value;
+			}
+		}
+		else
+		{
+			PgbsonWriterAppendValue(&newFilters, key, strlen(key), value);
+		}
+	}
+
+	*isDbFound = (dbFilter.value_type != BSON_TYPE_EOD);
+	*isCollFound = (collFilter.value_type != BSON_TYPE_EOD);
+
+	if (!*isDbFound || !*isCollFound)
+	{
+		/* If any of these filters are not found, write it back to the writer */
+		if (*isDbFound)
+		{
+			PgbsonWriterAppendValue(&newFilters, "db", 2, &dbFilter);
+		}
+		else if (*isCollFound)
+		{
+			PgbsonWriterAppendValue(&newFilters, "coll", 4, &collFilter);
+		}
+	}
+	else
+	{
+		/* Both filters present */
+		char *db = pnstrdup(dbFilter.value.v_utf8.str, dbFilter.value.v_utf8.len);
+		char *coll = pnstrdup(collFilter.value.v_utf8.str, collFilter.value.v_utf8.len);
+		*nsValueList = lappend(*nsValueList, list_make2(db, coll));
+	}
+
+	return PgbsonWriterGetPgbson(&newFilters);
+}
+
+
+/*
+ * Adds the match filters on namespace to an array writer, it only allows certain equality operators today
+ * such as $eq and $in to be valid.
+ */
+static bool
+AddNamespaceFilterToList(const bson_value_t *value, List **list)
+{
+	bool isValid = false;
+	if (value->value_type == BSON_TYPE_UTF8)
+	{
+		char *copiedStr = pnstrdup(value->value.v_utf8.str,
+								   value->value.v_utf8.len);
+		*list = lappend(*list, copiedStr);
+		isValid = true;
+	}
+	else if (value->value_type == BSON_TYPE_DOCUMENT)
+	{
+		bson_iter_t iter;
+		BsonValueInitIterator(value, &iter);
+		pgbsonelement element;
+		if (TryGetSinglePgbsonElementFromBsonIterator(&iter, &element))
+		{
+			if (strcmp(element.path, "$in") == 0 &&
+				element.bsonValue.value_type == BSON_TYPE_ARRAY)
+			{
+				bson_iter_t arrayIter;
+				BsonValueInitIterator(&element.bsonValue, &arrayIter);
+				while (bson_iter_next(&arrayIter))
+				{
+					const bson_value_t *arrayValue = bson_iter_value(&arrayIter);
+
+					/*
+					 * $in is an OR clause even if some entries here are invalid or not strings, we
+					 * skip those entries.
+					 */
+					if (arrayValue->value_type == BSON_TYPE_UTF8)
+					{
+						char *copiedStr = pnstrdup(arrayValue->value.v_utf8.str,
+												   arrayValue->value.v_utf8.len);
+						*list = lappend(*list, copiedStr);
+						isValid = true;
+					}
+				}
+			}
+			else if (strcmp(element.path, "$eq") == 0)
+			{
+				if (element.bsonValue.value_type == BSON_TYPE_UTF8)
+				{
+					char *copiedStr = pnstrdup(element.bsonValue.value.v_utf8.str,
+											   element.bsonValue.value.v_utf8.len);
+					*list = lappend(*list, copiedStr);
+					isValid = true;
+				}
+			}
+		}
+	}
+	return isValid;
+}
+
+
+/*
  * ReplaceBsonQueryOperatorsMutator is a mutator that replaces all occurrences
  * of <bson> @@ <bson> with an expanded expression that uses low-level BSON
  * operators.
@@ -1166,6 +1770,7 @@ ValidateQueryDocumentValue(const bson_value_t *value)
 		.inputType = MongoQueryOperatorInputType_Bson,
 		.simplifyOperators = false,
 		.coerceOperatorExprIfApplicable = false,
+		.convertSupportedInToScalarArrayOp = false,
 		.requiredFilterPathNameHashSet = NULL,
 		.variableContext = NULL,
 	};
@@ -1180,7 +1785,8 @@ ValidateQueryDocumentValue(const bson_value_t *value)
  */
 bool
 QueryDocumentsAreEquivalent(const pgbson *leftQueryDocument,
-							const pgbson *rightQueryDocument)
+							const pgbson *rightQueryDocument,
+							bool convertSupportedInToScalarArrayOp)
 {
 	bson_iter_t leftDocumentIter;
 	PgbsonInitIterator(leftQueryDocument, &leftDocumentIter);
@@ -1189,7 +1795,8 @@ QueryDocumentsAreEquivalent(const pgbson *leftQueryDocument,
 		.documentExpr = (Expr *) MakeSimpleDocumentVar(),
 		.inputType = MongoQueryOperatorInputType_Bson,
 		.simplifyOperators = false,
-		.coerceOperatorExprIfApplicable = false,
+		.coerceOperatorExprIfApplicable = true,
+		.convertSupportedInToScalarArrayOp = convertSupportedInToScalarArrayOp,
 		.requiredFilterPathNameHashSet = NULL,
 		.variableContext = NULL,
 	};
@@ -1204,7 +1811,8 @@ QueryDocumentsAreEquivalent(const pgbson *leftQueryDocument,
 		.documentExpr = (Expr *) MakeSimpleDocumentVar(),
 		.inputType = MongoQueryOperatorInputType_Bson,
 		.simplifyOperators = false,
-		.coerceOperatorExprIfApplicable = false,
+		.coerceOperatorExprIfApplicable = true,
+		.convertSupportedInToScalarArrayOp = convertSupportedInToScalarArrayOp,
 		.requiredFilterPathNameHashSet = NULL,
 		.variableContext = NULL,
 	};
@@ -1897,6 +2505,45 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 						operatorType, context->inputType);
 				return CreateFuncExprForQueryOperator(context, path, actualOperator,
 													  &currentValue);
+			}
+			else if (EnableDollarInToScalarArrayOpExprConversion &&
+					 context->convertSupportedInToScalarArrayOp &&
+					 context->coerceOperatorExprIfApplicable &&
+					 context->inputType == MongoQueryOperatorInputType_Bson &&
+					 numValues >= 1 &&
+					 operator->operatorType == QUERY_OPERATOR_IN && !hasRegex)
+			{
+				List *inArgsList = NIL;
+				if (bson_iter_recurse(operatorDocIterator, &arrayIterator))
+				{
+					while (bson_iter_next(&arrayIterator))
+					{
+						currentValue = *bson_iter_value(&arrayIterator);
+						Const *bsonConst = CreateConstFromBsonValue(
+							path, &currentValue,
+							context->collationString);
+						inArgsList = lappend(inArgsList, bsonConst);
+					}
+				}
+
+				/*
+				 * In the case where we're operating with a $in and indexes with
+				 * PFE we need to coerce the expression to the type of the index
+				 */
+				ScalarArrayOpExpr *inOperator = makeNode(ScalarArrayOpExpr);
+				inOperator->useOr = true;
+				inOperator->opno = BsonEqualMatchRuntimeOperatorId();
+				inOperator->opfuncid = BsonEqualMatchRuntimeFunctionId();
+
+				/* Second arg is an ArrayExpr containing the documents */
+				ArrayExpr *arrayExpr = makeNode(ArrayExpr);
+				arrayExpr->array_typeid = GetClusterBsonQueryArrayTypeId();
+				arrayExpr->element_typeid = GetClusterBsonQueryTypeId();
+				arrayExpr->multidims = false;
+				arrayExpr->elements = inArgsList;
+				inOperator->args = list_make2(context->documentExpr, arrayExpr);
+
+				return (Expr *) inOperator;
 			}
 			else
 			{

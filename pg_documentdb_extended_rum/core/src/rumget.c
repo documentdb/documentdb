@@ -4099,6 +4099,13 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 		/* Check if the current tuple matches */
 		idatum = rumtuple_get_key(&so->rumstate, itup, &icategory);
 
+		if (icategory != RUM_CAT_NORM_KEY)
+		{
+			/* move right and continue on null keys */
+			so->orderByScanData->orderStack->off += so->orderScanDirection;
+			continue;
+		}
+
 		markedEntryFinished = false;
 		scanFinished = false;
 		canSkipCheck = false;

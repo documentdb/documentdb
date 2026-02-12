@@ -139,7 +139,11 @@ Datum GenerateCorrelatedRootArrayTerm(const IndexTermCreateMetadata *);
 Datum GenerateValueUndefinedTerm(const IndexTermCreateMetadata *termData);
 Datum GenerateValueMaybeUndefinedTerm(const IndexTermCreateMetadata *termData);
 int32_t CompareBsonIndexTerm(const BsonIndexTerm *left, const BsonIndexTerm *right,
-							 bool *isComparisonValid);
+							 bool *isComparisonValid, const char *collation);
+int32_t CompareSerializedBsonIndexTermWithCollation(Datum a, Datum b, const
+													char *collation);
+bytea * FormCollatedIndexTerm(bytea *sourceTerm, const char *collation, uint32_t
+							  collationLength);
 
 /* Check if the term is a root truncation term */
 inline static bool

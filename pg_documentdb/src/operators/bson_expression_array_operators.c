@@ -262,8 +262,8 @@ static void SetResultValueForDollarMaxMin(const bson_value_t *inputArgument,
 										  bson_value_t *result, bool isFindMax);
 static void SetResultValueForDollarSumAvg(const bson_value_t *inputArgument,
 										  bson_value_t *result, bool isSum);
-static bool HeapSortComparatorMaxN(const void *first, const void *second);
-static bool HeapSortComparatorMinN(const void *first, const void *second);
+static bool HeapSortComparatorMaxN(const bson_value_t *first, const bson_value_t *second);
+static bool HeapSortComparatorMinN(const bson_value_t *first, const bson_value_t *second);
 static inline void DollarSliceInputValidation(bson_value_t *inputValue, bool isSecondArg);
 static bson_value_t * ParseZipDefaultsArgument(int rowNum, bson_value_t
 											   evaluatedDefaultsArg, bool
@@ -4184,8 +4184,8 @@ DollarSliceInputValidation(bson_value_t *inputValue, bool isSecondArg)
  * Comparator function for heap utils. For MaxN, we need to build min-heap
  */
 static bool
-HeapSortComparatorMaxN(const void *first,
-					   const void *second)
+HeapSortComparatorMaxN(const bson_value_t *first,
+					   const bson_value_t *second)
 {
 	bool ignoreIsComparisonValid = false; /* IsComparable ensures this is taken care of */
 	return CompareBsonValueAndType((const bson_value_t *) first,
@@ -4198,8 +4198,8 @@ HeapSortComparatorMaxN(const void *first,
  * Comparator function for heap utils. For MinN, we need to build max-heap
  */
 static bool
-HeapSortComparatorMinN(const void *first,
-					   const void *second)
+HeapSortComparatorMinN(const bson_value_t *first,
+					   const bson_value_t *second)
 {
 	bool ignoreIsComparisonValid = false; /* IsComparable ensures this is taken care of */
 	return CompareBsonValueAndType((const bson_value_t *) first,

@@ -75,6 +75,11 @@ typedef struct BsonQueryOperatorContext
 	 */
 	bool coerceOperatorExprIfApplicable;
 
+	/*
+	 * Whether or not to convert supported $in queries to ScalarArrayOpExpr
+	 */
+	bool convertSupportedInToScalarArrayOp;
+
 	/* Required path names for vector search
 	 * it is set only when the filter of vector search is specified
 	 */
@@ -114,7 +119,8 @@ Node * ReplaceBsonQueryOperators(Query *node, ParamListInfo boundParams);
 void ValidateQueryDocumentValue(const bson_value_t *queryDocumentValue);
 void ValidateQueryDocument(pgbson *queryDocument);
 bool QueryDocumentsAreEquivalent(const pgbson *leftQueryDocument,
-								 const pgbson *rightQueryDocument);
+								 const pgbson *rightQueryDocument,
+								 bool convertSupportedInToScalarArrayOp);
 List * CreateQualsFromQueryDocIterator(bson_iter_t *queryDocIterator,
 									   BsonQueryOperatorContext *context);
 Node * EvaluateBoundParameters(Node *expression, ParamListInfo boundParams);
@@ -147,5 +153,8 @@ bool ValidateOrderbyExpressionAndGetIsAscending(pgbson *orderby);
 bool IsValidBsonDocumentForDollarInOrNinOp(const bson_value_t *value);
 void UpdateQueryOperatorContextSortList(Query *query, List *sortClauses,
 										List *targetEntries);
+pgbson * FindNamespaceFiltersInMatchSpec(bson_iter_t *specIter, List **nsFilters,
+										 bool *multipleNSFilters,
+										 bool *invalidNSFilters);
 
 #endif

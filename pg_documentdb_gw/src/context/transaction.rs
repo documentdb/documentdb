@@ -6,21 +6,21 @@
  *-------------------------------------------------------------------------
  */
 
-use tokio::{sync::RwLock, task::JoinHandle};
+use std::sync::Arc;
+
+use dashmap::DashMap;
+use tokio::{
+    task::JoinHandle,
+    time::{Duration, Instant},
+};
 use tokio_postgres::IsolationLevel;
 
 use crate::{
     configuration::DynamicConfiguration,
+    context::{ConnectionContext, CursorStore},
     error::{DocumentDBError, ErrorCode, Result},
     postgres::{self, Connection, PgDataClient},
 };
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
-
-use super::{ConnectionContext, CursorStore};
 
 #[derive(Debug)]
 pub struct RequestTransactionInfo {
@@ -132,23 +132,22 @@ impl LastSeenTransaction {
 type TransactionEntry = (Instant, Transaction);
 
 pub struct TransactionStore {
-    pub transactions: Arc<RwLock<HashMap<Vec<u8>, TransactionEntry>>>,
-    last_seen_transactions: RwLock<HashMap<Vec<u8>, LastSeenTransaction>>,
+    pub transactions: Arc<DashMap<Vec<u8>, TransactionEntry>>,
+    last_seen_transactions: DashMap<Vec<u8>, LastSeenTransaction>,
     _reaper: JoinHandle<()>,
 }
 
 impl TransactionStore {
     pub fn new(expiration: Duration) -> Self {
-        let transactions = Arc::new(RwLock::new(HashMap::new()));
+        let transactions = Arc::new(DashMap::new());
         TransactionStore {
             transactions: transactions.clone(),
-            last_seen_transactions: RwLock::new(HashMap::new()),
+            last_seen_transactions: DashMap::new(),
             _reaper: tokio::spawn(async move {
                 let mut interval = tokio::time::interval(expiration / 2);
                 loop {
                     interval.tick().await;
-                    let mut cursors = transactions.write().await;
-                    cursors.retain(|_, (time, _)| time.elapsed() < expiration)
+                    transactions.retain(|_, (time, _)| time.elapsed() < expiration)
                 }
             }),
         }
@@ -156,10 +155,8 @@ impl TransactionStore {
 
     pub async fn get_connection(&self, session_id: &[u8]) -> Option<Arc<Connection>> {
         self.transactions
-            .read()
-            .await
             .get(session_id)
-            .and_then(|(_, t)| t.get_connection())
+            .and_then(|entry| entry.value().1.get_connection())
     }
 
     pub async fn create(
@@ -179,48 +176,38 @@ impl TransactionStore {
         }
 
         if transaction_info.start_transaction && !transaction_info.auto_commit {
-            {
-                let lst = self.last_seen_transactions.read().await;
-
-                if let Some(last_transaction) = lst.get(&session_id) {
-                    if last_transaction.transaction_number == transaction_info.transaction_number {
-                        return Err(DocumentDBError::documentdb_error(
-                            ErrorCode::ConflictingOperationInProgress,
-                            match last_transaction.state {
-                                TransactionState::Committed => format!(
-                                    "Transaction {} is already committed.",
-                                    transaction_info.transaction_number
-                                ),
-                                TransactionState::Aborted => format!(
-                                    "Transaction {} is already aborted.",
-                                    transaction_info.transaction_number
-                                ),
-                                TransactionState::Started => format!(
-                                    "Transaction {} is already started.",
-                                    transaction_info.transaction_number
-                                ),
-                            },
-                        ));
-                    }
+            if let Some(last_transaction) = self.last_seen_transactions.get(&session_id) {
+                if last_transaction.transaction_number == transaction_info.transaction_number {
+                    return Err(DocumentDBError::documentdb_error(
+                        ErrorCode::ConflictingOperationInProgress,
+                        match last_transaction.state {
+                            TransactionState::Committed => format!(
+                                "Transaction {} is already committed.",
+                                transaction_info.transaction_number
+                            ),
+                            TransactionState::Aborted => format!(
+                                "Transaction {} is already aborted.",
+                                transaction_info.transaction_number
+                            ),
+                            TransactionState::Started => format!(
+                                "Transaction {} is already started.",
+                                transaction_info.transaction_number
+                            ),
+                        },
+                    ));
                 }
             }
 
-            {
-                let mut transactions = self.transactions.write().await;
-                // Remove any existing transaction from this session
-                if let Some((_, mut old_transaction)) = transactions.remove(&session_id) {
-                    if old_transaction.transaction.is_some() {
-                        if old_transaction.transaction_number == transaction_info.transaction_number
-                        {
-                            return Err(DocumentDBError::documentdb_error(
-                                ErrorCode::ConflictingOperationInProgress,
-                                "This transaction is already started.".to_string(),
-                            ));
-                        }
-
-                        old_transaction.abort().await?;
-                    }
+            // Remove any existing transaction from this session
+            if let Some((_, mut old_transaction)) = self.transactions.remove(&session_id) {
+                if old_transaction.1.transaction_number == transaction_info.transaction_number {
+                    return Err(DocumentDBError::documentdb_error(
+                        ErrorCode::ConflictingOperationInProgress,
+                        "This transaction is already started.".to_string(),
+                    ));
                 }
+
+                old_transaction.1.abort().await?;
             }
 
             let transaction = Transaction::start(
@@ -238,40 +225,33 @@ impl TransactionStore {
             )
             .await?;
 
-            self.last_seen_transactions.write().await.insert(
+            self.last_seen_transactions.insert(
                 session_id.clone(),
                 LastSeenTransaction::new(transaction.transaction_number()),
             );
             self.transactions
-                .write()
-                .await
                 .insert(session_id, (Instant::now(), transaction));
 
             return Ok(());
         }
 
-        {
-            let transactions = self.transactions.read().await;
-
-            if let Some((_, transaction)) = transactions.get(&session_id) {
-                return if transaction.transaction_number() != transaction_info.transaction_number {
-                    Err(DocumentDBError::documentdb_error(
-                        ErrorCode::NoSuchTransaction,
-                        format!(
-                            "Cannot continue transaction {}",
-                            transaction_info.transaction_number
-                        ),
-                    ))
-                } else {
-                    Ok(())
-                };
-            }
+        if let Some(transaction_entry) = self.transactions.get(&session_id) {
+            let transaction = &transaction_entry.value().1;
+            return if transaction.transaction_number() != transaction_info.transaction_number {
+                Err(DocumentDBError::documentdb_error(
+                    ErrorCode::NoSuchTransaction,
+                    format!(
+                        "Cannot continue transaction {}",
+                        transaction_info.transaction_number
+                    ),
+                ))
+            } else {
+                Ok(())
+            };
         }
 
         if self
             .last_seen_transactions
-            .read()
-            .await
             .get(&session_id)
             .is_some_and(|s| {
                 s.transaction_number == transaction_info.transaction_number
@@ -297,14 +277,17 @@ impl TransactionStore {
     }
 
     pub async fn abort(&self, session_id: &[u8]) -> Result<()> {
-        if let Some((_, mut t)) = self.transactions.write().await.remove(session_id) {
-            t.abort().await?;
-            self.last_seen_transactions
-                .write()
-                .await
-                .get_mut(session_id)
-                .expect("Last seen transaction should always exist for an existing transaction")
-                .state = TransactionState::Aborted;
+        if let Some((_, (_, mut transaction))) = self.transactions.remove(session_id) {
+            transaction.abort().await?;
+            if let Some(mut last_seen) = self.last_seen_transactions.get_mut(session_id) {
+                last_seen.state = TransactionState::Aborted;
+            } else {
+                return Err(DocumentDBError::documentdb_error(
+                    ErrorCode::NoSuchTransaction,
+                    "Last seen transaction should always exist for an existing transaction"
+                        .to_string(),
+                ));
+            }
             Ok(())
         } else {
             Err(DocumentDBError::documentdb_error(
@@ -315,14 +298,17 @@ impl TransactionStore {
     }
 
     pub async fn commit(&self, session_id: &[u8]) -> Result<()> {
-        if let Some((_, mut t)) = self.transactions.write().await.remove(session_id) {
-            t.commit().await?;
-            self.last_seen_transactions
-                .write()
-                .await
-                .get_mut(session_id)
-                .expect("Last seen transaction should always exist for an existing transaction")
-                .state = TransactionState::Committed;
+        if let Some((_, (_, mut transaction))) = self.transactions.remove(session_id) {
+            transaction.commit().await?;
+            if let Some(mut last_seen) = self.last_seen_transactions.get_mut(session_id) {
+                last_seen.state = TransactionState::Committed;
+            } else {
+                return Err(DocumentDBError::documentdb_error(
+                    ErrorCode::NoSuchTransaction,
+                    "Last seen transaction should always exist for an existing transaction"
+                        .to_string(),
+                ));
+            }
             Ok(())
         } else {
             Err(DocumentDBError::documentdb_error(

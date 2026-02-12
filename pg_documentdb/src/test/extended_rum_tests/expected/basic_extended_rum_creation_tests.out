@@ -9,25 +9,71 @@ NOTICE:  creating collection
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
--- create an index
-SELECT documentdb_api_internal.create_indexes_non_concurrently('exrumdb', '{ "createIndexes": "index_creation_tests", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }', TRUE);
+-- create a regular index
+SELECT documentdb_api_internal.create_indexes_non_concurrently('exrumdb', '{ "createIndexes": "index_creation_tests", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableOrderedIndex": false } ] }', TRUE);
                                                                                                    create_indexes_non_concurrently                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
+SELECT documentdb_api_internal.create_indexes_non_concurrently('exrumdb', '{ "createIndexes": "index_creation_tests_ordered", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableOrderedIndex": true } ] }', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
 -- create a composite index
-SELECT documentdb_api_internal.create_indexes_non_concurrently('exrumdb', '{ "createIndexes": "index_creation_tests", "indexes": [ { "key": { "a": 1, "b": -1 }, "name": "a_1_b_-1" } ] }', TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('exrumdb', '{ "createIndexes": "index_creation_tests", "indexes": [ { "key": { "a": 1, "b": -1 }, "name": "a_1_b_-1", "enableOrderedIndex": false } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('exrumdb', '{ "createIndexes": "index_creation_tests_ordered", "indexes": [ { "key": { "a": 1, "b": -1 }, "name": "a_1_b_-1", "enableOrderedIndex": true } ] }', TRUE);
                                                                                                    create_indexes_non_concurrently                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 -- create a unique index
-SELECT documentdb_api_internal.create_indexes_non_concurrently('exrumdb', '{ "createIndexes": "index_creation_tests", "indexes": [ { "key": { "c": 1 }, "name": "c_1", "unique": true } ] }', TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('exrumdb', '{ "createIndexes": "index_creation_tests", "indexes": [ { "key": { "c": 1 }, "name": "c_1", "unique": true, "enableOrderedIndex": false } ] }', TRUE);
                                                                                                    create_indexes_non_concurrently                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('exrumdb', '{ "createIndexes": "index_creation_tests_ordered", "indexes": [ { "key": { "c": 1 }, "name": "c_1", "unique": true, "enableOrderedIndex": true } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- create a hashed index
+SELECT documentdb_api_internal.create_indexes_non_concurrently('exrumdb', '{ "createIndexes": "index_creation_tests", "indexes": [ { "key": { "e": "hashed" }, "name": "e_hashed", "enableOrderedIndex": false } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "4" }, "numIndexesAfter" : { "$numberInt" : "5" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('exrumdb', '{ "createIndexes": "index_creation_tests_ordered", "indexes": [ { "key": { "e": "hashed" }, "name": "e_hashed", "enableOrderedIndex": false } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "4" }, "numIndexesAfter" : { "$numberInt" : "5" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- create a wildcard index
+set documentdb.enableCompositeWildcardIndex to on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('exrumdb', '{ "createIndexes": "index_creation_tests", "indexes": [ { "key": { "b.$**": 1 }, "name": "b_wildcard", "enableOrderedIndex": false } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "5" }, "numIndexesAfter" : { "$numberInt" : "6" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('exrumdb', '{ "createIndexes": "index_creation_tests_ordered", "indexes": [ { "key": { "b.$**": -1 }, "name": "b_wildcard", "enableOrderedIndex": true } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "5" }, "numIndexesAfter" : { "$numberInt" : "6" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 -- validate they're all ordered indexes and using the appropriate index handler
@@ -40,11 +86,30 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('exrumdb', '{ "cr
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_101" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_102" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a" ]', tl='2691'))
-    "documents_rum_index_103" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a", { "b" : -1 } ]', tl='2691'))
-    "documents_rum_index_104" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c" ]', tl='2691') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "c" : { "$numberInt" : "1" } }'::bson, false, true) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true') WITH OPERATOR(documentdb_api_internal.=#=))
+    "documents_rum_index_102" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=a, tl='2699'))
+    "documents_rum_index_105" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=a, tl='2691'), document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=b, tl='2691'))
+    "documents_rum_index_107" EXCLUDE USING documentdb_extended_rum (documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "c" : { "$numberInt" : "1" } }'::bson, false) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops WITH OPERATOR(documentdb_api_internal.=#=), document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=c, tl='2691', generatenotfoundterm='true') WITH =?=)
+    "documents_rum_index_109" documentdb_extended_rum (document documentdb_extended_rum_catalog.documentdb_extended_rum_hashed_ops (path=e))
+    "documents_rum_index_111" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=b, iswildcard='true', tl='2699'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '101'::bigint)
+
+\d documentdb_data.documents_102
+           Table "documentdb_data.documents_102"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_102" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_104" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a" ]', tl='2691'))
+    "documents_rum_index_106" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a", { "b" : -1 } ]', tl='2691'))
+    "documents_rum_index_108" EXCLUDE USING documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c" ]', tl='2691') WITH =?=, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "c" : { "$numberInt" : "1" } }'::bson, false, true) documentdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops (cmp='true') WITH OPERATOR(documentdb_api_internal.=#=))
+    "documents_rum_index_110" documentdb_extended_rum (document documentdb_extended_rum_catalog.documentdb_extended_rum_hashed_ops (path=e))
+    "documents_rum_index_112" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ { "b" : -1 } ]', tl='2691', wki='0', wkl='200'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '102'::bigint)
 
 -- validate they're used in queries
 set enable_seqscan to off;
@@ -68,4 +133,162 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "fi
  Index Scan using "a_1_b_-1" on documents_101 collection
    Index Cond: ((document @= '{ "a" : "hello world" }'::bson) AND (document @= '{ "b" : "myfoo" }'::bson))
 (2 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests", "filter": { "e": "hello world" } }');
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Index Scan using e_hashed on documents_101 collection
+   Index Cond: (document @= '{ "e" : "hello world" }'::bson)
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests", "filter": { "b.c": "hello world" } }');
+                          QUERY PLAN                           
+---------------------------------------------------------------
+ Index Scan using b_wildcard on documents_101 collection
+   Index Cond: (document @= '{ "b.c" : "hello world" }'::bson)
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests_ordered", "filter": { "a": "hello world" } }');
+                            QUERY PLAN                             
+-------------------------------------------------------------------
+ Bitmap Heap Scan on documents_102 collection
+   Recheck Cond: (document @= '{ "a" : "hello world" }'::bson)
+   ->  Bitmap Index Scan on a_1
+         Index Cond: (document @= '{ "a" : "hello world" }'::bson)
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests_ordered", "filter": { "c": "hello world" } }');
+                            QUERY PLAN                             
+-------------------------------------------------------------------
+ Bitmap Heap Scan on documents_102 collection
+   Recheck Cond: (document @= '{ "c" : "hello world" }'::bson)
+   ->  Bitmap Index Scan on c_1
+         Index Cond: (document @= '{ "c" : "hello world" }'::bson)
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests_ordered", "filter": { "a": "hello world", "b": "myfoo" } }');
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Index Scan using "a_1_b_-1" on documents_102 collection
+   Index Cond: ((document @= '{ "a" : "hello world" }'::bson) AND (document @= '{ "b" : "myfoo" }'::bson))
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests_ordered", "filter": { "e": "hello world" } }');
+                            QUERY PLAN                             
+-------------------------------------------------------------------
+ Bitmap Heap Scan on documents_102 collection
+   Recheck Cond: (document @= '{ "e" : "hello world" }'::bson)
+   ->  Bitmap Index Scan on e_hashed
+         Index Cond: (document @= '{ "e" : "hello world" }'::bson)
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests_ordered", "filter": { "b.c": "hello world" } }');
+                             QUERY PLAN                              
+---------------------------------------------------------------------
+ Bitmap Heap Scan on documents_102 collection
+   Recheck Cond: (document @= '{ "b.c" : "hello world" }'::bson)
+   ->  Bitmap Index Scan on b_wildcard
+         Index Cond: (document @= '{ "b.c" : "hello world" }'::bson)
+(4 rows)
+
+-- ensure hints can push down to them too.
+set enable_indexscan to off;
+set enable_bitmapscan to off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests", "filter": { "a": "hello world" }, "hint": "a_1" }');
+$cmd$);
+                    run_explain_and_trim                     
+-------------------------------------------------------------
+ Index Scan using a_1 on documents_101 collection
+   Index Cond: (document @= '{ "a" : "hello world" }'::bson)
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests", "filter": { "c": "hello world" }, "hint": "c_1" }');
+$cmd$);
+                    run_explain_and_trim                     
+-------------------------------------------------------------
+ Index Scan using c_1 on documents_101 collection
+   Index Cond: (document @= '{ "c" : "hello world" }'::bson)
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests", "filter": { "a": "hello world", "b": "myfoo" }, "hint": "a_1_b_-1" }');
+$cmd$);
+                                           run_explain_and_trim                                            
+-----------------------------------------------------------------------------------------------------------
+ Index Scan using "a_1_b_-1" on documents_101 collection
+   Index Cond: ((document @= '{ "a" : "hello world" }'::bson) AND (document @= '{ "b" : "myfoo" }'::bson))
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests", "filter": { "e": "hello world" }, "hint": "e_hashed" }');
+$cmd$);
+                    run_explain_and_trim                     
+-------------------------------------------------------------
+ Index Scan using e_hashed on documents_101 collection
+   Index Cond: (document @= '{ "e" : "hello world" }'::bson)
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests", "filter": { "b.c": "hello world" }, "hint": "b_wildcard" }');
+$cmd$);
+                     run_explain_and_trim                      
+---------------------------------------------------------------
+ Index Scan using b_wildcard on documents_101 collection
+   Index Cond: (document @= '{ "b.c" : "hello world" }'::bson)
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests_ordered", "filter": { "a": "hello world" }, "hint": "a_1" }');
+$cmd$);
+                       run_explain_and_trim                        
+-------------------------------------------------------------------
+ Bitmap Heap Scan on documents_102 collection
+   Recheck Cond: (document @= '{ "a" : "hello world" }'::bson)
+   ->  Bitmap Index Scan on a_1
+         Index Cond: (document @= '{ "a" : "hello world" }'::bson)
+(4 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests_ordered", "filter": { "c": "hello world" }, "hint": "c_1" }');
+$cmd$);
+                       run_explain_and_trim                        
+-------------------------------------------------------------------
+ Bitmap Heap Scan on documents_102 collection
+   Recheck Cond: (document @= '{ "c" : "hello world" }'::bson)
+   ->  Bitmap Index Scan on c_1
+         Index Cond: (document @= '{ "c" : "hello world" }'::bson)
+(4 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests_ordered", "filter": { "a": "hello world", "b": "myfoo" }, "hint": "a_1_b_-1" }');
+$cmd$);
+                                           run_explain_and_trim                                            
+-----------------------------------------------------------------------------------------------------------
+ Index Scan using "a_1_b_-1" on documents_102 collection
+   Index Cond: ((document @= '{ "a" : "hello world" }'::bson) AND (document @= '{ "b" : "myfoo" }'::bson))
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests_ordered", "filter": { "e": "hello world" }, "hint": "e_hashed" }');
+$cmd$);
+                       run_explain_and_trim                        
+-------------------------------------------------------------------
+ Bitmap Heap Scan on documents_102 collection
+   Recheck Cond: (document @= '{ "e" : "hello world" }'::bson)
+   ->  Bitmap Index Scan on e_hashed
+         Index Cond: (document @= '{ "e" : "hello world" }'::bson)
+(4 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests_ordered", "filter": { "b.c": "hello world" }, "hint": "b_wildcard" }');
+$cmd$);
+                        run_explain_and_trim                         
+---------------------------------------------------------------------
+ Bitmap Heap Scan on documents_102 collection
+   Recheck Cond: (document @= '{ "b.c" : "hello world" }'::bson)
+   ->  Bitmap Index Scan on b_wildcard
+         Index Cond: (document @= '{ "b.c" : "hello world" }'::bson)
+(4 rows)
 
