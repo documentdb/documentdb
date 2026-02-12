@@ -1,7 +1,7 @@
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
-SET citus.next_shard_id TO 640000;
-SET documentdb.next_collection_id TO 6400;
-SET documentdb.next_collection_index_id TO 6400;
+SET citus.next_shard_id TO 930000;
+SET documentdb.next_collection_id TO 9300;
+SET documentdb.next_collection_index_id TO 9300;
 -- Set configs to something reasonable for testing.
 set documentdb.indexTermLimitOverride to 100;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "index_truncation_tests", "indexes": [ { "key": { "ikey": 1 }, "name": "ikey_1", "enableLargeIndexKeys": true } ] }');
@@ -12,18 +12,18 @@ NOTICE:  creating collection
 (1 row)
 
 -- now we have an index with truncation enabled and 100 chars.
-\d documentdb_data.documents_6400;
-          Table "documentdb_data.documents_6400"
+\d documentdb_data.documents_9300;
+          Table "documentdb_data.documents_9300"
      Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
  shard_key_value | bigint |           | not null | 
  object_id       | bson   |           | not null | 
  document        | bson   |           | not null | 
 Indexes:
-    "collection_pk_6400" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_6401" documentdb_rum (document bson_rum_single_path_ops (path=ikey, tl='100'))
+    "collection_pk_9300" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_9301" documentdb_rum (document bson_rum_single_path_ops (path=ikey, tl='100'))
 Check constraints:
-    "shard_key_value_check" CHECK (shard_key_value = '6400'::bigint)
+    "shard_key_value_check" CHECK (shard_key_value = '9300'::bigint)
 
 ---------------------------------------------------------------------
 ---- DATA TYPE: UTF8
@@ -822,18 +822,18 @@ NOTICE:  creating collection
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
-\d documentdb_data.documents_6401
-          Table "documentdb_data.documents_6401"
+\d documentdb_data.documents_9301
+          Table "documentdb_data.documents_9301"
      Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
  shard_key_value | bigint |           | not null | 
  object_id       | bson   |           | not null | 
  document        | bson   |           | not null | 
 Indexes:
-    "collection_pk_6401" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_6403" documentdb_rum (document bson_rum_single_path_ops (path=ikey, tl='60'))
+    "collection_pk_9301" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_9303" documentdb_rum (document bson_rum_single_path_ops (path=ikey, tl='60'))
 Check constraints:
-    "shard_key_value_check" CHECK (shard_key_value = '6401'::bigint)
+    "shard_key_value_check" CHECK (shard_key_value = '9301'::bigint)
 
 -- empty array
 SELECT documentdb_api.insert_one('db', 'index_truncation_tests', '{ "_id": 1, "ikey": [] }');
@@ -1316,7 +1316,7 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests') W
  { "_id" : { "$numberInt" : "15" }, "ikey" : [ { "$numberDecimal" : "1234" }, { "$numberDecimal" : "1234" }, { "$numberDecimal" : "1234" }, { "$numberDecimal" : "1234" }, { "$numberDecimal" : "1234" }, { "$numberInt" : "2345" } ] }
 (1 row)
 
-DELETE FROM documentdb_data.documents_6401;
+DELETE FROM documentdb_data.documents_9301;
 -- Specific operator tests.
 -- $gt
 BEGIN;
@@ -2286,7 +2286,7 @@ SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documen
 (3 rows)
 
 -- start fresh with documents
-DELETE FROM documentdb_data.documents_6401;
+DELETE FROM documentdb_data.documents_9301;
 -- $eq on something that's past truncation.
 BEGIN;
 SELECT documentdb_api.insert_one('db', 'index_truncation_tests', '{"_id": 31, "ikey" : { "userName": "myFirstUserName", "address": "1st avenue, Rua Amalho" }}');
@@ -2556,11 +2556,11 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests') W
 
 ROLLBACK;
 -- finally shard_collection and ensure it's Truncation limit is still there.
-SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 6401 ORDER BY index_id;
+SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 9301 ORDER BY index_id;
  collection_id | index_id |                                                        index_spec                                                        | index_is_valid 
 ---------------------------------------------------------------------
-          6401 |     6402 | (_id_,"{ ""_id"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,)                                                               | t
-          6401 |     6403 | (ikey_1,"{ ""ikey"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,"{ ""enableLargeIndexKeys"" : { ""$numberInt"" : ""1"" } }") | t
+          9301 |     9302 | (_id_,"{ ""_id"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,)                                                               | t
+          9301 |     9303 | (ikey_1,"{ ""ikey"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,"{ ""enableLargeIndexKeys"" : { ""$numberInt"" : ""1"" } }") | t
 (2 rows)
 
 SELECT documentdb_api.shard_collection('db', 'index_truncation_tests', '{ "_id": "hashed" }', false);
@@ -2569,19 +2569,19 @@ SELECT documentdb_api.shard_collection('db', 'index_truncation_tests', '{ "_id":
  
 (1 row)
 
-\d documentdb_data.documents_6401
-          Table "documentdb_data.documents_6401"
+\d documentdb_data.documents_9301
+          Table "documentdb_data.documents_9301"
      Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
  shard_key_value | bigint |           | not null | 
  object_id       | bson   |           | not null | 
  document        | bson   |           | not null | 
 Indexes:
-    "collection_pk_6401" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_6404" documentdb_rum (document bson_rum_single_path_ops (path=_id, tl='60'))
-    "documents_rum_index_6405" documentdb_rum (document bson_rum_single_path_ops (path=ikey, tl='60'))
+    "collection_pk_9301" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_9304" documentdb_rum (document bson_rum_single_path_ops (path=_id, tl='60'))
+    "documents_rum_index_9305" documentdb_rum (document bson_rum_single_path_ops (path=ikey, tl='60'))
 Check constraints:
-    "shard_key_value_check" CHECK (shard_key_value = get_shard_key_value('{ "_id" : "hashed" }'::bson, 6401::bigint, document))
+    "shard_key_value_check" CHECK (shard_key_value = get_shard_key_value('{ "_id" : "hashed" }'::bson, 9301::bigint, document))
 
 /* testing wildcard indexes */
 SET documentdb.indexTermLimitOverride TO 100;
@@ -2593,18 +2593,18 @@ NOTICE:  creating collection
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
-\d documentdb_data.documents_6402
-          Table "documentdb_data.documents_6402"
+\d documentdb_data.documents_9302
+          Table "documentdb_data.documents_9302"
      Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
  shard_key_value | bigint |           | not null | 
  object_id       | bson   |           | not null | 
  document        | bson   |           | not null | 
 Indexes:
-    "collection_pk_6402" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_6407" documentdb_rum (document bson_rum_single_path_ops (path='', iswildcard='true', tl='100', wkl='50'))
+    "collection_pk_9302" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_9307" documentdb_rum (document bson_rum_single_path_ops (path='', iswildcard='true', tl='100', wkl='50'))
 Check constraints:
-    "shard_key_value_check" CHECK (shard_key_value = '6402'::bigint)
+    "shard_key_value_check" CHECK (shard_key_value = '9302'::bigint)
 
 /* should fail fue to maximum size exceeded */
 SELECT documentdb_api.insert_one('db', 'wildcard_index_truncation_tests', '{"_id": 1, "thiskeyislargerthanthemaximumallowedsizeof50characters" : "sample_value"}');
@@ -2642,9 +2642,9 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_6402_640040 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "ikey1" : "this is a" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '6402'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_9302_930045 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "ikey1" : "this is a" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '9302'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_6402_640040 collection
+         ->  Bitmap Heap Scan on documentdb_data.documents_9302_930045 collection
                Output: document
                Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "ikey1" : "this is a" }'::documentdb_core.bson)
                ->  Bitmap Index Scan on wkey_1
@@ -2665,9 +2665,9 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_6402_640040 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "ikey2" : "this is a" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '6402'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_9302_930045 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "ikey2" : "this is a" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '9302'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_6402_640040 collection
+         ->  Bitmap Heap Scan on documentdb_data.documents_9302_930045 collection
                Output: document
                Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "ikey2" : "this is a" }'::documentdb_core.bson)
                ->  Bitmap Index Scan on wkey_1
@@ -2684,18 +2684,18 @@ NOTICE:  creating collection
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
-\d documentdb_data.documents_6403
-          Table "documentdb_data.documents_6403"
+\d documentdb_data.documents_9303
+          Table "documentdb_data.documents_9303"
      Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
  shard_key_value | bigint |           | not null | 
  object_id       | bson   |           | not null | 
  document        | bson   |           | not null | 
 Indexes:
-    "collection_pk_6403" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_6409" documentdb_rum (document bson_rum_single_path_ops (path='a.b', iswildcard='true', tl='60'))
+    "collection_pk_9303" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_9309" documentdb_rum (document bson_rum_single_path_ops (path='a.b', iswildcard='true', tl='60'))
 Check constraints:
-    "shard_key_value_check" CHECK (shard_key_value = '6403'::bigint)
+    "shard_key_value_check" CHECK (shard_key_value = '9303'::bigint)
 
 /* should succeed and truncate index term with wildcard index */
 SELECT documentdb_api.insert_one('db', 'wildcard_index_truncation_tests_single_field', '{ "_id": 1, "a": { "b": { "c": "this is a string that does violate the index term limit as it goes much over the 100 character limit of strings" } } }');
@@ -2848,9 +2848,9 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_6403_640061 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "a.b.c" : "this is a" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '6403'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_9303_930063 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "a.b.c" : "this is a" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '9303'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_6403_640061 collection
+         ->  Bitmap Heap Scan on documentdb_data.documents_9303_930063 collection
                Output: document
                Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "a.b.c" : "this is a" }'::documentdb_core.bson)
                ->  Bitmap Index Scan on wkey_2
@@ -2871,14 +2871,14 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_6403_640061 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "a.d.c" : "this is a" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '6403'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_9303_930063 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "a.d.c" : "this is a" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '9303'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_6403_640061 collection
+         ->  Bitmap Heap Scan on documentdb_data.documents_9303_930063 collection
                Output: document
-               Recheck Cond: (collection.shard_key_value = '6403'::bigint)
+               Recheck Cond: (collection.shard_key_value = '9303'::bigint)
                Filter: (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "a.d.c" : "this is a" }'::documentdb_core.bson)
                ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '6403'::bigint)
+                     Index Cond: (collection.shard_key_value = '9303'::bigint)
 (13 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'wildcard_index_truncation_tests_single_field') WHERE document @@ '{ "a.b.c": { "$gte": [ 2345, 1234, 1234, 1234, 1230 ] , "$lte": [ 2345, 1234, 1234, 1234, 1240 ] } }';
@@ -2895,9 +2895,9 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_6403_640061 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>=) '{ "a.b.c" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1230" } ] }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#<=) '{ "a.b.c" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1240" } ] }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '6403'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_9303_930063 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>=) '{ "a.b.c" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1230" } ] }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#<=) '{ "a.b.c" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1240" } ] }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '9303'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using wkey_2 on documentdb_data.documents_6403_640061 collection
+         ->  Index Scan using wkey_2 on documentdb_data.documents_9303_930063 collection
                Output: document
                Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@<>) '{ "a.b.c" : { "min" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1230" } ], "max" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1240" } ], "minInclusive" : true, "maxInclusive" : true } }'::documentdb_core.bson)
 (10 rows)
@@ -2916,9 +2916,9 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_6403_640061 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "a.b.c" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '6403'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_9303_930063 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "a.b.c" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '9303'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_6403_640061 collection
+         ->  Bitmap Heap Scan on documentdb_data.documents_9303_930063 collection
                Output: document
                Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a.b.c" : { "$numberInt" : "1" } }'::documentdb_core.bson)
                ->  Bitmap Index Scan on wkey_2
@@ -2939,9 +2939,9 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_6403_640061 collection WHERE (documentdb_api_catalog.bson_dollar_elemmatch(document, '{ "a.b.c" : { "$eq" : { "$numberInt" : "2345" } } }'::documentdb_core.bson) AND (shard_key_value OPERATOR(pg_catalog.=) '6403'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_9303_930063 collection WHERE (documentdb_api_catalog.bson_dollar_elemmatch(document, '{ "a.b.c" : { "$eq" : { "$numberInt" : "2345" } } }'::documentdb_core.bson) AND (shard_key_value OPERATOR(pg_catalog.=) '9303'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_6403_640061 collection
+         ->  Bitmap Heap Scan on documentdb_data.documents_9303_930063 collection
                Output: document
                Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@#?) '{ "a.b.c" : { "$eq" : { "$numberInt" : "2345" } } }'::documentdb_core.bson)
                ->  Bitmap Index Scan on wkey_2
@@ -2969,18 +2969,18 @@ NOTICE:  creating collection
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
-\d documentdb_data.documents_6404
-          Table "documentdb_data.documents_6404"
+\d documentdb_data.documents_9304
+          Table "documentdb_data.documents_9304"
      Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
  shard_key_value | bigint |           | not null | 
  object_id       | bson   |           | not null | 
  document        | bson   |           | not null | 
 Indexes:
-    "collection_pk_6404" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_6411" documentdb_rum (document bson_rum_wildcard_project_path_ops (includeid='false', tl='60', wkl='50', pathspec='[ "a", "b" ]', isexclusion='false'))
+    "collection_pk_9304" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_9311" documentdb_rum (document bson_rum_wildcard_project_path_ops (includeid='false', tl='60', wkl='50', pathspec='[ "a", "b" ]', isexclusion='false'))
 Check constraints:
-    "shard_key_value_check" CHECK (shard_key_value = '6404'::bigint)
+    "shard_key_value_check" CHECK (shard_key_value = '9304'::bigint)
 
 /* should succeed and truncate index term with wildcard index */
 SELECT documentdb_api.insert_one('db', 'wildcard_index_truncation_tests_wildcard_projection', '{ "_id": 1, "a": "this is a string that does violate the index term limit as it goes much over the 100 character limit of strings", "c": 2 }');
@@ -3021,9 +3021,9 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_6404_640074 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "a" : "this is a" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '6404'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_9304_930072 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "a" : "this is a" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '9304'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_6404_640074 collection
+         ->  Bitmap Heap Scan on documentdb_data.documents_9304_930072 collection
                Output: document
                Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "a" : "this is a" }'::documentdb_core.bson)
                ->  Bitmap Index Scan on wkey_3
@@ -3045,9 +3045,9 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_6404_640074 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "b" : "this is a" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '6404'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_9304_930072 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "b" : "this is a" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '9304'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_6404_640074 collection
+         ->  Bitmap Heap Scan on documentdb_data.documents_9304_930072 collection
                Output: document
                Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "b" : "this is a" }'::documentdb_core.bson)
                ->  Bitmap Index Scan on wkey_3
@@ -3068,9 +3068,9 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_6404_640074 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>=) '{ "a" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1230" } ] }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#<=) '{ "a" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1240" } ] }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '6404'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_9304_930072 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>=) '{ "a" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1230" } ] }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#<=) '{ "a" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1240" } ] }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '9304'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using wkey_3 on documentdb_data.documents_6404_640074 collection
+         ->  Index Scan using wkey_3 on documentdb_data.documents_9304_930072 collection
                Output: document
                Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@<>) '{ "a" : { "min" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1230" } ], "max" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1240" } ], "minInclusive" : true, "maxInclusive" : true } }'::documentdb_core.bson)
 (10 rows)
@@ -3089,9 +3089,9 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_6404_640074 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "a.l.j" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '6404'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_9304_930072 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "a.l.j" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '9304'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_6404_640074 collection
+         ->  Bitmap Heap Scan on documentdb_data.documents_9304_930072 collection
                Output: document
                Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a.l.j" : { "$numberInt" : "1" } }'::documentdb_core.bson)
                ->  Bitmap Index Scan on wkey_3
@@ -3112,9 +3112,9 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_6404_640074 collection WHERE (documentdb_api_catalog.bson_dollar_elemmatch(document, '{ "a" : { "$eq" : { "$numberInt" : "2345" } } }'::documentdb_core.bson) AND (shard_key_value OPERATOR(pg_catalog.=) '6404'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_9304_930072 collection WHERE (documentdb_api_catalog.bson_dollar_elemmatch(document, '{ "a" : { "$eq" : { "$numberInt" : "2345" } } }'::documentdb_core.bson) AND (shard_key_value OPERATOR(pg_catalog.=) '9304'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_6404_640074 collection
+         ->  Bitmap Heap Scan on documentdb_data.documents_9304_930072 collection
                Output: document
                Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@#?) '{ "a" : { "$eq" : { "$numberInt" : "2345" } } }'::documentdb_core.bson)
                ->  Bitmap Index Scan on wkey_3
@@ -3135,14 +3135,14 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_6404_640074 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "c" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '6404'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_9304_930072 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "c" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '9304'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_6404_640074 collection
+         ->  Bitmap Heap Scan on documentdb_data.documents_9304_930072 collection
                Output: document
-               Recheck Cond: (collection.shard_key_value = '6404'::bigint)
+               Recheck Cond: (collection.shard_key_value = '9304'::bigint)
                Filter: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "c" : { "$numberInt" : "1" } }'::documentdb_core.bson)
                ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '6404'::bigint)
+                     Index Cond: (collection.shard_key_value = '9304'::bigint)
 (13 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'wildcard_index_truncation_tests_wildcard_projection') WHERE document @@ '{ "d": 2 }';
@@ -3159,14 +3159,14 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_6404_640074 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "d" : { "$numberInt" : "2" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '6404'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_9304_930072 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "d" : { "$numberInt" : "2" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '9304'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_6404_640074 collection
+         ->  Bitmap Heap Scan on documentdb_data.documents_9304_930072 collection
                Output: document
-               Recheck Cond: (collection.shard_key_value = '6404'::bigint)
+               Recheck Cond: (collection.shard_key_value = '9304'::bigint)
                Filter: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "d" : { "$numberInt" : "2" } }'::documentdb_core.bson)
                ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '6404'::bigint)
+                     Index Cond: (collection.shard_key_value = '9304'::bigint)
 (13 rows)
 
 /* test that term truncation is enabled by default if user doesn't explicitly disable it. */
@@ -3179,11 +3179,11 @@ NOTICE:  creating collection
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
-SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 6405 ORDER BY index_id;
+SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 9305 ORDER BY index_id;
  collection_id | index_id |                         index_spec                         | index_is_valid 
 ---------------------------------------------------------------------
-          6405 |     6412 | (_id_,"{ ""_id"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,) | t
-          6405 |     6413 | (key,"{ ""a.b"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,)  | t
+          9305 |     9312 | (_id_,"{ ""_id"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,) | t
+          9305 |     9313 | (key,"{ ""a.b"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,)  | t
 (2 rows)
 
 /* enableLargeIndexKeys should be true because it was not explicitly set to false */
@@ -3194,11 +3194,11 @@ NOTICE:  creating collection
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
-SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 6406 ORDER BY index_id;
+SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 9306 ORDER BY index_id;
  collection_id | index_id |                         index_spec                         | index_is_valid 
 ---------------------------------------------------------------------
-          6406 |     6414 | (_id_,"{ ""_id"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,) | t
-          6406 |     6415 | (key,"{ ""a.b"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,)  | t
+          9306 |     9314 | (_id_,"{ ""_id"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,) | t
+          9306 |     9315 | (key,"{ ""a.b"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,)  | t
 (2 rows)
 
 /* enableLargeIndexKeys should be false because index does not support it (ttl index) */
@@ -3209,11 +3209,11 @@ NOTICE:  creating collection
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
-SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 6407 ORDER BY index_id;
+SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 9307 ORDER BY index_id;
  collection_id | index_id |                            index_spec                            | index_is_valid 
 ---------------------------------------------------------------------
-          6407 |     6416 | (_id_,"{ ""_id"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,)       | t
-          6407 |     6417 | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,) | t
+          9307 |     9316 | (_id_,"{ ""_id"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,)       | t
+          9307 |     9317 | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,) | t
 (2 rows)
 
 /* enableLargeIndexKeys should be false because index does not support it (hashed) */
@@ -3224,11 +3224,11 @@ NOTICE:  creating collection
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
-SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 6408 ORDER BY index_id;
+SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 9308 ORDER BY index_id;
  collection_id | index_id |                         index_spec                         | index_is_valid 
 ---------------------------------------------------------------------
-          6408 |     6418 | (_id_,"{ ""_id"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,) | t
-          6408 |     6419 | (key,"{ ""a.b"" : ""hashed"" }",,,,,2,,,)                  | t
+          9308 |     9318 | (_id_,"{ ""_id"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,) | t
+          9308 |     9319 | (key,"{ ""a.b"" : ""hashed"" }",,,,,2,,,)                  | t
 (2 rows)
 
 /* enableLargeIndexKeys should be false because index does not support it (text) */
@@ -3239,11 +3239,11 @@ NOTICE:  creating collection
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
-SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 6409 ORDER BY index_id;
+SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 9309 ORDER BY index_id;
  collection_id | index_id |                         index_spec                         | index_is_valid 
 ---------------------------------------------------------------------
-          6409 |     6420 | (_id_,"{ ""_id"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,) | t
-          6409 |     6421 | (key,"{ ""a.b"" : ""text"" }",,,,,2,,,)                    | t
+          9309 |     9320 | (_id_,"{ ""_id"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,) | t
+          9309 |     9321 | (key,"{ ""a.b"" : ""text"" }",,,,,2,,,)                    | t
 (2 rows)
 
 -- Additional tests for bug where index term length optimization with '$' was not consistent, i.e., we would generate prefix like 'ikey' and '$.0'
