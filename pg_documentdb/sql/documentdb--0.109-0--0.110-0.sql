@@ -45,3 +45,6 @@ REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA documentdb_api_v2 FROM PUBLIC;
 #include "udfs/query/bson_orderby--0.110-0.sql"
 
 #include "udfs/rum/composite_path_operator_functions--0.110-0.sql"
+
+-- pg_read_all_settings is required for metrics instrumentation to read documentdb.* GUCs
+GRANT pg_read_all_settings TO __API_BG_WORKER_ROLE__;
