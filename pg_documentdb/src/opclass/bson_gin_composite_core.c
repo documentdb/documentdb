@@ -365,6 +365,172 @@ UpdateRunDataForVariableBounds(CompositeQueryRunData *runData,
 }
 
 
+/*
+ * Given a set of scalar array bounds that have been picked for the current scan
+ * updates the global bounds for those scalar array bounds.
+ * Consider for instance
+ * clause 1: a ANY= [ 1, 2, 3, 4 ]
+ * clause 2: a > 2
+ * clause 3: b ANY= [ 5, 6, 7 ]
+ * With the current permutation states being:
+ * clause 1: offset 1 (pointing to 2)
+ * clause 3: offset 0 (pointing to 5)
+ * We would want to update the global bounds for path "a" to be (2, 2] after walking through
+ * all the query keys; and b would be [5, 5]
+ * If the result of walking the keys is unsatisfiable for a path, the unsatisfiablePathIndex is
+ * set to the first index that is unsatisfiable (here the index of "a"). Note that subsequent path
+ * indexes could ALSO be unsatisfiable, but that doesn't get updated here since revving the first one
+ * would be enough to move the scan forward.
+ *
+ * Similarly with the permutation
+ * clause 1: offset 2 (pointing to 3)
+ * clause 3: offset 1 (pointing to 6)
+ * The global bounds for path "a" would be set to [3, 3] and b would be [6, 6]
+ * Here none of the bounds are unsatisfiable so the unsatisfiablePathIndex would be set to -1.
+ *
+ * Any associated index recheck functions are added to the global runData.
+ */
+void
+UpdateRunDataForOrderedBounds(CompositeQueryRunData *runData,
+							  CompositeOrderedScanEntryData *orderedScanEntryData,
+							  int32_t *unsatisfiablePathIndex)
+{
+	*unsatisfiablePathIndex = -1;
+	for (int i = 0; i < runData->metaInfo->numIndexPaths; i++)
+	{
+		/* Reset rundata before starting with the new bounds */
+		runData->indexBounds[i].requiresRuntimeRecheck = false;
+		runData->indexBounds[i].isEqualityBound = false;
+
+		/* Free if we have a dupe */
+		if (runData->indexBounds[i].indexRecheckFunctions !=
+			orderedScanEntryData->baseIndexBounds[i].indexRecheckFunctions)
+		{
+			list_free(runData->indexBounds[i].indexRecheckFunctions);
+			runData->indexBounds[i].indexRecheckFunctions = NIL;
+		}
+
+		/* Set it to the base value for the bounds */
+		memcpy(&runData->indexBounds[i],
+			   &orderedScanEntryData->baseIndexBounds[i],
+			   sizeof(CompositeIndexBounds));
+
+		List *entriesForPath = orderedScanEntryData->perPathEntries[i].entries;
+
+		/* No variable entries for this path, use the base bounds */
+		if (entriesForPath == NIL)
+		{
+			continue;
+		}
+
+		ListCell *cell;
+		bool checkForUnsatisfiability = true;
+		foreach(cell, entriesForPath)
+		{
+			CompositeProcessedPerPathEntry *entry =
+				(CompositeProcessedPerPathEntry *) lfirst(cell);
+
+			/* The bound we want to consider here is the bound for the current index */
+			if (entry->currentOperatorIndex >= entry->boundsSet->numBounds)
+			{
+				/* We've exhausted the entries for this path
+				 * set the minBound to be MaxKey exclusive
+				 */
+				checkForUnsatisfiability = false;
+
+				CompositeIndexBounds *maxBounds =
+					&orderedScanEntryData->perPathEntries[i].maxRangeBounds;
+				if (maxBounds->lowerBound.bound.value_type == BSON_TYPE_EOD)
+				{
+					CompositeSingleBound maxKeyBound = GetTypeUpperBound(
+						orderedScanEntryData->perPathEntries[i].isEntryScanBackwards ?
+						BSON_TYPE_MINKEY : BSON_TYPE_MAXKEY);
+					maxKeyBound.isBoundInclusive = false;
+
+					maxBounds->lowerBound = maxKeyBound;
+					maxBounds->upperBound = maxKeyBound;
+					maxBounds->isEqualityBound = false;
+					IndexTermCreateMetadata metadata;
+					PopulateTermMetadataForTruncation(
+						&metadata, &orderedScanEntryData->basePathMetadata, runData,
+						orderedScanEntryData->indexPaths[i],
+						orderedScanEntryData->indexPathLengths[i],
+						orderedScanEntryData->sortOrders[i]);
+					MemoryContext oldContext =
+						MemoryContextSwitchTo(orderedScanEntryData->scanKeyMemoryContext);
+					UpdateSingleBoundForTruncation(runData, i, maxBounds, &metadata);
+					MemoryContextSwitchTo(oldContext);
+				}
+
+				runData->indexBounds[i] = *maxBounds;
+				orderedScanEntryData->perPathEntries[i].hasUnsatisfiableBounds = true;
+			}
+			else
+			{
+				SetLowerBound(&runData->indexBounds[i].lowerBound,
+							  &entry->boundsSet->bounds[entry->currentOperatorIndex].
+							  lowerBound);
+				SetUpperBound(&runData->indexBounds[i].upperBound,
+							  &entry->boundsSet->bounds[entry->currentOperatorIndex].
+							  upperBound);
+				runData->indexBounds->requiresRuntimeRecheck =
+					runData->indexBounds->requiresRuntimeRecheck ||
+					entry->boundsSet->bounds[entry
+											 ->currentOperatorIndex].
+					requiresRuntimeRecheck;
+				if (entry->boundsSet->bounds[entry->currentOperatorIndex].
+					indexRecheckFunctions != NIL)
+				{
+					MemoryContext oldContext =
+						MemoryContextSwitchTo(orderedScanEntryData->scanKeyMemoryContext);
+					if (runData->indexBounds[i].indexRecheckFunctions ==
+						orderedScanEntryData->baseIndexBounds[i].indexRecheckFunctions)
+					{
+						runData->indexBounds[i].indexRecheckFunctions = list_concat_copy(
+							orderedScanEntryData->baseIndexBounds[i].indexRecheckFunctions,
+							entry->boundsSet->bounds[entry->currentOperatorIndex].
+							indexRecheckFunctions);
+					}
+					else
+					{
+						runData->indexBounds[i].indexRecheckFunctions =
+							list_concat(runData->indexBounds[i].indexRecheckFunctions,
+										entry->boundsSet->bounds[entry->
+																 currentOperatorIndex].
+										indexRecheckFunctions);
+					}
+
+					MemoryContextSwitchTo(oldContext);
+				}
+			}
+		}
+
+		/* Set the equality bound after all of them are updated */
+		if (runData->indexBounds[i].lowerBound.bound.value_type != BSON_TYPE_EOD &&
+			runData->indexBounds[i].upperBound.bound.value_type != BSON_TYPE_EOD)
+		{
+			bool isComparisonValidIgnore = false;
+			int boundsCompare = CompareBsonValueAndType(
+				&runData->indexBounds[i].lowerBound.bound,
+				&runData->indexBounds[i].upperBound.bound,
+				&isComparisonValidIgnore);
+
+			/* lower bound is greater than upperbound (this is unsatisfiable) */
+			if (checkForUnsatisfiability && boundsCompare > 0 &&
+				*unsatisfiablePathIndex < 0)
+			{
+				*unsatisfiablePathIndex = i;
+			}
+
+			runData->indexBounds[i].isEqualityBound =
+				runData->indexBounds[i].lowerBound.isBoundInclusive &&
+				runData->indexBounds[i].upperBound.isBoundInclusive &&
+				boundsCompare == 0;
+		}
+	}
+}
+
+
 static void
 MergeBoundsForBoundsSet(CompositeIndexBoundsSet *set, CompositeIndexBounds *mergedBounds)
 {
@@ -599,6 +765,46 @@ UpdateSingleBoundForTruncation(CompositeQueryRunData *runData, int i,
 
 
 bool
+TryUpdateBoundsForTruncation(CompositeQueryRunData *runData,
+							 IndexTermCreateMetadata *basePathMetadata,
+							 const char **indexPaths, uint32_t *indexPathLengths,
+							 int8_t *sortOrders)
+{
+	bool hasTruncation = false;
+	for (int i = 0; i < runData->metaInfo->numIndexPaths; i++)
+	{
+		bool hasProcessedLowerBound =
+			runData->indexBounds[i].lowerBound.bound.value_type == BSON_TYPE_EOD ||
+			runData->indexBounds[i].lowerBound.serializedTerm != NULL;
+		bool hasProcessedUpperBound =
+			runData->indexBounds[i].upperBound.bound.value_type == BSON_TYPE_EOD ||
+			runData->indexBounds[i].upperBound.serializedTerm != NULL;
+
+		if (hasProcessedLowerBound && hasProcessedUpperBound)
+		{
+			hasTruncation = hasTruncation ||
+							(IsIndexTermTruncated(
+								 &runData->indexBounds[i].lowerBound.indexTermValue) ||
+							 IsIndexTermTruncated(
+								 &runData->indexBounds[i].upperBound.indexTermValue));
+			continue;
+		}
+
+		IndexTermCreateMetadata metadata;
+		PopulateTermMetadataForTruncation(&metadata, basePathMetadata, runData,
+										  indexPaths[i], indexPathLengths[i],
+										  sortOrders[i]);
+
+		bool currentHasTruncation = UpdateSingleBoundForTruncation(
+			runData, i, &runData->indexBounds[i], &metadata);
+		hasTruncation = hasTruncation || currentHasTruncation;
+	}
+
+	return hasTruncation;
+}
+
+
+bool
 UpdateBoundsForTruncation(CompositeQueryRunData *runData,
 						  IndexTermCreateMetadata *basePathMetadata,
 						  const char **indexPaths, uint32_t *indexPathLengths,
@@ -612,9 +818,8 @@ UpdateBoundsForTruncation(CompositeQueryRunData *runData,
 										  indexPaths[i], indexPathLengths[i],
 										  sortOrders[i]);
 
-		bool currentHasTruncation = UpdateSingleBoundForTruncation(runData, i,
-																   &runData->indexBounds[i
-																   ], &metadata);
+		bool currentHasTruncation = UpdateSingleBoundForTruncation(
+			runData, i, &runData->indexBounds[i], &metadata);
 		hasTruncation = hasTruncation || currentHasTruncation;
 	}
 

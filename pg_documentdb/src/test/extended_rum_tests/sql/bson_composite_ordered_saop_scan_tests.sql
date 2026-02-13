@@ -62,17 +62,20 @@ CREATE FUNCTION ordered_saop_scan_test.validate_index_runtime_equivalence(queryS
         index_reverse_query_spec bson;
         index_mixed_query_spec bson;
         runtime_query_spec bson;
+        index_query_backwards_spec bson;
     BEGIN
         SELECT bson_dollar_add_fields(querySpec, '{ "find": "ordered_saop_scan_coll" }') INTO runtime_query_spec;
         SELECT bson_dollar_add_fields(querySpec, '{ "find": "ordered_saop_index_coll" }') INTO index_query_spec;
         SELECT bson_dollar_add_fields(querySpec, '{ "find": "ordered_saop_index_reverse_coll" }') INTO index_reverse_query_spec;
         SELECT bson_dollar_add_fields(querySpec, '{ "find": "ordered_saop_index_mixed_coll" }') INTO index_mixed_query_spec;
+        SELECT bson_dollar_add_fields(querySpec, '{ "find": "ordered_saop_index_coll", "sort": { "a": -1 } }') INTO index_query_backwards_spec;
 
         set client_min_messages to warning;
         DROP TABLE IF EXISTS runtime_results;
         DROP TABLE IF EXISTS index_results;
         DROP TABLE IF EXISTS index_reverse_results;
         DROP TABLE IF EXISTS index_mixed_results;
+        DROP TABLE IF EXISTS index_backwards_results;
         reset client_min_messages;
 
         -- run the runtime query.
@@ -86,6 +89,9 @@ CREATE FUNCTION ordered_saop_scan_test.validate_index_runtime_equivalence(queryS
 
         -- run the mixed query
         CREATE TEMP TABLE index_mixed_results AS SELECT document FROM bson_aggregation_find('ordered_saop_scan_test', index_mixed_query_spec);
+
+        -- run the backwards scan query
+        CREATE TEMP TABLE index_backwards_results AS SELECT document FROM bson_aggregation_find('ordered_saop_scan_test', index_query_backwards_spec);
 
         IF (SELECT COUNT(*) FROM (SELECT * FROM runtime_results EXCEPT SELECT * FROM index_results) AS subquery) > 0 THEN
             RAISE EXCEPTION 'Runtime has results that are not in index results, runtime query %, index query %', runtime_query_spec, index_query_spec;
@@ -108,6 +114,12 @@ CREATE FUNCTION ordered_saop_scan_test.validate_index_runtime_equivalence(queryS
             RAISE EXCEPTION 'Index mixed has results that are not in runtime results, runtime query %, index mixed query %', runtime_query_spec, index_mixed_query_spec;
         END IF;
 
+        IF (SELECT COUNT(*) FROM (SELECT * FROM runtime_results EXCEPT SELECT * FROM index_backwards_results) AS subquery) > 0 THEN
+            RAISE EXCEPTION 'Runtime has results that are not in index backwards results, runtime query %, index backwards query %', runtime_query_spec, index_backwards_query_spec;
+        END IF;
+        IF (SELECT COUNT(*) FROM (SELECT * FROM index_backwards_results EXCEPT SELECT * FROM runtime_results) AS subquery) > 0 THEN
+            RAISE EXCEPTION 'Index backwards has results that are not in runtime results, runtime query %, index backwards query %', runtime_query_spec, index_backwards_query_spec;
+        END IF;
         RETURN QUERY SELECT document FROM index_results;
     END;
     $$;
@@ -116,12 +128,18 @@ CREATE FUNCTION ordered_saop_scan_test.validate_index_runtime_equivalence(queryS
 set documentdb.max_non_ordered_term_scan_threshold to 1;
 
 -- validate from explain we are using ordered scans
--- TODO: This should not take 2999 loops
 set documentdb.enableExtendedExplainPlans to on;
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
         '{ "find": "ordered_saop_index_coll", "filter": { "a": { "$in": [ 5, 16, 2005, 3001 ] }, "b": { "$in": [ 8, 6, 2005, 2995, 2996, 4000 ] } } }'::bson);
+$cmd$);
+
+-- TODO: This should not take 2999 loops
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_coll", "filter": { "a": { "$in": [ 5, 16, 2005, 3001 ] }, "b": { "$in": [ 8, 6, 2005, 2995, 2996, 4000 ] } }, "sort": { "a": -1 } }'::bson);
 $cmd$);
 
 SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(

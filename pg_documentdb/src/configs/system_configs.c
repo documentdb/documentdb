@@ -476,14 +476,14 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomStringVariable(
-		psprintf("%s.alternate_index_handler_name", prefix),
+		psprintf("%s.alternate_index_handler_name", newGucPrefix),
 		gettext_noop(
-			"The name of the index handler to use as opposed to rum (currently for testing only)."),
+			"The name of the index handler to use as opposed to rum."),
 		NULL, &AlternateIndexHandler, DEFAULT_ALTERNATE_INDEX_HANDLER,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(
-		psprintf("%s.max_non_ordered_term_scan_threshold", prefix),
+		psprintf("%s.max_non_ordered_term_scan_threshold", newGucPrefix),
 		gettext_noop(
 			"The maximum threshold for non-ordered term scans."),
 		NULL, &MaxNonOrderedTermScanThreshold,

@@ -1361,6 +1361,22 @@ fn query_planner(
                             index_doc.append("bounds", bounds_arr);
                         }
 
+                        if let Some(start_bounds) = detail.start_bounds.as_ref() {
+                            let mut bounds_arr = RawArrayBuf::new();
+                            start_bounds.iter().for_each(|key| {
+                                bounds_arr.push(key.as_str());
+                            });
+                            index_doc.append("startBounds", bounds_arr);
+                        }
+
+                        if let Some(raw_bounds) = detail.raw_bounds.as_ref() {
+                            let mut bounds_arr = RawArrayBuf::new();
+                            raw_bounds.iter().for_each(|key| {
+                                bounds_arr.push(key.as_str());
+                            });
+                            index_doc.append("rawBounds", bounds_arr);
+                        }
+
                         arr.push(index_doc);
                     }
 

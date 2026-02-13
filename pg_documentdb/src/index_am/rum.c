@@ -1395,7 +1395,8 @@ RumGetTruncationStatus(Relation indexRelation)
 
 
 static List *
-GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum, bool hasOrderBy)
+GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum, bool hasOrderBy,
+						 List **rawPerPathBounds)
 {
 	uint32_t nentries = 0;
 	bool *partialMatch = NULL;
@@ -1427,10 +1428,16 @@ GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum, bool hasOr
 	{
 		bytea *entry = DatumGetByteaPP(entryRes[i]);
 
+		List *rawPathBoundsInner = NIL;
 		char *serializedBound = SerializeBoundsStringForExplain(entry,
 																extraData[i],
-																fcinfo);
+																fcinfo,
+																&rawPathBoundsInner);
 		boundsList = lappend(boundsList, serializedBound);
+		if (rawPathBoundsInner != NIL)
+		{
+			*rawPerPathBounds = list_concat(*rawPerPathBounds, rawPathBoundsInner);
+		}
 	}
 
 	return boundsList;
@@ -1484,9 +1491,19 @@ ExplainRawCompositeScan(Relation index_rel, List *indexQuals, List *indexOrderBy
 													   supportsOrderedOperatorScans);
 	if (compositeDatum != 0)
 	{
+		List *rawPerPathBounds = NIL;
 		List *boundsList = GetIndexBoundsForExplain(index_rel, compositeDatum,
-													list_length(indexOrderBy) > 0);
-		ExplainPropertyList("indexBounds", boundsList, es);
+													list_length(indexOrderBy) > 0,
+													&rawPerPathBounds);
+		if (rawPerPathBounds != NIL)
+		{
+			ExplainPropertyList("startBounds", boundsList, es);
+			ExplainPropertyList("rawBounds", rawPerPathBounds, es);
+		}
+		else
+		{
+			ExplainPropertyList("indexBounds", boundsList, es);
+		}
 	}
 }
 
@@ -1520,13 +1537,21 @@ ExplainCompositeScan(IndexScanDesc scan, ExplainState *es)
 
 	if (outerScanState->compositeKey.sk_argument != (Datum) 0)
 	{
+		List *rawPerPathBounds = NIL;
 		List *boundsList = GetIndexBoundsForExplain(
 			scan->indexRelation,
 			outerScanState->compositeKey.sk_argument,
-			scan->numberOfOrderBys > 0);
+			scan->numberOfOrderBys > 0, &rawPerPathBounds);
 
-		/* Now write out the result for explain */
-		ExplainPropertyList("indexBounds", boundsList, es);
+		if (rawPerPathBounds != NIL)
+		{
+			ExplainPropertyList("startBounds", boundsList, es);
+			ExplainPropertyList("rawBounds", rawPerPathBounds, es);
+		}
+		else
+		{
+			ExplainPropertyList("indexBounds", boundsList, es);
+		}
 	}
 
 	if (outerScanState->numDuplicates > 0)
