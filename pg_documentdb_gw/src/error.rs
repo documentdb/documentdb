@@ -108,6 +108,10 @@ impl DocumentDBError {
             _ => None,
         }
     }
+
+    pub fn command_not_supported(msg: String) -> Self {
+        DocumentDBError::DocumentDBError(ErrorCode::CommandNotSupported, msg, Backtrace::capture())
+    }
 }
 
 /// The result type for all methods that can return an error
