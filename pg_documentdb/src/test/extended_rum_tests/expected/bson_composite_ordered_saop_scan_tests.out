@@ -148,17 +148,20 @@ CREATE FUNCTION ordered_saop_scan_test.validate_index_runtime_equivalence(queryS
         index_reverse_query_spec bson;
         index_mixed_query_spec bson;
         runtime_query_spec bson;
+        index_query_backwards_spec bson;
     BEGIN
         SELECT bson_dollar_add_fields(querySpec, '{ "find": "ordered_saop_scan_coll" }') INTO runtime_query_spec;
         SELECT bson_dollar_add_fields(querySpec, '{ "find": "ordered_saop_index_coll" }') INTO index_query_spec;
         SELECT bson_dollar_add_fields(querySpec, '{ "find": "ordered_saop_index_reverse_coll" }') INTO index_reverse_query_spec;
         SELECT bson_dollar_add_fields(querySpec, '{ "find": "ordered_saop_index_mixed_coll" }') INTO index_mixed_query_spec;
+        SELECT bson_dollar_add_fields(querySpec, '{ "find": "ordered_saop_index_coll", "sort": { "a": -1 } }') INTO index_query_backwards_spec;
 
         set client_min_messages to warning;
         DROP TABLE IF EXISTS runtime_results;
         DROP TABLE IF EXISTS index_results;
         DROP TABLE IF EXISTS index_reverse_results;
         DROP TABLE IF EXISTS index_mixed_results;
+        DROP TABLE IF EXISTS index_backwards_results;
         reset client_min_messages;
 
         -- run the runtime query.
@@ -172,6 +175,9 @@ CREATE FUNCTION ordered_saop_scan_test.validate_index_runtime_equivalence(queryS
 
         -- run the mixed query
         CREATE TEMP TABLE index_mixed_results AS SELECT document FROM bson_aggregation_find('ordered_saop_scan_test', index_mixed_query_spec);
+
+        -- run the backwards scan query
+        CREATE TEMP TABLE index_backwards_results AS SELECT document FROM bson_aggregation_find('ordered_saop_scan_test', index_query_backwards_spec);
 
         IF (SELECT COUNT(*) FROM (SELECT * FROM runtime_results EXCEPT SELECT * FROM index_results) AS subquery) > 0 THEN
             RAISE EXCEPTION 'Runtime has results that are not in index results, runtime query %, index query %', runtime_query_spec, index_query_spec;
@@ -194,32 +200,61 @@ CREATE FUNCTION ordered_saop_scan_test.validate_index_runtime_equivalence(queryS
             RAISE EXCEPTION 'Index mixed has results that are not in runtime results, runtime query %, index mixed query %', runtime_query_spec, index_mixed_query_spec;
         END IF;
 
+        IF (SELECT COUNT(*) FROM (SELECT * FROM runtime_results EXCEPT SELECT * FROM index_backwards_results) AS subquery) > 0 THEN
+            RAISE EXCEPTION 'Runtime has results that are not in index backwards results, runtime query %, index backwards query %', runtime_query_spec, index_backwards_query_spec;
+        END IF;
+        IF (SELECT COUNT(*) FROM (SELECT * FROM index_backwards_results EXCEPT SELECT * FROM runtime_results) AS subquery) > 0 THEN
+            RAISE EXCEPTION 'Index backwards has results that are not in runtime results, runtime query %, index backwards query %', runtime_query_spec, index_backwards_query_spec;
+        END IF;
         RETURN QUERY SELECT document FROM index_results;
     END;
     $$;
 -- make it so that > 1 variable terms force ordered scans.
 set documentdb.max_non_ordered_term_scan_threshold to 1;
 -- validate from explain we are using ordered scans
--- TODO: This should not take 2999 loops
 set documentdb.enableExtendedExplainPlans to on;
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
         '{ "find": "ordered_saop_index_coll", "filter": { "a": { "$in": [ 5, 16, 2005, 3001 ] }, "b": { "$in": [ 8, 6, 2005, 2995, 2996, 4000 ] } } }'::bson);
 $cmd$);
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    indexName: a_1_b_1
    indexKey: {"a": 1,"b": 1}
    isMultiKey: false
-   indexBounds: ["a": [5, 5], "b": [8, 8]], ["a": [16, 16], "b": [8, 8]], ["a": [2005, 2005], "b": [8, 8]], ["a": [3001, 3001], "b": [8, 8]], ["a": [5, 5], "b": [6, 6]], ["a": [16, 16], "b": [6, 6]], ["a": [2005, 2005], "b": [6, 6]], ["a": [3001, 3001], "b": [6, 6]], ["a": [5, 5], "b": [2005, 2005]], ["a": [16, 16], "b": [2005, 2005]], ["a": [2005, 2005], "b": [2005, 2005]], ["a": [3001, 3001], "b": [2005, 2005]], ["a": [5, 5], "b": [2995, 2995]], ["a": [16, 16], "b": [2995, 2995]], ["a": [2005, 2005], "b": [2995, 2995]], ["a": [3001, 3001], "b": [2995, 2995]], ["a": [5, 5], "b": [2996, 2996]], ["a": [16, 16], "b": [2996, 2996]], ["a": [2005, 2005], "b": [2996, 2996]], ["a": [3001, 3001], "b": [2996, 2996]], ["a": [5, 5], "b": [4000, 4000]], ["a": [16, 16], "b": [4000, 4000]], ["a": [2005, 2005], "b": [4000, 4000]], ["a": [3001, 3001], "b": [4000, 4000]]
-   innerScanLoops: 2 loops
-   scanType: regular
-   scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 1), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 1)]
+   startBounds: ["a": [5, 5], "b": [6, 6]]
+   rawBounds: ["a": [5, 5], [16, 16], [2005, 2005], [3001, 3001]], ["b": [6, 6], [8, 8], [2005, 2005], [2995, 2995], [2996, 2996], [4000, 4000]]
+   innerScanLoops: 8 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
    ->  Index Scan using a_1_b_1 on documents_1202 collection (actual rows=2 loops=1)
          Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "5" }, { "$numberInt" : "16" }, { "$numberInt" : "2005" }, { "$numberInt" : "3001" } ] }'::bson) AND (document @*= '{ "b" : [ { "$numberInt" : "8" }, { "$numberInt" : "6" }, { "$numberInt" : "2005" }, { "$numberInt" : "2995" }, { "$numberInt" : "2996" }, { "$numberInt" : "4000" } ] }'::bson))
-(10 rows)
+(11 rows)
+
+-- TODO: This should not take 2999 loops
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_coll", "filter": { "a": { "$in": [ 5, 16, 2005, 3001 ] }, "b": { "$in": [ 8, 6, 2005, 2995, 2996, 4000 ] } }, "sort": { "a": -1 } }'::bson);
+$cmd$);
+                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   indexName: a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   startBounds: ["a": [3001, 3001], "b": [4000, 4000]]
+   rawBounds: ["a": [3001, 3001], [2005, 2005], [16, 16], [5, 5]], ["b": [4000, 4000], [2996, 2996], [2995, 2995], [2005, 2005], [8, 8], [6, 6]]
+   isBackwardScan: true
+   innerScanLoops: 2999 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+   ->  Index Scan using a_1_b_1 on documents_1202 collection (actual rows=2 loops=1)
+         Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "5" }, { "$numberInt" : "16" }, { "$numberInt" : "2005" }, { "$numberInt" : "3001" } ] }'::bson) AND (document @*= '{ "b" : [ { "$numberInt" : "8" }, { "$numberInt" : "6" }, { "$numberInt" : "2005" }, { "$numberInt" : "2995" }, { "$numberInt" : "2996" }, { "$numberInt" : "4000" } ] }'::bson))
+         Order By: (document OPERATOR(documentdb_api_internal.<>-|) '{ "a" : { "$numberInt" : "-1" } }'::bson)
+(13 rows)
 
 SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
     '{ "filter": { "a": { "$in": [ 5, 16, 2005, 3001 ] }, "b": { "$in": [ 8, 6, 2005, 2995, 2996, 4000 ] } } }'::bson
@@ -328,8 +363,8 @@ SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
 ---------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "10" }, "b" : { "$numberInt" : "5" } }
  { "_id" : { "$numberInt" : "10" }, "a" : { "$numberInt" : "20" }, "b" : { "$numberInt" : "10" } }
- { "_id" : { "$numberInt" : "2500" }, "a" : { "$numberInt" : "2500" }, "b" : { "$numberInt" : "501" } }
  { "_id" : { "$numberInt" : "4001" }, "a" : { "$numberInt" : "1000" }, "b" : { "$numberInt" : "2000" } }
+ { "_id" : { "$numberInt" : "2500" }, "a" : { "$numberInt" : "2500" }, "b" : { "$numberInt" : "501" } }
 (4 rows)
 
 -- $in on 'a' with exact equality on 'b'
@@ -379,8 +414,8 @@ SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
 );
                                 validate_index_runtime_equivalence                                 
 ---------------------------------------------------------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "1" } }
  { "_id" : { "$numberInt" : "1001" }, "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "1" } }
  { "_id" : { "$numberInt" : "1002" }, "a" : { "$numberInt" : "3" }, "b" : { "$numberInt" : "6" } }
 (3 rows)
 
@@ -399,6 +434,7 @@ SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
 );
                                    validate_index_runtime_equivalence                                    
 ---------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1001" }, "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "3" } }
  { "_id" : { "$numberInt" : "25" }, "a" : { "$numberInt" : "50" }, "b" : { "$numberInt" : "25" } }
  { "_id" : { "$numberInt" : "50" }, "a" : { "$numberInt" : "100" }, "b" : { "$numberInt" : "50" } }
  { "_id" : { "$numberInt" : "100" }, "a" : { "$numberInt" : "200" }, "b" : { "$numberInt" : "100" } }
@@ -406,7 +442,6 @@ SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
  { "_id" : { "$numberInt" : "500" }, "a" : { "$numberInt" : "1000" }, "b" : { "$numberInt" : "500" } }
  { "_id" : { "$numberInt" : "750" }, "a" : { "$numberInt" : "1500" }, "b" : { "$numberInt" : "750" } }
  { "_id" : { "$numberInt" : "1000" }, "a" : { "$numberInt" : "2000" }, "b" : { "$numberInt" : "1000" } }
- { "_id" : { "$numberInt" : "1001" }, "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "3" } }
  { "_id" : { "$numberInt" : "2500" }, "a" : { "$numberInt" : "2500" }, "b" : { "$numberInt" : "501" } }
  { "_id" : { "$numberInt" : "3000" }, "a" : { "$numberInt" : "3000" }, "b" : { "$numberInt" : "1" } }
 (10 rows)
@@ -463,12 +498,12 @@ SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
                                    validate_index_runtime_equivalence                                    
 ---------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "1" } }
- { "_id" : { "$numberInt" : "1000" }, "a" : { "$numberInt" : "2000" }, "b" : { "$numberInt" : "1000" } }
  { "_id" : { "$numberInt" : "2000" }, "a" : { "$numberInt" : "1999" }, "b" : { "$numberInt" : "3000" } }
+ { "_id" : { "$numberInt" : "1000" }, "a" : { "$numberInt" : "2000" }, "b" : { "$numberInt" : "1000" } }
  { "_id" : { "$numberInt" : "2001" }, "a" : { "$numberInt" : "2001" }, "b" : { "$numberInt" : "1000" } }
  { "_id" : { "$numberInt" : "3000" }, "a" : { "$numberInt" : "3000" }, "b" : { "$numberInt" : "1" } }
- { "_id" : { "$numberInt" : "3001" }, "a" : { "$numberInt" : "4000" }, "b" : { "$numberInt" : "3001" } }
  { "_id" : { "$numberInt" : "4000" }, "a" : { "$numberInt" : "3001" }, "b" : { "$numberInt" : "4000" } }
+ { "_id" : { "$numberInt" : "3001" }, "a" : { "$numberInt" : "4000" }, "b" : { "$numberInt" : "3001" } }
 (7 rows)
 
 -- $in on 'a' with overlapping values in data batches (a=1000 has two docs)
@@ -478,11 +513,11 @@ SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
                                    validate_index_runtime_equivalence                                    
 ---------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "499" }, "a" : { "$numberInt" : "998" }, "b" : { "$numberInt" : "499" } }
- { "_id" : { "$numberInt" : "500" }, "a" : { "$numberInt" : "1000" }, "b" : { "$numberInt" : "500" } }
- { "_id" : { "$numberInt" : "501" }, "a" : { "$numberInt" : "1002" }, "b" : { "$numberInt" : "501" } }
  { "_id" : { "$numberInt" : "1500" }, "a" : { "$numberInt" : "999" }, "b" : { "$numberInt" : "1500" } }
- { "_id" : { "$numberInt" : "1501" }, "a" : { "$numberInt" : "1001" }, "b" : { "$numberInt" : "1503" } }
+ { "_id" : { "$numberInt" : "500" }, "a" : { "$numberInt" : "1000" }, "b" : { "$numberInt" : "500" } }
  { "_id" : { "$numberInt" : "4001" }, "a" : { "$numberInt" : "1000" }, "b" : { "$numberInt" : "2000" } }
+ { "_id" : { "$numberInt" : "1501" }, "a" : { "$numberInt" : "1001" }, "b" : { "$numberInt" : "1503" } }
+ { "_id" : { "$numberInt" : "501" }, "a" : { "$numberInt" : "1002" }, "b" : { "$numberInt" : "501" } }
 (6 rows)
 
 -- $in on 'a' targeting only odd values with $in on 'b' targeting multiples of 3

@@ -193,6 +193,8 @@ pub struct IndexDetails {
     pub index_name: Option<String>,
     pub is_multi_key: Option<bool>,
     pub index_bounds: Option<Vec<String>>,
+    pub raw_bounds: Option<Vec<String>>,
+    pub start_bounds: Option<Vec<String>>,
     pub inner_scan_loops: Option<i64>,
     pub scan_key_details: Option<Vec<String>>,
     pub scan_type: Option<String>,
