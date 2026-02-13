@@ -604,18 +604,24 @@ initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch, bool hasOrder
 								"operator class requested ordered scans, but index disallows it")));
 		}
 
-		if (ScanDirectionIsBackward(so->orderScanDirection) && searchMode ==
-			RUM_SEARCH_MODE_ORDERED)
+		if (searchMode == RUM_SEARCH_MODE_ORDERED)
 		{
-			ereport(ERROR, (errmsg(
-								"Scan has backward scan direction but operator class requested forward ordering")));
+			if (ScanDirectionIsBackward(so->orderScanDirection))
+			{
+				ereport(ERROR, (errmsg(
+									"Scan has backward scan direction but operator class requested forward ordering")));
+			}
+
 			so->orderScanDirection = ForwardScanDirection;
 		}
-		else if (ScanDirectionIsForward(so->orderScanDirection) && searchMode ==
-				 RUM_SEARCH_MODE_ORDERED_REVERSE)
+		else if (searchMode == RUM_SEARCH_MODE_ORDERED_REVERSE)
 		{
-			ereport(ERROR, (errmsg(
-								"Scan has forward scan direction but operator class requested backward ordering")));
+			if (ScanDirectionIsForward(so->orderScanDirection))
+			{
+				ereport(ERROR, (errmsg(
+									"Scan has forward scan direction but operator class requested backward ordering")));
+			}
+
 			so->orderScanDirection = BackwardScanDirection;
 		}
 
