@@ -399,4 +399,10 @@ pub trait PgDataClient: Send + Sync {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response>;
+
+    async fn execute_move_collection(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Response>;
 }

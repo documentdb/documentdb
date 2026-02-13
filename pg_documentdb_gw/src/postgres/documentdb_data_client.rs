@@ -1147,26 +1147,12 @@ impl PgDataClient for DocumentDBDataClient {
 
     async fn execute_list_shards(
         &self,
-        request_context: &RequestContext<'_>,
-        connection_context: &ConnectionContext,
+        _request_context: &RequestContext<'_>,
+        _connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (_, request_info, request_tracker) = request_context.get_components();
-        let shards = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .list_shards(),
-                &[],
-                &[],
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-
-        Ok(Response::Pg(PgResponse::new(shards)))
+        Err(DocumentDBError::command_not_supported(
+            "Not supported operation.".to_string(),
+        ))
     }
 
     async fn execute_connection_status(
@@ -1366,73 +1352,41 @@ impl PgDataClient for DocumentDBDataClient {
 
     async fn execute_balancer_start(
         &self,
-        request_context: &RequestContext<'_>,
-        connection_context: &ConnectionContext,
+        _request_context: &RequestContext<'_>,
+        _connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let balancer_start = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .balancer_start(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-
-        Ok(Response::Pg(PgResponse::new(balancer_start)))
+        Err(DocumentDBError::command_not_supported(
+            "Not supported operation.".to_string(),
+        ))
     }
 
     async fn execute_balancer_status(
         &self,
-        request_context: &RequestContext<'_>,
-        connection_context: &ConnectionContext,
+        _request_context: &RequestContext<'_>,
+        _connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let balancer_status = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .balancer_status(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-
-        Ok(Response::Pg(PgResponse::new(balancer_status)))
+        Err(DocumentDBError::command_not_supported(
+            "Not supported operation.".to_string(),
+        ))
     }
 
     async fn execute_balancer_stop(
         &self,
-        request_context: &RequestContext<'_>,
-        connection_context: &ConnectionContext,
+        _request_context: &RequestContext<'_>,
+        _connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let balancer_stop = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .balancer_stop(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
+        Err(DocumentDBError::command_not_supported(
+            "Not supported operation.".to_string(),
+        ))
+    }
 
-        Ok(Response::Pg(PgResponse::new(balancer_stop)))
+    async fn execute_move_collection(
+        &self,
+        _request_context: &RequestContext<'_>,
+        _connection_context: &ConnectionContext,
+    ) -> Result<Response> {
+        Err(DocumentDBError::command_not_supported(
+            "Not supported operation.".to_string(),
+        ))
     }
 }

@@ -91,6 +91,7 @@ pub struct QueryCatalog {
     pub balancer_start: String,
     pub balancer_status: String,
     pub balancer_stop: String,
+    pub move_collection: String,
 
     // indexing.rs
     pub create_indexes_background: String,
@@ -367,6 +368,10 @@ impl QueryCatalog {
         &self.get_parameter
     }
 
+    pub fn move_collection(&self) -> &str {
+        &self.move_collection
+    }
+
     // User getters
     pub fn create_user(&self) -> &str {
         &self.create_user
@@ -497,9 +502,6 @@ pub fn create_query_catalog() -> QueryCatalog {
             rename_collection: "SELECT documentdb_api.rename_collection($1, $2, $3, $4)".to_string(),
             coll_mod: "SELECT documentdb_api.coll_mod($1, $2, $3)".to_string(),
             unshard_collection: "SELECT documentdb_api.unshard_collection($1)".to_string(),
-            balancer_start: "SELECT documentdb_api_distributed.rebalancer_start($1)".to_string(),
-            balancer_status: "SELECT documentdb_api_distributed.rebalancer_status($1)".to_string(),
-            balancer_stop: "SELECT documentdb_api_distributed.rebalancer_stop($1)".to_string(),
 
             // data_management.rs
             delete: "SELECT * FROM documentdb_api.delete($1, $2, $3, NULL)".to_string(),
