@@ -29,22 +29,20 @@ pub async fn save_cursor(
         let connection = if persist { Some(connection) } else { None };
         let dynamic_config = connection_context.service_context.dynamic_configuration();
         let cursor_timeout =
-            if dynamic_config.enable_stateless_cursor_timeout().await && connection.is_none() {
-                Duration::from_secs(dynamic_config.stateless_cursor_idle_timeout_sec().await)
+            if dynamic_config.enable_stateless_cursor_timeout() && connection.is_none() {
+                Duration::from_secs(dynamic_config.stateless_cursor_idle_timeout_sec())
             } else {
-                Duration::from_secs(dynamic_config.default_cursor_idle_timeout_sec().await)
+                Duration::from_secs(dynamic_config.default_cursor_idle_timeout_sec())
             };
-        connection_context
-            .add_cursor(
-                connection,
-                cursor,
-                connection_context.auth_state.username()?,
-                request_info.db()?,
-                request_info.collection()?,
-                cursor_timeout,
-                request_info.session_id.map(|v| v.to_vec()),
-            )
-            .await;
+        connection_context.add_cursor(
+            connection,
+            cursor,
+            connection_context.auth_state.username()?,
+            request_info.db()?,
+            request_info.collection()?,
+            cursor_timeout,
+            request_info.session_id.map(|v| v.to_vec()),
+        );
     }
     Ok(())
 }
@@ -86,8 +84,7 @@ pub async fn process_kill_cursors(
         .kill_cursors(
             connection_context.auth_state.username()?.to_string(),
             &cursor_ids,
-        )
-        .await;
+        );
 
     if !removed_cursors.is_empty() {
         pg_data_client
@@ -142,7 +139,6 @@ pub async fn process_get_more(
         ..
     } = connection_context
         .get_cursor(id, connection_context.auth_state.username()?)
-        .await
         .ok_or(DocumentDBError::documentdb_error(
             ErrorCode::CursorNotFound,
             "Provided cursor was not found.".to_string(),
@@ -162,34 +158,30 @@ pub async fn process_get_more(
         .service_context
         .dynamic_configuration()
         .enable_stateless_cursor_timeout()
-        .await
     {
         cursor_timeout = Duration::from_secs(
             connection_context
                 .service_context
                 .dynamic_configuration()
-                .default_cursor_idle_timeout_sec()
-                .await,
+                .default_cursor_idle_timeout_sec(),
         );
     }
 
     if let Some(row) = results.first() {
         let continuation: Option<PgDocument> = row.try_get(1)?;
         if let Some(continuation) = continuation {
-            connection_context
-                .add_cursor(
-                    cursor_connection,
-                    Cursor {
-                        cursor_id: id,
-                        continuation: continuation.0.to_raw_document_buf(),
-                    },
-                    connection_context.auth_state.username()?,
-                    &db,
-                    &collection,
-                    cursor_timeout,
-                    session_id,
-                )
-                .await;
+            connection_context.add_cursor(
+                cursor_connection,
+                Cursor {
+                    cursor_id: id,
+                    continuation: continuation.0.to_raw_document_buf(),
+                },
+                connection_context.auth_state.username()?,
+                &db,
+                &collection,
+                cursor_timeout,
+                session_id,
+            );
         }
     }
 

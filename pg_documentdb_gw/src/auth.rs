@@ -160,7 +160,7 @@ where
 
     if request.request_type().allowed_unauthorized() {
         let service_context = Arc::clone(&connection_context.service_context);
-        let data_client = T::new_unauthorized(&service_context).await?;
+        let data_client = T::new_unauthorized(&service_context)?;
 
         return processor::process_request(request_context, connection_context, data_client).await;
     }
@@ -398,7 +398,7 @@ async fn handle_oidc_token_authentication(
 
     // Allocate a connection pool for the user after successful authentication, which will be used for subsequent requests on this connection.
     // The pool will be deallocated after a period of inactivity.
-    connection_context.allocate_data_pool(token_string).await?;
+    connection_context.allocate_data_pool(token_string)?;
 
     /* We are setting a timer for the time until token expiry, which will set authorized to false at the end */
     let connection_activity_id = connection_context.connection_id.to_string();
@@ -591,7 +591,7 @@ async fn handle_sasl_continue(
             Some(get_user_oid(connection_context, username).await?);
 
         *connection_context.auth_state.is_authorized().write().await = true;
-        connection_context.allocate_data_pool("").await?;
+        connection_context.allocate_data_pool("")?;
 
         Ok(Response::Raw(RawResponse(rawdoc! {
             "payload": payload,

@@ -34,6 +34,9 @@ correctness = { level = "warn", priority = -1 }
 suspicious = { level = "warn", priority = -1 }
 perf = { level = "warn", priority = -1 }
 
+needless_pass_by_ref_mut = "warn"
+unused_async = "warn"
+
 [profile.release-with-symbols]
 inherits = "release"
 # Generates the minimal amount of debug info for backtraces with filename/line number info, but not anything else

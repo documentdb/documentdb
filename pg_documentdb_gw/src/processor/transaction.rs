@@ -116,8 +116,7 @@ pub async fn handle(
             && !(connection_context
                 .service_context
                 .dynamic_configuration()
-                .allow_transaction_snapshot()
-                .await)
+                .allow_transaction_snapshot())
         {
             return Err(DocumentDBError::documentdb_error(
                 ErrorCode::CommandNotSupported,

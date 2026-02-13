@@ -53,10 +53,9 @@ pub async fn process_drop_database(
     connection_context
         .service_context
         .cursor_store()
-        .invalidate_cursors_by_database(&db)
-        .await;
+        .invalidate_cursors_by_database(&db);
 
-    let is_read_only_for_disk_full = dynamic_config.is_read_only_for_disk_full().await;
+    let is_read_only_for_disk_full = dynamic_config.is_read_only_for_disk_full();
     pg_data_client
         .execute_drop_database(
             request_context,
@@ -89,10 +88,9 @@ pub async fn process_drop_collection(
     connection_context
         .service_context
         .cursor_store()
-        .invalidate_cursors_by_collection(db_str, coll_str)
-        .await;
+        .invalidate_cursors_by_collection(db_str, coll_str);
 
-    let is_read_only_for_disk_full = dynamic_config.is_read_only_for_disk_full().await;
+    let is_read_only_for_disk_full = dynamic_config.is_read_only_for_disk_full();
     pg_data_client
         .execute_drop_collection(
             request_context,

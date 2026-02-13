@@ -76,7 +76,7 @@ pub async fn parse_request<'a>(
     // Parse the specific message based on OpCode
     let request = match message.op_code {
         OpCode::Query => parse_query(&message.request).await?,
-        OpCode::Msg => parse_msg(message, requires_response).await?,
+        OpCode::Msg => parse_msg(message, requires_response)?,
         OpCode::Insert => parse_insert(message).await?,
         _ => Err(DocumentDBError::internal_error(format!(
             "Unimplemented: {:?}",
@@ -117,7 +117,7 @@ async fn parse_query<'a>(message: &'a [u8]) -> Result<Request<'a>> {
 
     // OP_QUERY is only supported for commands currently
     if collection_name == "$cmd" {
-        return parse_cmd(query, None).await;
+        return parse_cmd(query, None);
     }
 
     Err(DocumentDBError::internal_error(
@@ -140,10 +140,7 @@ pub fn str_from_u8_nul_utf8(utf8_src: &[u8]) -> Result<(&str, usize)> {
 }
 
 /// Parse an OP_MSG
-async fn parse_msg<'a>(
-    message: &'a RequestMessage,
-    requires_response: &mut bool,
-) -> Result<Request<'a>> {
+fn parse_msg<'a>(message: &'a RequestMessage, requires_response: &mut bool) -> Result<Request<'a>> {
     let reader = Cursor::new(message.request.as_slice());
     let msg: Message = Message::read_from_op_msg(reader, message.response_to)?;
 
@@ -153,7 +150,7 @@ async fn parse_msg<'a>(
             "Message had no sections".to_string(),
         )),
         1 => match &msg.sections[0] {
-            MessageSection::Document(doc) => parse_cmd(doc, None).await,
+            MessageSection::Document(doc) => parse_cmd(doc, None),
             MessageSection::Sequence {
                 size: _,
                 _identifier: _,
@@ -164,14 +161,14 @@ async fn parse_msg<'a>(
         },
         2 => match (&msg.sections[0], &msg.sections[1]) {
             (MessageSection::Document(doc), MessageSection::Document(extra)) => {
-                parse_cmd(doc, Some(extra.as_bytes())).await
+                parse_cmd(doc, Some(extra.as_bytes()))
             }
             (
                 MessageSection::Document(doc),
                 MessageSection::Sequence {
                     documents: extras, ..
                 },
-            ) => parse_cmd(doc, Some(extras)).await,
+            ) => parse_cmd(doc, Some(extras)),
             (MessageSection::Sequence { .. }, _) => Err(DocumentDBError::bad_value(
                 "Expected first section to be a single document.".to_string(),
             )),
@@ -183,7 +180,7 @@ async fn parse_msg<'a>(
 }
 
 /// Parse a command document
-async fn parse_cmd<'a>(command: &'a RawDocument, extra: Option<&'a [u8]>) -> Result<Request<'a>> {
+fn parse_cmd<'a>(command: &'a RawDocument, extra: Option<&'a [u8]>) -> Result<Request<'a>> {
     if let Some(result) = command.into_iter().next() {
         let cmd_name = result?.0;
 

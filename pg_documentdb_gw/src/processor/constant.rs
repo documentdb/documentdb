@@ -27,10 +27,8 @@ pub fn ok_response() -> Response {
     }))
 }
 
-pub async fn process_build_info(
-    dynamic_config: &Arc<dyn DynamicConfiguration>,
-) -> Result<Response> {
-    let version = dynamic_config.server_version().await;
+pub fn process_build_info(dynamic_config: &Arc<dyn DynamicConfiguration>) -> Result<Response> {
+    let version = dynamic_config.server_version();
     Ok(Response::Raw(RawResponse(rawdoc! {
         "version": version.as_str(),
         "versionArray": version.as_bson_array(),

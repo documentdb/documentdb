@@ -111,9 +111,8 @@ pub async fn write_error_without_header<S>(
 where
     S: AsyncWrite + Unpin,
 {
-    let response = CommandError::from_error(connection_context, &err, activity_id)
-        .await
-        .to_raw_document_buf();
+    let response =
+        CommandError::from_error(connection_context, &err, activity_id).to_raw_document_buf();
 
     let header = Header {
         length: (response.as_bytes().len() + 1) as i32,

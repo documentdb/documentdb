@@ -253,7 +253,7 @@ async fn run_explain(
 
     match explain_response {
         Some(content) => {
-            let explain_content = if dynamic_config.enable_developer_explain().await {
+            let explain_content = if dynamic_config.enable_developer_explain() {
                 Some(convert_to_bson(content.clone()))
             } else {
                 None
@@ -268,8 +268,7 @@ async fn run_explain(
                 query_base,
                 verbosity,
                 connection_context.service_context.query_catalog(),
-            )
-            .await?;
+            )?;
 
             explain.append("explainVersion", 2.0);
             explain.append(
@@ -283,7 +282,7 @@ async fn run_explain(
             );
             explain.append("ok", OK_SUCCEEDED);
 
-            if dynamic_config.enable_developer_explain().await {
+            if dynamic_config.enable_developer_explain() {
                 explain.append(
                     "internal",
                     developer_explain(
@@ -335,7 +334,7 @@ fn get_subtype_and_collection_name<'a>(request: &'a Request<'_>) -> Result<(&'a 
     ))
 }
 
-async fn transform_explain(
+fn transform_explain(
     explain_content: serde_json::Value,
     db: &str,
     collection: &str,

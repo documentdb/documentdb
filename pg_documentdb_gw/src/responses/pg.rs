@@ -76,7 +76,7 @@ impl PgResponse {
     }
 
     /// If 'writeErrors' is present, it transforms each error by potentially mapping them to the known DocumentDB error codes.
-    pub async fn transform_write_errors(
+    pub fn transform_write_errors(
         self,
         connection_context: &ConnectionContext,
         activity_id: &str,
@@ -89,8 +89,7 @@ impl PgResponse {
             })?;
 
             for value in write_errors {
-                self.transform_error(connection_context, value, activity_id)
-                    .await?;
+                self.transform_error(connection_context, value, activity_id)?;
             }
             let raw = RawDocumentBuf::from_document(&response)?;
             return Ok(Response::Raw(RawResponse(raw)));
@@ -98,7 +97,7 @@ impl PgResponse {
         Ok(Response::Pg(self))
     }
 
-    async fn transform_error(
+    fn transform_error(
         &self,
         context: &ConnectionContext,
         error_bson: &mut Bson,
@@ -119,9 +118,7 @@ impl PgResponse {
             &PgResponse::i32_to_postgres_sqlstate(code)?,
             &msg,
             activity_id,
-        )
-        .await
-        {
+        ) {
             if known == ErrorCode::WriteConflict as i32
                 || known == ErrorCode::InternalError as i32
                 || known == ErrorCode::LockTimeout as i32
@@ -170,7 +167,7 @@ impl PgResponse {
 
     documentdb_int_error_mapping!();
 
-    pub async fn known_pg_error<'a>(
+    pub fn known_pg_error<'a>(
         connection_context: &'a ConnectionContext,
         state: &'a SqlState,
         msg: &'a str,
@@ -365,8 +362,7 @@ impl PgResponse {
             SqlState::READ_ONLY_SQL_TRANSACTION
                 if connection_context
                     .dynamic_configuration()
-                    .is_replica_cluster()
-                    .await =>
+                    .is_replica_cluster() =>
             {
                 let error_message = "Cannot execute the operation on this replica cluster";
                 tracing::error!(activity_id = activity_id, "{error_message}");

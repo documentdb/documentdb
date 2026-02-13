@@ -34,15 +34,14 @@ impl PgPoolSettings {
         }
     }
 
-    pub async fn from_configuration(config: &dyn DynamicConfiguration) -> Self {
-        let max_connections = config.max_connections().await;
-        let system_connection_budget = config.system_connection_budget().await;
+    pub fn from_configuration(config: &dyn DynamicConfiguration) -> Self {
+        let max_connections = config.max_connections();
+        let system_connection_budget = config.system_connection_budget();
         let connection_pruning_interval =
-            Duration::from_secs(config.gateway_connection_pruning_interval_sec().await);
+            Duration::from_secs(config.gateway_connection_pruning_interval_sec());
         let connection_idle_lifetime =
-            Duration::from_secs(config.gateway_connection_idle_lifetime_sec().await);
-        let connection_lifetime =
-            Duration::from_secs(config.gateway_connection_lifetime_sec().await);
+            Duration::from_secs(config.gateway_connection_idle_lifetime_sec());
+        let connection_lifetime = Duration::from_secs(config.gateway_connection_lifetime_sec());
 
         PgPoolSettings {
             max_connections,

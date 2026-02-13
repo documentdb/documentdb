@@ -67,7 +67,7 @@ impl CommandError {
         )
     }
 
-    pub async fn from_error(
+    pub fn from_error(
         connection_context: &ConnectionContext,
         err: &DocumentDBError,
         activity_id: &str,
@@ -75,15 +75,15 @@ impl CommandError {
         match err {
             DocumentDBError::IoError(e, _) => CommandError::internal(e.to_string()),
             DocumentDBError::PostgresError(e, _) => {
-                Self::from_pg_error(connection_context, e, activity_id).await
+                Self::from_pg_error(connection_context, e, activity_id)
             }
             DocumentDBError::PoolError(PoolError::Backend(e), _) => {
-                Self::from_pg_error(connection_context, e, activity_id).await
+                Self::from_pg_error(connection_context, e, activity_id)
             }
             DocumentDBError::PostgresDocumentDBError(e, msg, _) => {
                 if let Ok(state) = PgResponse::i32_to_postgres_sqlstate(e) {
                     if let Some(known_error) =
-                        Self::known_pg_error(connection_context, &state, msg, activity_id).await
+                        Self::known_pg_error(connection_context, &state, msg, activity_id)
                     {
                         return known_error;
                     }
@@ -161,7 +161,7 @@ impl CommandError {
         }
     }
 
-    pub async fn from_pg_error(
+    pub fn from_pg_error(
         context: &ConnectionContext,
         e: &tokio_postgres::Error,
         activity_id: &str,
@@ -172,9 +172,7 @@ impl CommandError {
                 state,
                 e.as_db_error().map_or("", |e| e.message()),
                 activity_id,
-            )
-            .await
-            {
+            ) {
                 return known_error;
             }
             CommandError::new(
@@ -187,14 +185,14 @@ impl CommandError {
         }
     }
 
-    async fn known_pg_error(
+    fn known_pg_error(
         context: &ConnectionContext,
         state: &SqlState,
         msg: &str,
         activity_id: &str,
     ) -> Option<Self> {
         if let Some((code, code_name, error_msg)) =
-            PgResponse::known_pg_error(context, state, msg, activity_id).await
+            PgResponse::known_pg_error(context, state, msg, activity_id)
         {
             Some(CommandError::new(
                 code,

@@ -74,7 +74,7 @@ pub async fn wait_for_index(
     }
 
     let mut interval = tokio::time::interval(Duration::from_millis(
-        dynamic_config.index_build_sleep_milli_secs().await as u64,
+        dynamic_config.index_build_sleep_milli_secs() as u64,
     ));
     loop {
         interval.tick().await;

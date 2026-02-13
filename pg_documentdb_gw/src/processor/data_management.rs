@@ -26,7 +26,7 @@ pub async fn process_delete(
     dynamic_config: &Arc<dyn DynamicConfiguration>,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let is_read_only_for_disk_full = dynamic_config.is_read_only_for_disk_full().await;
+    let is_read_only_for_disk_full = dynamic_config.is_read_only_for_disk_full();
     let delete_rows = pg_data_client
         .execute_delete(
             request_context,
@@ -37,7 +37,6 @@ pub async fn process_delete(
 
     PgResponse::new(delete_rows)
         .transform_write_errors(connection_context, request_context.activity_id)
-        .await
 }
 
 pub async fn process_find(
@@ -73,7 +72,6 @@ pub async fn process_insert(
 
     PgResponse::new(insert_rows)
         .transform_write_errors(connection_context, request_context.activity_id)
-        .await
 }
 
 pub async fn process_aggregate(
@@ -108,7 +106,6 @@ pub async fn process_update(
 
     PgResponse::new(update_rows)
         .transform_write_errors(connection_context, request_context.activity_id)
-        .await
 }
 
 pub async fn process_list_databases(

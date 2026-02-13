@@ -79,27 +79,23 @@ impl ConnectionContext {
         }
     }
 
-    pub async fn get_cursor(&self, id: i64, username: &str) -> Option<CursorStoreEntry> {
+    pub fn get_cursor(&self, id: i64, username: &str) -> Option<CursorStoreEntry> {
         // If there is a transaction, get the cursor to its store
         if let Some((session_id, _)) = self.transaction.as_ref() {
             let transaction_store = self.service_context.transaction_store();
             if let Some(entry) = transaction_store.transactions.get(session_id) {
                 let (_, transaction) = entry.value();
-                return transaction
-                    .cursors
-                    .get_cursor((id, username.to_string()))
-                    .await;
+                return transaction.cursors.get_cursor((id, username.to_string()));
             }
         }
 
         self.service_context
             .cursor_store()
             .get_cursor((id, username.to_string()))
-            .await
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub async fn add_cursor(
+    pub fn add_cursor(
         &self,
         conn: Option<Arc<Connection>>,
         cursor: Cursor,
@@ -125,19 +121,16 @@ impl ConnectionContext {
             let transaction_store = self.service_context.transaction_store();
             if let Some(entry) = transaction_store.transactions.get(session_id) {
                 let (_, transaction) = entry.value();
-                transaction.cursors.add_cursor(key, value).await;
+                transaction.cursors.add_cursor(key, value);
                 return;
             }
         }
 
         // Otherwise add it to the service context
-        self.service_context
-            .cursor_store()
-            .add_cursor(key, value)
-            .await
+        self.service_context.cursor_store().add_cursor(key, value)
     }
 
-    pub async fn allocate_data_pool(&self, password: &str) -> Result<()> {
+    pub fn allocate_data_pool(&self, password: &str) -> Result<()> {
         let username = self.auth_state.username()?;
 
         self.service_context
@@ -147,7 +140,6 @@ impl ConnectionContext {
                 password,
                 self.service_context.dynamic_configuration().as_ref(),
             )
-            .await
     }
 
     pub fn dynamic_configuration(&self) -> Arc<dyn DynamicConfiguration> {
