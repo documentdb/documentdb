@@ -23,14 +23,14 @@ use crate::{
 
 #[async_trait]
 pub trait PgDataClient: Send + Sync {
-    async fn new_authorized(
+    fn new_authorized(
         service_context: &Arc<ServiceContext>,
         authorization: &AuthState,
     ) -> Result<Self>
     where
         Self: Sized;
 
-    async fn new_unauthorized(service_context: &Arc<ServiceContext>) -> Result<Self>
+    fn new_unauthorized(service_context: &Arc<ServiceContext>) -> Result<Self>
     where
         Self: Sized;
 
@@ -43,7 +43,6 @@ pub trait PgDataClient: Send + Sync {
                 .service_context
                 .transaction_store()
                 .get_connection(session_id)
-                .await
             {
                 return Ok(connection);
             }

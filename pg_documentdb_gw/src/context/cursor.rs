@@ -46,14 +46,14 @@ impl CursorStore {
         let reaper = if use_reaper {
             Some(tokio::spawn(async move {
                 let mut cursor_timeout_resolution =
-                    Duration::from_secs(config.cursor_resolution_interval().await);
+                    Duration::from_secs(config.cursor_resolution_interval());
                 let mut interval = tokio::time::interval(cursor_timeout_resolution);
                 loop {
                     interval.tick().await;
                     cursors_clone.retain(|_, v| v.timestamp.elapsed() < v.cursor_timeout);
 
                     let new_timeout_interval =
-                        Duration::from_secs(config.cursor_resolution_interval().await);
+                        Duration::from_secs(config.cursor_resolution_interval());
                     if new_timeout_interval != cursor_timeout_resolution {
                         cursor_timeout_resolution = new_timeout_interval;
                         interval = tokio::time::interval(cursor_timeout_resolution);
@@ -70,24 +70,24 @@ impl CursorStore {
         }
     }
 
-    pub async fn add_cursor(&self, k: (i64, String), v: CursorStoreEntry) {
+    pub fn add_cursor(&self, k: (i64, String), v: CursorStoreEntry) {
         self.cursors.insert(k, v);
     }
 
-    pub async fn get_cursor(&self, k: (i64, String)) -> Option<CursorStoreEntry> {
+    pub fn get_cursor(&self, k: (i64, String)) -> Option<CursorStoreEntry> {
         self.cursors.remove(&k).map(|(_, v)| v)
     }
 
-    pub async fn invalidate_cursors_by_collection(&self, db: &str, collection: &str) {
+    pub fn invalidate_cursors_by_collection(&self, db: &str, collection: &str) {
         self.cursors
             .retain(|_, v| !(v.collection == collection && v.db == db))
     }
 
-    pub async fn invalidate_cursors_by_database(&self, db: &str) {
+    pub fn invalidate_cursors_by_database(&self, db: &str) {
         self.cursors.retain(|_, v| v.db != db)
     }
 
-    pub async fn invalidate_cursors_by_session(&self, session: &[u8]) -> Vec<i64> {
+    pub fn invalidate_cursors_by_session(&self, session: &[u8]) -> Vec<i64> {
         let mut invalidated_cursor_ids = Vec::new();
         self.cursors.retain(|&(cursor_id, _), v| {
             let should_remove = v.session_id.as_deref() == Some(session);
@@ -99,7 +99,7 @@ impl CursorStore {
         invalidated_cursor_ids
     }
 
-    pub async fn kill_cursors(&self, user: String, cursors: &[i64]) -> (Vec<i64>, Vec<i64>) {
+    pub fn kill_cursors(&self, user: String, cursors: &[i64]) -> (Vec<i64>, Vec<i64>) {
         let mut removed_cursors = Vec::new();
         let mut missing_cursors = Vec::new();
 

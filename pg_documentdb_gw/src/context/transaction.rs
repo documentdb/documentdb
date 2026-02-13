@@ -153,7 +153,7 @@ impl TransactionStore {
         }
     }
 
-    pub async fn get_connection(&self, session_id: &[u8]) -> Option<Arc<Connection>> {
+    pub fn get_connection(&self, session_id: &[u8]) -> Option<Arc<Connection>> {
         self.transactions
             .get(session_id)
             .and_then(|entry| entry.value().1.get_connection())

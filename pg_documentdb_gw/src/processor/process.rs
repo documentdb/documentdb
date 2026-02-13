@@ -53,7 +53,7 @@ pub async fn process_request(
                 )
                 .await
             }
-            RequestType::BuildInfo => constant::process_build_info(&dynamic_config).await,
+            RequestType::BuildInfo => constant::process_build_info(&dynamic_config),
             RequestType::CollStats => {
                 data_management::process_coll_stats(
                     request_context,
@@ -71,7 +71,7 @@ pub async fn process_request(
                 .await
             }
             RequestType::ConnectionStatus => {
-                if dynamic_config.enable_connection_status().await {
+                if dynamic_config.enable_connection_status() {
                     users::process_connection_status(
                         request_context,
                         connection_context,
@@ -160,39 +160,31 @@ pub async fn process_request(
             RequestType::GetMore => {
                 cursor::process_get_more(request_context, connection_context, &pg_data_client).await
             }
-            RequestType::Hello => {
-                ismaster::process(
-                    request_context,
-                    "isWritablePrimary",
-                    connection_context,
-                    &dynamic_config,
-                )
-                .await
-            }
+            RequestType::Hello => ismaster::process(
+                request_context,
+                "isWritablePrimary",
+                connection_context,
+                &dynamic_config,
+            ),
             RequestType::HostInfo => constant::process_host_info(),
             RequestType::Insert => {
                 data_management::process_insert(
                     request_context,
                     connection_context,
                     &pg_data_client,
-                    dynamic_config.enable_write_procedures().await,
-                    dynamic_config
-                        .enable_write_procedures_with_batch_commit()
-                        .await,
-                    dynamic_config.enable_backend_timeout().await,
+                    dynamic_config.enable_write_procedures(),
+                    dynamic_config.enable_write_procedures_with_batch_commit(),
+                    dynamic_config.enable_backend_timeout(),
                 )
                 .await
             }
             RequestType::IsDBGrid => constant::process_is_db_grid(connection_context),
-            RequestType::IsMaster => {
-                ismaster::process(
-                    request_context,
-                    "ismaster",
-                    connection_context,
-                    &dynamic_config,
-                )
-                .await
-            }
+            RequestType::IsMaster => ismaster::process(
+                request_context,
+                "ismaster",
+                connection_context,
+                &dynamic_config,
+            ),
             RequestType::ListCollections => {
                 data_management::process_list_collections(
                     request_context,
@@ -224,11 +216,9 @@ pub async fn process_request(
                     request_context,
                     connection_context,
                     &pg_data_client,
-                    dynamic_config.enable_write_procedures().await,
-                    dynamic_config
-                        .enable_write_procedures_with_batch_commit()
-                        .await,
-                    dynamic_config.enable_backend_timeout().await,
+                    dynamic_config.enable_write_procedures(),
+                    dynamic_config.enable_write_procedures_with_batch_commit(),
+                    dynamic_config.enable_backend_timeout(),
                 )
                 .await
             }
@@ -421,33 +411,24 @@ pub async fn process_request(
 
         let retry = match &response {
             // in the case of write conflict, we need to remove the transaction.
-            Err(DocumentDBError::PostgresError(error, _)) => {
-                retry_policy(
-                    &dynamic_config,
-                    error,
-                    request_context.payload.request_type(),
-                )
-                .await
-            }
+            Err(DocumentDBError::PostgresError(error, _)) => retry_policy(
+                &dynamic_config,
+                error,
+                request_context.payload.request_type(),
+            ),
             Err(DocumentDBError::PoolError(
                 PoolError::PostCreateHook(HookError::Backend(error)),
                 _,
-            )) => {
-                retry_policy(
-                    &dynamic_config,
-                    error,
-                    request_context.payload.request_type(),
-                )
-                .await
-            }
-            Err(DocumentDBError::PoolError(PoolError::Backend(error), _)) => {
-                retry_policy(
-                    &dynamic_config,
-                    error,
-                    request_context.payload.request_type(),
-                )
-                .await
-            }
+            )) => retry_policy(
+                &dynamic_config,
+                error,
+                request_context.payload.request_type(),
+            ),
+            Err(DocumentDBError::PoolError(PoolError::Backend(error), _)) => retry_policy(
+                &dynamic_config,
+                error,
+                request_context.payload.request_type(),
+            ),
             // Any other errors cannot be retried
             _ => Retry::None,
         };
@@ -485,15 +466,13 @@ pub async fn process_request(
     result
 }
 
-async fn retry_policy(
+fn retry_policy(
     dynamic_config: &Arc<dyn DynamicConfiguration>,
     error: &tokio_postgres::Error,
     request_type: &RequestType,
 ) -> Retry {
     if (request_type == &RequestType::Insert || request_type == &RequestType::Update)
-        && dynamic_config
-            .enable_write_procedures_with_batch_commit()
-            .await
+        && dynamic_config.enable_write_procedures_with_batch_commit()
     {
         // When batch commit are enabled, do not retry on any errors.
         return Retry::None;
@@ -503,7 +482,7 @@ async fn retry_policy(
     }
     match error.code() {
         Some(&SqlState::ADMIN_SHUTDOWN) => Retry::Short,
-        Some(&SqlState::READ_ONLY_SQL_TRANSACTION) if dynamic_config.is_replica_cluster().await => {
+        Some(&SqlState::READ_ONLY_SQL_TRANSACTION) if dynamic_config.is_replica_cluster() => {
             Retry::None
         }
         Some(&SqlState::READ_ONLY_SQL_TRANSACTION) => Retry::Long,

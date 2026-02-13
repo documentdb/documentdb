@@ -48,8 +48,7 @@ async fn terminate_sessions(
         let cursor_ids = connection_context
             .service_context
             .cursor_store()
-            .invalidate_cursors_by_session(session_id)
-            .await;
+            .invalidate_cursors_by_session(session_id);
 
         if !cursor_ids.is_empty() {
             if let Err(e) = pg_data_client

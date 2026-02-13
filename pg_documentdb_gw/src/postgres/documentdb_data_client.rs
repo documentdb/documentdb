@@ -42,7 +42,7 @@ impl DocumentDBDataClient {
 
 #[async_trait]
 impl PgDataClient for DocumentDBDataClient {
-    async fn new_authorized(
+    fn new_authorized(
         service_context: &Arc<ServiceContext>,
         authorization: &AuthState,
     ) -> Result<Self> {
@@ -52,14 +52,13 @@ impl PgDataClient for DocumentDBDataClient {
         let connection_pool = Some(
             service_context
                 .connection_pool_manager()
-                .get_data_pool(user, dynamic_configuration.as_ref())
-                .await?,
+                .get_data_pool(user, dynamic_configuration.as_ref())?,
         );
 
         Ok(DocumentDBDataClient { connection_pool })
     }
 
-    async fn new_unauthorized(_: &Arc<ServiceContext>) -> Result<Self> {
+    fn new_unauthorized(_: &Arc<ServiceContext>) -> Result<Self> {
         Ok(DocumentDBDataClient {
             connection_pool: None,
         })

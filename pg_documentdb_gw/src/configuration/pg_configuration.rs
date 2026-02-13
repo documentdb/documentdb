@@ -15,13 +15,12 @@ use std::{
     },
 };
 
-use async_trait::async_trait;
+use arc_swap::ArcSwap;
 use bson::{rawbson, RawBson};
 use notify::{event::ModifyKind, Error, Event, EventKind, RecursiveMode, Watcher};
 use serde::Deserialize;
 use tokio::{
     runtime::Handle,
-    sync::RwLock,
     time::{sleep, Duration, Instant},
 };
 
@@ -133,8 +132,8 @@ impl PgConfigurationInner {
 #[derive(Debug)]
 pub struct PgConfiguration {
     inner: PgConfigurationInner,
-    values: RwLock<HashMap<String, String>>,
-    last_update_at: RwLock<Instant>,
+    values: ArcSwap<HashMap<String, String>>,
+    last_update_at: ArcSwap<Instant>,
 }
 
 static DEBOUNCE_RELOAD_SCHEDULED: AtomicBool = AtomicBool::new(false);
@@ -173,12 +172,13 @@ impl PgConfiguration {
             pool_manager,
         };
 
-        let values = RwLock::new(inner.load_configurations().await?);
+        let values = ArcSwap::from_pointee(inner.load_configurations().await?);
+        let last_update_at = ArcSwap::from_pointee(Instant::now());
 
         let configuration = Arc::new(PgConfiguration {
             inner,
             values,
-            last_update_at: RwLock::new(Instant::now()),
+            last_update_at,
         });
 
         let refresh_interval = setup_configuration.dynamic_configuration_refresh_interval_secs();
@@ -187,8 +187,8 @@ impl PgConfiguration {
         Ok(configuration)
     }
 
-    pub async fn last_update_at(&self) -> Instant {
-        *self.last_update_at.read().await
+    pub fn last_update_at(&self) -> Instant {
+        *self.last_update_at.load_full()
     }
 
     pub async fn refresh_configuration(&self) -> Result<()> {
@@ -200,15 +200,8 @@ impl PgConfiguration {
             }
         };
 
-        {
-            let mut config_writable = self.values.write().await;
-            *config_writable = new_config;
-        }
-
-        {
-            let mut last_update = self.last_update_at.write().await;
-            *last_update = Instant::now();
-        }
+        self.values.store(Arc::new(new_config));
+        self.last_update_at.store(Arc::new(Instant::now()));
 
         Ok(())
     }
@@ -292,79 +285,61 @@ impl PgConfiguration {
     }
 }
 
-#[async_trait]
 impl DynamicConfiguration for PgConfiguration {
-    async fn get_str(&self, key: &str) -> Option<String> {
-        self.values.read().await.get(key).cloned()
+    fn get_str(&self, key: &str) -> Option<String> {
+        self.values.load_full().get(key).cloned()
     }
-
-    async fn get_bool(&self, key: &str, default: bool) -> bool {
-        let ret = self
-            .values
-            .read()
-            .await
+    fn get_bool(&self, key: &str, default: bool) -> bool {
+        self.values
+            .load_full()
             .get(key)
             .map(|v| v.parse::<bool>().unwrap_or(default))
-            .unwrap_or(default);
-        ret
+            .unwrap_or(default)
     }
-
-    async fn get_i32(&self, key: &str, default: i32) -> i32 {
-        let ret = self
-            .values
-            .read()
-            .await
+    fn get_i32(&self, key: &str, default: i32) -> i32 {
+        self.values
+            .load_full()
             .get(key)
             .map(|v| v.parse::<i32>().unwrap_or(default))
-            .unwrap_or(default);
-        ret
+            .unwrap_or(default)
     }
-
-    async fn get_u64(&self, key: &str, default: u64) -> u64 {
-        let ret = self
-            .values
-            .read()
-            .await
+    fn get_u64(&self, key: &str, default: u64) -> u64 {
+        self.values
+            .load_full()
             .get(key)
             .map(|v| v.parse::<u64>().unwrap_or(default))
-            .unwrap_or(default);
-        ret
+            .unwrap_or(default)
     }
-
-    async fn equals_value(&self, key: &str, value: &str) -> bool {
-        let ret = self
-            .values
-            .read()
-            .await
+    fn equals_value(&self, key: &str, value: &str) -> bool {
+        self.values
+            .load_full()
             .get(key)
             .map(|v| v == value)
-            .unwrap_or(false);
-        ret
+            .unwrap_or(false)
     }
 
     fn topology(&self) -> RawBson {
-        let empty_doc: RawBson = rawbson!({});
-        empty_doc
+        rawbson!({})
     }
 
-    async fn enable_developer_explain(&self) -> bool {
-        self.get_bool("enableDeveloperExplain", false).await
+    fn enable_developer_explain(&self) -> bool {
+        self.get_bool("enableDeveloperExplain", false)
     }
 
-    async fn max_connections(&self) -> usize {
-        let max_connections = self.get_i32("max_connections", -1).await;
+    fn max_connections(&self) -> usize {
+        let max_connections = self.get_i32("max_connections", -1);
         match max_connections {
             n if n < 0 => {
                 // theoretically we can't end up here, since Postgres always provide values
                 tracing::error!("GUC max_connections is not setup correctly");
-                return 25usize;
+                25usize
             }
             n => n as usize,
         }
     }
 
-    async fn allow_transaction_snapshot(&self) -> bool {
-        self.get_bool("mongoAllowTransactionSnapshot", false).await
+    fn allow_transaction_snapshot(&self) -> bool {
+        self.get_bool("mongoAllowTransactionSnapshot", false)
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

@@ -592,7 +592,7 @@ where
     }
 
     let service_context = Arc::clone(&connection_context.service_context);
-    let data_client = T::new_authorized(&service_context, &connection_context.auth_state).await?;
+    let data_client = T::new_authorized(&service_context, &connection_context.auth_state)?;
 
     // Process the actual request
     let response =
@@ -626,7 +626,6 @@ where
     if connection_context
         .dynamic_configuration()
         .send_shutdown_responses()
-        .await
     {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::ShutdownInProgress,
@@ -692,9 +691,8 @@ where
     if connection_context
         .dynamic_configuration()
         .enable_verbose_logging_in_gateway()
-        .await
     {
-        log_verbose_latency(connection_context, &request_context, command_error.as_ref()).await;
+        log_verbose_latency(connection_context, &request_context, command_error.as_ref());
     }
 
     Ok(())
@@ -775,7 +773,8 @@ async fn log_and_write_error<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let command_error = CommandError::from_error(connection_context, e, activity_id).await;
+    let command_error = CommandError::from_error(connection_context, e, activity_id);
+
     let response = command_error.to_raw_document_buf();
 
     if let Some(start) = handle_message_start {
@@ -807,7 +806,7 @@ where
     Ok(command_error)
 }
 
-async fn log_verbose_latency(
+fn log_verbose_latency(
     connection_context: &ConnectionContext,
     request_context: &RequestContext<'_>,
     e: Option<&CommandError>,

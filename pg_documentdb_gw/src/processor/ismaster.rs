@@ -21,7 +21,7 @@ use crate::{
     responses::{RawResponse, Response},
 };
 
-pub async fn process(
+pub fn process(
     request_context: &RequestContext<'_>,
     writeable_primary_field: &str,
     connection_context: &mut ConnectionContext,
@@ -53,12 +53,12 @@ pub async fn process(
         "msg": "isdbgrid",
         "maxBsonObjectSize": MAX_BSON_OBJECT_SIZE,
         "maxMessageSizeBytes": MAX_MESSAGE_SIZE_BYTES,
-        "maxWriteBatchSize": dynamic_configuration.max_write_batch_size().await,
+        "maxWriteBatchSize": dynamic_configuration.max_write_batch_size(),
         "localTime": local_time,
         "logicalSessionTimeoutMinutes": 30,
         "minWireVersion": 0,
-        "maxWireVersion": dynamic_configuration.server_version().await.max_wire_protocol(),
-        "readOnly": dynamic_configuration.read_only().await,
+        "maxWireVersion": dynamic_configuration.server_version().max_wire_protocol(),
+        "readOnly": dynamic_configuration.read_only(),
         "connectionId": connection_context.get_connection_id_hash(),
         "saslSupportedMechs": ["SCRAM-SHA-256"],
         "internal": dynamic_configuration.topology(),
@@ -66,7 +66,7 @@ pub async fn process(
     };
 
     // Add the operationTime field if change streams GUC is enabled
-    if dynamic_configuration.enable_change_streams().await {
+    if dynamic_configuration.enable_change_streams() {
         response_doc.append(
             "operationTime",
             bson::Timestamp {

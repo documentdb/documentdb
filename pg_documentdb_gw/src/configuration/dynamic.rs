@@ -8,7 +8,6 @@
 
 use std::fmt::Debug;
 
-use async_trait::async_trait;
 use bson::RawBson;
 
 use crate::{configuration::Version, postgres::conn_mgmt};
@@ -16,137 +15,126 @@ use crate::{configuration::Version, postgres::conn_mgmt};
 pub const POSTGRES_RECOVERY_KEY: &str = "IsPostgresInRecovery";
 
 /// Used for configurations which can change during runtime.
-#[async_trait]
 pub trait DynamicConfiguration: Send + Sync + Debug {
-    async fn get_str(&self, key: &str) -> Option<String>;
-    async fn get_bool(&self, key: &str, default: bool) -> bool;
-    async fn get_i32(&self, key: &str, default: i32) -> i32;
-    async fn get_u64(&self, key: &str, default: u64) -> u64;
-    async fn equals_value(&self, key: &str, value: &str) -> bool;
+    fn get_str(&self, key: &str) -> Option<String>;
+    fn get_bool(&self, key: &str, default: bool) -> bool;
+    fn get_i32(&self, key: &str, default: i32) -> i32;
+    fn get_u64(&self, key: &str, default: u64) -> u64;
+    fn equals_value(&self, key: &str, value: &str) -> bool;
     fn topology(&self) -> RawBson;
-    async fn enable_developer_explain(&self) -> bool;
-    async fn max_connections(&self) -> usize;
-    async fn allow_transaction_snapshot(&self) -> bool;
+    fn enable_developer_explain(&self) -> bool;
+    fn max_connections(&self) -> usize;
+    fn allow_transaction_snapshot(&self) -> bool;
 
     // Needed to downcast to concrete type
     fn as_any(&self) -> &dyn std::any::Any;
 
-    async fn enable_change_streams(&self) -> bool {
-        self.get_bool("enableChangeStreams", false).await
+    fn enable_change_streams(&self) -> bool {
+        self.get_bool("enableChangeStreams", false)
     }
 
-    async fn enable_backend_timeout(&self) -> bool {
-        self.get_bool("enableStatementTimeout", false).await
+    fn enable_backend_timeout(&self) -> bool {
+        self.get_bool("enableStatementTimeout", false)
     }
 
-    async fn enable_write_procedures(&self) -> bool {
-        self.get_bool("enableWriteProcedures", false).await
+    fn enable_write_procedures(&self) -> bool {
+        self.get_bool("enableWriteProcedures", false)
     }
 
-    async fn enable_write_procedures_with_batch_commit(&self) -> bool {
+    fn enable_write_procedures_with_batch_commit(&self) -> bool {
         self.get_bool("enableWriteProceduresWithBatchCommit", false)
-            .await
     }
 
-    async fn enable_connection_status(&self) -> bool {
-        self.get_bool("enableConnectionStatus", true).await
+    fn enable_connection_status(&self) -> bool {
+        self.get_bool("enableConnectionStatus", true)
     }
 
-    async fn enable_verbose_logging_in_gateway(&self) -> bool {
-        self.get_bool("enableVerboseLoggingInGateway", false).await
+    fn enable_verbose_logging_in_gateway(&self) -> bool {
+        self.get_bool("enableVerboseLoggingInGateway", false)
     }
 
-    async fn index_build_sleep_milli_secs(&self) -> i32 {
+    fn index_build_sleep_milli_secs(&self) -> i32 {
         self.get_i32("indexBuildWaitSleepTimeInMilliSec", 1000)
-            .await
     }
 
-    async fn is_postgres_writable(&self) -> bool {
-        !self.get_bool(POSTGRES_RECOVERY_KEY, false).await
+    fn is_postgres_writable(&self) -> bool {
+        !self.get_bool(POSTGRES_RECOVERY_KEY, false)
     }
 
-    async fn is_read_only_for_disk_full(&self) -> bool {
-        self.get_bool("default_transaction_read_only", false).await
+    fn is_read_only_for_disk_full(&self) -> bool {
+        self.get_bool("default_transaction_read_only", false)
     }
 
-    async fn is_replica_cluster(&self) -> bool {
-        (self.get_bool(POSTGRES_RECOVERY_KEY, false).await
-            && self
-                .equals_value("citus.use_secondary_nodes", "always")
-                .await)
-            || self.get_bool("simulateReadReplica", false).await
+    fn is_replica_cluster(&self) -> bool {
+        (self.get_bool(POSTGRES_RECOVERY_KEY, false)
+            && self.equals_value("citus.use_secondary_nodes", "always"))
+            || self.get_bool("simulateReadReplica", false)
     }
 
-    async fn max_write_batch_size(&self) -> i32 {
-        self.get_i32("maxWriteBatchSize", 100000).await
+    fn max_write_batch_size(&self) -> i32 {
+        self.get_i32("maxWriteBatchSize", 100000)
     }
 
-    async fn read_only(&self) -> bool {
-        self.get_bool("readOnly", false).await
+    fn read_only(&self) -> bool {
+        self.get_bool("readOnly", false)
     }
 
-    async fn send_shutdown_responses(&self) -> bool {
-        self.get_bool("SendShutdownResponses", false).await
+    fn send_shutdown_responses(&self) -> bool {
+        self.get_bool("SendShutdownResponses", false)
     }
 
-    async fn server_version(&self) -> Version {
+    fn server_version(&self) -> Version {
         self.get_str("serverVersion")
-            .await
             .as_deref()
             .and_then(Version::parse)
             .unwrap_or(Version::Seven)
     }
 
-    async fn enable_stateless_cursor_timeout(&self) -> bool {
-        self.get_bool("enableStatelessCursorTimeout", false).await
+    fn enable_stateless_cursor_timeout(&self) -> bool {
+        self.get_bool("enableStatelessCursorTimeout", false)
     }
 
-    async fn default_cursor_idle_timeout_sec(&self) -> u64 {
-        self.get_u64("mongoCursorIdleTimeoutInSeconds", 60).await
+    fn default_cursor_idle_timeout_sec(&self) -> u64 {
+        self.get_u64("mongoCursorIdleTimeoutInSeconds", 60)
     }
 
-    async fn stateless_cursor_idle_timeout_sec(&self) -> u64 {
+    fn stateless_cursor_idle_timeout_sec(&self) -> u64 {
         self.get_u64("mongoCursorStatelessIdleTimeoutInSeconds", 600)
-            .await
     }
 
-    async fn cursor_resolution_interval(&self) -> u64 {
+    fn cursor_resolution_interval(&self) -> u64 {
         self.get_u64("mongoCursorIdleResolutionIntervalSeconds", 5)
-            .await
     }
 
-    async fn system_connection_budget(&self) -> usize {
+    fn system_connection_budget(&self) -> usize {
         let min_system_connections = (conn_mgmt::SYSTEM_REQUESTS_MAX_CONNECTIONS
             + conn_mgmt::AUTHENTICATION_MAX_CONNECTIONS)
             as i32;
-        let system_connection_budget = self
-            .get_i32("systemConnectionBudget", min_system_connections)
-            .await;
+        let system_connection_budget =
+            self.get_i32("systemConnectionBudget", min_system_connections);
+
         system_connection_budget as usize
     }
 
-    async fn gateway_connection_idle_lifetime_sec(&self) -> u64 {
+    fn gateway_connection_idle_lifetime_sec(&self) -> u64 {
         self.get_u64(
             "gatewayConnectionIdleLifetimeSec",
             conn_mgmt::CONN_IDLE_LIFETIME_SECS,
         )
-        .await
     }
 
-    async fn gateway_connection_pruning_interval_sec(&self) -> u64 {
+    fn gateway_connection_pruning_interval_sec(&self) -> u64 {
         self.get_u64(
             "gatewayConnectionPruningIntervalSec",
             conn_mgmt::CONN_PRUNE_INTERVAL_SECS,
         )
-        .await
     }
 
-    async fn gateway_connection_lifetime_sec(&self) -> u64 {
+    fn gateway_connection_lifetime_sec(&self) -> u64 {
         self.get_u64(
             "gatewayConnectionLifetimeSec",
             conn_mgmt::CONN_LIFETIME_SECS,
         )
-        .await
     }
 
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
