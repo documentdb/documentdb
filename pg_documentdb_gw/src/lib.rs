@@ -481,9 +481,11 @@ where
         "UnixSocket".to_string(),
     );
 
+    let setup_configuration = connection_context.service_context.setup_configuration();
+
     let buffered_stream = BufStream::with_capacity(
-        STREAM_READ_BUFFER_SIZE,
-        STREAM_WRITE_BUFFER_SIZE,
+        setup_configuration.stream_read_buffer_size(),
+        setup_configuration.stream_write_buffer_size(),
         unix_stream,
     );
 
@@ -596,7 +598,7 @@ where
 
     // Process the actual request
     let response =
-        processor::process_request(request_context, connection_context, data_client).await?;
+        processor::process_request(request_context, connection_context, &data_client).await?;
 
     Ok(response)
 }

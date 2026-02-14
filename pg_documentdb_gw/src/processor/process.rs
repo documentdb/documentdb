@@ -35,11 +35,11 @@ enum Retry {
 pub async fn process_request(
     request_context: &RequestContext<'_>,
     connection_context: &mut ConnectionContext,
-    pg_data_client: impl PgDataClient,
+    pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
     let dynamic_config = connection_context.dynamic_configuration();
 
-    transaction::handle(request_context, connection_context, &pg_data_client).await?;
+    transaction::handle(request_context, connection_context, pg_data_client).await?;
     let start_time = Instant::now();
 
     let mut retries = 0;
@@ -49,7 +49,7 @@ pub async fn process_request(
                 data_management::process_aggregate(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -58,7 +58,7 @@ pub async fn process_request(
                 data_management::process_coll_stats(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -66,7 +66,7 @@ pub async fn process_request(
                 data_management::process_compact(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -75,7 +75,7 @@ pub async fn process_request(
                     users::process_connection_status(
                         request_context,
                         connection_context,
-                        &pg_data_client,
+                        pg_data_client,
                     )
                     .await
                 } else {
@@ -83,14 +83,14 @@ pub async fn process_request(
                 }
             }
             RequestType::Count => {
-                data_management::process_count(request_context, connection_context, &pg_data_client)
+                data_management::process_count(request_context, connection_context, pg_data_client)
                     .await
             }
             RequestType::Create => {
                 data_description::process_create(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -99,7 +99,7 @@ pub async fn process_request(
                     request_context,
                     connection_context,
                     &dynamic_config,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -108,7 +108,7 @@ pub async fn process_request(
                     request_context,
                     connection_context,
                     &dynamic_config,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -116,7 +116,7 @@ pub async fn process_request(
                 data_management::process_distinct(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -125,7 +125,7 @@ pub async fn process_request(
                     request_context,
                     connection_context,
                     &dynamic_config,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -134,23 +134,23 @@ pub async fn process_request(
                     request_context,
                     connection_context,
                     &dynamic_config,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
             RequestType::Explain => {
-                explain::process_explain(request_context, None, connection_context, &pg_data_client)
+                explain::process_explain(request_context, None, connection_context, pg_data_client)
                     .await
             }
             RequestType::Find => {
-                data_management::process_find(request_context, connection_context, &pg_data_client)
+                data_management::process_find(request_context, connection_context, pg_data_client)
                     .await
             }
             RequestType::FindAndModify => {
                 data_management::process_find_and_modify(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -158,7 +158,7 @@ pub async fn process_request(
             RequestType::GetDefaultRWConcern => constant::process_get_rw_concern(request_context),
             RequestType::GetLog => constant::process_get_log(),
             RequestType::GetMore => {
-                cursor::process_get_more(request_context, connection_context, &pg_data_client).await
+                cursor::process_get_more(request_context, connection_context, pg_data_client).await
             }
             RequestType::Hello => ismaster::process(
                 request_context,
@@ -171,7 +171,7 @@ pub async fn process_request(
                 data_management::process_insert(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                     dynamic_config.enable_write_procedures(),
                     dynamic_config.enable_write_procedures_with_batch_commit(),
                     dynamic_config.enable_backend_timeout(),
@@ -189,7 +189,7 @@ pub async fn process_request(
                 data_management::process_list_collections(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -197,12 +197,12 @@ pub async fn process_request(
                 data_management::process_list_databases(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
             RequestType::ListIndexes => {
-                indexing::process_list_indexes(request_context, connection_context, &pg_data_client)
+                indexing::process_list_indexes(request_context, connection_context, pg_data_client)
                     .await
             }
             RequestType::Ping => Ok(constant::ok_response()),
@@ -215,7 +215,7 @@ pub async fn process_request(
                 data_management::process_update(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                     dynamic_config.enable_write_procedures(),
                     dynamic_config.enable_write_procedures_with_batch_commit(),
                     dynamic_config.enable_backend_timeout(),
@@ -226,12 +226,12 @@ pub async fn process_request(
                 data_management::process_validate(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
             RequestType::DropIndexes => {
-                indexing::process_drop_indexes(request_context, connection_context, &pg_data_client)
+                indexing::process_drop_indexes(request_context, connection_context, pg_data_client)
                     .await
             }
             RequestType::ShardCollection => {
@@ -239,19 +239,18 @@ pub async fn process_request(
                     request_context,
                     connection_context,
                     false,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
             RequestType::ReIndex => {
-                indexing::process_reindex(request_context, connection_context, &pg_data_client)
-                    .await
+                indexing::process_reindex(request_context, connection_context, pg_data_client).await
             }
             RequestType::CurrentOp => {
                 data_management::process_current_op(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -259,7 +258,7 @@ pub async fn process_request(
                 data_management::process_kill_op(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -267,7 +266,7 @@ pub async fn process_request(
                 data_description::process_coll_mod(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -275,19 +274,19 @@ pub async fn process_request(
                 data_management::process_get_parameter(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
             RequestType::KillCursors => {
-                cursor::process_kill_cursors(request_context, connection_context, &pg_data_client)
+                cursor::process_kill_cursors(request_context, connection_context, pg_data_client)
                     .await
             }
             RequestType::DbStats => {
                 data_management::process_db_stats(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -295,7 +294,7 @@ pub async fn process_request(
                 data_description::process_rename_collection(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -304,7 +303,7 @@ pub async fn process_request(
             RequestType::AbortTransaction => transaction::process_abort(connection_context).await,
             RequestType::ListCommands => constant::list_commands(),
             RequestType::EndSessions | RequestType::KillSessions => {
-                session::end_or_kill_sessions(request_context, connection_context, &pg_data_client)
+                session::end_or_kill_sessions(request_context, connection_context, pg_data_client)
                     .await
             }
             RequestType::ReshardCollection => {
@@ -312,46 +311,44 @@ pub async fn process_request(
                     request_context,
                     connection_context,
                     true,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
             RequestType::WhatsMyUri => constant::process_whats_my_uri(),
             RequestType::CreateUser => {
-                users::process_create_user(request_context, connection_context, &pg_data_client)
+                users::process_create_user(request_context, connection_context, pg_data_client)
                     .await
             }
             RequestType::DropUser => {
-                users::process_drop_user(request_context, connection_context, &pg_data_client).await
+                users::process_drop_user(request_context, connection_context, pg_data_client).await
             }
             RequestType::UpdateUser => {
-                users::process_update_user(request_context, connection_context, &pg_data_client)
+                users::process_update_user(request_context, connection_context, pg_data_client)
                     .await
             }
             RequestType::UsersInfo => {
-                users::process_users_info(request_context, connection_context, &pg_data_client)
-                    .await
+                users::process_users_info(request_context, connection_context, pg_data_client).await
             }
             RequestType::CreateRole => {
-                roles::process_create_role(request_context, connection_context, &pg_data_client)
+                roles::process_create_role(request_context, connection_context, pg_data_client)
                     .await
             }
             RequestType::UpdateRole => {
-                roles::process_update_role(request_context, connection_context, &pg_data_client)
+                roles::process_update_role(request_context, connection_context, pg_data_client)
                     .await
             }
             RequestType::DropRole => {
-                roles::process_drop_role(request_context, connection_context, &pg_data_client).await
+                roles::process_drop_role(request_context, connection_context, pg_data_client).await
             }
             RequestType::RolesInfo => {
-                roles::process_roles_info(request_context, connection_context, &pg_data_client)
-                    .await
+                roles::process_roles_info(request_context, connection_context, pg_data_client).await
             }
             RequestType::UnshardCollection => {
                 data_description::process_unshard_collection(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -359,7 +356,7 @@ pub async fn process_request(
                 data_description::process_get_shard_map(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -367,7 +364,7 @@ pub async fn process_request(
                 data_description::process_list_shards(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -375,7 +372,7 @@ pub async fn process_request(
                 data_description::process_balancer_start(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -383,7 +380,7 @@ pub async fn process_request(
                 data_description::process_balancer_status(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }
@@ -391,7 +388,7 @@ pub async fn process_request(
                 data_description::process_balancer_stop(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }

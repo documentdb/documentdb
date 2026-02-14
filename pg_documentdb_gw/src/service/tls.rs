@@ -41,9 +41,9 @@ use std::{path::Path, sync::Arc};
 
 use arc_swap::ArcSwap;
 use openssl::{
-    hash::{Hasher, MessageDigest},
+    hash::MessageDigest,
     pkey::{Id, PKey, PKeyRef, Private},
-    ssl::{SslAcceptor, SslAcceptorBuilder, SslCipherRef},
+    ssl::{SslAcceptor, SslCipherRef},
     x509::X509,
 };
 
@@ -204,42 +204,6 @@ impl CertificateBundle {
     }
 }
 
-/// Creates an SSL acceptor builder configured with the specified certificate options.
-///
-/// This function is a convenience wrapper that combines certificate store creation,
-/// certificate bundle loading, and TLS acceptor configuration into a single operation.
-/// It handles both file-based certificates and auto-generated certificates based on
-/// the provided configuration.
-///
-/// # Arguments
-///
-/// * `certificate_options` - Configuration specifying the certificate type, file paths,
-///   and other SSL/TLS options
-/// * `acceptor_builder` - Optional custom function for creating SSL acceptor builders
-///
-/// # Returns
-///
-/// Returns an `SslAcceptorBuilder` that can be further configured or built into
-/// an `SslAcceptor` for accepting TLS connections.
-///
-/// # Errors
-///
-/// This function will return an error if:
-/// * Certificate store creation fails (missing file paths, generation errors)
-/// * Certificate files cannot be read or are in invalid PEM format
-/// * Private key files cannot be read or parsed
-/// * CA chain files are specified but cannot be loaded
-/// * TLS acceptor configuration fails
-pub async fn create_tls_acceptor_builder(
-    certificate_options: &CertificateOptions,
-    acceptor_builder: Option<docdb_openssl::AcceptorBuilderFn>,
-) -> Result<SslAcceptorBuilder> {
-    let cert_store = CertificateStore::new(certificate_options)?;
-    let cert_bundle = CertificateBundle::from_cert_store(&cert_store).await?;
-
-    docdb_openssl::create_tls_acceptor(&cert_bundle, acceptor_builder)
-}
-
 /// A provider that manages SSL/TLS certificates with automatic reloading.
 ///
 /// This struct handles certificate loading, monitoring for file changes, and
@@ -285,9 +249,9 @@ impl TlsProvider {
         ciphersuite_mapping: Option<fn(Option<&str>) -> i32>,
     ) -> Result<Self> {
         let cert_store = CertificateStore::new(certificate_options)?;
+        let cert_bundle = CertificateBundle::from_cert_store(&cert_store).await?;
 
-        let tls_builder =
-            create_tls_acceptor_builder(certificate_options, acceptor_builder).await?;
+        let tls_builder = docdb_openssl::create_tls_acceptor(&cert_bundle, acceptor_builder)?;
         let tls_acceptor_arc = Arc::new(ArcSwap::from_pointee(tls_builder.build()));
 
         let mut last_cert_modified = Self::get_modified_time(&cert_store.certificate_path).await?;
@@ -375,12 +339,6 @@ impl TlsProvider {
 
     pub fn is_valid_certificate(&self) -> bool {
         let bundle = self.certificate_bundle.load();
-        let certificate = bundle.certificate();
-
-        // private key is RSA
-        let is_private_rsa = bundle.private_key.id() == Id::RSA;
-
-        // certificate public key is RSA (and obtainable)
         let pubkey = match bundle.certificate.public_key() {
             Ok(k) => k,
             Err(_) => {
@@ -389,28 +347,27 @@ impl TlsProvider {
             }
         };
 
-        let is_pub_rsa = pubkey.id() == Id::RSA;
+        let is_valid = bundle.private_key.id() == Id::RSA
+            && pubkey.id() == Id::RSA
+            && pubkey.public_eq(&bundle.private_key);
 
-        // private key matches the certificate’s public key
-        let matches_cert = pubkey.public_eq(&bundle.private_key);
-
-        let result = is_private_rsa && is_pub_rsa && matches_cert;
-
-        if !result {
-            match TlsProvider::sha1_thumbprint(&certificate) {
-                Ok(thumbprint) => tracing::error!("Detected invalid certificate. Thumbprint: {thumbprint:?}"),
-                Err(e) => tracing::error!("Detected invalid certificate. Failed to generate certificate. Thumbprint: {e:?}"),
+        if !is_valid {
+            match TlsProvider::sha1_thumbprint(&bundle.certificate) {
+                Ok(thumbprint) => {
+                    tracing::error!("Detected invalid certificate. Thumbprint: {thumbprint:?}")
+                }
+                Err(e) => tracing::error!(
+                    "Detected invalid certificate. Failed to generate certificate. Thumbprint: {e:?}"
+                ),
             }
         }
 
-        result
+        is_valid
     }
 
     fn sha1_thumbprint(cert: &X509) -> Result<String> {
         let der = cert.to_der()?;
-        let mut h = Hasher::new(MessageDigest::sha1())?;
-        h.update(&der)?;
-        let digest = h.finish()?;
+        let digest = openssl::hash::hash(MessageDigest::sha1(), &der)?;
         Ok(hex::encode_upper(digest))
     }
 

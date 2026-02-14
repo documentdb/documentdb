@@ -60,6 +60,9 @@ pub struct DocumentDBSetupConfiguration {
     // Unix socket file permissions (octal format string, e.g., "0660" for owner+group read/write)
     // If not specified, defaults to 0o660
     pub unix_socket_file_permissions: Option<String>,
+
+    pub stream_read_buffer_size: Option<usize>,
+    pub stream_write_buffer_size: Option<usize>,
 }
 
 impl DocumentDBSetupConfiguration {
@@ -197,5 +200,13 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
             None => 0o660, // Default when not provided
             Some(perm_str) => u32::from_str_radix(perm_str, 8).unwrap(),
         }
+    }
+
+    fn stream_read_buffer_size(&self) -> usize {
+        self.stream_read_buffer_size.unwrap_or(8 * 1024)
+    }
+
+    fn stream_write_buffer_size(&self) -> usize {
+        self.stream_write_buffer_size.unwrap_or(8 * 1024)
     }
 }

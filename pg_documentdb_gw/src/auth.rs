@@ -162,7 +162,7 @@ where
         let service_context = Arc::clone(&connection_context.service_context);
         let data_client = T::new_unauthorized(&service_context)?;
 
-        return processor::process_request(request_context, connection_context, data_client).await;
+        return processor::process_request(request_context, connection_context, &data_client).await;
     }
 
     Err(DocumentDBError::unauthorized(format!(

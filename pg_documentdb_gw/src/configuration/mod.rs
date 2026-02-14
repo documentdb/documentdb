@@ -95,6 +95,12 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
     /// Defaults to 0o660 (owner+group read/write) if not specified.
     fn unix_socket_file_permissions(&self) -> u32;
 
+    /// Returns the size of the read buffer for streams.
+    fn stream_read_buffer_size(&self) -> usize;
+
+    /// Returns the size of the write buffer for streams.
+    fn stream_write_buffer_size(&self) -> usize;
+
     /// Provides a way to downcast the trait object to a concrete type.
     fn as_any(&self) -> &dyn std::any::Any;
 }
