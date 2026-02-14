@@ -396,7 +396,7 @@ pub async fn process_request(
                 data_description::process_move_collection(
                     request_context,
                     connection_context,
-                    &pg_data_client,
+                    pg_data_client,
                 )
                 .await
             }

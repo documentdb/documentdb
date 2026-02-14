@@ -47,6 +47,7 @@ pub struct DocumentDBSetupConfiguration {
     pub dynamic_configuration_file: String,
     pub dynamic_configuration_refresh_interval_secs: Option<u32>,
     pub postgres_command_timeout_secs: Option<u64>,
+    pub postgres_idle_connection_timeout_minutes: Option<u64>,
     pub postgres_startup_wait_time_seconds: Option<u64>,
 
     // Runtime configuration
