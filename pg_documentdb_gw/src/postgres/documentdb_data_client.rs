@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use bson::{RawDocument, RawDocumentBuf};
+use bson::RawDocument;
 use tokio_postgres::{error::SqlState, types::Type, Row};
 
 use crate::{
@@ -806,12 +806,10 @@ impl PgDataClient for DocumentDBDataClient {
     async fn execute_current_op(
         &self,
         request_context: &RequestContext<'_>,
-        filter: &RawDocumentBuf,
-        all: bool,
-        own_ops: bool,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (_, request_info, request_tracker) = request_context.get_components();
+        let (request, request_info, request_tracker) = request_context.get_components();
+
         let current_op_rows = self
             .pull_connection(connection_context)
             .await?
@@ -820,8 +818,8 @@ impl PgDataClient for DocumentDBDataClient {
                     .service_context
                     .query_catalog()
                     .current_op(),
-                &[Type::BYTEA, Type::BOOL, Type::BOOL],
-                &[&PgDocument(filter), &all, &own_ops],
+                &[Type::BYTEA],
+                &[&PgDocument(request.document())],
                 Timeout::transaction(request_info.max_time_ms),
                 request_tracker,
             )

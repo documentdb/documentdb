@@ -527,7 +527,7 @@ pub fn create_query_catalog() -> QueryCatalog {
             count_query: "SELECT document FROM documentdb_api.count_query($1, $2)".to_string(),
             coll_stats: "SELECT documentdb_api.coll_stats($1, $2, $3)".to_string(),
             db_stats: "SELECT documentdb_api.db_stats($1, $2, $3)".to_string(),
-            current_op: "SELECT documentdb_api.current_op($1, $2, $3)".to_string(),
+            current_op: "SELECT documentdb_api.current_op_command($1)".to_string(),
             get_parameter: "SELECT documentdb_api.get_parameter($1, $2, $3)".to_string(),
             compact: "SELECT documentdb_api.compact($1)".to_string(),
             kill_op: "SELECT documentdb_api.kill_op($1)".to_string(),

@@ -9,7 +9,7 @@
 use std::{future::Future, sync::Arc};
 
 use async_trait::async_trait;
-use bson::{RawDocument, RawDocumentBuf};
+use bson::RawDocument;
 use tokio_postgres::Row;
 
 use crate::{
@@ -223,9 +223,6 @@ pub trait PgDataClient: Send + Sync {
     async fn execute_current_op(
         &self,
         request_context: &RequestContext<'_>,
-        filter: &RawDocumentBuf,
-        all: bool,
-        own_ops: bool,
         connection_context: &ConnectionContext,
     ) -> Result<Response>;
 

@@ -5,10 +5,8 @@
  *
  *-------------------------------------------------------------------------
  */
-
+use bson::{spec::ElementType, RawBsonRef};
 use std::sync::Arc;
-
-use bson::{spec::ElementType, RawBsonRef, RawDocumentBuf};
 
 use crate::{
     bson::convert_to_bool,
@@ -235,20 +233,8 @@ pub async fn process_current_op(
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let mut filter = RawDocumentBuf::new();
-    let mut all = false;
-    let mut own_ops = false;
-    request_context.payload.extract_fields(|k, v| {
-        match k {
-            "all" => all = v.as_bool().unwrap_or(false),
-            "ownOps" => own_ops = v.as_bool().unwrap_or(false),
-            _ => filter.append(k, v.to_raw_bson()),
-        }
-        Ok(())
-    })?;
-
     pg_data_client
-        .execute_current_op(request_context, &filter, all, own_ops, connection_context)
+        .execute_current_op(request_context, connection_context)
         .await
 }
 
