@@ -7,6 +7,7 @@
  */
 
 pub mod auth;
+pub mod auth_legacy;
 pub mod bson;
 pub mod configuration;
 pub mod context;
