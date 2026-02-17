@@ -81,6 +81,12 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
     /// Returns the number of worker threads for the async runtime.
     fn async_runtime_worker_threads(&self) -> usize;
 
+    /// Returns the size of the read buffer for streams.
+    fn stream_read_buffer_size(&self) -> usize;
+
+    /// Returns the size of the write buffer for streams.
+    fn stream_write_buffer_size(&self) -> usize;
+
     /// Returns the Unix domain socket path if Unix domain socket is enabled.
     /// Returns None if Unix socket is disabled.
     fn unix_socket_path(&self) -> Option<&str>;
@@ -94,12 +100,6 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
     /// Returns the file permissions for Unix socket files (octal format).
     /// Defaults to 0o660 (owner+group read/write) if not specified.
     fn unix_socket_file_permissions(&self) -> u32;
-
-    /// Returns the size of the read buffer for streams.
-    fn stream_read_buffer_size(&self) -> usize;
-
-    /// Returns the size of the write buffer for streams.
-    fn stream_write_buffer_size(&self) -> usize;
 
     /// Provides a way to downcast the trait object to a concrete type.
     fn as_any(&self) -> &dyn std::any::Any;

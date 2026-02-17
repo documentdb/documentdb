@@ -52,6 +52,8 @@ pub struct DocumentDBSetupConfiguration {
 
     // Runtime configuration
     pub async_runtime_worker_threads: Option<usize>,
+    pub stream_read_buffer_size: Option<usize>,
+    pub stream_write_buffer_size: Option<usize>,
 
     // Unix domain socket configuration
     // If specified with a non-empty path, Unix socket is enabled at that path.
@@ -61,9 +63,6 @@ pub struct DocumentDBSetupConfiguration {
     // Unix socket file permissions (octal format string, e.g., "0660" for owner+group read/write)
     // If not specified, defaults to 0o660
     pub unix_socket_file_permissions: Option<String>,
-
-    pub stream_read_buffer_size: Option<usize>,
-    pub stream_write_buffer_size: Option<usize>,
 }
 
 impl DocumentDBSetupConfiguration {
@@ -184,6 +183,14 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
         })
     }
 
+    fn stream_read_buffer_size(&self) -> usize {
+        self.stream_read_buffer_size.unwrap_or(8 * 1024)
+    }
+
+    fn stream_write_buffer_size(&self) -> usize {
+        self.stream_write_buffer_size.unwrap_or(8 * 1024)
+    }
+
     fn unix_socket_path(&self) -> Option<&str> {
         self.unix_socket_path.as_deref()
     }
@@ -201,13 +208,5 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
             None => 0o660, // Default when not provided
             Some(perm_str) => u32::from_str_radix(perm_str, 8).unwrap(),
         }
-    }
-
-    fn stream_read_buffer_size(&self) -> usize {
-        self.stream_read_buffer_size.unwrap_or(8 * 1024)
-    }
-
-    fn stream_write_buffer_size(&self) -> usize {
-        self.stream_write_buffer_size.unwrap_or(8 * 1024)
     }
 }

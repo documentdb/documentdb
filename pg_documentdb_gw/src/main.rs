@@ -74,11 +74,10 @@ async fn start_gateway(setup_configuration: DocumentDBSetupConfiguration) {
 
     tracing::info!("TLS provider initialized successfully.");
 
-    let connection_pool_manager = create_connection_pool_manager(
-        create_query_catalog(),
-        Box::new(setup_configuration.clone()),
-    )
-    .await;
+    let query_catalog = create_query_catalog();
+
+    let connection_pool_manager =
+        create_connection_pool_manager(query_catalog, Box::new(setup_configuration.clone())).await;
 
     let dynamic_configuration = create_postgres_object(
         || async {

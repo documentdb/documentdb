@@ -53,10 +53,6 @@ use crate::{
 const TCP_KEEPALIVE_TIME_SECS: u64 = 180;
 const TCP_KEEPALIVE_INTERVAL_SECS: u64 = 60;
 
-// Buffer configuration constants
-const STREAM_READ_BUFFER_SIZE: usize = 8 * 1024;
-const STREAM_WRITE_BUFFER_SIZE: usize = 8 * 1024;
-
 // TLS detection timeout
 const TLS_PEEK_TIMEOUT_SECS: u64 = 5;
 
@@ -399,9 +395,11 @@ where
             "TCP".to_string(),
         );
 
+        let setup_configuration = conn_ctx.service_context.setup_configuration();
+
         let buffered_stream = BufStream::with_capacity(
-            STREAM_READ_BUFFER_SIZE,
-            STREAM_WRITE_BUFFER_SIZE,
+            setup_configuration.stream_read_buffer_size(),
+            setup_configuration.stream_write_buffer_size(),
             tls_stream,
         );
 
@@ -422,9 +420,11 @@ where
             "TCP".to_string(),
         );
 
+        let setup_configuration = conn_ctx.service_context.setup_configuration();
+
         let buffered_stream = BufStream::with_capacity(
-            STREAM_READ_BUFFER_SIZE,
-            STREAM_WRITE_BUFFER_SIZE,
+            setup_configuration.stream_read_buffer_size(),
+            setup_configuration.stream_write_buffer_size(),
             tcp_stream,
         );
 
@@ -776,7 +776,6 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let command_error = CommandError::from_error(connection_context, e, activity_id);
-
     let response = command_error.to_raw_document_buf();
 
     if let Some(start) = handle_message_start {
