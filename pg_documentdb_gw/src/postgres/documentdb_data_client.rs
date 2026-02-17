@@ -659,7 +659,10 @@ impl PgDataClient for DocumentDBDataClient {
     ) -> Result<Vec<Row>> {
         let (request, request_info, request_tracker) = request_context.get_components();
 
-        let mut query_str: &str = connection_context.service_context.query_catalog().insert();
+        let mut query_str: &str = connection_context
+            .service_context
+            .query_catalog()
+            .process_update();
 
         if enable_write_procedures_with_batch_commit
             && connection_context.transaction.is_none()
