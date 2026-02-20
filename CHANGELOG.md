@@ -3,6 +3,7 @@
 * Integrate cargo tools to identify dependencies for pg_documentdb_gw *[Feature]* (#263)
 * Add support for killSessions command *[Feature]* (#402)
 * Support arbitrary database user and password *[Feature]* (#306)
+* Support for TTL cron job to repeat deletes in batches until the one minute budget is exhausted, instead of deleting one batch per index per minute.*[Perf]*
 
 ### documentdb v0.109-0 (Unreleased) ###
 * Support collation with find positional queries *[Feature]*

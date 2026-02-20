@@ -123,6 +123,9 @@ bool RumUseNewCompositeTermGeneration = DEFAULT_RUM_USE_NEW_COMPOSITE_TERM_GENER
 #define DEFAULT_ENABLE_COMPOSITE_WILDCARD_INDEX true
 bool EnableCompositeWildcardIndex = DEFAULT_ENABLE_COMPOSITE_WILDCARD_INDEX;
 
+#define DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE true
+bool CreateTTLIndexAsCompositeByDefault = DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE;
+
 #define DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS false
 bool EnableCompositeReducedCorrelatedTerms = DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS;
 
@@ -851,5 +854,13 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable skipping bitmap records by tid without loading the heap to find the continuation point."),
 		NULL, &EnableContinuationFastBitmapLookup,
 		DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.createTTLIndexAsCompositeByDefault", newGucPrefix),
+		gettext_noop(
+			"Whether to always create TTL indexes as composite indexes by default."),
+		NULL, &CreateTTLIndexAsCompositeByDefault,
+		DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }

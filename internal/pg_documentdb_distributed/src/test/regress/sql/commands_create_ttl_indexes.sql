@@ -483,7 +483,7 @@ SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documen
 BEGIN;
 SET LOCAL documentdb.enableIndexOrderbyPushdown to on;
 set local enable_seqscan to off;
-set LOCAL enable_bitmapscan to off;
+SET LOCAL enable_bitmapscan to off;
 SET client_min_messages TO INFO;
 
 -- Check ORDER BY uses index 
@@ -496,3 +496,74 @@ EXPLAIN(COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
         ORDER BY documentdb_api_catalog.bson_orderby(document, '{ "ttl" : -1}'::documentdb_core.bson)
         LIMIT 100;
 END;
+
+
+-- Test : Tests that creating TTL index with createTTLIndexAsCompositeByDefault GUC on creates composite index and the index is used for TTL deletes
+
+-- a. Create a TTL index that is on single path when ttl is not forced to composite
+SHOW documentdb.defaultUseCompositeOpClass;
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+\d+ documentdb_data.documents_20008;
+
+-- b. When defaultUseCompositeOpClass=off, createTTLIndexAsCompositeByDefault=on, 
+-- "enableCompositeTerm": unset
+-- TTL index should be created with composite opclass by default
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll2", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+\d+ documentdb_data.documents_20009;
+
+-- c. When defaultUseCompositeOpClass is on, TTL index should be created with composite opclass and the index should be used for deletes
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll3", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+\d+ documentdb_data.documents_20010;
+
+-- d. When defaultUseCompositeOpClass=on, createTTLIndexAsCompositeByDefault=on, "enableCompositeTerm": true
+-- TTL index should be created with composite opclass by default
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll4", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+\d+ documentdb_data.documents_20011;
+
+-- e. When defaultUseCompositeOpClass=off, createTTLIndexAsCompositeByDefault=off, "enableCompositeTerm": true
+-- TTL index should be created with composite opclass by default
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll5", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+\d+ documentdb_data.documents_20012;
+
+-- f. When defaultUseCompositeOpClass=off, createTTLIndexAsCompositeByDefault=on, "enableCompositeTerm": true
+-- TTL index should be created with composite opclass by default
+BEGIN;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll6", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+\d+ documentdb_data.documents_20013;
+
+-- g. When createTTLIndexAsCompositeByDefault=on, "enableCompositeTerm": false
+-- TTL index should not be created with composite opclass and should not allow ordered scan
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll7", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": false, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+\d+ documentdb_data.documents_20014;
+
+select
+    c.collection_name, 
+    (index_spec).index_name,
+    -- index_is_ordered column tells if the index allows ordered scan 
+    COALESCE(documentdb_core.bson_get_value_text((index_spec).index_options::documentdb_core.bson, 'enableOrderedIndex'::text)::bool, false) as is_ordered,
+    (index_spec).index_expire_after_seconds as ttl_expiry,
+    (index_spec).index_name as index_name,
+    index_spec
+from documentdb_api_catalog.collection_indexes ci 
+JOIN documentdb_api_catalog.collections c
+ON  c.collection_id = ci.collection_id 
+where (index_spec).index_expire_after_seconds > 0
+AND c.database_name = 'ttl_default_composite';

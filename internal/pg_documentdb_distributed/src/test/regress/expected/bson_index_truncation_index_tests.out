@@ -3210,10 +3210,10 @@ NOTICE:  creating collection
 (1 row)
 
 SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 9307 ORDER BY index_id;
- collection_id | index_id |                            index_spec                            | index_is_valid 
+ collection_id | index_id |                                                        index_spec                                                         | index_is_valid 
 ---------------------------------------------------------------------
-          9307 |     9316 | (_id_,"{ ""_id"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,)       | t
-          9307 |     9317 | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,) | t
+          9307 |     9316 | (_id_,"{ ""_id"" : { ""$numberInt"" : ""1"" } }",,,,,2,,,)                                                                | t
+          9307 |     9317 | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""1"" } }") | t
 (2 rows)
 
 /* enableLargeIndexKeys should be false because index does not support it (hashed) */

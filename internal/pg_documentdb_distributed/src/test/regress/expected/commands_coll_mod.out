@@ -187,9 +187,9 @@ SELECT documentdb_api.coll_mod('commands', 'collModTest',
 SELECT * FROM documentdb_api_catalog.collection_indexes
     WHERE (index_spec).index_name = 'b_ttl' AND
     (index_spec).index_expire_after_seconds = 2; -- After update
- collection_id | index_id |                         index_spec                         | index_is_valid 
+ collection_id | index_id |                                                     index_spec                                                      | index_is_valid 
 ---------------------------------------------------------------------
-         25001 |    25003 | (b_ttl,"{ ""b"" : { ""$numberInt"" : ""1"" } }",,,,,2,2,,) | t
+         25001 |    25003 | (b_ttl,"{ ""b"" : { ""$numberInt"" : ""1"" } }",,,,,2,2,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""1"" } }") | t
 (1 row)
 
 SELECT pg_sleep(2);

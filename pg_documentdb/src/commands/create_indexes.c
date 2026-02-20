@@ -163,6 +163,7 @@ extern bool DefaultEnableLargeUniqueIndexKeys;
 extern bool ForceWildcardReducedTerm;
 extern bool EnableCompositeUniqueHash;
 extern bool EnableCompositeWildcardIndex;
+extern bool CreateTTLIndexAsCompositeByDefault;
 extern bool EnableCompositeReducedCorrelatedTerms;
 extern bool EnableUniqueCompositeReducedCorrelatedTerms;
 extern bool EnableCompositeShardDocumentTerms;
@@ -2098,6 +2099,113 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 		}
 	}
 
+	/*
+	 * Below are the check we peform on TTL index spec
+	 *  1. TTL index is not allowed on compound keys. TTL index needs to be single field.
+	 *  2. TTL index can't be defined on _id.
+	 *  3. TTL index can't be a wildcard index.
+	 *
+	 * FYI: 1. Unique and Sparse are valid options for ttl index
+	 *      2. TTL index can be of type hash.
+	 */
+
+	if (isTTLIndex)
+	{
+		ReportFeatureUsage(FEATURE_CREATE_INDEX_TTL);
+
+		ListCell *keyPathCell = NULL;
+		int totalIndexKeyPath = 0;
+		int totalIdKeyPath = 0;
+		foreach(keyPathCell, indexDef->key->keyPathList)
+		{
+			IndexDefKeyPath *indexKeyPath = (IndexDefKeyPath *) lfirst(keyPathCell);
+			char *keyPath = (char *) indexKeyPath->path;
+
+			if (strcmp(keyPath, "_id") == 0)
+			{
+				totalIdKeyPath++;
+			}
+
+			totalIndexKeyPath++;
+		}
+
+		/* "key" : { "_id" : 1, "_id" : 1 } is considered as single-field spec on _id. */
+		if (totalIdKeyPath == totalIndexKeyPath)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDINDEXSPECIFICATIONOPTION),
+							errmsg(
+								"The field 'expireAfterSeconds' is not valid for an _id index specification.")));
+		}
+
+		if (totalIndexKeyPath > 1)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg(
+								"TTL indexes work only on single fields, and compound indexes are incompatible with TTL functionality.")));
+		}
+
+		if (indexDef->key->isWildcard)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg(
+								"Index type 'wildcard' cannot be a TTL index.")));
+		}
+
+		/*
+		 *  While can support creating a ttl index as hash index, it is not performant based on our current approch.
+		 *  If the ttl index is a hash index - searching for all the expired documents would require a scan, as range
+		 *  queries are not supported on hash indexes.
+		 *
+		 *  It is possible to create a parallel b-tree based index - that way we can use the b-tree index to search
+		 *  for the expired documents while supporting a ttl hash index. At some point, if we decide to support
+		 *  "ttl hash indexes" - this may be one of the approaches to try.
+		 *
+		 *  With Hash indexes uniqueness guarantee becomes another challenge, which needs to addressed creatively as well.
+		 */
+		if (indexDef->key->hasHashedIndexes)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg(
+								"Creating a hash index as ttl index is not supported.")));
+		}
+
+		if (indexDef->key->hasTextIndexes)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg(
+								"Creating a text index as ttl index is not supported.")));
+		}
+
+		if (indexDef->key->hasCosmosIndexes)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg(
+								"Creating a cosmosSearch index as ttl index is not supported.")));
+		}
+
+		if (indexDef->key->has2dIndex)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg(
+								"Creating a 2d index as ttl index is not supported.")));
+		}
+
+		if (indexDef->key->has2dsphereIndex)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg(
+								"Creating a 2dsphere index as ttl index is not supported.")));
+		}
+
+		/* TTL indexes should always use single path composite term indexing
+		 * when the GUC `CreateTTLIndexAsCompositeByDefault` is enabled (enabled by default) */
+		if (CreateTTLIndexAsCompositeByDefault && indexDef->enableCompositeTerm !=
+			BoolIndexOption_False)
+		{
+			indexDef->enableCompositeTerm = BoolIndexOption_True;
+		}
+	}
+
 	/* parse the partialFilterExpression with applicable collation*/
 	if (indexDef->partialFilterExprDocument != NULL)
 	{
@@ -2498,106 +2606,6 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 					}
 				}
 			}
-		}
-	}
-
-	/*
-	 * Below are the check we peform on TTL index spec
-	 *  1. TTL index is not allowed on composite keys. TTL index needs to be single field.
-	 *  2. TTL index can't be defined on _id. If the spec contains multiple _id fields and nothing else
-	 * it is considered a single field spec.
-	 *  3. TTL index can't be a wildcard index.
-	 *
-	 * FYI: 1. Unique and Sparse are valid options for ttl index
-	 *       2. TTL index can be of type hash.
-	 */
-
-	if (isTTLIndex)
-	{
-		ReportFeatureUsage(FEATURE_CREATE_INDEX_TTL);
-
-		ListCell *keyPathCell = NULL;
-		int totalIndexKeyPath = 0;
-		int totalIdKeyPath = 0;
-		foreach(keyPathCell, indexDef->key->keyPathList)
-		{
-			IndexDefKeyPath *indexKeyPath = (IndexDefKeyPath *) lfirst(keyPathCell);
-			char *keyPath = (char *) indexKeyPath->path;
-
-			if (strcmp(keyPath, "_id") == 0)
-			{
-				totalIdKeyPath++;
-			}
-
-			totalIndexKeyPath++;
-		}
-
-		/* "key" : { "_id" : 1, "_id" : 1 } is considered as single-field spec on _id. */
-		if (totalIdKeyPath == totalIndexKeyPath)
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDINDEXSPECIFICATIONOPTION),
-							errmsg(
-								"The field 'expireAfterSeconds' is not valid for an _id index specification.")));
-		}
-
-		if (totalIndexKeyPath > 1)
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
-							errmsg(
-								"TTL indexes work only on single fields, and compound indexes are incompatible with TTL functionality.")));
-		}
-
-		if (indexDef->key->isWildcard)
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
-							errmsg(
-								"Index type 'wildcard' cannot be a TTL index.")));
-		}
-
-		/*
-		 *  While can support creating a ttl index as hash index, it is not performant based on our current approch.
-		 *  If the ttl index is a hash index - searching for all the expired documents would require a scan, as range
-		 *  queries are not supported on hash indexes.
-		 *
-		 *  It is possible to create a parallel b-tree based index - that way we can use the b-tree index to search
-		 *  for the expired documents while supporting a ttl hash index. At some point, if we decide to support
-		 *  "ttl hash indexes" - this may be one of the approaches to try.
-		 *
-		 *  With Hash indexes uniqueness guarantee becomes another challenge, which needs to addressed creatively as well.
-		 */
-		if (indexDef->key->hasHashedIndexes)
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg(
-								"Creating a hash index as ttl index is not supported.")));
-		}
-
-		if (indexDef->key->hasTextIndexes)
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg(
-								"Creating a text index as ttl index is not supported.")));
-		}
-
-		if (indexDef->key->hasCosmosIndexes)
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg(
-								"Creating a cosmosSearch index as ttl index is not supported.")));
-		}
-
-		if (indexDef->key->has2dIndex)
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg(
-								"Creating a 2d index as ttl index is not supported.")));
-		}
-
-		if (indexDef->key->has2dsphereIndex)
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg(
-								"Creating a 2dsphere index as ttl index is not supported.")));
 		}
 	}
 
