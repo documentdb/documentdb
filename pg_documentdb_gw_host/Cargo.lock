@@ -366,7 +366,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "documentdb_gateway"
+name = "documentdb_gateway_core"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
@@ -1146,7 +1146,7 @@ dependencies = [
 name = "pg_documentdb_gw_host"
 version = "0.1.0"
 dependencies = [
- "documentdb_gateway",
+ "documentdb_gateway_core",
  "pgrx",
  "tokio",
  "tracing",

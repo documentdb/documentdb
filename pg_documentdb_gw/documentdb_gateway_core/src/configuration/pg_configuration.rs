@@ -1,0 +1,348 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Microsoft Corporation.  All rights reserved.
+ *
+ * documentdb_gateway_core/src/configuration/pg_configuration.rs
+ *
+ *-------------------------------------------------------------------------
+ */
+
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
+};
+
+use arc_swap::ArcSwap;
+use bson::{rawbson, RawBson};
+use notify::{event::ModifyKind, Error, Event, EventKind, RecursiveMode, Watcher};
+use serde::Deserialize;
+use tokio::{
+    runtime::Handle,
+    time::{sleep, Duration, Instant},
+};
+
+use crate::{
+    configuration::{dynamic::POSTGRES_RECOVERY_KEY, DynamicConfiguration, SetupConfiguration},
+    error::{DocumentDBError, Result},
+    postgres::conn_mgmt::PoolManager,
+    requests::request_tracker::RequestTracker,
+};
+
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(rename_all = "PascalCase")]
+pub struct HostConfig {
+    #[serde(default)]
+    is_primary: String,
+    #[serde(default)]
+    send_shutdown_responses: String,
+}
+
+/// Inner struct that holds the dependencies needed for loading configurations.
+#[derive(Debug, Clone)]
+struct PgConfigurationInner {
+    dynamic_config_file: String,
+    settings_prefixes: Vec<String>,
+    pool_manager: Arc<PoolManager>,
+}
+
+impl PgConfigurationInner {
+    /// Loads configurations from the database and config file using the provided connection.
+    pub async fn load_configurations(&self) -> Result<HashMap<String, String>> {
+        let mut configs = HashMap::new();
+
+        match Self::load_host_config(&self.dynamic_config_file).await {
+            Ok(host_config) => {
+                configs.insert(
+                    "IsPrimary".to_string(),
+                    host_config.is_primary.to_lowercase(),
+                );
+                configs.insert(
+                    "SendShutdownResponses".to_string(),
+                    host_config.send_shutdown_responses.to_lowercase(),
+                );
+            }
+            Err(e) => tracing::warn!("Host Config file not able to be loaded: {e}"),
+        }
+
+        let request_tracker = RequestTracker::new();
+        let pg_config_rows = self
+            .pool_manager
+            .system_requests_connection()
+            .await?
+            .query(
+                self.pool_manager.query_catalog().pg_settings(),
+                &[],
+                &[],
+                None,
+                &request_tracker,
+            )
+            .await?;
+
+        for pg_config in pg_config_rows {
+            let mut key = pg_config.get::<_, String>(0);
+
+            for settings_prefix in &self.settings_prefixes {
+                if key.starts_with(settings_prefix) {
+                    key = key[settings_prefix.len()..].to_string();
+                    break;
+                }
+            }
+
+            let mut value: String = pg_config.get(1);
+            if value == "on" {
+                value = "true".to_string();
+            } else if value == "off" {
+                value = "false".to_string();
+            }
+            configs.insert(key.to_owned(), value);
+        }
+
+        let pg_is_in_recovery_row = self
+            .pool_manager
+            .system_requests_connection()
+            .await?
+            .query(
+                self.pool_manager.query_catalog().pg_is_in_recovery(),
+                &[],
+                &[],
+                None,
+                &request_tracker,
+            )
+            .await?;
+
+        let in_recovery: bool = pg_is_in_recovery_row.first().is_some_and(|row| row.get(0));
+        configs.insert(POSTGRES_RECOVERY_KEY.to_string(), in_recovery.to_string());
+
+        tracing::info!("Dynamic configurations loaded: {configs:?}");
+        Ok(configs)
+    }
+
+    async fn load_host_config(dynamic_config_file: &str) -> Result<HostConfig> {
+        let config: HostConfig = serde_json::from_str(
+            &tokio::fs::read_to_string(dynamic_config_file).await?,
+        )
+        .map_err(|e| DocumentDBError::internal_error(format!("Failed to read config file: {e}")))?;
+        Ok(config)
+    }
+}
+
+#[derive(Debug)]
+pub struct PgConfiguration {
+    inner: PgConfigurationInner,
+    values: ArcSwap<HashMap<String, String>>,
+    last_update_at: ArcSwap<Instant>,
+}
+
+static DEBOUNCE_RELOAD_SCHEDULED: AtomicBool = AtomicBool::new(false);
+
+impl PgConfiguration {
+    fn start_dynamic_configuration_refresh_thread(
+        configuration: Arc<PgConfiguration>,
+        refresh_interval: u32,
+    ) {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(refresh_interval as u64));
+            interval.tick().await;
+
+            loop {
+                interval.tick().await;
+
+                Self::reload_configuration(Arc::clone(&configuration)).await;
+            }
+        });
+    }
+
+    async fn reload_configuration(configuration: Arc<PgConfiguration>) {
+        if let Err(e) = configuration.refresh_configuration().await {
+            tracing::error!("Config reload failed! {e}");
+        }
+    }
+
+    pub async fn new(
+        setup_configuration: &dyn SetupConfiguration,
+        pool_manager: Arc<PoolManager>,
+        settings_prefixes: Vec<String>,
+    ) -> Result<Arc<Self>> {
+        let inner = PgConfigurationInner {
+            dynamic_config_file: setup_configuration.dynamic_configuration_file(),
+            settings_prefixes,
+            pool_manager,
+        };
+
+        let values = ArcSwap::from_pointee(inner.load_configurations().await?);
+        let last_update_at = ArcSwap::from_pointee(Instant::now());
+
+        let configuration = Arc::new(PgConfiguration {
+            inner,
+            values,
+            last_update_at,
+        });
+
+        let refresh_interval = setup_configuration.dynamic_configuration_refresh_interval_secs();
+        Self::start_dynamic_configuration_refresh_thread(configuration.clone(), refresh_interval);
+
+        Ok(configuration)
+    }
+
+    pub fn last_update_at(&self) -> Instant {
+        *self.last_update_at.load_full()
+    }
+
+    pub async fn refresh_configuration(&self) -> Result<()> {
+        let new_config = match self.inner.load_configurations().await {
+            Ok(config) => config,
+            Err(e) => {
+                tracing::error!("Failed to reload configuration: {e}");
+                return Err(e);
+            }
+        };
+
+        self.values.store(Arc::new(new_config));
+        self.last_update_at.store(Arc::new(Instant::now()));
+
+        Ok(())
+    }
+
+    pub fn start_config_watcher(
+        dynamic_config_file: String,
+        configuration: Arc<PgConfiguration>,
+        handle: Handle,
+    ) -> notify::Result<notify::RecommendedWatcher> {
+        let (tx, rx) = mpsc::channel::<std::result::Result<Event, Error>>();
+
+        let dynamic_config_file_path = Path::new(&dynamic_config_file);
+
+        let mut watcher = notify::recommended_watcher(move |res| {
+            let _ = tx.send(res);
+        })?;
+
+        watcher.watch(dynamic_config_file_path, RecursiveMode::NonRecursive)?;
+
+        tracing::info!("Config monitoring on: {}", dynamic_config_file);
+
+        std::thread::spawn(move || {
+            for res in rx {
+                match res {
+                    Ok(event) => {
+                        if Self::is_relevant_event(&event) {
+                            Self::on_fs_watcher_notify(
+                                &event,
+                                configuration.clone(),
+                                handle.clone(),
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Config monitoring failed! {:?}", e);
+                    }
+                }
+            }
+        });
+
+        Ok(watcher)
+    }
+
+    fn is_relevant_event(event: &Event) -> bool {
+        matches!(
+            event.kind,
+            // Created (CreationTime, FileName)
+            EventKind::Create(_)
+            // Deleted (FileName)
+            | EventKind::Remove(_)
+            // LastWrite / Size
+            | EventKind::Modify(ModifyKind::Data(_))
+            // Attributes
+            | EventKind::Modify(ModifyKind::Metadata(_))
+        )
+    }
+
+    fn on_fs_watcher_notify(event: &Event, configuration: Arc<PgConfiguration>, handle: Handle) {
+        // Debounce multiple events in quick succession
+        if DEBOUNCE_RELOAD_SCHEDULED.swap(true, Ordering::SeqCst) {
+            return;
+        }
+
+        tracing::info!("Config file changed ({:?})! Reloading.", event.kind);
+
+        handle.spawn(async move {
+            struct ResetFlagGuard;
+
+            impl Drop for ResetFlagGuard {
+                fn drop(&mut self) {
+                    DEBOUNCE_RELOAD_SCHEDULED.store(false, Ordering::SeqCst);
+                }
+            }
+
+            let _guard = ResetFlagGuard;
+
+            // debounce window
+            sleep(Duration::from_millis(300)).await;
+            Self::reload_configuration(configuration).await;
+        });
+    }
+}
+
+impl DynamicConfiguration for PgConfiguration {
+    fn get_str(&self, key: &str) -> Option<String> {
+        self.values.load_full().get(key).cloned()
+    }
+    fn get_bool(&self, key: &str, default: bool) -> bool {
+        self.values
+            .load_full()
+            .get(key)
+            .map(|v| v.parse::<bool>().unwrap_or(default))
+            .unwrap_or(default)
+    }
+    fn get_i32(&self, key: &str, default: i32) -> i32 {
+        self.values
+            .load_full()
+            .get(key)
+            .map(|v| v.parse::<i32>().unwrap_or(default))
+            .unwrap_or(default)
+    }
+    fn get_u64(&self, key: &str, default: u64) -> u64 {
+        self.values
+            .load_full()
+            .get(key)
+            .map(|v| v.parse::<u64>().unwrap_or(default))
+            .unwrap_or(default)
+    }
+    fn equals_value(&self, key: &str, value: &str) -> bool {
+        self.values
+            .load_full()
+            .get(key)
+            .map(|v| v == value)
+            .unwrap_or(false)
+    }
+
+    fn topology(&self) -> RawBson {
+        rawbson!({})
+    }
+
+    fn enable_developer_explain(&self) -> bool {
+        self.get_bool("enableDeveloperExplain", false)
+    }
+
+    fn max_connections(&self) -> usize {
+        let max_connections = self.get_i32("max_connections", -1);
+        match max_connections {
+            n if n < 0 => {
+                // theoretically we can't end up here, since Postgres always provide values
+                tracing::error!("GUC max_connections is not setup correctly");
+                25usize
+            }
+            n => n as usize,
+        }
+    }
+
+    fn allow_transaction_snapshot(&self) -> bool {
+        self.get_bool("mongoAllowTransactionSnapshot", false)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}

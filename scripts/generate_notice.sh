@@ -48,14 +48,6 @@ if [ ! -f "$SOURCEDIR/Cargo.toml" ]; then
   exit 1
 fi
 
-# Install cargo-about if not already installed
-if command -v cargo-about > /dev/null; then
-    echo "cargo-about is already installed."
-else
-    echo "Installing cargo-about..."
-    cargo install --locked cargo-about
-fi
-
 OUTPUT_FILE="${NOTICE_FILE:-NOTICE}"
 
 # Generate JSON output from cargo-about

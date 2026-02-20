@@ -1,62 +1,56 @@
-[package]
-name = "documentdb_gateway"
-description = "A gateway component for DocumentDB."
+## Workspace section
+
+[workspace]
+members = ["documentdb_gateway", "documentdb_tests", "documentdb_gateway_core", "documentdb_macros"]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "Apache-2.0 OR MIT"
+license = "MIT"
 
-[package.metadata.deb]
-name = "documentdb_gateway"
-maintainer = "documentdb-packaging-maintainers@microsoft.com"
-depends = []
-assets = [
- ["target/release-with-symbols/documentdb_gateway", "usr/bin/", "755"],
-]
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-base64 = "0.22.1"
-bson = "2.7.0"
-tokio = { version = "1", features = ["full"] }
-tokio-util = "0.7.9"
-bitflags = "1.1.0"
-async-recursion = "1.0.5"
-serde_json = { version = "1.0.107", features = ["arbitrary_precision"] }
-rand = "0.8.5"
-deadpool-postgres = "0.11.0"
-regex = "1.10.2"
-once_cell = "1.18.0"
-hex = "0.4.3"
-openssl = "0.10.73"
-tokio-openssl = "0.6.5"
-either = "1.13.0"
-socket2 = "0.5.7"
-documentdb_macros = { path = "./documentdb_macros" }
-async-trait = "0.1.88"
-dyn-clone = "1.0.19"
-whoami = "1.6.0"
+[workspace.dependencies]
 arc-swap = "1.7.1"
-tokio-postgres = { version = "0.7.10", features = [
-    "with-serde_json-1",
-    "array-impls",
-] }
-serde = { version = "1.0.125", features = ["derive", "rc"] }
-uuid = { version = "1.12.1", features = ["v4"] }
-tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
-tracing = "0.1.41"
-notify = "6"
+async-recursion = "1.0.5"
+async-trait = "0.1.88"
+base64 = "0.22.1"
+bitflags = "1.1.0"
+bson = "2.7.0"
 dashmap = { version = "6.1.0", default-features = false, features = ["inline"] }
-
-[dev-dependencies]
+deadpool-postgres = "0.11.0"
+documentdb_macros = { path = "documentdb_macros" }
+documentdb_gateway_core = { path = "documentdb_gateway_core" }
+dyn-clone = "1.0.19"
+either = "1.13.0"
+futures = "0.3.31"
+hex = "0.4.3"
+# mongodb rust driver that we use to write test cases for DocumentDB
 mongodb = { version = "3.2.0", default-features = false, features = [
     "dns-resolver",
     "openssl-tls",
     "compat-3-0-0",
 ] }
-futures = "0.3.31"
+notify = "6"
+once_cell = "1.18.0"
+openssl = "0.10.73"
+rand = "0.8.5"
+regex = "1.10.2"
+serde = { version = "1.0.125", features = ["derive", "rc"] }
+serde_json = { version = "1.0.107", features = ["arbitrary_precision"] }
+socket2 = "0.5.7"
+tokio = { version = "1", features = ["full"] }
+tokio-openssl = "0.6.5"
+tokio-postgres = { version = "0.7.10", features = [
+    "with-serde_json-1",
+    "array-impls",
+] }
+tokio-util = "0.7.9"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+uuid = { version = "1.12.1", features = ["v4"] }
+whoami = "1.6.0"
 
-[lints.clippy]
+[workspace.lints.clippy]
 complexity = { level = "warn", priority = -1 }
 correctness = { level = "warn", priority = -1 }
 suspicious = { level = "warn", priority = -1 }
@@ -64,6 +58,8 @@ perf = { level = "warn", priority = -1 }
 
 needless_pass_by_ref_mut = "warn"
 unused_async = "warn"
+
+## Profile section
 
 [profile.release-with-symbols]
 inherits = "release"

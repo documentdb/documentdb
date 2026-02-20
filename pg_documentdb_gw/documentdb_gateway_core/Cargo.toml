@@ -1,0 +1,39 @@
+[package]
+name = "documentdb_gateway_core"
+description = "A gateway library for DocumentDB."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+arc-swap.workspace = true
+async-recursion.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bitflags.workspace = true
+bson.workspace = true
+dashmap.workspace = true
+deadpool-postgres.workspace = true
+documentdb_macros.workspace = true
+dyn-clone.workspace = true
+either.workspace = true
+hex.workspace = true
+notify.workspace = true
+once_cell.workspace = true
+openssl.workspace = true
+rand.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+socket2.workspace = true
+tokio.workspace = true
+tokio-openssl.workspace = true
+tokio-postgres.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+whoami.workspace = true
+
+[lints]
+workspace = true

@@ -418,6 +418,16 @@ dependencies = [
 name = "documentdb_gateway"
 version = "0.1.0"
 dependencies = [
+ "documentdb_gateway_core",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "documentdb_gateway_core"
+version = "0.1.0"
+dependencies = [
  "arc-swap",
  "async-recursion",
  "async-trait",
@@ -429,9 +439,7 @@ dependencies = [
  "documentdb_macros",
  "dyn-clone",
  "either",
- "futures",
  "hex",
- "mongodb",
  "notify",
  "once_cell",
  "openssl",
@@ -453,6 +461,23 @@ dependencies = [
 [[package]]
 name = "documentdb_macros"
 version = "0.1.0"
+
+[[package]]
+name = "documentdb_tests"
+version = "0.1.0"
+dependencies = [
+ "bson",
+ "documentdb_gateway_core",
+ "futures",
+ "mongodb",
+ "tokio",
+ "tokio-postgres",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "whoami",
+]
 
 [[package]]
 name = "dyn-clone"

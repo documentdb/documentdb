@@ -61,16 +61,15 @@ jobs:
       - name: Build and Install Gateway host
         run: ./scripts/build_and_install_with_pgrx.sh -v ${{ matrix.pg_version }} -d ./pg_documentdb_gw_host
 
-      - name: Check Gateway formatting and lints
-        run: |
-          cargo fmt --all --check
-          cargo clippy --all-targets --all-features -- -D warnings
+      - name: Install Rust tools
+        run: ${{ github.workspace }}/scripts/install_rust_tools.sh ${{ github.workspace }}/rust-toolchain.toml
+
+      - name: Lint Gateway
+        run: cargo make lint
         working-directory: pg_documentdb_gw
 
-      - name: Check Gateway host formatting and lints
-        run: |
-          cargo fmt --all --check
-          cargo clippy --all-targets --no-default-features --features "pg${{ matrix.pg_version }}" -- -D warnings
+      - name: Lint Gateway host
+        run: PGVERSION=${{ matrix.pg_version }} cargo make lint
         working-directory: pg_documentdb_gw_host
 
       - name: Start DocumentDB service
@@ -81,8 +80,7 @@ jobs:
           cat $RUNNER_TEMP/pgdata/pglog.log
 
       - name: Run Gateway Tests
-        run: |
-          cargo test -- --test-threads=1
+        run: cargo make test
         working-directory: pg_documentdb_gw
 
       - name: Upload Log Files

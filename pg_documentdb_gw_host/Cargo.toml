@@ -20,7 +20,7 @@ pg_test = []
 
 [dependencies]
 pgrx = { version ="=0.16.0", default-features = false }
-documentdb_gateway = { path = "../pg_documentdb_gw" }
+documentdb_gateway_core = { path = "../pg_documentdb_gw/documentdb_gateway_core" }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

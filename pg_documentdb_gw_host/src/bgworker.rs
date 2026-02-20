@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use documentdb_gateway::{
+use documentdb_gateway_core::{
     configuration::{DocumentDBSetupConfiguration, PgConfiguration, SetupConfiguration},
     postgres::{
         conn_mgmt::create_connection_pool_manager, create_query_catalog, DocumentDBDataClient,

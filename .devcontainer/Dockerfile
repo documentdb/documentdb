@@ -150,6 +150,10 @@ COPY rust-toolchain.toml /
 RUN [ "bin/bash", "-c", "/tmp/install_setup/install_rustup.sh --install-toolchain" ]
 RUN chown -R documentdb:documentdb /home/documentdb/.cargo /home/documentdb/.rustup
 
+# Install Rust tools from [tools] section
+COPY scripts/install_rust_tools.sh /tmp/install_setup/
+RUN [ "bin/bash", "-c", "/tmp/install_setup/install_rust_tools.sh /rust-toolchain.toml" ]
+
 ENV PGRX_HOME=/home/documentdb/.pgrx
 RUN mkdir -p $PGRX_HOME
 
