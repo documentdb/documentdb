@@ -50,7 +50,6 @@ pub async fn process(
 
     let mut response_doc = rawdoc! {
         writeable_primary_field: true,
-        "msg": "isdbgrid",
         "maxBsonObjectSize": MAX_BSON_OBJECT_SIZE,
         "maxMessageSizeBytes": MAX_MESSAGE_SIZE_BYTES,
         "maxWriteBatchSize": dynamic_configuration.max_write_batch_size().await,
@@ -65,6 +64,10 @@ pub async fn process(
         "ok": OK_SUCCEEDED,
     };
 
+    if dynamic_configuration.is_mongo_sharded().await {
+        response_doc.append("msg", "isdbgrid");
+    }
+
     // Add the operationTime field if change streams GUC is enabled
     if dynamic_configuration.enable_change_streams().await {
         response_doc.append(
@@ -74,6 +77,12 @@ pub async fn process(
                 increment: (local_time % 1000) as u32,
             },
         );
+    }
+
+    if let Some(replica_set_bson) = dynamic_configuration.get_replica_set_bson().await {
+        for (key, value) in replica_set_bson.iter().flatten() {
+            response_doc.append(key, value.to_raw_bson());
+        }
     }
 
     Ok(Response::Raw(RawResponse(response_doc)))

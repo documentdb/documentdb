@@ -239,4 +239,6 @@ const char * GetOperationCancellationQuery(int64 shardId, StringView *opIdString
 
 bool ShouldUseCompositeOpClassByDefault(void);
 
+Datum GetReplicaSetFields(void);
+
 #endif

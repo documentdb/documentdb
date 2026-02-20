@@ -14,7 +14,7 @@ use std::sync::{
 };
 
 use async_trait::async_trait;
-use bson::{rawbson, RawBson};
+use bson::{rawbson, RawBson, RawDocumentBuf};
 use documentdb_gateway::{
     configuration::{DynamicConfiguration, SetupConfiguration},
     postgres::{
@@ -75,6 +75,10 @@ impl DynamicConfiguration for MaxConnectionConfig {
 
     async fn allow_transaction_snapshot(&self) -> bool {
         false
+    }
+
+    async fn get_replica_set_bson(&self) -> Option<RawDocumentBuf> {
+        None
     }
 
     // Needed to downcast to concrete type

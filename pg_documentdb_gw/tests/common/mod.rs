@@ -140,6 +140,28 @@ pub fn setup_configuration_with_unix_socket_custom(
     config
 }
 
+/// Creates a setup configuration with a custom dynamic config file.
+#[allow(dead_code)]
+pub fn setup_configuration_with_dynamic_config(
+    dynamic_config_json: &str,
+) -> DocumentDBSetupConfiguration {
+    use std::fs;
+
+    // Create temp directory
+    let _ = fs::create_dir_all("/tmp");
+
+    // Create unique config file path
+    let config_path = format!("/tmp/test_dynamic_config_{}.json", std::process::id());
+
+    // Write the JSON content directly
+    fs::write(&config_path, dynamic_config_json).expect("Failed to write dynamic config");
+
+    // Return configuration pointing to the file
+    let mut config = setup_configuration();
+    config.dynamic_configuration_file = config_path;
+    config
+}
+
 pub fn get_client() -> Client {
     let credential = Credential::builder()
         .username("test".to_string())

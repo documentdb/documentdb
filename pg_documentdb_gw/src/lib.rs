@@ -43,7 +43,7 @@ use crate::{
     error::{DocumentDBError, ErrorCode, Result},
     postgres::PgDataClient,
     protocol::header::Header,
-    requests::{request_tracker::RequestTracker, Request, RequestIntervalKind},
+    requests::{request_tracker::RequestTracker, Request, RequestIntervalKind, RequestType},
     responses::{CommandError, Response},
     telemetry::{
         client_info::parse_client_info, error_code_to_status_code, event_id::EventId,
@@ -644,6 +644,18 @@ where
         protocol::reader::parse_request(&message, &mut connection_context.requires_response)
             .await?;
     request_tracker.record_duration(RequestIntervalKind::FormatRequest, format_request_start);
+
+    if request.request_type() == &RequestType::IsDBGrid
+        && !connection_context
+            .dynamic_configuration()
+            .is_mongo_sharded()
+            .await
+    {
+        return Err(DocumentDBError::documentdb_error(
+            ErrorCode::CommandNotSupported,
+            "no such cmd: isdbgrid".to_string(),
+        ));
+    }
 
     let request_info = request.extract_common()?;
     let request_context = RequestContext {

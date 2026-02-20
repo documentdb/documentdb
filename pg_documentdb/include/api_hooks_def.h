@@ -257,4 +257,7 @@ extern GetOperationCancellationQuery_HookType get_operation_cancellation_query_h
 typedef bool (*DefaultEnableCompositeOpClass_HookType)(void);
 extern DefaultEnableCompositeOpClass_HookType default_enable_composite_op_class_hook;
 
+typedef Datum (*GetReplicaSetFields_HookType)(void);
+extern GetReplicaSetFields_HookType get_replica_set_fields_hook;
+
 #endif

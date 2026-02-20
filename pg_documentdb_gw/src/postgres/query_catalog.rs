@@ -106,6 +106,9 @@ pub struct QueryCatalog {
     pub users_info: String,
     pub connection_status: String,
 
+    // hello.rs
+    pub replicaset_info: String,
+
     // roles.rs
     pub create_role: String,
     pub update_role: String,
@@ -388,6 +391,10 @@ impl QueryCatalog {
         &self.connection_status
     }
 
+    pub fn get_replicaset_info(&self) -> &str {
+        &self.replicaset_info
+    }
+
     pub fn create_role(&self) -> &str {
         &self.create_role
     }
@@ -538,6 +545,9 @@ pub fn create_query_catalog() -> QueryCatalog {
             re_index: "CALL documentdb_api.re_index($1, $2)".to_string(),
             drop_indexes: "CALL documentdb_api.drop_indexes($1, $2)".to_string(),
             list_indexes_cursor_first_page: "SELECT cursorPage, continuation, persistConnection, cursorId FROM documentdb_api.list_indexes_cursor_first_page($1, $2)".to_string(),
+
+            // hello.rs - returns single BSON document
+            replicaset_info: "SELECT documentdb_api_internal.get_replica_set_fields()".to_string(),
 
             // user.rs
             create_user: "SELECT documentdb_api.create_user($1)".to_string(),

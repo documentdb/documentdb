@@ -15,8 +15,9 @@ use std::{
     },
 };
 
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use bson::{rawbson, RawBson};
+use bson::{rawbson, RawBson, RawDocumentBuf};
 use notify::{event::ModifyKind, Error, Event, EventKind, RecursiveMode, Watcher};
 use serde::Deserialize;
 use tokio::{
@@ -28,7 +29,7 @@ use tokio::{
 use crate::{
     configuration::{dynamic::POSTGRES_RECOVERY_KEY, DynamicConfiguration, SetupConfiguration},
     error::{DocumentDBError, Result},
-    postgres::{Connection, ConnectionPool, QueryCatalog},
+    postgres::{Connection, ConnectionPool, PgDocument, QueryCatalog},
     requests::request_tracker::RequestTracker,
 };
 
@@ -39,6 +40,12 @@ pub struct HostConfig {
     is_primary: String,
     #[serde(default)]
     send_shutdown_responses: String,
+    #[serde(default = "default_is_mongo_sharded")]
+    is_mongo_sharded: bool,
+}
+
+fn default_is_mongo_sharded() -> bool {
+    true
 }
 
 /// Inner struct that holds the dependencies needed for loading configurations.
@@ -64,6 +71,10 @@ impl PgConfigurationInner {
                 configs.insert(
                     "SendShutdownResponses".to_string(),
                     host_config.send_shutdown_responses.to_lowercase(),
+                );
+                configs.insert(
+                    "IsMongoSharded".to_string(),
+                    host_config.is_mongo_sharded.to_string(),
                 );
             }
             Err(e) => tracing::warn!("Host Config file not able to be loaded: {e}"),
@@ -114,6 +125,28 @@ impl PgConfigurationInner {
         Ok(configs)
     }
 
+    async fn load_replica_set_bson(&self, conn: &Connection) -> Result<Option<RawDocumentBuf>> {
+        let request_tracker = RequestTracker::new();
+        let replica_set_rows = conn
+            .query(
+                self.query_catalog.get_replicaset_info(),
+                &[],
+                &[],
+                None,
+                &request_tracker,
+            )
+            .await?;
+
+        if let Some(first_row) = replica_set_rows.first() {
+            let replica_set_doc: Option<PgDocument> = first_row.try_get(0)?;
+            if let Some(doc) = replica_set_doc {
+                return Ok(Some(doc.0.to_raw_document_buf()));
+            }
+        }
+
+        Ok(None)
+    }
+
     async fn load_host_config(dynamic_config_file: &str) -> Result<HostConfig> {
         let config: HostConfig = serde_json::from_str(
             &tokio::fs::read_to_string(dynamic_config_file).await?,
@@ -127,6 +160,7 @@ impl PgConfigurationInner {
 pub struct PgConfiguration {
     inner: PgConfigurationInner,
     values: RwLock<HashMap<String, String>>,
+    replica_set_bson: ArcSwap<Option<RawDocumentBuf>>,
     last_update_at: RwLock<Instant>,
 }
 
@@ -191,9 +225,13 @@ impl PgConfiguration {
 
         let values = RwLock::new(inner.load_configurations(&connection).await?);
 
+        let replica_set_bson =
+            ArcSwap::from_pointee(inner.load_replica_set_bson(&connection).await?);
+
         let configuration = Arc::new(PgConfiguration {
             inner,
             values,
+            replica_set_bson,
             last_update_at: RwLock::new(Instant::now()),
         });
 
@@ -216,10 +254,20 @@ impl PgConfiguration {
             }
         };
 
+        let new_replica_set_bson = match self.inner.load_replica_set_bson(conn).await {
+            Ok(bson_doc) => bson_doc,
+            Err(e) => {
+                tracing::error!("Failed to reload replica set BSON: {e}");
+                return Err(e);
+            }
+        };
+
         {
             let mut config_writable = self.values.write().await;
             *config_writable = new_config;
         }
+
+        self.replica_set_bson.store(Arc::new(new_replica_set_bson));
 
         {
             let mut last_update = self.last_update_at.write().await;
@@ -381,6 +429,10 @@ impl DynamicConfiguration for PgConfiguration {
 
     async fn allow_transaction_snapshot(&self) -> bool {
         self.get_bool("mongoAllowTransactionSnapshot", false).await
+    }
+
+    async fn get_replica_set_bson(&self) -> Option<RawDocumentBuf> {
+        self.replica_set_bson.load_full().as_ref().clone()
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

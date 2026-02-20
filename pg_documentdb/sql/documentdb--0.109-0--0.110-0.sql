@@ -13,6 +13,7 @@
 
 #include "udfs/metadata/collection--0.110-0.sql"
 #include "udfs/metadata/empty_data_table--0.110-0.sql"
+#include "udfs/metadata/replica_set_fields--0.110-0.sql"
 
 #include "udfs/schema_mgmt/create_collection--0.110-0.sql"
 #include "udfs/schema_mgmt/create_collection_view--0.110-0.sql"

@@ -80,6 +80,7 @@ PasswordValidation_HookType
 
 DefaultEnableCompositeOpClass_HookType
 	default_enable_composite_op_class_hook = NULL;
+GetReplicaSetFields_HookType get_replica_set_fields_hook = NULL;
 
 /*
  * Single node scenario is always a metadata coordinator
@@ -638,3 +639,15 @@ ShouldUseCompositeOpClassByDefault()
 
 	return DefaultUseCompositeOpClass;
 }
+
+Datum
+GetReplicaSetFields(void)
+{
+	if (get_replica_set_fields_hook != NULL)
+	{
+		return get_replica_set_fields_hook();
+	}
+
+	return (Datum) 0;
+}
+
