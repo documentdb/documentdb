@@ -241,7 +241,7 @@ impl TransactionStore {
                 Err(DocumentDBError::documentdb_error(
                     ErrorCode::NoSuchTransaction,
                     format!(
-                        "Cannot continue transaction {}",
+                        "Given transaction number {} does not match any in-progress transactions.",
                         transaction_info.transaction_number
                     ),
                 ))
@@ -269,7 +269,7 @@ impl TransactionStore {
             Err(DocumentDBError::documentdb_error(
                 ErrorCode::NoSuchTransaction,
                 format!(
-                    "Cannot continue transaction {}",
+                    "Given transaction number {} does not match any in-progress transactions.",
                     transaction_info.transaction_number
                 ),
             ))

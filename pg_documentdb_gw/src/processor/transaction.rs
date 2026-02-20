@@ -23,6 +23,46 @@ pub async fn handle(
     let (request, request_info, _) = request_context.get_components();
 
     connection_context.transaction = None;
+
+    // Validate fields needed in CommitTransaction and AbortTransaction requests
+    if matches!(
+        request.request_type(),
+        RequestType::CommitTransaction | RequestType::AbortTransaction
+    ) {
+        // Check raw BSON to see if txnNumber and autocommit fields exist
+        let txn_number_bson = request.document().get("txnNumber");
+        let txn_number_value = txn_number_bson.as_ref().unwrap();
+
+        let autocommit_bson = request.document().get("autocommit");
+        let autocommit_value = autocommit_bson.as_ref().unwrap();
+
+        // If both txnNumber and autocommit are missing, it's not being run within a transaction
+        if txn_number_value.is_none() && autocommit_value.is_none() {
+            return Err(DocumentDBError::UntypedDocumentDBError(
+                125,
+                format!(
+                    "{} must be run within a transaction.",
+                    request.request_type()
+                ),
+                "CommandFailed".to_string(),
+                std::backtrace::Backtrace::capture(),
+            ));
+        } else if txn_number_value.is_none() {
+            return Err(DocumentDBError::documentdb_error(
+                ErrorCode::InvalidOptions,
+                "'autocommit' field requires a transaction number to also be specified."
+                    .to_string(),
+            ));
+        } else if autocommit_value.is_none() {
+            return Err(DocumentDBError::UntypedDocumentDBError(
+                50768,
+                format!("txnNumber may only be provided for multi-document transactions and retryable write commands. autocommit:false was not provided, and {} is not a retryable write command.", request.request_type()),
+                "NotARetryableWriteCommand".to_string(),
+                std::backtrace::Backtrace::capture(),
+            ));
+        }
+    }
+
     if let Some(request_transaction_info) = &request_info.transaction_info {
         if request_transaction_info.auto_commit {
             if request_info.session_id.is_none() {
@@ -173,10 +213,15 @@ pub async fn handle(
 }
 
 pub async fn process_commit(context: &ConnectionContext) -> Result<Response> {
-    if let Some((session_id, _)) = context.transaction.as_ref() {
-        let store = context.service_context.transaction_store();
-        store.commit(session_id).await?;
-    }
+    let (session_id, _) = context
+        .transaction
+        .as_ref()
+        .ok_or(DocumentDBError::internal_error(
+            "Transaction information was not populated for commit.".to_string(),
+        ))?;
+
+    let store = context.service_context.transaction_store();
+    store.commit(session_id).await?;
     Ok(Response::ok())
 }
 
