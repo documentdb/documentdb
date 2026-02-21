@@ -560,7 +560,7 @@ rollback;
 begin;
 set local citus.log_remote_commands to on;
 select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":{"$eq":5}},"u":{"$set":{"b":0}},"multi":true}]}');
-NOTICE:  executing the command locally: WITH u AS (UPDATE documentdb_data.documents_6490_649022 documents_6490 SET document = COALESCE(documentdb_api_internal.update_bson_document(documents_6490.document, ($1)::documentdb_core.bson, $2::documentdb_core.bson, ($3)::documentdb_core.bson, $4::documentdb_core.bson, NULL::text), documents_6490.document) WHERE ((documents_6490.document OPERATOR(documentdb_api_catalog.#=) '{ "a" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND (documents_6490.shard_key_value OPERATOR(pg_catalog.=) $6)) RETURNING documentdb_api_internal.bson_update_returned_value(documents_6490.shard_key_value) AS updated) SELECT count(*) AS count, sum(updated) AS sum FROM u WHERE true
+NOTICE:  executing the command locally: WITH u AS (UPDATE documentdb_data.documents_6490_649022 documents_6490 SET document = COALESCE(documentdb_api_internal.update_bson_document(documents_6490.document, ($1)::documentdb_core.bson, $2::documentdb_core.bson, ($3)::documentdb_core.bson, $4::documentdb_core.bson, NULL::text), documents_6490.document) WHERE (((documents_6490.document OPERATOR(documentdb_api_catalog.#=) '{ "a" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND (documents_6490.shard_key_value OPERATOR(pg_catalog.=) '1786987034919379147'::bigint)) AND (documents_6490.shard_key_value OPERATOR(pg_catalog.=) $6)) RETURNING documentdb_api_internal.bson_update_returned_value(documents_6490.shard_key_value) AS updated) SELECT count(*) AS count, sum(updated) AS sum FROM u WHERE true
                                                                update                                                               
 ---------------------------------------------------------------------
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
@@ -583,7 +583,7 @@ rollback;
 begin;
 set local citus.log_remote_commands to on;
 select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"$and":[{"a":5},{"a":{"$gt":0}}]},"u":{"$set":{"b":0}},"multi":true}]}');
-NOTICE:  executing the command locally: WITH u AS (UPDATE documentdb_data.documents_6490_649022 documents_6490 SET document = COALESCE(documentdb_api_internal.update_bson_document(documents_6490.document, ($1)::documentdb_core.bson, $2::documentdb_core.bson, ($3)::documentdb_core.bson, $4::documentdb_core.bson, NULL::text), documents_6490.document) WHERE (((documents_6490.document OPERATOR(documentdb_api_catalog.#=) '{ "a" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND (documents_6490.document OPERATOR(documentdb_api_catalog.#>) '{ "a" : { "$numberInt" : "0" } }'::documentdb_core.bsonquery)) AND (documents_6490.shard_key_value OPERATOR(pg_catalog.=) $6)) RETURNING documentdb_api_internal.bson_update_returned_value(documents_6490.shard_key_value) AS updated) SELECT count(*) AS count, sum(updated) AS sum FROM u WHERE true
+NOTICE:  executing the command locally: WITH u AS (UPDATE documentdb_data.documents_6490_649022 documents_6490 SET document = COALESCE(documentdb_api_internal.update_bson_document(documents_6490.document, ($1)::documentdb_core.bson, $2::documentdb_core.bson, ($3)::documentdb_core.bson, $4::documentdb_core.bson, NULL::text), documents_6490.document) WHERE ((((documents_6490.document OPERATOR(documentdb_api_catalog.#=) '{ "a" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND (documents_6490.document OPERATOR(documentdb_api_catalog.#>) '{ "a" : { "$numberInt" : "0" } }'::documentdb_core.bsonquery)) AND (documents_6490.shard_key_value OPERATOR(pg_catalog.=) '1786987034919379147'::bigint)) AND (documents_6490.shard_key_value OPERATOR(pg_catalog.=) $6)) RETURNING documentdb_api_internal.bson_update_returned_value(documents_6490.shard_key_value) AS updated) SELECT count(*) AS count, sum(updated) AS sum FROM u WHERE true
                                                                update                                                               
 ---------------------------------------------------------------------
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
@@ -965,7 +965,7 @@ select count(*) from documentdb_api.collection('db', 'updateme') where document 
 
 set local citus.log_remote_commands to on;
 select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"_id":33, "a": 10 },"u":{"$set":{"b":2}},"multi":true,"upsert":true}]}');
-NOTICE:  executing the command locally: WITH u AS (UPDATE documentdb_data.documents_6490_649023 documents_6490 SET document = COALESCE(documentdb_api_internal.update_bson_document(documents_6490.document, ($1)::documentdb_core.bson, $2::documentdb_core.bson, ($3)::documentdb_core.bson, $4::documentdb_core.bson, NULL::text), documents_6490.document) WHERE (((documents_6490.document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : { "$numberInt" : "33" } }'::documentdb_core.bsonquery) AND (documents_6490.document OPERATOR(documentdb_api_catalog.#=) '{ "a" : { "$numberInt" : "10" } }'::documentdb_core.bsonquery)) AND (documents_6490.shard_key_value OPERATOR(pg_catalog.=) $6) AND (documents_6490.object_id OPERATOR(documentdb_core.=) ($7)::documentdb_core.bson)) RETURNING documentdb_api_internal.bson_update_returned_value(documents_6490.shard_key_value) AS updated) SELECT count(*) AS count, sum(updated) AS sum FROM u WHERE true
+NOTICE:  executing the command locally: WITH u AS (UPDATE documentdb_data.documents_6490_649023 documents_6490 SET document = COALESCE(documentdb_api_internal.update_bson_document(documents_6490.document, ($1)::documentdb_core.bson, $2::documentdb_core.bson, ($3)::documentdb_core.bson, $4::documentdb_core.bson, NULL::text), documents_6490.document) WHERE (((documents_6490.document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : { "$numberInt" : "33" } }'::documentdb_core.bsonquery) AND (documents_6490.document OPERATOR(documentdb_api_catalog.#=) '{ "a" : { "$numberInt" : "10" } }'::documentdb_core.bsonquery) AND (documents_6490.shard_key_value OPERATOR(pg_catalog.=) '5243071450131145979'::bigint) AND (documents_6490.object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "33" } }'::documentdb_core.bson)) AND (documents_6490.shard_key_value OPERATOR(pg_catalog.=) $6) AND (documents_6490.object_id OPERATOR(documentdb_core.=) ($7)::documentdb_core.bson)) RETURNING documentdb_api_internal.bson_update_returned_value(documents_6490.shard_key_value) AS updated) SELECT count(*) AS count, sum(updated) AS sum FROM u WHERE true
                                                                update                                                               
 ---------------------------------------------------------------------
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
@@ -2721,23 +2721,23 @@ SELECT documentdb_api.update('db', '{ "update": "coll_update", "updates": [ { "q
 ROLLBACK;
 -- Check for index pushdown
 BEGIN;
-select  documentdb_api.insert('datab', '{"insert":"updateIndex", "documents":[{"_id":1}]}');
+select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":1}]}');
 NOTICE:  creating collection
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
-select  documentdb_api.insert('datab', '{"insert":"updateIndex", "documents":[{"_id":2}]}');
+select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":2}]}');
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
 SET LOCAL citus.log_remote_commands TO ON;
+SET local client_min_messages TO ERROR;
 set LOCAL enable_seqscan TO OFF;
-select  documentdb_api.insert('datab', '{"insert":"updateIndex", "documents":[{"_id":3}]}');
-NOTICE:  executing the command locally: INSERT INTO documentdb_data.documents_6504_649124 AS collection (shard_key_value, object_id, document) VALUES ('6504'::bigint,'{ "" : { "$numberInt" : "3" } }'::documentdb_core.bson,'{ "_id" : { "$numberInt" : "3" } }'::documentdb_core.bson) RETURNING 1 AS "intVal"
+select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":3}]}');
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
@@ -2914,7 +2914,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6504_649124 SET
 (4 rows)
 
 ROLLBACK;
-select documentdb_api.shard_collection('datab', 'updateIndex', '{"_id": "hashed"}', false);
+select documentdb_api.shard_collection('db', 'updateIndex', '{"_id": "hashed"}', false);
 NOTICE:  creating collection
  shard_collection 
 ---------------------------------------------------------------------
@@ -2923,22 +2923,22 @@ NOTICE:  creating collection
 
 --6. Now shard collection and run explain plan again, it should still show index scan
 BEGIN;
-select  documentdb_api.insert('datab', '{"insert":"updateIndex", "documents":[{"_id":1}]}');
+select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":1}]}');
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
-select  documentdb_api.insert('datab', '{"insert":"updateIndex", "documents":[{"_id":2}]}');
+select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":2}]}');
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
 SET LOCAL citus.log_remote_commands TO ON;
+SET local client_min_messages TO ERROR;
 set LOCAL enable_seqscan TO OFF;
-select  documentdb_api.insert('datab', '{"insert":"updateIndex", "documents":[{"_id":3}]}');
-NOTICE:  executing the command locally: INSERT INTO documentdb_data.documents_6505_649129 AS collection (shard_key_value, object_id, document) VALUES ('-4918719581749358852'::bigint,$1,$2) RETURNING 1 AS "intVal"
+select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":3}]}');
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
@@ -2946,108 +2946,168 @@ NOTICE:  executing the command locally: INSERT INTO documentdb_data.documents_65
 
 SET LOCAL documentdb.useLocalExecutionShardQueries to off;
 --7. bson_query_match with all ops
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : 1}', NULL, NULL);
-                                                                                                   QUERY PLAN                                                                                                    
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : 1}', NULL, NULL);
+                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                     
 ---------------------------------------------------------------------
- Update on documentdb_data.documents_6505_649129
-   ->  Index Scan using _id_ on documentdb_data.documents_6505_649129
-         Output: COALESCE(update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::bson, '{ "_id" : { "$numberInt" : "1" } }'::bson, NULL::bson, NULL::bson, NULL::text), document), ctid
-         Index Cond: ((documents_6505_649129.shard_key_value = '4322365043291501017'::bigint) AND (documents_6505_649129.object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
-(4 rows)
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: UPDATE documentdb_data.documents_6505_649163 documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document) WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '4322365043291501017'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+         Node: host=localhost port=58070 dbname=regression
+         ->  Update on documentdb_data.documents_6505_649163 documents_6505
+               ->  Index Scan using _id_ on documentdb_data.documents_6505_649163 documents_6505
+                     Output: COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document), ctid
+                     Index Cond: ((documents_6505.shard_key_value = '4322365043291501017'::bigint) AND (documents_6505.object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+(10 rows)
 
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq"  : 1}}', NULL, NULL);
-                                                                                                   QUERY PLAN                                                                                                    
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq"  : 1}}', NULL, NULL);
+                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                     
 ---------------------------------------------------------------------
- Update on documentdb_data.documents_6505_649129
-   ->  Index Scan using _id_ on documentdb_data.documents_6505_649129
-         Output: COALESCE(update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::bson, '{ "_id" : { "$numberInt" : "1" } }'::bson, NULL::bson, NULL::bson, NULL::text), document), ctid
-         Index Cond: ((documents_6505_649129.shard_key_value = '4322365043291501017'::bigint) AND (documents_6505_649129.object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
-(4 rows)
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: UPDATE documentdb_data.documents_6505_649163 documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document) WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '4322365043291501017'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+         Node: host=localhost port=58070 dbname=regression
+         ->  Update on documentdb_data.documents_6505_649163 documents_6505
+               ->  Index Scan using _id_ on documentdb_data.documents_6505_649163 documents_6505
+                     Output: COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document), ctid
+                     Index Cond: ((documents_6505.shard_key_value = '4322365043291501017'::bigint) AND (documents_6505.object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+(10 rows)
 
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$in"  : [1,2,3]}}', NULL, NULL);
-                                                                                                                                                                                                              QUERY PLAN                                                                                                                                                                                                               
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$in"  : [1,2,3]}}', NULL, NULL);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
 ---------------------------------------------------------------------
- Update on documentdb_data.documents_6505_649129
-   ->  Bitmap Heap Scan on documentdb_data.documents_6505_649129
-         Output: COALESCE(update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::bson, '{ "_id" : { "$numberInt" : "1" } }'::bson, NULL::bson, NULL::bson, NULL::text), document), ctid
-         Recheck Cond: (documents_6505_649129.document @*= '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson)
-         Filter: ((documents_6505_649129.object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"1\" } }","{ \"\" : { \"$numberInt\" : \"2\" } }","{ \"\" : { \"$numberInt\" : \"3\" } }"}'::bson[])) AND ((documents_6505_649129.shard_key_value = '4322365043291501017'::bigint) OR (documents_6505_649129.shard_key_value = '-1389566185330078543'::bigint) OR (documents_6505_649129.shard_key_value = '-4918719581749358852'::bigint)))
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (documents_6505_649129.document @*= '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson)
-(7 rows)
+ Custom Scan (Citus Adaptive)
+   Task Count: 2
+   Tasks Shown: One of 2
+   ->  Task
+         Query: UPDATE documentdb_data.documents_6505_649157 documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document) WHERE ((documentdb_api_catalog.bson_dollar_in(document, '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_internal.##=) ANY (ARRAY['{ "_id" : { "$numberInt" : "1" } }'::documentdb_api_internal.bsonindexbounds, '{ "_id" : { "$numberInt" : "2" } }'::documentdb_api_internal.bsonindexbounds, '{ "_id" : { "$numberInt" : "3" } }'::documentdb_api_internal.bsonindexbounds]))) AND ((shard_key_value OPERATOR(pg_catalog.=) '4322365043291501017'::bigint) OR (shard_key_value OPERATOR(pg_catalog.=) '-1389566185330078543'::bigint) OR (shard_key_value OPERATOR(pg_catalog.=) '-4918719581749358852'::bigint)) AND (object_id OPERATOR(documentdb_core.=) ANY (ARRAY['{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson, '{ "" : { "$numberInt" : "3" } }'::documentdb_core.bson])))
+         Node: host=localhost port=58070 dbname=regression
+         ->  Update on documentdb_data.documents_6505_649157 documents_6505
+               ->  Bitmap Heap Scan on documentdb_data.documents_6505_649157 documents_6505
+                     Output: COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document), ctid
+                     Recheck Cond: (documents_6505.document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::documentdb_core.bson)
+                     Filter: ((documents_6505.object_id OPERATOR(documentdb_core.=) ANY ('{"{ \"\" : { \"$numberInt\" : \"1\" } }","{ \"\" : { \"$numberInt\" : \"2\" } }","{ \"\" : { \"$numberInt\" : \"3\" } }"}'::documentdb_core.bson[])) AND ((documents_6505.shard_key_value = '4322365043291501017'::bigint) OR (documents_6505.shard_key_value = '-1389566185330078543'::bigint) OR (documents_6505.shard_key_value = '-4918719581749358852'::bigint)))
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (documents_6505.document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::documentdb_core.bson)
+(13 rows)
 
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gt"  : 1}}', NULL, NULL);
-                                                                                                   QUERY PLAN                                                                                                    
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gt"  : 1}}', NULL, NULL);
+                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                            
 ---------------------------------------------------------------------
- Update on documentdb_data.documents_6505_649129
-   ->  Bitmap Heap Scan on documentdb_data.documents_6505_649129
-         Output: COALESCE(update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::bson, '{ "_id" : { "$numberInt" : "1" } }'::bson, NULL::bson, NULL::bson, NULL::text), document), ctid
-         Recheck Cond: (documents_6505_649129.document @> '{ "_id" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (documents_6505_649129.document @> '{ "_id" : { "$numberInt" : "1" } }'::bson)
-(6 rows)
+ Custom Scan (Citus Adaptive)
+   Task Count: 8
+   Tasks Shown: One of 8
+   ->  Task
+         Query: UPDATE documentdb_data.documents_6505_649156 documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document) WHERE (document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery)
+         Node: host=localhost port=58070 dbname=regression
+         ->  Update on documentdb_data.documents_6505_649156 documents_6505
+               ->  Bitmap Heap Scan on documentdb_data.documents_6505_649156 documents_6505
+                     Output: COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document), ctid
+                     Recheck Cond: (documents_6505.document OPERATOR(documentdb_api_catalog.@>) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (documents_6505.document OPERATOR(documentdb_api_catalog.@>) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+(12 rows)
 
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte"  : 1}}', NULL, NULL);
-                                                                                                   QUERY PLAN                                                                                                    
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte"  : 1}}', NULL, NULL);
+                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                             
 ---------------------------------------------------------------------
- Update on documentdb_data.documents_6505_649129
-   ->  Bitmap Heap Scan on documentdb_data.documents_6505_649129
-         Output: COALESCE(update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::bson, '{ "_id" : { "$numberInt" : "1" } }'::bson, NULL::bson, NULL::bson, NULL::text), document), ctid
-         Recheck Cond: (documents_6505_649129.document @>= '{ "_id" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (documents_6505_649129.document @>= '{ "_id" : { "$numberInt" : "1" } }'::bson)
-(6 rows)
+ Custom Scan (Citus Adaptive)
+   Task Count: 8
+   Tasks Shown: One of 8
+   ->  Task
+         Query: UPDATE documentdb_data.documents_6505_649156 documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document) WHERE (document OPERATOR(documentdb_api_catalog.#>=) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery)
+         Node: host=localhost port=58070 dbname=regression
+         ->  Update on documentdb_data.documents_6505_649156 documents_6505
+               ->  Bitmap Heap Scan on documentdb_data.documents_6505_649156 documents_6505
+                     Output: COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document), ctid
+                     Recheck Cond: (documents_6505.document OPERATOR(documentdb_api_catalog.@>=) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (documents_6505.document OPERATOR(documentdb_api_catalog.@>=) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+(12 rows)
 
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte"  : 1}}', NULL, NULL);
-                                                                                                   QUERY PLAN                                                                                                    
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte"  : 1}}', NULL, NULL);
+                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                             
 ---------------------------------------------------------------------
- Update on documentdb_data.documents_6505_649129
-   ->  Bitmap Heap Scan on documentdb_data.documents_6505_649129
-         Output: COALESCE(update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::bson, '{ "_id" : { "$numberInt" : "1" } }'::bson, NULL::bson, NULL::bson, NULL::text), document), ctid
-         Recheck Cond: (documents_6505_649129.document @<= '{ "_id" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (documents_6505_649129.document @<= '{ "_id" : { "$numberInt" : "1" } }'::bson)
-(6 rows)
+ Custom Scan (Citus Adaptive)
+   Task Count: 8
+   Tasks Shown: One of 8
+   ->  Task
+         Query: UPDATE documentdb_data.documents_6505_649156 documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document) WHERE (document OPERATOR(documentdb_api_catalog.#<=) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery)
+         Node: host=localhost port=58070 dbname=regression
+         ->  Update on documentdb_data.documents_6505_649156 documents_6505
+               ->  Bitmap Heap Scan on documentdb_data.documents_6505_649156 documents_6505
+                     Output: COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document), ctid
+                     Recheck Cond: (documents_6505.document OPERATOR(documentdb_api_catalog.@<=) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (documents_6505.document OPERATOR(documentdb_api_catalog.@<=) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+(12 rows)
 
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt"  : 1}}', NULL, NULL);
-                                                                                                   QUERY PLAN                                                                                                    
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt"  : 1}}', NULL, NULL);
+                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                            
 ---------------------------------------------------------------------
- Update on documentdb_data.documents_6505_649129
-   ->  Bitmap Heap Scan on documentdb_data.documents_6505_649129
-         Output: COALESCE(update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::bson, '{ "_id" : { "$numberInt" : "1" } }'::bson, NULL::bson, NULL::bson, NULL::text), document), ctid
-         Recheck Cond: (documents_6505_649129.document @< '{ "_id" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (documents_6505_649129.document @< '{ "_id" : { "$numberInt" : "1" } }'::bson)
-(6 rows)
+ Custom Scan (Citus Adaptive)
+   Task Count: 8
+   Tasks Shown: One of 8
+   ->  Task
+         Query: UPDATE documentdb_data.documents_6505_649156 documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document) WHERE (document OPERATOR(documentdb_api_catalog.#<) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery)
+         Node: host=localhost port=58070 dbname=regression
+         ->  Update on documentdb_data.documents_6505_649156 documents_6505
+               ->  Bitmap Heap Scan on documentdb_data.documents_6505_649156 documents_6505
+                     Output: COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document), ctid
+                     Recheck Cond: (documents_6505.document OPERATOR(documentdb_api_catalog.@<) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (documents_6505.document OPERATOR(documentdb_api_catalog.@<) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+(12 rows)
 
 --8. bson_query_match with let variable
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : "$$varRef1"}', '{ "let": {"varRef1": 2, "varRef2": 2} }', NULL);
-                                                                                                   QUERY PLAN                                                                                                    
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : "$$varRef1"}', '{ "let": {"varRef1": 2, "varRef2": 2} }', NULL);
+                                                                                                                                                                                                                                                                                                                         QUERY PLAN                                                                                                                                                                                                                                                                                                                          
 ---------------------------------------------------------------------
- Update on documentdb_data.documents_6505_649129
-   ->  Index Scan using _id_ on documentdb_data.documents_6505_649129
-         Output: COALESCE(update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::bson, '{ "_id" : { "$numberInt" : "1" } }'::bson, NULL::bson, NULL::bson, NULL::text), document), ctid
-         Index Cond: ((documents_6505_649129.shard_key_value = '3208035191240789468'::bigint) AND (documents_6505_649129.object_id = '{ "" : "$$varRef1" }'::bson))
-(4 rows)
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: UPDATE documentdb_data.documents_6505_649160 documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document) WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "$$varRef1" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '3208035191240789468'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : "$$varRef1" }'::documentdb_core.bson))
+         Node: host=localhost port=58070 dbname=regression
+         ->  Update on documentdb_data.documents_6505_649160 documents_6505
+               ->  Index Scan using _id_ on documentdb_data.documents_6505_649160 documents_6505
+                     Output: COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document), ctid
+                     Index Cond: ((documents_6505.shard_key_value = '3208035191240789468'::bigint) AND (documents_6505.object_id OPERATOR(documentdb_core.=) '{ "" : "$$varRef1" }'::documentdb_core.bson))
+(10 rows)
 
 --9. simple @@ filter
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  document @@ '{"_id" : 1}';
-                                                                                                   QUERY PLAN                                                                                                    
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  document @@ '{"_id" : 1}';
+                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                     
 ---------------------------------------------------------------------
- Update on documentdb_data.documents_6505_649129
-   ->  Index Scan using _id_ on documentdb_data.documents_6505_649129
-         Output: COALESCE(update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::bson, '{ "_id" : { "$numberInt" : "1" } }'::bson, NULL::bson, NULL::bson, NULL::text), document), ctid
-         Index Cond: ((documents_6505_649129.shard_key_value = '4322365043291501017'::bigint) AND (documents_6505_649129.object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
-(4 rows)
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: UPDATE documentdb_data.documents_6505_649163 documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document) WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '4322365043291501017'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+         Node: host=localhost port=58070 dbname=regression
+         ->  Update on documentdb_data.documents_6505_649163 documents_6505
+               ->  Index Scan using _id_ on documentdb_data.documents_6505_649163 documents_6505
+                     Output: COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document), ctid
+                     Index Cond: ((documents_6505.shard_key_value = '4322365043291501017'::bigint) AND (documents_6505.object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+(10 rows)
 
 --10. with collation filter
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : 1}', NULL, 'en-u-ks-level1');
-                                                                                                   QUERY PLAN                                                                                                    
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : 1}', NULL, 'en-u-ks-level1');
+                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                     
 ---------------------------------------------------------------------
- Update on documentdb_data.documents_6505_649129
-   ->  Index Scan using _id_ on documentdb_data.documents_6505_649129
-         Output: COALESCE(update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::bson, '{ "_id" : { "$numberInt" : "1" } }'::bson, NULL::bson, NULL::bson, NULL::text), document), ctid
-         Index Cond: ((documents_6505_649129.shard_key_value = '4322365043291501017'::bigint) AND (documents_6505_649129.object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
-(4 rows)
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: UPDATE documentdb_data.documents_6505_649163 documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document) WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '4322365043291501017'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+         Node: host=localhost port=58070 dbname=regression
+         ->  Update on documentdb_data.documents_6505_649163 documents_6505
+               ->  Index Scan using _id_ on documentdb_data.documents_6505_649163 documents_6505
+                     Output: COALESCE(documentdb_api_internal.update_bson_document(document, '{ "$set" : { "a" : { "$numberInt" : "1" } } }'::documentdb_core.bson, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::text), document), ctid
+                     Index Cond: ((documents_6505.shard_key_value = '4322365043291501017'::bigint) AND (documents_6505.object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+(10 rows)
 
 ROLLBACK;

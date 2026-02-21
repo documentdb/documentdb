@@ -994,12 +994,13 @@ ROLLBACK;
 
 -- Check for index pushdown
 BEGIN;
-select  documentdb_api.insert('datab', '{"insert":"updateIndex", "documents":[{"_id":1}]}');
-select  documentdb_api.insert('datab', '{"insert":"updateIndex", "documents":[{"_id":2}]}');
+select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":1}]}');
+select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":2}]}');
 
 SET LOCAL citus.log_remote_commands TO ON;
+SET local client_min_messages TO ERROR;
 set LOCAL enable_seqscan TO OFF;
-select  documentdb_api.insert('datab', '{"insert":"updateIndex", "documents":[{"_id":3}]}');
+select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":3}]}');
 
 SET LOCAL documentdb.useLocalExecutionShardQueries to off;
 
@@ -1035,32 +1036,33 @@ EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6504_649124 SET
 ROLLBACK;
 
 
-select documentdb_api.shard_collection('datab', 'updateIndex', '{"_id": "hashed"}', false);
+select documentdb_api.shard_collection('db', 'updateIndex', '{"_id": "hashed"}', false);
 --6. Now shard collection and run explain plan again, it should still show index scan
 BEGIN;
-select  documentdb_api.insert('datab', '{"insert":"updateIndex", "documents":[{"_id":1}]}');
-select  documentdb_api.insert('datab', '{"insert":"updateIndex", "documents":[{"_id":2}]}');
+select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":1}]}');
+select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":2}]}');
 
 SET LOCAL citus.log_remote_commands TO ON;
+SET local client_min_messages TO ERROR;
 set LOCAL enable_seqscan TO OFF;
-select  documentdb_api.insert('datab', '{"insert":"updateIndex", "documents":[{"_id":3}]}');
+select  documentdb_api.insert('db', '{"insert":"updateIndex", "documents":[{"_id":3}]}');
 SET LOCAL documentdb.useLocalExecutionShardQueries to off;
 
 --7. bson_query_match with all ops
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : 1}', NULL, NULL);
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq"  : 1}}', NULL, NULL);
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$in"  : [1,2,3]}}', NULL, NULL);
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gt"  : 1}}', NULL, NULL);
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte"  : 1}}', NULL, NULL);
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte"  : 1}}', NULL, NULL);
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt"  : 1}}', NULL, NULL);
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : 1}', NULL, NULL);
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq"  : 1}}', NULL, NULL);
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$in"  : [1,2,3]}}', NULL, NULL);
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gt"  : 1}}', NULL, NULL);
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte"  : 1}}', NULL, NULL);
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte"  : 1}}', NULL, NULL);
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt"  : 1}}', NULL, NULL);
 
 --8. bson_query_match with let variable
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : "$$varRef1"}', '{ "let": {"varRef1": 2, "varRef2": 2} }', NULL);
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : "$$varRef1"}', '{ "let": {"varRef1": 2, "varRef2": 2} }', NULL);
 
 --9. simple @@ filter
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  document @@ '{"_id" : 1}';
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  document @@ '{"_id" : 1}';
 
 --10. with collation filter
-EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505_649129 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : 1}', NULL, 'en-u-ks-level1');
+EXPLAIN (COSTS OFF, VERBOSE ON) UPDATE documentdb_data.documents_6505 SET document = COALESCE(documentdb_api_internal.update_bson_document(document, '{"$set" : {"a" : 1} }' ,'{"_id" :  1}', NULL, NULL, NULL::TEXT), document)  WHERE  documentdb_api_internal.bson_query_match(document, '{"_id" : 1}', NULL, 'en-u-ks-level1');
 ROLLBACK;

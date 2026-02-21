@@ -521,73 +521,75 @@ ROLLBACK;
 
 -- Check for index pushdown
 BEGIN;
-select  documentdb_api.insert('datab', '{"insert":"deleteIndex", "documents":[{"_id":1}]}');
-select  documentdb_api.insert('datab', '{"insert":"deleteIndex", "documents":[{"_id":2}]}');
+select  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":1}]}');
+select  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":2}]}');
 
 SET LOCAL citus.log_remote_commands TO ON;
+SET local client_min_messages TO ERROR;
 SET LOCAL enable_seqscan TO OFF;
-select  documentdb_api.insert('datab', '{"insert":"deleteIndex", "documents":[{"_id":3}]}');
+select  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":3}]}');
 SET LOCAL documentdb.useLocalExecutionShardQueries TO off;
 -- explain plan should show index scan with delete pushdown
 
 -- 1. bson_query_match with $lt, $lte, $gt, $gte, $eq and $in
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : 10}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gt" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}', NULL, NULL::text) ;
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6396_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6396_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : 10}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6396_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gt" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6396_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6396_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6396_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6396_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}', NULL, NULL::text) ;
 
 -- 2. document @@ with $in
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE document @@ '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6396_639072 WHERE document @@ '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}';
 
 -- 3. with variableSpec
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : "$$varRef1"}}', '{ "let": {"varRef1": 2, "varRef2": 2} }', NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6396_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : "$$varRef1"}}', '{ "let": {"varRef1": 2, "varRef2": 2} }', NULL::text);
 
 -- 4. with collation 
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, 'en-u-ks-level1');
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6396_639072 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, 'en-u-ks-level1');
 ROLLBACK;
 
 -- 5. Now shard collection and run all again to make sure we get index scan with delete pushdown on sharded collection as well
-select documentdb_api.shard_collection('datab', 'deleteIndex', '{"a":"hashed"}', false);
+select documentdb_api.shard_collection('db', 'deleteIndex', '{"_id":"hashed"}', false);
 
 BEGIN;
-select  documentdb_api.insert('datab', '{"insert":"deleteIndex", "documents":[{"_id":1}]}');
-select  documentdb_api.insert('datab', '{"insert":"deleteIndex", "documents":[{"_id":2}]}');
+select  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":1}]}');
+select  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":2}]}');
 
 SET LOCAL citus.log_remote_commands TO ON;
+SET local client_min_messages TO ERROR;
 SET LOCAL enable_seqscan TO OFF;
-SELECT  documentdb_api.insert('datab', '{"insert":"deleteIndex", "documents":[{"_id":3}]}');
+SELECT  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":3}]}');
 SET LOCAL documentdb.useLocalExecutionShardQueries to off;
-
+SET LOCAL citus.log_remote_commands TO OFF;
 -- 6. bson_query_match with $lt, $lte, $gt, $gte, $eq and $in
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : 10}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gt" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}', NULL, NULL::text) ;
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : 10}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gt" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}', NULL, NULL::text) ;
 
 -- 7. document @@ with $in
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE document @@ '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397 WHERE document @@ '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}';
 
 -- 8. with variableSpec
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : "$$varRef1"}}', '{ "let": {"varRef1": 2, "varRef2": 2} }', NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : "$$varRef1"}}', '{ "let": {"varRef1": 2, "varRef2": 2} }', NULL::text);
 
 -- 9. with collation 
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, 'en-u-ks-level1');
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, 'en-u-ks-level1');
 
 -- explain plan should show seq scan without delete pushdown
 SET LOCAL documentdb.enableIdIndexPushdownForQueryOp to OFF;
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE document @@ '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}';
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : 10}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6399_639079 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE document @@ '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : 10}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte" : 10}}', NULL, NULL::text);
 ROLLBACK;
 
 RESET documentdb.enableVariablesSupportForWriteCommands;

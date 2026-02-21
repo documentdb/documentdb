@@ -207,7 +207,7 @@ MongoCollection * CopyMongoCollection(const MongoCollection *collection);
 MongoCollection * GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode);
 
 /* get Mongo collection metadata by realtion ID of a collection's shard */
-MongoCollection * GetMongoCollectionByRelationOid(Oid relationId);
+MongoCollection * GetMongoCollectionByRelationOid(Oid relationId, bool requireShardTable);
 
 /* get OID of data table (documents_*) table by collection id */
 Oid GetRelationIdForCollectionId(uint64 collectionId, LOCKMODE lockMode);
@@ -249,5 +249,6 @@ void CreateRetryTable(char *retryTableName, char *colocateWith, const
 bool GetMongoCollectionShardOidsAndNames(MongoCollection *collection,
 										 ArrayType **shardIdArray,
 										 ArrayType **shardNames);
-bool CheckRelNameValidity(const char *relName, uint64_t *collectionId);
+bool CheckRelNameValidity(const char *relName, uint64_t *collectionId,
+						  bool validateShardTable);
 #endif

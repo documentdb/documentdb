@@ -4271,7 +4271,7 @@ SET citus.log_remote_commands TO ON;
 -- _id is not collation-aware
 SELECT documentdb_api.delete('db', '{ "delete": "coll_delete", "deletes": [ {"q": {"_id": 1 }, "limit": 0, "collation": { "locale": "fr", "strength" : 2}} ]}');
 NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS delete_worker FROM documentdb_data.documents_8008_7990355 documents_8008 WHERE (shard_key_value OPERATOR(pg_catalog.=) 8008)
-NOTICE:  executing the command locally: DELETE FROM documentdb_data.documents_8008_7990355 documents_8008 WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : { "$numberInt" : "1" }, "collation" : "fr-u-ks-level2" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '8008'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+NOTICE:  executing the command locally: DELETE FROM documentdb_data.documents_8008_7990355 documents_8008 WHERE (((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : { "$numberInt" : "1" }, "collation" : "fr-u-ks-level2" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '8008'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson)) AND (shard_key_value OPERATOR(pg_catalog.=) $4) AND (object_id OPERATOR(documentdb_core.=) ($5)::documentdb_core.bson))
                                          delete                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
@@ -4279,7 +4279,7 @@ NOTICE:  executing the command locally: DELETE FROM documentdb_data.documents_80
 
 SELECT documentdb_api.delete('db', '{ "delete": "coll_delete", "deletes": [ {"q": {"_id": "DoG" }, "limit": 0, "collation": { "locale": "fr", "strength" : 2}} ]}');
 NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS delete_worker FROM documentdb_data.documents_8008_7990355 documents_8008 WHERE (shard_key_value OPERATOR(pg_catalog.=) 8008)
-NOTICE:  executing the command locally: DELETE FROM documentdb_data.documents_8008_7990355 documents_8008 WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "DoG", "collation" : "fr-u-ks-level2" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '8008'::bigint))
+NOTICE:  executing the command locally: DELETE FROM documentdb_data.documents_8008_7990355 documents_8008 WHERE (((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "DoG", "collation" : "fr-u-ks-level2" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '8008'::bigint)) AND (shard_key_value OPERATOR(pg_catalog.=) $4))
                                          delete                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""2"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
@@ -4287,7 +4287,7 @@ NOTICE:  executing the command locally: DELETE FROM documentdb_data.documents_80
 
 SELECT documentdb_api.delete('db', '{ "delete": "coll_delete", "deletes": [ {"q": {"_id": "cAT" }, "limit": 0, "collation": { "locale": "fr", "strength" : 3}} ]}');
 NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS delete_worker FROM documentdb_data.documents_8008_7990355 documents_8008 WHERE (shard_key_value OPERATOR(pg_catalog.=) 8008)
-NOTICE:  executing the command locally: DELETE FROM documentdb_data.documents_8008_7990355 documents_8008 WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "cAT", "collation" : "fr-u-ks-level3" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '8008'::bigint))
+NOTICE:  executing the command locally: DELETE FROM documentdb_data.documents_8008_7990355 documents_8008 WHERE (((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "cAT", "collation" : "fr-u-ks-level3" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '8008'::bigint)) AND (shard_key_value OPERATOR(pg_catalog.=) $4))
                                          delete                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)

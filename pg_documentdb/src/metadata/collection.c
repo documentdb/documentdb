@@ -420,7 +420,7 @@ GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode)
  * with the specified relationId exists in the ApiCatalogSchemaName.
  */
 MongoCollection *
-GetMongoCollectionByRelationOid(Oid relationId)
+GetMongoCollectionByRelationOid(Oid relationId, bool requireShardTable)
 {
 	if (get_rel_namespace(relationId) != ApiDataNamespaceOid())
 	{
@@ -438,7 +438,7 @@ GetMongoCollectionByRelationOid(Oid relationId)
 
 	/* Get the collection ID from the shard table name. */
 	uint64 collectionId = 0;
-	if (!CheckRelNameValidity(relationName, &collectionId))
+	if (!CheckRelNameValidity(relationName, &collectionId, requireShardTable))
 	{
 		return NULL;
 	}
@@ -1984,7 +1984,7 @@ UpdateMongoCollectionUsingIds(MongoCollection *mongoCollection, uint64 collectio
  * naming convention and extracts the collection ID if valid.
  */
 bool
-CheckRelNameValidity(const char *relName, uint64_t *collectionId)
+CheckRelNameValidity(const char *relName, uint64_t *collectionId, bool validateShardTable)
 {
 	if (relName == NULL ||
 		strncmp(relName, "documents_", 10) != 0)
@@ -2000,6 +2000,13 @@ CheckRelNameValidity(const char *relName, uint64_t *collectionId)
 	 */
 	char *numEndPointer = NULL;
 	uint64 parsedCollectionId = strtoull(&relName[10], &numEndPointer, 10);
+
+	if (!validateShardTable)
+	{
+		*collectionId = parsedCollectionId;
+		return true;
+	}
+
 	if (IsShardTableForDocumentDbTable(relName, numEndPointer))
 	{
 		*collectionId = parsedCollectionId;

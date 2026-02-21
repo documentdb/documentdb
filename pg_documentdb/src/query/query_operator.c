@@ -3840,7 +3840,8 @@ GetCollectionByDocumentVar(Expr *documentExpr,
 
 	if (rte->rtekind == RTE_RELATION && rte->relkind == RELKIND_RELATION)
 	{
-		return GetMongoCollectionByRelationOid(rte->relid);
+		bool requireShardTable = false;
+		return GetMongoCollectionByRelationOid(rte->relid, requireShardTable);
 	}
 	else if (IsResolvableDocumentDbCollectionBasedRTE(rte, boundParams))
 	{

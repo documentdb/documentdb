@@ -1480,7 +1480,9 @@ IsRTEShardForDocumentDbCollection(RangeTblEntry *rte, bool *isDocumentDbDataName
 	{
 		Form_pg_class reltup = (Form_pg_class) GETSTRUCT(tp);
 		const char *relNameStr = NameStr(reltup->relname);
-		bool isValid = CheckRelNameValidity(relNameStr, collectionId);
+		bool validateShardTableName = true;
+		bool isValid = CheckRelNameValidity(relNameStr, collectionId,
+											validateShardTableName);
 		ReleaseSysCache(tp);
 		return isValid;
 	}
