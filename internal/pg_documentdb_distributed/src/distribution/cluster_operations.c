@@ -339,6 +339,11 @@ SetupCluster(bool isInitialize)
 	if (ShouldRunSetupForVersion(&versions, DocDB_V0, 110, 0))
 	{
 		SetPermissionsForReadWriteRole();
+
+		/* Make roles a reference table so it's replicated to all nodes */
+		StringInfo tableName = makeStringInfo();
+		appendStringInfo(tableName, "%s.roles", ApiCatalogSchemaName);
+		CreateReferenceTable(tableName->data);
 	}
 
 	/* we call the post setup cluster hook to allow the extension to do any additional setup */

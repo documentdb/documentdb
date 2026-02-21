@@ -608,7 +608,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_find('prep_unique_d
 -- this fails (one shard has a duplicate)
 set documentdb.enableCollModUnique to on;
 SELECT documentdb_api.coll_mod('prep_unique_db', 'shard_collection', '{ "collMod": "shard_collection", "index": { "name": "a_1_shard", "unique": true } }');
-ERROR:  conflicting key value violates exclusion constraint "documents_rum_index_4_102052"
+ERROR:  conflicting key value violates exclusion constraint "documents_rum_index_4_102053"
 DETAIL:  Key (document, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson, false, true))=({ "_id" : { "$numberInt" : "50" }, "a" : { "$numberInt" : "50" }, "shkey" : { "$numberInt" : "0" } }, { "$shard_key_value" : { "$numberLong" : "3" }, "$numTerms" : { "$numberInt" : "1" }, "$numPaths" : { "$numberInt" : "1" }, "a" : [ { "$numberInt" : "50" } ] }) conflicts with existing key (document, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson, false, true))=({ "_id" : { "$numberInt" : "201" }, "a" : { "$numberInt" : "50" }, "shkey" : { "$numberInt" : "0" } }, { "$shard_key_value" : { "$numberLong" : "3" }, "$numTerms" : { "$numberInt" : "1" }, "$numPaths" : { "$numberInt" : "1" }, "a" : [ { "$numberInt" : "50" } ] }).
 CONTEXT:  SQL statement "SELECT documentdb_api_internal.command_node_worker($1::oid, $2::documentdb_core.bson, 0, $3::text[], TRUE, NULL) FROM documentdb_data.documents_3"
 -- fixing the duplicates allows it to go through
@@ -619,7 +619,7 @@ SELECT documentdb_api.delete('prep_unique_db', '{ "delete": "shard_collection", 
 (1 row)
 
 SELECT documentdb_api.coll_mod('prep_unique_db', 'shard_collection', '{ "collMod": "shard_collection", "index": { "name": "a_1_shard", "unique": true } }');
-ERROR:  conflicting key value violates exclusion constraint "documents_rum_index_4_102052"
+ERROR:  conflicting key value violates exclusion constraint "documents_rum_index_4_102053"
 DETAIL:  Key (document, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson, false, true))=({ "_id" : { "$numberInt" : "51" }, "a" : { "$numberInt" : "51" }, "shkey" : { "$numberInt" : "1" } }, { "$shard_key_value" : { "$numberLong" : "3" }, "$numTerms" : { "$numberInt" : "1" }, "$numPaths" : { "$numberInt" : "1" }, "a" : [ { "$numberInt" : "51" } ] }) conflicts with existing key (document, documentdb_api_internal.generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson, false, true))=({ "_id" : { "$numberInt" : "202" }, "a" : { "$numberInt" : "51" }, "shkey" : { "$numberInt" : "1" } }, { "$shard_key_value" : { "$numberLong" : "3" }, "$numTerms" : { "$numberInt" : "1" }, "$numPaths" : { "$numberInt" : "1" }, "a" : [ { "$numberInt" : "51" } ] }).
 CONTEXT:  SQL statement "SELECT documentdb_api_internal.command_node_worker($1::oid, $2::documentdb_core.bson, 0, $3::text[], TRUE, NULL) FROM documentdb_data.documents_3"
 SELECT documentdb_api.delete('prep_unique_db', '{ "delete": "shard_collection", "deletes": [ { "q": { "_id": 202 }, "limit": 1 } ]}');

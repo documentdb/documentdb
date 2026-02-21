@@ -36,6 +36,10 @@ REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA documentdb_api_v2 FROM PUBLIC;
 
 -- Adding new built-in roles
 #include "rbac/extension_readwrite_setup--0.110-0.sql"
+
+-- Roles metadata table for custom role RBAC
+#include "schema/roles_metadata--0.110-0.sql"
+
 #include "types/bsonindexterm--0.110-0.sql"
 #include "udfs/index_mgmt/bson_index_term_functions--0.110-0.sql"
 #include "operators/bsonindexterm_btree_operators--0.110-0.sql"

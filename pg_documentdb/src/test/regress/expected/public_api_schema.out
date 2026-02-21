@@ -649,6 +649,20 @@ btree, for table "documentdb_api_catalog.documentdb_index_queue"
  cosmos_search_options      | documentdb_core.bson |           |          | 
  index_options              | documentdb_core.bson |           |          | 
 
+               Table "documentdb_api_catalog.roles"
+  Column   |         Type         | Collation | Nullable | Default 
+-----------+----------------------+-----------+----------+---------
+ role_oid  | oid                  |           | not null | 
+ role_bson | documentdb_core.bson |           | not null | 
+Indexes:
+    "roles_pkey" PRIMARY KEY, btree (role_oid)
+
+Index "documentdb_api_catalog.roles_pkey"
+  Column  | Type | Key? | Definition 
+----------+------+------+------------
+ role_oid | oid  | yes  | role_oid
+primary key, btree, for table "documentdb_api_catalog.roles"
+
      Composite type "documentdb_api_catalog.shard_key_and_document"
      Column      |         Type         | Collation | Nullable | Default 
 -----------------+----------------------+-----------+----------+---------
