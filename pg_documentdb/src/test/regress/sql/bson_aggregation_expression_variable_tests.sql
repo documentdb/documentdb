@@ -1,7 +1,6 @@
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
-SET citus.next_shard_id TO 4910000;
-SET documentdb.next_collection_id TO 4910;
-SET documentdb.next_collection_index_id TO 4910;
+SET documentdb.next_collection_id TO 5200;
+SET documentdb.next_collection_index_id TO 5200;
 
 
 -- $$ROOT as a variable.
@@ -98,6 +97,13 @@ SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"variable
 SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"variable": "with space"}, "in": "$$variable."}}}');
 SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"a.b": "a.b"}, "in": "$$a.b"}}}');
 SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"foo": "this is my foo variable"}, "in": {"$let": {"vars": {"foo": "$$foo2"}, "in": {"a": "$$foo"}}}}}}');
+
+-- $let with constant "in" expression (no variable references)
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"variable": "with space"}, "in": "_variable"}}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"a": 1}, "in": "hello"}}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"a": 1, "b": 2}, "in": 42}}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"x": "val"}, "in": null}}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"x": "val"}, "in": true}}}');
 
 -- $$NOW
 SELECT documentdb_api.insert_one('db','now_test_1','{"_id":"1", "a": "umbor" }', NULL);

@@ -2854,9 +2854,6 @@ ParseDollarLet(const bson_value_t *argument, AggregationExpressionData *data,
 
 	ParseVariableSpec(&vars, inputVariableContext, context);
 
-	/* do not destroy the variables table after runtime evaluation on a document */
-	inputVariableContext->preserveVariableTable = true;
-
 	if (isInConstant)
 	{
 		data->kind = AggregationExpressionKind_Constant;
@@ -2864,6 +2861,9 @@ ParseDollarLet(const bson_value_t *argument, AggregationExpressionData *data,
 		pfree(inData);
 		return;
 	}
+
+	/* do not destroy the variables table after runtime evaluation on a document */
+	inputVariableContext->preserveVariableTable = true;
 
 	data->operator.arguments = list_make2(inData, inputVariableContext);
 	data->operator.argumentsKind = AggregationExpressionArgumentsKind_List;

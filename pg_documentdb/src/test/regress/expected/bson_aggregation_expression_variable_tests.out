@@ -1,7 +1,6 @@
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
-SET citus.next_shard_id TO 4910000;
-SET documentdb.next_collection_id TO 4910;
-SET documentdb.next_collection_index_id TO 4910;
+SET documentdb.next_collection_id TO 5200;
+SET documentdb.next_collection_index_id TO 5200;
 -- $$ROOT as a variable.
 SELECT documentdb_api_catalog.bson_expression_get('{ "a": 1 }', '{ "c": "$$ROOT" }');
             bson_expression_get             
@@ -354,6 +353,37 @@ SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"a.b": "a
 ERROR:  The variable name 'a.b' contains an invalid character '.'.
 SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"foo": "this is my foo variable"}, "in": {"$let": {"vars": {"foo": "$$foo2"}, "in": {"a": "$$foo"}}}}}}');
 ERROR:  Attempting to use an undefined variable: foo2
+-- $let with constant "in" expression (no variable references)
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"variable": "with space"}, "in": "_variable"}}}');
+    bson_dollar_project     
+---------------------------------------------------------------------
+ { "result" : "_variable" }
+(1 row)
+
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"a": 1}, "in": "hello"}}}');
+  bson_dollar_project   
+---------------------------------------------------------------------
+ { "result" : "hello" }
+(1 row)
+
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"a": 1, "b": 2}, "in": 42}}}');
+          bson_dollar_project           
+---------------------------------------------------------------------
+ { "result" : { "$numberInt" : "42" } }
+(1 row)
+
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"x": "val"}, "in": null}}}');
+ bson_dollar_project 
+---------------------------------------------------------------------
+ { "result" : null }
+(1 row)
+
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"x": "val"}, "in": true}}}');
+ bson_dollar_project 
+---------------------------------------------------------------------
+ { "result" : true }
+(1 row)
+
 -- $$NOW
 SELECT documentdb_api.insert_one('db','now_test_1','{"_id":"1", "a": "umbor" }', NULL);
 NOTICE:  creating collection
@@ -416,21 +446,14 @@ SELECT time_system_variables_test.mask_time_value($Q$ SELECT document FROM bson_
 (3 rows)
 
 SELECT time_system_variables_test.mask_time_value($Q$ EXPLAIN (COSTS OFF, VERBOSE ON ) SELECT document FROM bson_aggregation_find('db', '{ "find": "now_test_1", "projection": { "nowField" : "$$varRef" }, "filter": {}, "let": { "varRef": "$$NOW" } }') $Q$);
-                                                                                                                                                                                                   mask_time_value                                                                                                                                                                                                   
+                                                                                        mask_time_value                                                                                         
 ---------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Output: remote_scan.document
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_project_find(document, '{ "nowField" : "$$varRef" }'::documentdb_core.bson, '{ }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "varRef" : { "$literal" : NOW_SYS_VARIABLE } } }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4912_4910033 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '4912'::bigint)
-         Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_4912_4910033 collection
-               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "nowField" : "$$varRef" }'::documentdb_core.bson, '{ }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "varRef" : { "$literal" : NOW_SYS_VARIABLE } } }'::documentdb_core.bson)
-               Recheck Cond: (collection.shard_key_value = '4912'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '4912'::bigint)
-(12 rows)
+ Bitmap Heap Scan on documentdb_data.documents_5202 collection
+   Output: bson_dollar_project_find(document, '{ "nowField" : "$$varRef" }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "varRef" : { "$literal" : NOW_SYS_VARIABLE } } }'::bson)
+   Recheck Cond: (collection.shard_key_value = '5202'::bigint)
+   ->  Bitmap Index Scan on _id_
+         Index Cond: (collection.shard_key_value = '5202'::bigint)
+(5 rows)
 
 SELECT time_system_variables_test.mask_time_value($Q$ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "now_test_1", "pipeline": [ { "$addFields": { "nowField" : "$$varRef", "c": { "$lt": [ "$_id", "$$varRef" ] } }} ], "let": { "varRef": "$$NOW" } }') $Q$);
                               mask_time_value                              
@@ -441,21 +464,14 @@ SELECT time_system_variables_test.mask_time_value($Q$ SELECT document FROM bson_
 (3 rows)
 
 SELECT time_system_variables_test.mask_time_value($Q$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "now_test_1", "pipeline": [ { "$addFields": { "nowField" : "$$varRef", "c": { "$lt": [ "$_id", "$$varRef" ] } }} ], "let": { "varRef": "$$NOW" } }') $Q$);
-                                                                                                                                                                                                        mask_time_value                                                                                                                                                                                                         
+                                                                                                      mask_time_value                                                                                                      
 ---------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Output: remote_scan.document
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_add_fields(document, '{ "nowField" : "$$varRef", "c" : { "$lt" : [ "$_id", "$$varRef" ] } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "varRef" : { "$literal" : NOW_SYS_VARIABLE } } }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4912_4910033 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '4912'::bigint)
-         Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_4912_4910033 collection
-               Output: documentdb_api_internal.bson_dollar_add_fields(document, '{ "nowField" : "$$varRef", "c" : { "$lt" : [ "$_id", "$$varRef" ] } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "varRef" : { "$literal" : NOW_SYS_VARIABLE } } }'::documentdb_core.bson)
-               Recheck Cond: (collection.shard_key_value = '4912'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '4912'::bigint)
-(12 rows)
+ Bitmap Heap Scan on documentdb_data.documents_5202 collection
+   Output: bson_dollar_add_fields(document, '{ "nowField" : "$$varRef", "c" : { "$lt" : [ "$_id", "$$varRef" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "varRef" : { "$literal" : NOW_SYS_VARIABLE } } }'::bson)
+   Recheck Cond: (collection.shard_key_value = '5202'::bigint)
+   ->  Bitmap Index Scan on _id_
+         Index Cond: (collection.shard_key_value = '5202'::bigint)
+(5 rows)
 
 SELECT time_system_variables_test.mask_time_value($Q$ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "now_test_1", "pipeline": [ { "$addFields": { "nowField" : "$$NOW" }} ] }') $Q$);
                         mask_time_value                        
@@ -466,39 +482,25 @@ SELECT time_system_variables_test.mask_time_value($Q$ SELECT document FROM bson_
 (3 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "now_test_1", "pipeline": [ { "$addFields": { "nowField" : "$$NOW" }} ] }');
-                                                                                                                                                                        QUERY PLAN                                                                                                                                                                        
+                                                                     QUERY PLAN                                                                      
 ---------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Output: remote_scan.document
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_add_fields(document, '{ "nowField" : "$$NOW" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4912_4910033 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '4912'::bigint)
-         Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_4912_4910033 collection
-               Output: documentdb_api_internal.bson_dollar_add_fields(document, '{ "nowField" : "$$NOW" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
-               Recheck Cond: (collection.shard_key_value = '4912'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '4912'::bigint)
-(12 rows)
+ Bitmap Heap Scan on documentdb_data.documents_5202 collection
+   Output: bson_dollar_add_fields(document, '{ "nowField" : "$$NOW" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Recheck Cond: (collection.shard_key_value = '5202'::bigint)
+   ->  Bitmap Index Scan on _id_
+         Index Cond: (collection.shard_key_value = '5202'::bigint)
+(5 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('db', '{ "find": "now_test_1", "projection": { "other": "$$varRef" }, "filter": { "$expr": { "$lt": [ "$_id", "$$NOW" ]} }, "let": { "varRef": "3" } }');
-                                                                                                                                                                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                   
+                                                                                                                        QUERY PLAN                                                                                                                         
 ---------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Output: remote_scan.document
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_project_find(document, '{ "other" : "$$varRef" }'::documentdb_core.bson, '{ "$expr" : { "$lt" : [ "$_id", "$$NOW" ] } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "varRef" : { "$literal" : "3" } } }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4912_4910033 collection WHERE (documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$lt" : [ "$_id", "$$NOW" ] } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "varRef" : { "$literal" : "3" } } }'::documentdb_core.bson) AND (shard_key_value OPERATOR(pg_catalog.=) '4912'::bigint))
-         Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_4912_4910033 collection
-               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "other" : "$$varRef" }'::documentdb_core.bson, '{ "$expr" : { "$lt" : [ "$_id", "$$NOW" ] } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "varRef" : { "$literal" : "3" } } }'::documentdb_core.bson)
-               Recheck Cond: (collection.shard_key_value = '4912'::bigint)
-               Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$lt" : [ "$_id", "$$NOW" ] } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "varRef" : { "$literal" : "3" } } }'::documentdb_core.bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '4912'::bigint)
-(13 rows)
+ Bitmap Heap Scan on documentdb_data.documents_5202 collection
+   Output: bson_dollar_project_find(document, '{ "other" : "$$varRef" }'::bson, '{ "$expr" : { "$lt" : [ "$_id", "$$NOW" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "varRef" : { "$literal" : "3" } } }'::bson)
+   Recheck Cond: (collection.shard_key_value = '5202'::bigint)
+   Filter: bson_dollar_expr(collection.document, '{ "" : { "$lt" : [ "$_id", "$$NOW" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "varRef" : { "$literal" : "3" } } }'::bson)
+   ->  Bitmap Index Scan on _id_
+         Index Cond: (collection.shard_key_value = '5202'::bigint)
+(6 rows)
 
 -- $$NOW in $lookup 
 SELECT documentdb_api.insert_one('db','now_test_from','{"_id":1,"a":"alpha","b":["x","y"],"c":10,"d":["m","n"]}',NULL);
@@ -798,7 +800,7 @@ SELECT time_system_variables_test.mask_time_value($Q$ SELECT * FROM aggregate_cu
 
 SELECT * FROM time_system_variables_test.drain_find_query(loopCount => 12, pageSize => 1, project => '{ "nowField": "$$NOW" }');
                                                                                                filtereddoc                                                                                               | nowcompareresult | persistconnection 
----------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------+-------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967295" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "1" } ] } | t                | f
  { "cursor" : { "id" : { "$numberLong" : "4294967295" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "2" } ] } | t                | f
  { "cursor" : { "id" : { "$numberLong" : "4294967295" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "3" } ] } | t                | f
@@ -816,7 +818,7 @@ SELECT * FROM time_system_variables_test.drain_find_query(loopCount => 12, pageS
 
 SELECT * FROM time_system_variables_test.drain_find_query(loopCount => 12, pageSize => 1, project => '{ "a": 1, "nowField": "$$NOW" }');
                                                                                                filtereddoc                                                                                               | nowcompareresult | persistconnection 
----------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------+-------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967295" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "1" } ] } | t                | f
  { "cursor" : { "id" : { "$numberLong" : "4294967295" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "2" } ] } | t                | f
  { "cursor" : { "id" : { "$numberLong" : "4294967295" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "3" } ] } | t                | f
@@ -834,7 +836,7 @@ SELECT * FROM time_system_variables_test.drain_find_query(loopCount => 12, pageS
 
 SELECT * FROM time_system_variables_test.drain_find_query(loopCount => 12, pageSize => 2, project => '{ "a": 1, "nowField": "$$NOW" }');
                                                                                                            filtereddoc                                                                                                           | nowcompareresult | persistconnection 
----------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------+-------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967295" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] } | t                | f
  { "cursor" : { "id" : { "$numberLong" : "4294967295" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } | t                | f
  { "cursor" : { "id" : { "$numberLong" : "4294967295" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ] } | t                | f
@@ -852,7 +854,7 @@ SELECT * FROM time_system_variables_test.drain_find_query(loopCount => 12, pageS
 
 SELECT * FROM time_system_variables_test.drain_aggregation_query(loopCount => 12, pageSize => 2, pipeline => '{ "": [{ "$project": { "a": 1, "nowField": "$$NOW" } }]}');
                                                                                                            filtereddoc                                                                                                           | nowcompareresult | persistconnection 
----------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------+-------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] } | t                | f
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } | t                | f
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ] } | t                | f
@@ -870,7 +872,7 @@ SELECT * FROM time_system_variables_test.drain_aggregation_query(loopCount => 12
 
 SELECT * FROM time_system_variables_test.drain_aggregation_query(loopCount => 12, pageSize => 1, pipeline => '{ "": [{ "$project": { "a": 1, "nowField": "$$NOW" } }]}');
                                                                                                filtereddoc                                                                                               | nowcompareresult | persistconnection 
----------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------+-------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "1" } ] } | t                | f
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "2" } ] } | t                | f
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "3" } ] } | t                | f
@@ -888,7 +890,7 @@ SELECT * FROM time_system_variables_test.drain_aggregation_query(loopCount => 12
 
 SELECT * FROM time_system_variables_test.drain_aggregation_query(loopCount => 4, pageSize => 3, pipeline => '{ "": [{ "$project": { "a": 1, "nowField": "$$NOW" } }]}', singleBatch => TRUE);
                                                                                                                   filtereddoc                                                                                                                   | nowcompareresult | persistconnection 
----------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------+-------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "3" }, "ids" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] } | t                | f
                                                                                                                                                                                                                                                 | t                | f
                                                                                                                                                                                                                                                 | t                | f
@@ -898,7 +900,7 @@ SELECT * FROM time_system_variables_test.drain_aggregation_query(loopCount => 4,
 
 SELECT * FROM time_system_variables_test.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$project": { "nowField": "$$NOW" } }, { "$limit": 3 }]}');
                                                                                                                   filtereddoc                                                                                                                   | nowcompareresult | persistconnection 
----------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------+-------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.now_cursor_tests" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "3" }, "ids" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] } | t                | f
                                                                                                                                                                                                                                                 | t                | f
                                                                                                                                                                                                                                                 | t                | f
