@@ -511,3 +511,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_3508 whe
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_3508 where document @@ '{"_id" : {"$lte" : 1}}';
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_3508 where document @@ '{"_id" : {"$gte" : 1}}';
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_3508 where document @@ '{"_id" : {"$in" : [1,2,3,4,5]}}';
+
+-- Regression test for NULL pointer check in BSONFIRSTN/BSONLASTN.
+SELECT documentdb_api.create_collection('db', 'bsonFirstNLastNCrashEmptyCollection');
+SELECT BSONLASTNONSORTED(NULL, 3) FROM documentdb_api.collection('db', 'bsonFirstNLastNCrashEmptyCollection');

@@ -1168,7 +1168,7 @@ BsonOrderFinalOnSorted(PG_FUNCTION_ARGS, bool isSingle)
 	}
 
 	bool returnNull = false;
-	bytea *byteArray = PG_GETARG_BYTEA_P(0);
+	bytea *byteArray = PG_ARGISNULL(0) ? NULL : PG_GETARG_BYTEA_P(0);
 	char *sourcePtr;
 	int64 currentCount = 0;
 	pgbson *inputExpression = NULL;

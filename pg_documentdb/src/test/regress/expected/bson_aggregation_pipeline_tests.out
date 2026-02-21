@@ -1803,3 +1803,17 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_3508 whe
    Index Cond: ((documents_3508.shard_key_value = '3508'::bigint) AND (documents_3508.object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"1\" } }","{ \"\" : { \"$numberInt\" : \"2\" } }","{ \"\" : { \"$numberInt\" : \"3\" } }","{ \"\" : { \"$numberInt\" : \"4\" } }","{ \"\" : { \"$numberInt\" : \"5\" } }"}'::bson[])))
 (3 rows)
 
+-- Regression test for NULL pointer check in BSONFIRSTN/BSONLASTN.
+SELECT documentdb_api.create_collection('db', 'bsonFirstNLastNCrashEmptyCollection');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT BSONLASTNONSORTED(NULL, 3) FROM documentdb_api.collection('db', 'bsonFirstNLastNCrashEmptyCollection');
+ bsonlastnonsorted 
+-------------------
+ { "" : [  ] }
+(1 row)
+
