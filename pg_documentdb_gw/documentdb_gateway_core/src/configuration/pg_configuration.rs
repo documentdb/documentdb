@@ -27,7 +27,7 @@ use tokio::{
 use crate::{
     configuration::{dynamic::POSTGRES_RECOVERY_KEY, DynamicConfiguration, SetupConfiguration},
     error::{DocumentDBError, Result},
-    postgres::conn_mgmt::PoolManager,
+    postgres::{conn_mgmt::PoolManager, PgDocument},
     requests::request_tracker::RequestTracker,
 };
 
@@ -134,6 +134,7 @@ pub struct PgConfiguration {
     inner: PgConfigurationInner,
     values: ArcSwap<HashMap<String, String>>,
     last_update_at: ArcSwap<Instant>,
+    topology_bson: ArcSwap<RawBson>,
 }
 
 static DEBOUNCE_RELOAD_SCHEDULED: AtomicBool = AtomicBool::new(false);
@@ -174,11 +175,13 @@ impl PgConfiguration {
 
         let values = ArcSwap::from_pointee(inner.load_configurations().await?);
         let last_update_at = ArcSwap::from_pointee(Instant::now());
+        let topology_bson = ArcSwap::from_pointee(Self::load_topology(&inner.pool_manager).await);
 
         let configuration = Arc::new(PgConfiguration {
             inner,
             values,
             last_update_at,
+            topology_bson,
         });
 
         let refresh_interval = setup_configuration.dynamic_configuration_refresh_interval_secs();
@@ -201,6 +204,9 @@ impl PgConfiguration {
         };
 
         self.values.store(Arc::new(new_config));
+        self.topology_bson.store(Arc::new(
+            Self::load_topology(&self.inner.pool_manager).await,
+        ));
         self.last_update_at.store(Arc::new(Instant::now()));
 
         Ok(())
@@ -283,6 +289,55 @@ impl PgConfiguration {
             Self::reload_configuration(configuration).await;
         });
     }
+
+    async fn load_topology(pool_manager: &PoolManager) -> RawBson {
+        let extension_versions_query = pool_manager.query_catalog().extension_versions();
+        if extension_versions_query.is_empty() {
+            return rawbson!({});
+        }
+
+        let results = match async {
+            let conn = pool_manager.system_requests_connection().await?;
+            conn.query(
+                extension_versions_query,
+                &[],
+                &[],
+                None,
+                &RequestTracker::new(),
+            )
+            .await
+        }
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("Failed to load topology versions: {e}");
+                return rawbson!({});
+            }
+        };
+
+        let Some(result) = results.first() else {
+            tracing::error!("No results returned for extension versions query");
+            return rawbson!({});
+        };
+
+        let doc: std::result::Result<PgDocument, _> = result.try_get(0);
+        match doc {
+            Ok(doc) => {
+                tracing::info!("Topology acquired: {doc:?}");
+                match doc.0.get("internal") {
+                    Ok(Some(value)) => rawbson!({
+                        "documentdb_versions": value.to_raw_bson()
+                    }),
+                    _ => rawbson!({}),
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to parse extension versions: {e}");
+                rawbson!({})
+            }
+        }
+    }
 }
 
 impl DynamicConfiguration for PgConfiguration {
@@ -319,7 +374,7 @@ impl DynamicConfiguration for PgConfiguration {
     }
 
     fn topology(&self) -> RawBson {
-        rawbson!({})
+        self.topology_bson.load_full().as_ref().clone()
     }
 
     fn enable_developer_explain(&self) -> bool {

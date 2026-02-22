@@ -98,5 +98,25 @@ pub async fn validate_is_master_unauthenticated(client: &Client) -> Result<(), E
         .await?;
 
     assert_eq!(result.get_f64("ok").unwrap(), 1.0);
+    assert_eq!(result.get_str("msg").unwrap(), "isdbgrid");
+
+    // Validate the internal.documentdb_versions structure
+    let internal = result
+        .get_document("internal")
+        .expect("hello response must contain 'internal' document");
+    let versions = internal
+        .get_array("documentdb_versions")
+        .expect("internal must contain 'documentdb_versions' array");
+    assert!(
+        !versions.is_empty(),
+        "documentdb_versions array must not be empty"
+    );
+    for (i, v) in versions.iter().enumerate() {
+        assert!(
+            v.as_str().is_some(),
+            "documentdb_versions[{i}] must be a string"
+        );
+    }
+
     Ok(())
 }
