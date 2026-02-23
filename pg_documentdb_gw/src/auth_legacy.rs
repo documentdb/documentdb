@@ -37,17 +37,17 @@ pub enum AuthKind {
 }
 
 pub struct ScramFirstState {
-    nonce: String,
-    first_message_bare: String,
-    first_message: String,
+    pub nonce: String,
+    pub first_message_bare: String,
+    pub first_message: String,
 }
 
 pub struct AuthState {
     authorized: Arc<RwLock<bool>>,
-    first_state: Option<ScramFirstState>,
-    username: Option<String>,
+    pub first_state: Option<ScramFirstState>,
+    pub username: Option<String>,
     pub password: Option<String>,
-    user_oid: Option<u32>,
+    pub user_oid: Option<u32>,
     auth_kind: Option<AuthKind>,
     timer_initialized: Arc<RwLock<bool>>,
 }
