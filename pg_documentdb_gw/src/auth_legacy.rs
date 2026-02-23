@@ -114,7 +114,7 @@ impl AuthState {
         }
     }
 
-    async fn initialize_expiry_timer(
+    pub async fn initialize_expiry_timer(
         &self,
         timeout_secs: u64,
         connection_activity_id: &str,
