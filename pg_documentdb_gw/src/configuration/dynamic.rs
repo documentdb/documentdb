@@ -124,6 +124,12 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         system_connection_budget as usize
     }
 
+    /// Whether to use the new pluggable auth architecture (RFC-0009).
+    /// Default: false (use legacy monolithic handler).
+    async fn use_pluggable_auth(&self) -> bool {
+        self.get_bool("usePluggableAuth", false).await
+    }
+
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "")
     }

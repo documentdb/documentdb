@@ -50,6 +50,7 @@ pub struct AuthState {
     pub user_oid: Option<u32>,
     auth_kind: Option<AuthKind>,
     timer_initialized: Arc<RwLock<bool>>,
+    active_mechanism: Option<String>,
 }
 
 impl Default for AuthState {
@@ -68,6 +69,7 @@ impl AuthState {
             user_oid: None,
             auth_kind: None,
             timer_initialized: Arc::new(RwLock::new(false)),
+            active_mechanism: None,
         }
     }
 
@@ -112,6 +114,14 @@ impl AuthState {
         } else {
             Ok(())
         }
+    }
+
+    pub fn set_active_mechanism(&mut self, mechanism: &str) {
+        self.active_mechanism = Some(mechanism.to_string());
+    }
+
+    pub fn active_mechanism(&self) -> Option<&str> {
+        self.active_mechanism.as_deref()
     }
 
     pub async fn initialize_expiry_timer(
@@ -177,6 +187,17 @@ async fn handle_auth_request(
     connection_context: &mut ConnectionContext,
     request: &Request<'_>,
 ) -> Result<Option<Response>> {
+    // GUC toggle: route to pluggable auth handler when enabled
+    if connection_context
+        .service_context
+        .dynamic_configuration()
+        .use_pluggable_auth()
+        .await
+    {
+        return crate::auth::handler::handle_auth_request(connection_context, request).await;
+    }
+
+    // Legacy monolithic handler
     match request.request_type() {
         RequestType::SaslStart => Ok(Some(handle_sasl_start(connection_context, request).await?)),
         RequestType::SaslContinue => Ok(Some(

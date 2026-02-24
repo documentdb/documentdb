@@ -9,6 +9,7 @@
 use std::{sync::Arc, time::Duration};
 
 use crate::{
+    auth::AuthProviderRegistry,
     configuration::{DynamicConfiguration, SetupConfiguration},
     context::{CursorStore, TransactionStore},
     postgres::{PoolManager, QueryCatalog},
@@ -23,6 +24,7 @@ pub struct ServiceContextInner {
     pub transaction_store: TransactionStore,
     pub query_catalog: QueryCatalog,
     pub tls_provider: TlsProvider,
+    pub auth_provider_registry: Option<AuthProviderRegistry>,
 }
 
 #[derive(Clone)]
@@ -49,6 +51,7 @@ impl ServiceContext {
             transaction_store: TransactionStore::new(Duration::from_secs(timeout_secs)),
             query_catalog,
             tls_provider,
+            auth_provider_registry: None,
         };
         ServiceContext(Arc::new(inner))
     }
@@ -79,5 +82,9 @@ impl ServiceContext {
 
     pub fn connection_pool_manager(&self) -> &PoolManager {
         &self.0.connection_pool_manager
+    }
+
+    pub fn auth_provider_registry(&self) -> Option<&AuthProviderRegistry> {
+        self.0.auth_provider_registry.as_ref()
     }
 }
