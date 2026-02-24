@@ -569,6 +569,24 @@ where
             }
         }
     }
+
+    // Connection cleanup: call on_connection_close() on the active provider
+    // if authentication was completed through the pluggable auth path.
+    if let Some(mechanism) = connection_context.auth_state.active_mechanism() {
+        if let Some(registry) = connection_context.service_context.auth_provider_registry() {
+            if let Ok(provider) = registry.get_provider(mechanism) {
+                if let Err(e) = provider.on_connection_close(&connection_context).await {
+                    tracing::warn!(
+                        activity_id = connection_activity_id_as_str,
+                        "on_connection_close failed for provider '{mechanism}': {e}"
+                    );
+                }
+            }
+        }
+    }
+
+    // Reset auth state on connection close
+    connection_context.auth_state = auth::AuthState::new();
 }
 
 async fn get_response<T>(

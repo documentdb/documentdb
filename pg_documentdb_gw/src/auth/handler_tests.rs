@@ -46,3 +46,26 @@ fn logout_resets_active_mechanism() {
     state = AuthState::new();
     assert!(state.active_mechanism().is_none());
 }
+
+#[test]
+fn new_auth_state_has_no_username() {
+    let state = AuthState::new();
+    assert!(state.username().is_err());
+}
+
+#[test]
+fn connection_close_resets_all_auth_state() {
+    let mut state = AuthState::new();
+    state.set_active_mechanism("SCRAM-SHA-256");
+    state.set_username("testuser");
+    state.password = Some("pass".to_string());
+    state.user_oid = Some(42);
+
+    // Simulate connection close cleanup
+    state = AuthState::new();
+
+    assert!(state.active_mechanism().is_none());
+    assert!(state.username().is_err());
+    assert!(state.password.is_none());
+    assert!(state.user_oid.is_none());
+}
