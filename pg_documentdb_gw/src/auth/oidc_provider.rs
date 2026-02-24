@@ -37,6 +37,12 @@ impl OidcProvider {
     }
 }
 
+impl Default for OidcProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl AuthProvider for OidcProvider {
     fn mechanism_name(&self) -> &str {

@@ -28,6 +28,12 @@ pub struct AuthProviderRegistry {
     providers: HashMap<String, Arc<dyn AuthProvider>>,
 }
 
+impl Default for AuthProviderRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AuthProviderRegistry {
     /// Create an empty registry.
     pub fn new() -> Self {

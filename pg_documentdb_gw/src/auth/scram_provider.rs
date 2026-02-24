@@ -39,6 +39,12 @@ impl ScramProvider {
     }
 }
 
+impl Default for ScramProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl AuthProvider for ScramProvider {
     fn mechanism_name(&self) -> &str {
