@@ -55,6 +55,12 @@ pub struct DistributedQueryPlan {
 #[serde(rename_all = "PascalCase")]
 pub struct PostgresExplain {
     pub plan: ExplainPlan,
+
+    #[serde(rename = "Planning Time")]
+    pub planning_time: Option<f64>,
+
+    #[serde(rename = "Execution Time")]
+    pub execution_time: Option<f64>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -66,6 +72,9 @@ pub struct ExplainPlan {
     #[serde(rename = "Actual Total Time")]
     pub actual_total_time: Option<f64>,
 
+    #[serde(rename = "Actual Startup Time")]
+    pub actual_startup_time: Option<f64>,
+
     #[serde(rename = "Alias")]
     pub alias: Option<String>,
 
@@ -74,9 +83,6 @@ pub struct ExplainPlan {
 
     #[serde(rename = "Distributed Query")]
     pub distributed_plan: Option<DistributedQueryPlan>,
-
-    #[serde(rename = "Execution Time")]
-    pub execution_time: Option<f64>,
 
     pub filter: Option<String>,
 
@@ -114,9 +120,6 @@ pub struct ExplainPlan {
 
     #[serde(rename = "Plan Rows")]
     pub plan_rows: Option<serde_json::value::Number>,
-
-    #[serde(rename = "Planning Time")]
-    pub planning_time: Option<f64>,
 
     #[serde(rename = "Plans")]
     pub inner_plans: Option<Vec<ExplainPlan>>,
@@ -196,7 +199,11 @@ pub struct IndexDetails {
     pub raw_bounds: Option<Vec<String>>,
     pub start_bounds: Option<Vec<String>>,
     pub inner_scan_loops: Option<i64>,
+    pub dead_entries_or_pages_skipped: Option<i64>,
+    pub parallel_scan_capable: Option<bool>,
     pub scan_key_details: Option<Vec<String>>,
     pub scan_type: Option<String>,
     pub num_duplicates: Option<i64>,
+    pub is_backward_scan: Option<bool>,
+    pub has_correlated_terms: Option<bool>,
 }

@@ -260,7 +260,7 @@ async fn run_explain(
             };
 
             let (collection_name, subtype) = get_subtype_and_collection_name(request)?;
-            let mut explain = transform_explain(
+            let (body, planning_time, execution_time, data_size) = transform_explain(
                 content,
                 request_info.db()?,
                 collection_name,
@@ -270,17 +270,46 @@ async fn run_explain(
                 connection_context.service_context.query_catalog(),
             )?;
 
+            let mut explain = RawDocumentBuf::new();
             explain.append("explainVersion", 2.0);
-            explain.append(
-                "command",
-                format!(
-                    "db.runCommand({{explain:{}}})",
-                    Document::try_from(request.document())?
-                        .to_string()
-                        .replace('\"', "'")
-                ),
+
+            let command_str = format!(
+                "db.runCommand({{explain: {}}})",
+                Document::try_from(request.document())?
+                    .to_string()
+                    .replace('\"', "'")
             );
-            explain.append("ok", OK_SUCCEEDED);
+            if command_str.len() > MAX_EXPLAIN_BSON_COMMAND_LENGTH {
+                let truncate_at = command_str.floor_char_boundary(MAX_EXPLAIN_BSON_COMMAND_LENGTH);
+                explain.append("command", &command_str[..truncate_at]);
+            } else {
+                explain.append("command", command_str);
+            }
+
+            if let Some(planning_time) = planning_time {
+                if planning_time != 0.0 {
+                    explain.append(
+                        "explainCommandPlanningTimeMillis",
+                        smallest_from_f64(truncate_latency(planning_time)),
+                    );
+                }
+            }
+            if let Some(execution_time) = execution_time {
+                if execution_time != 0.0 {
+                    explain.append(
+                        "explainCommandExecTimeMillis",
+                        smallest_from_f64(truncate_latency(execution_time)),
+                    );
+                }
+            }
+            if let Some(data_size) = data_size {
+                explain.append("dataSize", data_size);
+            }
+
+            // Merge body fields into explain
+            for (key, val) in body.into_iter().flatten() {
+                explain.append(key, val.to_raw_bson());
+            }
 
             if dynamic_config.enable_developer_explain() {
                 explain.append(
@@ -293,6 +322,8 @@ async fn run_explain(
                     ),
                 )
             }
+
+            explain.append("ok", OK_SUCCEEDED);
 
             Ok(Response::Raw(RawResponse(explain)))
         }
@@ -334,6 +365,7 @@ fn get_subtype_and_collection_name<'a>(request: &'a Request<'_>) -> Result<(&'a 
     ))
 }
 
+#[expect(clippy::type_complexity)]
 fn transform_explain(
     explain_content: serde_json::Value,
     db: &str,
@@ -342,7 +374,7 @@ fn transform_explain(
     query_base: &str,
     verbosity: Verbosity,
     query_catalog: &QueryCatalog,
-) -> Result<RawDocumentBuf> {
+) -> Result<(RawDocumentBuf, Option<f64>, Option<f64>, Option<String>)> {
     let mut plans: Vec<PostgresExplain> = serde_json::from_value(explain_content).map_err(|e| {
         DocumentDBError::internal_error(format!("Failed to parse backend explain plan: {e}"))
     })?;
@@ -350,8 +382,8 @@ fn transform_explain(
     let plan = plans.remove(0);
 
     // Store top level data
-    let planning_time = plan.plan.planning_time;
-    let execution_time = plan.plan.execution_time;
+    let planning_time = plan.planning_time;
+    let execution_time = plan.execution_time;
     let data_size = plan
         .plan
         .distributed_plan
@@ -365,29 +397,13 @@ fn transform_explain(
     let plan = try_simplify_plan(plan, is_unsharded, query_base, query_catalog);
 
     let collection_path = format!("{db}.{collection}");
-    let mut base_result = if subtype == RequestType::Aggregate {
+    let base_result = if subtype == RequestType::Aggregate {
         aggregate_explain(plan, &collection_path, verbosity, query_catalog)
     } else {
         cursor_explain(plan, &collection_path, false, verbosity, query_catalog)
     };
 
-    if let Some(planning_time) = planning_time {
-        base_result.append(
-            "explainCommandPlanningTimeMillis",
-            truncate_latency(planning_time),
-        );
-    }
-    if let Some(execution_time) = execution_time {
-        base_result.append(
-            "explainCommandExecTimeMillis",
-            truncate_latency(execution_time),
-        );
-    }
-    if let Some(data_size) = data_size {
-        base_result.append("dataSize", data_size);
-    }
-
-    Ok(base_result)
+    Ok((base_result, planning_time, execution_time, data_size))
 }
 
 fn decompose_distributed_plan(mut explain_plan: ExplainPlan) -> ExplainPlan {
@@ -533,6 +549,7 @@ fn decompose_plan_with_subplans(
             )
         }
 
+        // TODO: Rip out the citus dependency
         if explain_plan
             .custom_plan_provider
             .as_ref()
@@ -659,14 +676,21 @@ fn try_simplify_plan(
                 && dp.job.tasks[0].worker_plans.len() == 1
                 && dp.job.tasks[0].worker_plans[0].len() == 1
             {
-                let sub_plan = dp.job.tasks[0].worker_plans[0].remove(0).plan;
-                let new_plan = remove_nested_add_fields(sub_plan, "COUNT", query_catalog);
+                let sub_plan = dp.job.tasks[0].worker_plans[0].remove(0);
+                let new_plan = remove_nested_add_fields(sub_plan.plan, "COUNT", query_catalog);
                 let new_plan = ExplainPlan {
                     node_type: "Explain_Count_Scan".to_string(),
                     inner_plans: Some(vec![new_plan]),
                     ..Default::default()
                 };
-                dp.job.tasks[0].worker_plans[0].insert(0, PostgresExplain { plan: new_plan })
+                dp.job.tasks[0].worker_plans[0].insert(
+                    0,
+                    PostgresExplain {
+                        plan: new_plan,
+                        planning_time: sub_plan.planning_time,
+                        execution_time: sub_plan.execution_time,
+                    },
+                )
             }
         }
     }
@@ -834,6 +858,7 @@ fn get_stage_from_plan(
             ("PROJECTION_DEFAULT".to_owned(), None)
         }
         "BitmapAnd" => ("AND".to_owned(), None),
+        "Incremental Sort" => ("SORT".to_owned(), None),
         "Sort" => {
             if plan
                 .sort_keys
@@ -932,16 +957,17 @@ fn get_stage_from_plan(
             tracing::warn!("Unknown stage aggregate found");
             ("GENERIC_AGGREGATE".to_owned(), None)
         }
-        "Gather" => ("Parallel Merge".to_owned(), None),
+        "Gather" => ("PARALLEL_MERGE".to_owned(), None),
         "Custom Scan" => {
             if let Some(cpp) = plan.custom_plan_provider.as_ref() {
                 match cpp.as_str() {
-                    "Citus Adaptive" => {
+                    "Citus Adaptive" | "Citus MERGE INTO ..." => {
                         if plan
                             .distributed_plan
                             .as_ref()
                             .is_some_and(|p| p.job.task_count == 1)
                         {
+                            // TODO: Rip out the citus dependency
                             ("SINGLE_SHARD".to_owned(), None)
                         } else {
                             ("SHARD_MERGE".to_owned(), None)
@@ -1053,8 +1079,11 @@ fn aggregate_explain(
             let mut shards_explain = rawdoc! {
                 "shardCount": dplan.job.task_count,
                 "shardInformation": dplan.job.tasks_shown,
-                "retrievedDocumentSizeBytes": dplan.job.total_response_size.unwrap_or("".to_string())
             };
+
+            if let Some(ref bytes) = dplan.job.total_response_size {
+                shards_explain.append("retrievedDocumentSizeBytes", bytes.as_str());
+            }
 
             let mut i = 0;
             for shard_plan in shard_parts.into_iter() {
@@ -1328,7 +1357,7 @@ fn query_planner(
                     doc.append("direction", direction);
                 }
 
-                if plan.node_type.contains("bitmap") {
+                if plan.node_type.to_lowercase().contains("bitmap") {
                     doc.append("isBitmap", true);
                 }
 
@@ -1353,27 +1382,33 @@ fn query_planner(
                         }
 
                         if let Some(index_bounds) = detail.index_bounds.as_ref() {
-                            let mut bounds_arr = RawArrayBuf::new();
-                            index_bounds.iter().for_each(|key| {
-                                bounds_arr.push(key.as_str());
-                            });
-                            index_doc.append("bounds", bounds_arr);
+                            if !index_bounds.is_empty() {
+                                let mut bounds_arr = RawArrayBuf::new();
+                                index_bounds.iter().for_each(|key| {
+                                    bounds_arr.push(key.as_str());
+                                });
+                                index_doc.append("bounds", bounds_arr);
+                            }
                         }
 
                         if let Some(start_bounds) = detail.start_bounds.as_ref() {
-                            let mut bounds_arr = RawArrayBuf::new();
-                            start_bounds.iter().for_each(|key| {
-                                bounds_arr.push(key.as_str());
-                            });
-                            index_doc.append("startBounds", bounds_arr);
+                            if !start_bounds.is_empty() {
+                                let mut bounds_arr = RawArrayBuf::new();
+                                start_bounds.iter().for_each(|key| {
+                                    bounds_arr.push(key.as_str());
+                                });
+                                index_doc.append("startBounds", bounds_arr);
+                            }
                         }
 
                         if let Some(raw_bounds) = detail.raw_bounds.as_ref() {
-                            let mut bounds_arr = RawArrayBuf::new();
-                            raw_bounds.iter().for_each(|key| {
-                                bounds_arr.push(key.as_str());
-                            });
-                            index_doc.append("rawBounds", bounds_arr);
+                            if !raw_bounds.is_empty() {
+                                let mut bounds_arr = RawArrayBuf::new();
+                                raw_bounds.iter().for_each(|key| {
+                                    bounds_arr.push(key.as_str());
+                                });
+                                index_doc.append("rawBounds", bounds_arr);
+                            }
                         }
 
                         arr.push(index_doc);
@@ -1384,7 +1419,9 @@ fn query_planner(
             }
 
             if let Some(page_size) = plan.page_size {
-                doc.append("page_size", smallest_from_i64(page_size));
+                if page_size > 0 {
+                    doc.append("pageSize", smallest_from_i64(page_size));
+                }
             }
 
             if let Some(startup_cost) = plan.startup_cost {
@@ -1395,42 +1432,25 @@ fn query_planner(
                 doc.append("totalCost", total_cost);
             }
 
-            if let Some(sort_keys) = plan.sort_keys.as_ref() {
-                let mut sort_keys_arr = RawArrayBuf::new();
-                for order_string in sort_keys {
-                    if let Some(order_value) =
-                        query_diagnostics::get_sort_conditions(order_string, query_catalog)
-                    {
-                        sort_keys_arr.push(order_value);
-                    }
-                }
-                if !sort_keys_arr.is_empty() {
-                    doc.append("sortKey", sort_keys_arr);
-                }
-
-                doc.append("sortKeysCount", sort_keys.len() as i32);
-            }
-            if let Some(presorted_keys) = plan.presorted_key.as_ref() {
-                doc.append("presortedKeysCount", presorted_keys.len() as i32);
-            }
-
-            if stage_name != "FETCH" && plan.node_type == "Index Scan" && plan.order_by.is_some() {
-                doc.append("hasOrderBy", true);
-            }
-
             if let Some(vector_search_params) = plan.vector_search_custom_params.as_deref() {
                 let params: std::result::Result<VectorSearchParams, serde_json::Error> =
                     serde_json::from_str(vector_search_params);
                 if let Ok(params) = params {
                     let mut vector_search = RawDocumentBuf::new();
                     if let Some(nprobes) = params.n_probes {
-                        vector_search.append("nProbes", smallest_from_f64(nprobes))
+                        if nprobes != 0.0 {
+                            vector_search.append("nProbes", smallest_from_f64(nprobes))
+                        }
                     }
                     if let Some(ef_search) = params.ef_search {
-                        vector_search.append("efSearch", smallest_from_f64(ef_search))
+                        if ef_search != 0.0 {
+                            vector_search.append("efSearch", smallest_from_f64(ef_search))
+                        }
                     }
                     if let Some(l_search) = params.l_search {
-                        vector_search.append("lSearch", smallest_from_f64(l_search))
+                        if l_search != 0.0 {
+                            vector_search.append("lSearch", smallest_from_f64(l_search))
+                        }
                     }
                     doc.append("cosmosSearchCustomParams", vector_search)
                 } else {
@@ -1443,6 +1463,45 @@ fn query_planner(
                 if !values.is_empty() {
                     doc.append("runtimeFilterSet", limited_array_from_contents(values));
                 }
+            }
+
+            if let Some(sort_keys) = plan.sort_keys.as_ref() {
+                doc.append("sortKeysCount", sort_keys.len() as i32);
+
+                let mut sort_keys_arr = RawArrayBuf::new();
+                for order_string in sort_keys {
+                    if let Some(order_value) =
+                        query_diagnostics::get_sort_conditions(order_string, query_catalog)
+                    {
+                        sort_keys_arr.push(order_value);
+                    }
+                }
+                if !sort_keys_arr.is_empty() {
+                    doc.append("sortKey", sort_keys_arr);
+                }
+            }
+            if let Some(presorted_keys) = plan.presorted_key.as_ref() {
+                doc.append("presortedKeysCount", presorted_keys.len() as i32);
+                if let Some(sort_keys) = plan.sort_keys.as_ref() {
+                    let mut sort_keys_arr = RawArrayBuf::new();
+                    for order_string in sort_keys {
+                        if let Some(order_value) =
+                            query_diagnostics::get_sort_conditions(order_string, query_catalog)
+                        {
+                            sort_keys_arr.push(order_value);
+                        }
+                    }
+                    if !sort_keys_arr.is_empty() {
+                        doc.append("presortedKey", sort_keys_arr);
+                    }
+                }
+            }
+
+            if stage_name != "FETCH"
+                && plan.node_type == "Index Scan"
+                && plan.order_by.as_ref().is_some_and(|s| !s.trim().is_empty())
+            {
+                doc.append("hasOrderBy", true);
             }
 
             if plan.index_condition.is_some() && stage_name != "FETCH" {
@@ -1498,15 +1557,23 @@ fn limited_array_from_contents(contents: Vec<(&'static str, RawDocumentBuf)>) ->
 
 fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocumentBuf {
     let (total_rows_examined, total_keys_examined) = get_total_examined(&plan);
-    let execution_time = plan.actual_total_time.unwrap_or(0.0) as i64;
+    let execution_time = smallest_from_f64(truncate_latency(plan.actual_total_time.unwrap_or(0.0)));
+    let execution_start_at_time =
+        smallest_from_f64(truncate_latency(plan.actual_startup_time.unwrap_or(0.0)));
     let returned = plan.actual_rows.unwrap_or(0);
     let stages = walk_plan_stage(plan, None, query_catalog, |plan, stage_name, _| {
         let mut doc = rawdoc! {
             "stage": stage_name,
             "nReturned": plan.actual_rows.unwrap_or(0),
-            "executionTimeMillis": plan.actual_total_time.unwrap_or(0.0) as i64,
-            "totalKeysExamined": plan.actual_rows.unwrap_or(0) + plan.rows_removed_by_index.unwrap_or(0),
         };
+        doc.append(
+            "executionTimeMillis",
+            smallest_from_f64(truncate_latency(plan.actual_total_time.unwrap_or(0.0))),
+        );
+        doc.append(
+            "executionStartAtTimeMillis",
+            smallest_from_f64(truncate_latency(plan.actual_startup_time.unwrap_or(0.0))),
+        );
         if plan.index_name.is_none()
             || plan.filter.is_some()
             || plan.rows_removed_by_filter.unwrap_or(0) > 0
@@ -1531,17 +1598,24 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
             if plan.index_details.is_some() {
                 let mut arr = RawArrayBuf::new();
                 for detail in plan.index_details.as_ref().unwrap() {
+                    if detail.index_name.as_deref() != plan.index_name.as_deref() {
+                        continue;
+                    }
                     let mut index_doc = rawdoc! {};
                     if let Some(index_name) = detail.index_name.as_deref() {
                         index_doc.append("indexName", index_name);
                     }
 
                     if let Some(inner_scan_loops) = detail.inner_scan_loops {
-                        index_doc.append("scanLoops", smallest_from_i64(inner_scan_loops));
+                        if inner_scan_loops > 0 {
+                            index_doc.append("scanLoops", smallest_from_i64(inner_scan_loops));
+                        }
                     }
 
                     if let Some(scan_type) = detail.scan_type.as_deref() {
-                        index_doc.append("scanType", scan_type);
+                        if !scan_type.is_empty() {
+                            index_doc.append("scanType", scan_type);
+                        }
                     }
 
                     if let Some(num_duplicates) = detail.num_duplicates {
@@ -1550,12 +1624,35 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
                         }
                     }
 
+                    if let Some(num_dead_entries_or_pages_skipped) =
+                        detail.dead_entries_or_pages_skipped
+                    {
+                        index_doc.append(
+                            "deadEntriesOrPagesSkipped",
+                            smallest_from_i64(num_dead_entries_or_pages_skipped),
+                        );
+                    }
+
+                    if let Some(parallel_scan_capable) = detail.parallel_scan_capable {
+                        index_doc.append("parallelScanCapable", parallel_scan_capable);
+                    }
+
+                    if let Some(is_backward_scan) = detail.is_backward_scan {
+                        index_doc.append("isBackwardScan", is_backward_scan);
+                    }
+
+                    if let Some(has_correlated_terms) = detail.has_correlated_terms {
+                        index_doc.append("hasCorrelatedTerms", has_correlated_terms);
+                    }
+
                     if let Some(scan_key_details) = detail.scan_key_details.as_ref() {
-                        let mut scan_key_arr = RawArrayBuf::new();
-                        scan_key_details.iter().for_each(|key| {
-                            scan_key_arr.push(key.as_str());
-                        });
-                        index_doc.append("scanKeys", scan_key_arr);
+                        if !scan_key_details.is_empty() {
+                            let mut scan_key_arr = RawArrayBuf::new();
+                            scan_key_details.iter().for_each(|key| {
+                                scan_key_arr.push(key.as_str());
+                            });
+                            index_doc.append("scanKeys", scan_key_arr);
+                        }
                     }
 
                     arr.push(index_doc);
@@ -1568,6 +1665,14 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
         if stage_name == "TEXT_MATCH" {
             doc.append("textIndexVersion", 3)
         }
+
+        doc.append(
+            "totalKeysExamined",
+            smallest_from_i64(
+                plan.actual_rows.unwrap_or(0) + plan.rows_removed_by_index.unwrap_or(0),
+            ),
+        );
+
         if plan.sort_space_type.as_deref().is_some_and(|s| s == "Disk") {
             doc.append("usedDisk", true)
         }
@@ -1575,45 +1680,65 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
             doc.append("sortMethod", method)
         }
         if let Some(blocks) = plan.exact_heap_blocks {
-            doc.append("exactBlocksRead", smallest_from_i64(blocks))
+            if blocks != 0 {
+                doc.append("exactBlocksRead", smallest_from_i64(blocks))
+            }
         }
         if let Some(blocks) = plan.lossy_heap_blocks {
-            doc.append("lossyBlocksRead", smallest_from_i64(blocks))
+            if blocks != 0 {
+                doc.append("lossyBlocksRead", smallest_from_i64(blocks))
+            }
         }
         if let Some(space_used) = plan.sort_space_used {
-            doc.append(
-                "totalDataSizeSortedBytesEstimate",
-                smallest_from_i64(space_used),
-            )
+            if space_used > 0 {
+                doc.append(
+                    "totalDataSizeSortedBytesEstimate",
+                    smallest_from_i64(space_used),
+                )
+            }
         }
         if let Some(v) = plan.rows_removed_by_filter {
-            doc.append("totalDocsRemovedByRuntimeFilter", smallest_from_i64(v))
+            if v > 0 {
+                doc.append("totalDocsRemovedByRuntimeFilter", smallest_from_i64(v))
+            }
         }
         if let Some(v) = plan.rows_removed_by_index {
-            doc.append("totalDocsRemovedByIndexRechecks", smallest_from_i64(v))
+            if v > 0 {
+                doc.append("totalDocsRemovedByIndexRechecks", smallest_from_i64(v))
+            }
         }
         if let Some(v) = plan.shared_hit_blocks {
-            doc.append("numBlocksFromCache", smallest_from_i64(v))
+            if v > 0 {
+                doc.append("numBlocksFromCache", smallest_from_i64(v))
+            }
         }
         if let Some(v) = plan.shared_read_blocks {
-            doc.append("numBlocksFromDisk", smallest_from_i64(v))
+            if v > 0 {
+                doc.append("numBlocksFromDisk", smallest_from_i64(v))
+            }
         }
         if let Some(v) = plan.io_read_time {
-            doc.append("ioReadTimeMillis", smallest_from_i64(v))
+            if v > 0 {
+                doc.append("ioReadTimeMillis", smallest_from_i64(v))
+            }
         }
         if let Some(v) = plan.workers_launched {
-            doc.append("parallelWorkers", smallest_from_i64(v))
+            if v > 0 {
+                doc.append("parallelWorkers", smallest_from_i64(v))
+            }
         }
 
         doc
     });
-    rawdoc! {
+    let result = rawdoc! {
         "nReturned": returned,
         "executionTimeMillis": execution_time,
+        "executionStartAtTimeMillis": execution_start_at_time,
         "totalDocsExamined": total_rows_examined,
         "totalKeysExamined": total_keys_examined,
-        "executionStages": stages
-    }
+        "executionStages": stages,
+    };
+    result
 }
 
 fn distribute_index_details(plan: &mut ExplainPlan, index_details: Option<Vec<IndexDetails>>) {
@@ -1636,7 +1761,9 @@ fn skip_stage(plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPlan {
         && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
     {
         let mut p = plan.inner_plans.expect("Checked").remove(0);
-        p.alias = plan.alias;
+        if p.alias.is_none() {
+            p.alias = plan.alias;
+        }
         p
     } else if plan.node_type == "Custom Scan"
         && plan.custom_plan_provider.as_deref() == Some("DocumentDBApiExplainQueryScan")
@@ -1703,10 +1830,10 @@ fn walk_plan_stage_core(
         });
         writer.append("shardCount", job.task_count);
         writer.append("shardInformation", job.tasks_shown);
-        writer.append("shards", RawArrayBuf::from_iter(plan_bufs));
         if let Some(bytes) = job.total_response_size {
             writer.append("retrievedDocumentSizeBytes", bytes);
         }
+        writer.append("shards", RawArrayBuf::from_iter(plan_bufs));
     }
 
     if let Some(mut inner_plans) = plan.inner_plans {
@@ -1749,7 +1876,7 @@ fn cursor_explain(
 }
 
 fn truncate_latency(latency: f64) -> f64 {
-    (latency * 1000.0).round() / 1000.0
+    (latency * 1000.0).trunc() / 1000.0
 }
 
 fn convert_to_bson(val: serde_json::Value) -> RawBson {
