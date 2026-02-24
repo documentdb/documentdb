@@ -333,6 +333,9 @@ SELECT index_cmd, cmd_type, index_id, index_cmd_status, collection_id FROM docum
 SELECT * FROM documentdb_test_helpers.count_collection_indexes('db', 'backgroundcoll1');
 SELECT * FROM documentdb_test_helpers.count_collection_indexes('db', 'backgroundcoll2');
 
+-- Disable cron jobs to prevent them from racing with manual build calls below.
+SELECT change_index_jobs_schema.change_index_jobs_status(false);
+
 -- now call build once.
 -- it's okay to call both since exactly one of them will execute with the other NOOP due to the GUC
 CALL documentdb_api_internal.build_index_concurrently(1);
@@ -344,9 +347,22 @@ SELECT * FROM documentdb_test_helpers.count_collection_indexes('db', 'background
 SELECT * FROM documentdb_test_helpers.count_collection_indexes('db', 'backgroundcoll2');
 
 -- now queue some reindex jobs and test index builds
-SELECT * FROM documentdb_api_internal.reindex_index_background('db', '{ "collection": "backgroundcoll1", "indexes": [ 32044, 32045 ] }');
+-- Dynamically look up the b_1 and c_1 index IDs for backgroundcoll1 (last two non-_id indexes by allocation order)
+SELECT index_id AS reindex_idx_1 FROM documentdb_api_catalog.collection_indexes
+  WHERE collection_id = (SELECT collection_id FROM documentdb_api_catalog.collections
+    WHERE database_name = 'db' AND collection_name = 'backgroundcoll1')
+  ORDER BY index_id DESC OFFSET 1 LIMIT 1 \gset
+SELECT index_id AS reindex_idx_2 FROM documentdb_api_catalog.collection_indexes
+  WHERE collection_id = (SELECT collection_id FROM documentdb_api_catalog.collections
+    WHERE database_name = 'db' AND collection_name = 'backgroundcoll1')
+  ORDER BY index_id DESC OFFSET 0 LIMIT 1 \gset
+SELECT * FROM documentdb_api_internal.reindex_index_background('db',
+  format('{ "collection": "backgroundcoll1", "indexes": [ %s, %s ] }', :reindex_idx_1, :reindex_idx_2)::documentdb_core.bson);
 SELECT index_cmd, cmd_type, index_id, index_cmd_status, collection_id FROM documentdb_api_catalog.documentdb_index_queue order by index_id;
 CALL documentdb_api_internal.build_index_concurrently(1);
 
 --all indexes should be built and queue should be empty.
 SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
+
+-- Re-enable cron jobs for the schedule_background_index_build_jobs test below.
+SELECT change_index_jobs_schema.change_index_jobs_status(true);
