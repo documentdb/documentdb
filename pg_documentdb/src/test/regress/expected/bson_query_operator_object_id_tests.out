@@ -1,0 +1,152 @@
+SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_api_internal,documentdb_core;
+SET citus.next_shard_id TO 860000;
+SET documentdb.next_collection_id TO 8600;
+SET documentdb.next_collection_index_id TO 8600;
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('objectIdTestDb', 'test_object_id_index', FORMAT('{ "_id": %s, "a": %s, "otherField": "aaaa" }', g, g)::bson) FROM generate_series(1, 10000) g) i;
+NOTICE:  creating collection
+ count 
+-------
+ 10000
+(1 row)
+
+EXPLAIN (COSTS ON) SELECT document FROM documentdb_api.collection('objectIdTestDb', 'test_object_id_index') WHERE document @@ '{ "_id": 15 }';
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8601  (cost=0.00..0.00 rows=1 width=32)
+   Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id = '{ "" : { "$numberInt" : "15" } }'::bson))
+(2 rows)
+
+EXPLAIN (COSTS ON) SELECT document FROM documentdb_api.collection('objectIdTestDb', 'test_object_id_index') WHERE document @@ '{ "_id": { "$in": [ 15, 55, 90 ] } }';
+                                                                                                    QUERY PLAN                                                                                                     
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8601  (cost=0.00..0.00 rows=1 width=32)
+   Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"15\" } }","{ \"\" : { \"$numberInt\" : \"55\" } }","{ \"\" : { \"$numberInt\" : \"90\" } }"}'::bson[])))
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('objectIdTestDb', 'test_object_id_index') WHERE document @@ '{ "_id": { "$gt": 50 } }' $cmd$);
+                                                                                run_explain_and_trim                                                                                
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8601 (actual rows=9950 loops=1)
+   Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id > '{ "" : { "$numberInt" : "50" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('objectIdTestDb', 'test_object_id_index') WHERE document @@ '{ "_id": { "$gt": 50, "$lt": 60 } }' $cmd$);
+                                                                                                                                                run_explain_and_trim                                                                                                                                                 
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8601 (actual rows=9 loops=1)
+   Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id > '{ "" : { "$numberInt" : "50" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (object_id < '{ "" : { "$numberInt" : "60" } }'::bson) AND (object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('objectIdTestDb', 'test_object_id_index') WHERE document @@ '{ "_id": { "$gte": 50, "$lte": 60 } }' $cmd$);
+                                                                                                                                                 run_explain_and_trim                                                                                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8601 (actual rows=11 loops=1)
+   Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id >= '{ "" : { "$numberInt" : "50" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (object_id <= '{ "" : { "$numberInt" : "60" } }'::bson) AND (object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('objectIdTestDb', 'test_object_id_index') WHERE document @@ '{ "$and": [ {"_id": 15 }, { "_id": 16 } ] }' $cmd$);
+                                                                           run_explain_and_trim                                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8601 (actual rows=0 loops=1)
+   Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id = '{ "" : { "$numberInt" : "15" } }'::bson) AND (object_id = '{ "" : { "$numberInt" : "16" } }'::bson))
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('objectIdTestDb', 'test_object_id_index') WHERE document @@ '{ "$and": [ {"_id": { "$in": [ 15, 16, 17] }}, { "_id": { "$in": [ 16, 17, 18 ] } } ] }' $cmd$);
+                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8601 (actual rows=2 loops=1)
+   Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"15\" } }","{ \"\" : { \"$numberInt\" : \"16\" } }","{ \"\" : { \"$numberInt\" : \"17\" } }"}'::bson[])) AND (object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"16\" } }","{ \"\" : { \"$numberInt\" : \"17\" } }","{ \"\" : { \"$numberInt\" : \"18\" } }"}'::bson[])))
+   Filter: (document @*= '{ "_id" : [ { "$numberInt" : "16" }, { "$numberInt" : "17" }, { "$numberInt" : "18" } ] }'::bson)
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('objectIdTestDb', 'test_object_id_index') WHERE document @@ '{ "$and": [ {"_id": { "$gt": 50 } }, { "_id": { "$lt": 60 } } ] }' $cmd$);
+                                                                                                                                                run_explain_and_trim                                                                                                                                                 
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8601 (actual rows=9 loops=1)
+   Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id > '{ "" : { "$numberInt" : "50" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (object_id < '{ "" : { "$numberInt" : "60" } }'::bson) AND (object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(2 rows)
+
+-- create a scenario where there's an alternate filter and that can be matched in the RUM index.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('objectIdTestDb', '{ "createIndexes": "test_object_id_index", "indexes": [ { "key": { "otherField": 1 }, "name": "idx_1" } ]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('objectIdTestDb', 'test_object_id_index') WHERE document @@ '{ "_id": { "$in": [ 15, 20 ] }, "otherField": "aaaa" }' $cmd$);
+                                                                           run_explain_and_trim                                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8601 (actual rows=2 loops=1)
+   Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"15\" } }","{ \"\" : { \"$numberInt\" : \"20\" } }"}'::bson[])))
+   Filter: (document @= '{ "otherField" : "aaaa" }'::bson)
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('objectIdTestDb', 'test_object_id_index') WHERE document @@ '{ "_id": { "$in": [ 15 ] }, "otherField": "aaaa" }' $cmd$);
+                                             run_explain_and_trim                                              
+---------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8601 (actual rows=1 loops=1)
+   Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id = '{ "" : { "$numberInt" : "15" } }'::bson))
+   Filter: (document @= '{ "otherField" : "aaaa" }'::bson)
+(3 rows)
+
+-- we shouldn't have object_id filters unless we also have shard key filters
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('objectIdTestDb', 'test_object_id_index') WHERE document @@ '{ "_id": 15 }' $cmd$);
+                                             run_explain_and_trim                                              
+---------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8601 (actual rows=1 loops=1)
+   Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id = '{ "" : { "$numberInt" : "15" } }'::bson))
+(2 rows)
+
+BEGIN;
+SET LOCAL documentdb.ForceUseIndexIfAvailable to OFF;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('objectIdTestDb', 'test_object_id_index') WHERE document @@ '{ "_id": { "$in": [ 15, 55, 90 ] } }' $cmd$);
+                                                                                               run_explain_and_trim                                                                                                
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8601 (actual rows=3 loops=1)
+   Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"15\" } }","{ \"\" : { \"$numberInt\" : \"55\" } }","{ \"\" : { \"$numberInt\" : \"90\" } }"}'::bson[])))
+(2 rows)
+
+ROLLBACK;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('objectIdTestDb', 'test_object_id_index') WHERE document @@ '{ "_id": 15, "a": 15 }' $cmd$);
+                                             run_explain_and_trim                                              
+---------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8601 (actual rows=1 loops=1)
+   Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id = '{ "" : { "$numberInt" : "15" } }'::bson))
+   Filter: (document @= '{ "a" : { "$numberInt" : "15" } }'::bson)
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('objectIdTestDb', 'test_object_id_index') WHERE document @@ '{ "_id": 15, "a": { "$gt": 15 } }' $cmd$);
+                                             run_explain_and_trim                                              
+---------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8601 (actual rows=0 loops=1)
+   Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id = '{ "" : { "$numberInt" : "15" } }'::bson))
+   Filter: (document @> '{ "a" : { "$numberInt" : "15" } }'::bson)
+   Rows Removed by Filter: 1
+(4 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('objectIdTestDb', 'test_object_id_index') WHERE document @@ '{ "_id": { "$in": [ 15, 20 ] }, "otherField": "aaaa" }' $cmd$);
+                                                                           run_explain_and_trim                                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8601 (actual rows=2 loops=1)
+   Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"15\" } }","{ \"\" : { \"$numberInt\" : \"20\" } }"}'::bson[])))
+   Filter: (document @= '{ "otherField" : "aaaa" }'::bson)
+(3 rows)
+
+-- Run with multiple object_id filters in the query
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('objectIdTestDb', '{ "find": "test_object_id_index",  "filter": { "$and": [ { "$or": [ { "_id": { "$in": [15, 16, 17] } } ] } ], "otherField": {"$ne": "bbb"}, "_id": 15 }, "limit": 1 }') $cmd$);
+                                                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                                                            
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_8601 collection (actual rows=1 loops=1)
+   Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id = '{ "" : { "$numberInt" : "15" } }'::bson))
+   Filter: (bson_dollar_in(document, '{ "_id" : [ { "$numberInt" : "15" }, { "$numberInt" : "16" }, { "$numberInt" : "17" } ] }'::bson) AND (document ##= ANY (ARRAY['{ "_id" : { "$numberInt" : "15" } }'::bsonindexbounds, '{ "_id" : { "$numberInt" : "16" } }'::bsonindexbounds, '{ "_id" : { "$numberInt" : "17" } }'::bsonindexbounds])) AND bson_dollar_ne(document, '{ "otherField" : "bbb" }'::bson) AND (object_id = ANY (ARRAY['{ "" : { "$numberInt" : "15" } }'::bson, '{ "" : { "$numberInt" : "16" } }'::bson, '{ "" : { "$numberInt" : "17" } }'::bson])))
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('objectIdTestDb', '{ "find": "test_object_id_index",  "filter": { "$and": [ { "$or": [ { "_id": { "$in": [15, 16, 17] } } ] } ], "otherField": {"$ne": "bbb"}, "$or": [ { "_id": 15 }, { "_id": 16 } ] }, "limit": 1 }') $cmd$);
+                                                                                                                                                             run_explain_and_trim                                                                                                                                                              
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual rows=1 loops=1)
+   ->  Index Scan using _id_ on documents_8601 collection (actual rows=1 loops=1)
+         Index Cond: ((shard_key_value = '8601'::bigint) AND (object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"15\" } }","{ \"\" : { \"$numberInt\" : \"16\" } }","{ \"\" : { \"$numberInt\" : \"17\" } }"}'::bson[])) AND (object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"15\" } }","{ \"\" : { \"$numberInt\" : \"16\" } }"}'::bson[])))
+         Filter: ((document @!= '{ "otherField" : "bbb" }'::bson) AND (document @*= '{ "_id" : [ { "$numberInt" : "15" }, { "$numberInt" : "16" } ] }'::bson))
+(4 rows)
+

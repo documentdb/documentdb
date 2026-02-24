@@ -4140,6 +4140,7 @@ CheckAndAddIdFilter(List *opArgs, IdFilterWalkerContext *context,
 					ScalarArrayOpExpr *inOperator = makeNode(ScalarArrayOpExpr);
 					inOperator->useOr = true;
 					inOperator->opno = BsonEqualOperatorId();
+					inOperator->opfuncid = BsonEqualFunctionOid();
 
 					/* First arg is the object_id var */
 					AttrNumber documentIdAttnum = 2;

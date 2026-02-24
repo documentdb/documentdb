@@ -145,6 +145,7 @@ Oid TextEqualOperatorId(void);
 Oid TextNotEqualOperatorId(void);
 Oid TextLessOperatorId(void);
 Oid BsonEqualOperatorId(void);
+Oid BsonEqualFunctionOid(void);
 Oid BsonEqualMatchOperatorId(void);
 Oid BsonInOperatorId(void);
 Oid BsonQueryOperatorId(void);

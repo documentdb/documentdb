@@ -185,6 +185,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the <bson> OPERATOR(ApiCatalogSchemaName.=) <bson> operator */
 	Oid BsonEqualOperatorId;
 
+	/* OID of the function for bson_equals UDF */
+	Oid BsonEqualFunctionOid;
+
 	/* OID of the <bson> OPERATOR(ApiCatalogSchemaName.@=) <bson> operator */
 	Oid BsonEqualMatchOperatorId;
 
@@ -2277,6 +2280,19 @@ BsonEqualOperatorId(void)
 {
 	return GetCoreBinaryOperatorId(&Cache.BsonEqualOperatorId,
 								   BsonTypeId(), "=", BsonTypeId());
+}
+
+
+/*
+ * BsonEqualFunctionOid returns the OID of the CoreSchema.bson_equal function UDF.
+ */
+Oid
+BsonEqualFunctionOid(void)
+{
+	return GetBinaryOperatorFunctionIdWithSchema(&Cache.BsonEqualFunctionOid,
+												 "bson_equal",
+												 BsonTypeId(), BsonTypeId(),
+												 CoreSchemaName);
 }
 
 
