@@ -11,7 +11,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use bson::rawdoc;
+use bson::{rawdoc, RawArrayBuf};
 
 use crate::{
     configuration::DynamicConfiguration,
@@ -48,6 +48,27 @@ pub async fn process(
         connection_context.client_information = Some(client.to_raw_document_buf());
     }
 
+    // Build the saslSupportedMechs array: query registry when GUC enabled,
+    // otherwise use the hardcoded default.
+    let mechanisms: Vec<String> = if dynamic_configuration.use_pluggable_auth().await {
+        if let Some(registry) = connection_context.service_context.auth_provider_registry() {
+            registry
+                .list_enabled_mechanisms()
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
+        } else {
+            vec!["SCRAM-SHA-256".to_string()]
+        }
+    } else {
+        vec!["SCRAM-SHA-256".to_string()]
+    };
+
+    let mut mechs_array = RawArrayBuf::new();
+    for m in &mechanisms {
+        mechs_array.push(m.as_str());
+    }
+
     let mut response_doc = rawdoc! {
         writeable_primary_field: true,
         "msg": "isdbgrid",
@@ -60,7 +81,7 @@ pub async fn process(
         "maxWireVersion": dynamic_configuration.server_version().await.max_wire_protocol(),
         "readOnly": dynamic_configuration.read_only().await,
         "connectionId": connection_context.get_connection_id_hash(),
-        "saslSupportedMechs": ["SCRAM-SHA-256"],
+        "saslSupportedMechs": mechs_array,
         "internal": dynamic_configuration.topology(),
         "ok": OK_SUCCEEDED,
     };
