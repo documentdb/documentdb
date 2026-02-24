@@ -21,6 +21,21 @@ void _PG_fini(void);
 bool SkipDocumentDBCoreLoad = false;
 
 /*
+ * DocumentDBCore_InstallBsonMemVTablesLocal sets the libbson memory vtable
+ * for pg_documentdb_core.so's own statically-linked copy of libbson.
+ *
+ * This MUST be a non-inline exported function so that service.so can
+ * call it to set this .so's vtable (since service.c is the real _PG_init
+ * entry point and pg_documentdb's _PG_init is skipped via SkipDocumentDBLoad).
+ */
+void
+DocumentDBCore_InstallBsonMemVTablesLocal(void)
+{
+	InstallBsonMemVTablesLocal();
+}
+
+
+/*
  * _PG_init gets called when the extension is loaded.
  */
 void
@@ -39,7 +54,7 @@ _PG_init(void)
 							"variable in postgresql.conf.")));
 	}
 
-	InstallBsonMemVTables();
+	DocumentDBCore_InstallBsonMemVTablesLocal();
 
 	InitDocumentDBCoreConfigurations("documentdb_core");
 

@@ -159,3 +159,4 @@ test: three_column_data_table
 # This needs to be by itself since it updates the documentdb schema to add order by functions
 # Once this is added to the central schema, it can be run concurrently
 test: bson_composite_order_by_index_tests
+test: bson_distributed_mem_vtable_palloc_test
