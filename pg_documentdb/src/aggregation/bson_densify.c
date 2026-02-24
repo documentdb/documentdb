@@ -9,12 +9,19 @@
  */
 
 #include <postgres.h>
+#include <catalog/pg_operator.h>
 #include <nodes/execnodes.h>
+#include <nodes/nodeFuncs.h>
 #include <miscadmin.h>
 #include <parser/parse_clause.h>
 #include <parser/parse_node.h>
 #include <windowapi.h>
 #include <utils/datetime.h>
+
+/* pg_operator_d.h defines Int8LessOperator but not the equality operator */
+#ifndef Int8EqualOperator
+#define Int8EqualOperator 410
+#endif
 
 #include "aggregation/bson_project.h"
 #include "commands/parse_error.h"
@@ -572,8 +579,22 @@ HandleDensify(const bson_value_t *existingValue, Query *query,
 
 		SortGroupClause *partitionClause = makeNode(SortGroupClause);
 		partitionClause->tleSortGroupRef = partitionTle->ressortgroupref;
-		partitionClause->eqop = BsonEqualOperatorId();
-		partitionClause->sortop = BsonLessThanOperatorId();
+
+		/*
+		 * When partitionByFields matches the shard key, the partition expression
+		 * is the INT8 shard_key_value column rather than a BSON expression.
+		 * Use INT8 operators in that case to avoid BSON comparison on int values.
+		 */
+		if (exprType((Node *) partitionByFieldsExpr) == INT8OID)
+		{
+			partitionClause->eqop = Int8EqualOperator;
+			partitionClause->sortop = Int8LessOperator;
+		}
+		else
+		{
+			partitionClause->eqop = BsonEqualOperatorId();
+			partitionClause->sortop = BsonLessThanOperatorId();
+		}
 		partitionClause->nulls_first = false;
 		partitionClause->hashable = true;
 

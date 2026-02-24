@@ -570,3 +570,8 @@ NOTICE:  creating collection
 
 SELECT documentdb_api.shard_collection('db', 'nonShardedCollection', '{ "a.b": "hashed" }', true);
 ERROR:  Collection db.nonShardedCollection is not sharded
+-- shard_collection should not crash when implicit CreateCollection fails (issue #462)
+-- Force a collection ID collision by resetting next_collection_id
+SET documentdb.next_collection_id TO 5000;
+SELECT documentdb_api.shard_collection('db', 'shard_462_crash_test', '{ "_id": "hashed" }', false);
+ERROR:  Failed to create collection db.shard_462_crash_test for sharding
