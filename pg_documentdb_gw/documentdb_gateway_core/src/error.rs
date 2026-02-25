@@ -214,8 +214,9 @@ impl std::fmt::Debug for DocumentDBError {
                 if let Some(dbe) = error.as_db_error() {
                     f.debug_struct("PostgresError")
                         .field("sql_state", &dbe.code())
-                        .field("message", &"[REDACTED]")
                         .field("hint", &dbe.hint())
+                        .field("file", &dbe.file())
+                        .field("line_num", &dbe.line())
                         .field("backtrace", backtrace)
                         .finish()
                 } else {
@@ -231,7 +232,6 @@ impl std::fmt::Debug for DocumentDBError {
             DocumentDBError::PostgresDocumentDBError(code, _msg, backtrace) => f
                 .debug_struct("PostgresDocumentDBError")
                 .field("code", code)
-                .field("message", &"[REDACTED]")
                 .field("backtrace", backtrace)
                 .finish(),
             DocumentDBError::PoolError(error, backtrace) => f
@@ -252,7 +252,6 @@ impl std::fmt::Debug for DocumentDBError {
             DocumentDBError::RawBsonError(_error, backtrace) => f
                 .debug_struct("RawBsonError")
                 .field("error_type", &std::any::type_name::<bson::raw::Error>())
-                .field("error_display", &"[REDACTED]")
                 .field("backtrace", backtrace)
                 .finish(),
             DocumentDBError::SSLError(error, backtrace) => f
@@ -268,7 +267,6 @@ impl std::fmt::Debug for DocumentDBError {
             DocumentDBError::ValueAccessError(_error, backtrace) => f
                 .debug_struct("ValueAccessError")
                 .field("error_type", &std::any::type_name::<ValueAccessError>())
-                .field("error_display", &"[REDACTED]")
                 .field("backtrace", backtrace)
                 .finish(),
         }
