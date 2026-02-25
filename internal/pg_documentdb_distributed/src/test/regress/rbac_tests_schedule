@@ -1,1 +1,5 @@
 test: rbac_documentdb_readwrite_user
+test: rbac_find_role_tests
+test: rbac_insert_role_tests
+test: rbac_update_role_tests
+test: rbac_remove_role_tests

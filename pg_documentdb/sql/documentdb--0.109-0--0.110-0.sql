@@ -40,6 +40,12 @@ REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA documentdb_api_v2 FROM PUBLIC;
 -- Roles metadata table for custom role RBAC
 #include "schema/roles_metadata--0.110-0.sql"
 
+-- Privileged Action System Roles
+#include "rbac/custom_role_find--0.110-0.sql"
+#include "rbac/custom_role_insert--0.110-0.sql"
+#include "rbac/custom_role_update--0.110-0.sql"
+#include "rbac/custom_role_remove--0.110-0.sql"
+
 #include "types/bsonindexterm--0.110-0.sql"
 #include "udfs/index_mgmt/bson_index_term_functions--0.110-0.sql"
 #include "operators/bsonindexterm_btree_operators--0.110-0.sql"

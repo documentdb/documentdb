@@ -139,6 +139,12 @@ PGDLLEXPORT char *ApiRootRole = "documentdb_root_role";
 PGDLLEXPORT char *ApiSettingsManagerRole = "";
 PGDLLEXPORT char *ApiUserAdminRole = "documentdb_user_admin_role";
 
+/* Privileged Action System Roles */
+PGDLLEXPORT char *ApiCollectionFindRole = "documentdb_api_find_role";
+PGDLLEXPORT char *ApiCollectionInsertRole = "documentdb_api_insert_role";
+PGDLLEXPORT char *ApiCollectionUpdateRole = "documentdb_api_update_role";
+PGDLLEXPORT char *ApiCollectionRemoveRole = "documentdb_api_remove_role";
+
 /* Schema functions migrated from a public API to an internal API schema
  * (e.g. from documentdb_api -> documentdb_api_internal)
  * TODO: These should be transition and removed in subsequent releases.

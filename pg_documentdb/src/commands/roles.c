@@ -37,6 +37,15 @@
 	(strcmp(roleName, ApiReadOnlyRole) == 0 || \
 	 strcmp(roleName, ApiAdminRoleV2) == 0)
 
+/*
+ * IS_CUSTOM_RBAC_ROLE checks if a role is an internal custom rbac role
+ */
+#define IS_CUSTOM_RBAC_ROLE(roleName) \
+	(strcmp((roleName), ApiCollectionFindRole) == 0 || \
+	 strcmp((roleName), ApiCollectionInsertRole) == 0 || \
+	 strcmp((roleName), ApiCollectionUpdateRole) == 0 || \
+	 strcmp((roleName), ApiCollectionRemoveRole) == 0)
+
 /* GUC to enable user crud operations */
 extern bool EnableRoleCrud;
 
@@ -1528,8 +1537,10 @@ BuildRoleInheritanceTable(void)
 		 * - ApiAdminRoleV2: internal role that maps to both readWriteAnyDatabase
 		 *   and clusterAdmin; we add separate entries for these at the end
 		 * - ApiAdminRole: legacy admin role
+		 * - Privileged Action System Roles: internal roles for fine-grained access
 		 */
 		if (IS_SYSTEM_LOGIN_ROLE(childRole) ||
+			IS_CUSTOM_RBAC_ROLE(childRole) ||
 			strcmp(childRole, ApiAdminRoleV2) == 0 ||
 			strcmp(childRole, ApiAdminRole) == 0)
 		{
