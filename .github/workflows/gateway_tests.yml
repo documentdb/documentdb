@@ -58,11 +58,11 @@ jobs:
           ./scripts/install_rustup.sh --install-toolchain
           rustc --version && cargo --version
 
-      - name: Build and Install Gateway host
-        run: ./scripts/build_and_install_with_pgrx.sh -v ${{ matrix.pg_version }} -d ./pg_documentdb_gw_host
-
       - name: Install Rust tools
         run: ${{ github.workspace }}/scripts/install_rust_tools.sh ${{ github.workspace }}/rust-toolchain.toml
+
+      - name: Build and Install Gateway host
+        run: ./scripts/build_and_install_with_pgrx.sh -v ${{ matrix.pg_version }} -d ./pg_documentdb_gw_host
 
       - name: Lint Gateway
         run: cargo make lint
