@@ -121,7 +121,7 @@ if [ "$createUser" = "true" ]; then
         exit 1
     fi
 
-    SetupCustomAdminUser "$userName" "$userPassword" "$port" "$owner"
+    SetupCustomAdminUser "$userName" "$userPassword" "$port" "$owner" "$hostname"
 else
     echo "Skipping user creation."
 fi
