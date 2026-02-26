@@ -742,24 +742,13 @@ GetElemMatchQualConsistentResult(BsonElemMatchBoolFilterState *expression,
 }
 
 
-/*
- * Walks a dotted path specified by 'a.b.c.d' and checks if any
- * component is an array index (or deals with array index paths).
- * This is defined as any path that can be an integer type.
- */
 bool
-PathHasArrayIndexElements(const StringView *path)
+SubPathHasArrayIndexElements(const StringView *path, StringView subPath)
 {
-	StringView subPath = StringViewFindPrefix(path, '.');
-	if (subPath.length == 0)
-	{
-		/* not a dotted path - top level field */
-		return false;
-	}
-
 	StringView newPath = *path;
 
-	do {
+	while (subPath.length > 0)
+	{
 		if (isdigit(subPath.string[0]))
 		{
 			char *endptr;
@@ -773,7 +762,7 @@ PathHasArrayIndexElements(const StringView *path)
 
 		newPath = StringViewSubstring(&newPath, subPath.length + 1);
 		subPath = StringViewFindPrefix(&newPath, '.');
-	} while (subPath.length > 0);
+	}
 
 	if (newPath.length > 0)
 	{
@@ -790,4 +779,23 @@ PathHasArrayIndexElements(const StringView *path)
 	}
 
 	return false;
+}
+
+
+/*
+ * Walks a dotted path specified by 'a.b.c.d' and checks if any
+ * component is an array index (or deals with array index paths).
+ * This is defined as any path that can be an integer type.
+ */
+bool
+PathHasArrayIndexElements(const StringView *path)
+{
+	StringView subPath = StringViewFindPrefix(path, '.');
+	if (subPath.length == 0)
+	{
+		/* not a dotted path - top level field */
+		return false;
+	}
+
+	return SubPathHasArrayIndexElements(path, subPath);
 }

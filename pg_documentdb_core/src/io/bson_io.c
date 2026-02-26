@@ -67,6 +67,7 @@ PG_FUNCTION_INFO_V1(bson_to_bytea);
 PG_FUNCTION_INFO_V1(bson_object_keys);
 PG_FUNCTION_INFO_V1(row_get_bson);
 PG_FUNCTION_INFO_V1(bson_repath_and_build);
+PG_FUNCTION_INFO_V1(bson_build_document);
 PG_FUNCTION_INFO_V1(bson_to_bson_hex);
 PG_FUNCTION_INFO_V1(bson_hex_to_bson);
 PG_FUNCTION_INFO_V1(bson_json_to_bson);
@@ -400,8 +401,8 @@ bson_object_keys(PG_FUNCTION_ARGS)
  * If the value is an empty document, it is treated as an EOD value and is not written. For example:
  * ["l1", "l2"] [{"":x}, {}] becomes {"l1":x}
  */
-Datum
-bson_repath_and_build(PG_FUNCTION_ARGS)
+static Datum
+BsonRepathAndBuildCore(PG_FUNCTION_ARGS, bool isBuildDocument)
 {
 	Datum *args;
 	bool *nulls;
@@ -434,21 +435,63 @@ bson_repath_and_build(PG_FUNCTION_ARGS)
 					 errdetail("Object keys should be text.")));
 		}
 
+		char *path;
+		int len;
 		if (types[i] != TEXTOID)
 		{
-			ereport(ERROR,
-					(errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-					 errmsg(
-						 "Invalid type: expected a text type field, but received %s instead",
-						 format_type_be(types[i]))));
+			if (isBuildDocument)
+			{
+				Oid outputFunction;
+				bool isVarlena;
+				getTypeOutputInfo(types[i], &outputFunction, &isVarlena);
+
+				FmgrInfo info;
+				LOCAL_FCINFO(innerFcinfo, 1);
+				fmgr_info(outputFunction, &info);
+
+				InitFunctionCallInfoData(*innerFcinfo, &info, 1, fcinfo->fncollation,
+										 fcinfo->context, fcinfo->resultinfo);
+				innerFcinfo->args->value = args[i];
+				innerFcinfo->args->isnull = nulls[i];
+
+				Datum result = FunctionCallInvoke(innerFcinfo);
+				if (innerFcinfo->isnull)
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							 errmsg(
+								 "Invalid type: expected a value coercible to text, but received null instead")));
+				}
+
+				path = DatumGetCString(result);
+				len = strlen(path);
+			}
+			else
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						 errmsg(
+							 "Invalid type: expected a text type field, but received %s instead",
+							 format_type_be(types[i]))));
+			}
+		}
+		else
+		{
+			text *pathText = DatumGetTextP(args[i]);
+			path = (char *) VARDATA_ANY(pathText);
+			len = VARSIZE_ANY_EXHDR(pathText);
 		}
 
-		text *pathText = DatumGetTextP(args[i]);
-		char *path = (char *) VARDATA_ANY(pathText);
-		int len = VARSIZE_ANY_EXHDR(pathText);
 		StringView pathView = { .length = len, .string = path };
 
-		if (pathView.length == 0 || StringViewStartsWith(&pathView, '$'))
+		if (pathView.length == 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40236),
+							errmsg(
+								"Cannot use %.*s as a field name. empty paths are not allowed.",
+								len, path)));
+		}
+		else if (!isBuildDocument && StringViewStartsWith(&pathView, '$'))
 		{
 			/* We don't support dollar prefixed-paths here */
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40236),
@@ -467,20 +510,38 @@ bson_repath_and_build(PG_FUNCTION_ARGS)
 			pgbsonelement elem;
 			pgbson *pbson = DatumGetPgBson(args[i + 1]);
 
-			if (IsPgbsonEmptyDocument(pbson))
+			if (isBuildDocument)
 			{
-				/* We treat empty document as EOD values and these values should just not be written */
-				continue;
-			}
-
-			if (TryGetSinglePgbsonElementFromPgbson(pbson, &elem))
-			{
-				PgbsonWriterAppendValue(&writer, path, len, &elem.bsonValue);
+				/* in the build document path, we write the bson as is
+				 * with the exception of a bson with no path and a single value
+				 */
+				if (TryGetSinglePgbsonElementFromPgbson(pbson, &elem) &&
+					elem.pathLength == 0)
+				{
+					PgbsonWriterAppendValue(&writer, path, len, &elem.bsonValue);
+				}
+				else
+				{
+					PgbsonWriterAppendDocument(&writer, path, len, pbson);
+				}
 			}
 			else
 			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-								(errmsg("Expecting only one element value"))));
+				if (IsPgbsonEmptyDocument(pbson))
+				{
+					/* We treat empty document as EOD values and these values should just not be written */
+					continue;
+				}
+
+				if (TryGetSinglePgbsonElementFromPgbson(pbson, &elem))
+				{
+					PgbsonWriterAppendValue(&writer, path, len, &elem.bsonValue);
+				}
+				else
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+									(errmsg("Expecting only one element value"))));
+				}
 			}
 		}
 		else
@@ -494,6 +555,22 @@ bson_repath_and_build(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
+}
+
+
+Datum
+bson_repath_and_build(PG_FUNCTION_ARGS)
+{
+	bool isBuildDocument = false;
+	return BsonRepathAndBuildCore(fcinfo, isBuildDocument);
+}
+
+
+Datum
+bson_build_document(PG_FUNCTION_ARGS)
+{
+	bool isBuildDocument = true;
+	return BsonRepathAndBuildCore(fcinfo, isBuildDocument);
 }
 
 

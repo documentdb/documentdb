@@ -60,3 +60,25 @@ This script checks:
 Packages can be found at the `packages` directory by default, but it can be configured with the `--output-dir` option.
 
 **Note:** The packages do not include pg_documentdb_distributed in the `internal` directory.
+
+
+## Building Gateway Packages
+
+To build gateway packages, use the `build_gateway_packages.sh` script. This script supports the same OS and PostgreSQL version options as the main package builder.
+
+For example, to build a gateway package for Debian 12 and PostgreSQL 16, run:
+
+```sh
+./packaging/build_gateway_packages.sh --os deb12 --pg 16
+```
+
+Supported DEB/Ubuntu distributions:
+- deb11 — Debian 11 (bullseye)
+- deb12 — Debian 12 (bookworm)
+- deb13 — Debian 13 (trixie)
+- ubuntu22.04 — Ubuntu 22.04 (jammy)
+- ubuntu24.04 — Ubuntu 24.04 (noble)
+
+Supported PG versions: 15, 16, 17, 18
+
+The resulting gateway packages will be placed in the output directory (default: `packaging`). You can change the output location with the `--output-dir` option.

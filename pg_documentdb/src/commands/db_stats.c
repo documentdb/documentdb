@@ -139,6 +139,8 @@ command_db_stats_worker(PG_FUNCTION_ARGS)
 Datum
 command_list_databases(PG_FUNCTION_ARGS)
 {
+	ReportFeatureUsage(FEATURE_COMMAND_LIST_DATABASES);
+
 	pgbson *spec = PG_GETARG_PGBSON(0);
 
 	bool nameOnly = false;

@@ -940,25 +940,26 @@ DeleteAllMatchingDocuments(MongoCollection *collection, pgbson *queryDoc,
 
 	Datum *argValues = palloc0(sizeof(Datum) * argCount);
 	Oid *argTypes = palloc0(sizeof(Oid) * argCount);
+
 	char *argNulls = palloc0(sizeof(char) * argCount);
+	memset(argNulls, ' ', argCount);
 
 	/* assign query value */
 	Oid bsonTypeId = BsonTypeId();
 	argTypes[0] = bsonTypeId;
 	argValues[0] = PointerGetDatum(queryDoc);
-	argNulls[0] = ' ';
 
 	if (applyVariableSpec || applyCollation)
 	{
 		/* set the variable spec */
 		argTypes[1] = bsonTypeId;
-		argValues[1] = applyVariableSpec ? PointerGetDatum(variableSpecBson) : (Datum) 0;
-		argNulls[1] = applyVariableSpec ? ' ' : 'n';
+		argValues[1] = applyVariableSpec ? PointerGetDatum(variableSpecBson) :
+					   PointerGetDatum(PgbsonInitEmpty());
 
 		/* set the collation string */
 		argTypes[2] = TEXTOID;
-		argValues[2] = applyCollation ? CStringGetTextDatum(collationString) : (Datum) 0;
-		argNulls[2] = applyCollation ? ' ' : 'n';
+		argValues[2] = applyCollation ? CStringGetTextDatum(collationString) :
+					   CStringGetTextDatum("");
 	}
 
 	/* set shard key value */
@@ -966,7 +967,6 @@ DeleteAllMatchingDocuments(MongoCollection *collection, pgbson *queryDoc,
 	{
 		argTypes[shardKeyArgIndex] = INT8OID;
 		argValues[shardKeyArgIndex] = Int64GetDatum(shardKeyHash);
-		argNulls[shardKeyArgIndex] = ' ';
 	}
 
 	/* set object id value */
@@ -974,7 +974,6 @@ DeleteAllMatchingDocuments(MongoCollection *collection, pgbson *queryDoc,
 	{
 		argTypes[objectIdArgIndex] = BYTEAOID;
 		argValues[objectIdArgIndex] = PointerGetDatum(CastPgbsonToBytea(objectIdFilter));
-		argNulls[objectIdArgIndex] = ' ';
 	}
 
 	bool readOnly = false;
@@ -1351,8 +1350,6 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 	Oid *argTypes = palloc0(sizeof(Oid) * argCount);
 	char *argNulls = palloc0(sizeof(char) * argCount);
 
-	memset(argNulls, 'n', argCount);
-
 	/* set shard key value */
 	argTypes[0] = INT8OID;
 	argValues[0] = Int64GetDatum(shardKeyHash);
@@ -1369,13 +1366,16 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 	{
 		/* set the variable spec */
 		argTypes[2] = bsonTypeId;
-		argValues[2] = PointerGetDatum(variableSpecBson);
-		argNulls[2] = applyVariableSpec ? ' ' : 'n';
+		argValues[2] = applyVariableSpec ? PointerGetDatum(variableSpecBson) :
+					   PointerGetDatum(PgbsonInitEmpty());
+		argNulls[2] = ' ';
 
-		/* TODO: set the collation string */
+		/* set the collation string */
 		argTypes[3] = TEXTOID;
-		argValues[3] = CStringGetTextDatum(deleteOneParams->collationString);
-		argNulls[3] = applyCollation ? ' ' : 'n';
+		argValues[3] = applyCollation ? CStringGetTextDatum(
+			deleteOneParams->collationString) :
+					   CStringGetTextDatum("");
+		argNulls[3] = ' ';
 	}
 
 	/* set id filter value */

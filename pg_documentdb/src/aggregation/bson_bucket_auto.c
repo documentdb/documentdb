@@ -22,10 +22,9 @@
 #include "utils/fmgr_utils.h"
 #include "utils/feature_counter.h"
 #include "utils/documentdb_errors.h"
+#include "operators/bson_expression_operators.h"
 
 #include "aggregation/bson_bucket_auto.h"
-
-extern bool EnableBucketAutoStage;
 
 /*
  * Structure for $bucketAuto specs.
@@ -129,6 +128,8 @@ static void ValidateValueIsNumberic(pgbson *value);
 static double FindClosestPowersOf2(double n, bool findLarger);
 
 static double FindClosest125(double n, bool findLarger);
+
+static void ValidateBucketAutoOutput(const bson_value_t *output);
 
 static double FindClosestRenardOrEseries(double n, bool findLarger, const
 										 char *seriesType);
@@ -274,12 +275,6 @@ Query *
 HandleBucketAuto(const bson_value_t *existingValue, Query *query,
 				 AggregationPipelineBuildContext *context)
 {
-	if (!(EnableBucketAutoStage && IsClusterVersionAtleast(DocDB_V0, 105, 0)))
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-						errmsg("$bucketAuto aggregation stage is not supported yet.")));
-	}
-
 	ReportFeatureUsage(FEATURE_STAGE_BUCKET_AUTO);
 
 	if (existingValue->value_type != BSON_TYPE_DOCUMENT)
@@ -375,6 +370,12 @@ HandleBucketAuto(const bson_value_t *existingValue, Query *query,
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40246),
 						errmsg(
 							"The $bucketAuto stage must include both 'groupBy' and 'buckets' parameters.")));
+	}
+
+	/*validate output, since can't refer to the group key in $bucketAuto*/
+	if (output.value_type != BSON_TYPE_EOD)
+	{
+		ValidateBucketAutoOutput(&output);
 	}
 
 	AggregationExpressionData parsedGroupBy = { 0 };
@@ -1146,4 +1147,69 @@ FindClosestRenardOrEseries(double n, bool findLarger, const char *seriesType)
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 					errmsg("Unexpected: Failed to find a value in the series for %f",
 						   n)));
+}
+
+
+/*
+ * Validate that the 'n' field in accumulators like $minN, $maxN, $topN, $bottomN, $firstN, $lastN
+ * in the 'output' specification of $bucketAuto is a constant expression.
+ */
+static void
+ValidateBucketAutoOutput(const bson_value_t *output)
+{
+	if (output->value_type != BSON_TYPE_DOCUMENT)
+	{
+		return;
+	}
+
+	bson_iter_t iter;
+	BsonValueInitIterator(output, &iter);
+	while (bson_iter_next(&iter))
+	{
+		const bson_value_t *accumulator = bson_iter_value(&iter);
+
+		if (accumulator->value_type != BSON_TYPE_DOCUMENT)
+		{
+			continue;
+		}
+
+		bson_iter_t accIter;
+		BsonValueInitIterator(accumulator, &accIter);
+		while (bson_iter_next(&accIter))
+		{
+			const char *key = bson_iter_key(&accIter);
+			if (strcmp(key, "$minN") == 0 || strcmp(key, "$maxN") == 0 || strcmp(key,
+																				 "$topN")
+				== 0 || strcmp(key, "$bottomN") == 0 || strcmp(key, "$firstN") == 0 ||
+				strcmp(
+					key, "$lastN") == 0)
+			{
+				const bson_value_t *accSpec = bson_iter_value(&accIter);
+				if (accSpec->value_type == BSON_TYPE_DOCUMENT)
+				{
+					bson_iter_t specIter;
+					BsonValueInitIterator(accSpec, &specIter);
+					if (bson_iter_find(&specIter, "n"))
+					{
+						const bson_value_t *nValue = bson_iter_value(&specIter);
+
+						AggregationExpressionData expressionData;
+						memset(&expressionData, 0, sizeof(AggregationExpressionData));
+
+						ParseAggregationExpressionContext parseContext = { 0 };
+
+						ParseAggregationExpressionData(&expressionData, nValue,
+													   &parseContext);
+
+						if (!IsAggregationExpressionConstant(&expressionData))
+						{
+							ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION4544714),
+											errmsg(
+												"Can't refer to the group key in $bucketAuto")));
+						}
+					}
+				}
+			}
+		}
+	}
 }

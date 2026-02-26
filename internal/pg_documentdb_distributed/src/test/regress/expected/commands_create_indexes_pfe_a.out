@@ -144,7 +144,7 @@ BEGIN;
     ]
   }
   ';
-                                                                                                                           QUERY PLAN                                                                                                                           
+                                                                                                                        QUERY PLAN                                                                                                                         
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -153,11 +153,10 @@ BEGIN;
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                ->  Bitmap Heap Scan on documents_16000_1600000 collection
-                     Recheck Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "4" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.#>=) '{ "b" : { "$numberInt" : "10" } }'::documentdb_core.bsonquery))
-                     Filter: (document OPERATOR(documentdb_api_catalog.@>=) '{ "b" : { "$numberInt" : "10" } }'::documentdb_core.bson)
+                     Recheck Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "4" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>=) '{ "b" : { "$numberInt" : "10" } }'::documentdb_core.bson))
                      ->  Bitmap Index Scan on my_idx_1
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "4" } }'::documentdb_core.bson)
-(11 rows)
+(10 rows)
 
   EXPLAIN (COSTS OFF) SELECT COUNT(*)
   FROM documentdb_api.collection('mydb', 'collection_i')
@@ -169,7 +168,7 @@ BEGIN;
     ]
   }
   ';
-                                                                                                                           QUERY PLAN                                                                                                                           
+                                                                                                                        QUERY PLAN                                                                                                                         
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -178,7 +177,7 @@ BEGIN;
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                ->  Bitmap Heap Scan on documents_16000_1600000 collection
-                     Recheck Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "4" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.#>=) '{ "b" : { "$numberInt" : "10" } }'::documentdb_core.bsonquery))
+                     Recheck Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "4" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>=) '{ "b" : { "$numberInt" : "10" } }'::documentdb_core.bson))
                      Filter: (document OPERATOR(documentdb_api_catalog.@>=) '{ "b" : { "$numberInt" : "11" } }'::documentdb_core.bson)
                      ->  Bitmap Index Scan on my_idx_1
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "4" } }'::documentdb_core.bson)
@@ -194,7 +193,7 @@ BEGIN;
     ]
   }
   ';
-                                                                                                                           QUERY PLAN                                                                                                                           
+                                                                                                                        QUERY PLAN                                                                                                                         
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -203,7 +202,7 @@ BEGIN;
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                ->  Bitmap Heap Scan on documents_16000_1600000 collection
-                     Recheck Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "4" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.#>=) '{ "b" : { "$numberInt" : "10" } }'::documentdb_core.bsonquery))
+                     Recheck Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "4" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>=) '{ "b" : { "$numberInt" : "10" } }'::documentdb_core.bson))
                      Filter: (document OPERATOR(documentdb_api_catalog.@>) '{ "b" : { "$numberInt" : "12" } }'::documentdb_core.bson)
                      ->  Bitmap Index Scan on my_idx_1
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "4" } }'::documentdb_core.bson)
@@ -219,7 +218,7 @@ BEGIN;
     ]
   }
   ';
-                                                                                                                           QUERY PLAN                                                                                                                           
+                                                                                                                        QUERY PLAN                                                                                                                         
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -228,7 +227,7 @@ BEGIN;
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                ->  Bitmap Heap Scan on documents_16000_1600000 collection
-                     Recheck Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "4" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.#>=) '{ "b" : { "$numberInt" : "10" } }'::documentdb_core.bsonquery))
+                     Recheck Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "4" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>=) '{ "b" : { "$numberInt" : "10" } }'::documentdb_core.bson))
                      Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "b" : { "$numberInt" : "13" } }'::documentdb_core.bson)
                      ->  Bitmap Index Scan on my_idx_1
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "4" } }'::documentdb_core.bson)
@@ -290,7 +289,7 @@ BEGIN;
     ]
   }
   ';
-                                                                                                                   QUERY PLAN                                                                                                                   
+                                                                                                                 QUERY PLAN                                                                                                                 
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -299,11 +298,10 @@ BEGIN;
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                ->  Bitmap Heap Scan on documents_16000_1600000 collection
-                     Recheck Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "z" : { "$numberInt" : "13" } }'::documentdb_core.bson) AND documentdb_api_catalog.bson_dollar_type(document, '{ "c" : "number" }'::documentdb_core.bson))
-                     Filter: (document OPERATOR(documentdb_api_catalog.@#) '{ "c" : "number" }'::documentdb_core.bson)
+                     Recheck Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "z" : { "$numberInt" : "13" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@#) '{ "c" : "number" }'::documentdb_core.bson))
                      ->  Bitmap Index Scan on my_idx_3
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "z" : { "$numberInt" : "13" } }'::documentdb_core.bson)
-(11 rows)
+(10 rows)
 
 COMMIT;
 -- unsupported "partialFilterExpression" operators --
@@ -362,7 +360,11 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('my_db', create_i
   ]
 }
 '), true);
-ERROR:  Error in specification { "key" : { "c.d" : 1 }, "name" : "new_idx", "partialFilterExpression" : { "$and" : [ { "b" : 3 }, { "a" : { "$in" : [ 2 ] } }, { "c" : 4 } ] } }:Expression not supported in partial index: a $in [ 2 ]
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('my_db', create_index_arg_using_pfe('
 {

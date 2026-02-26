@@ -1,4 +1,4 @@
-CREATE OPERATOR CLASS __API_CATALOG_SCHEMA__.__EXTENSION_OBJECT__(_rum_hashed_ops)
+CREATE OPERATOR CLASS __API_OPCLASS_SCHEMA__.__EXTENSION_SHORTENED_INDEX_OPCLASS__(__API_INDEX_PREFIX_NAME__, _hashed)
     FOR TYPE __CORE_SCHEMA__.bson USING __EXTENSION_OBJECT__(_rum) AS
         -- hashed index only supports the equal and in operators
         OPERATOR	    1	    __API_CATALOG_SCHEMA__.@=,

@@ -31,6 +31,7 @@
 
 extern int CollStatsCountPolicyThreshold;
 extern bool UsePgStatsLiveTuplesForCount;
+extern bool ForceCollStatsDataCollection;
 
 PG_FUNCTION_INFO_V1(command_coll_stats);
 PG_FUNCTION_INFO_V1(command_coll_stats_worker);
@@ -64,7 +65,11 @@ typedef enum CollStatsAggMode
 
 	CollStatsAggMode_Count = 0x1,
 
-	CollStatsAggMode_Storage = 0x2
+	CollStatsAggMode_Storage = 0x2,
+
+	CollStatsAggMode_CountAndStorage = 0x3,
+
+	CollStatsAggMode_Max = CollStatsAggMode_CountAndStorage,
 } CollStatsAggMode;
 
 /* Forward Declaration */
@@ -76,12 +81,13 @@ static void WriteCoreStorageStats(CollStatsResult *result, pgbson_writer *writer
 static pgbson * BuildEmptyResponseMessage(CollStatsResult *result);
 static void BuildResultData(Datum databaseName, Datum collectionName,
 							CollStatsResult *result,
-							MongoCollection *collection, int32 scale);
+							MongoCollection *collection, int32 scale,
+							CollStatsAggMode aggMode);
 
 
 static pgbson * CollStatsCoordinator(Datum databaseName, Datum collectionName, int scale);
 static void MergeWorkerResults(CollStatsResult *result, MongoCollection *collection,
-							   List *workerResults, int scale);
+							   List *workerResults, int scale, CollStatsAggMode mode);
 static pgbson * MergeWorkerIndexDocs(MongoCollection *collection, List *workerIndexDocs,
 									 int32 scale, int *indexCount);
 static pgbson * CollStatsWorker(void *fcinfoPointer);
@@ -255,7 +261,8 @@ command_coll_stats_aggregation(PG_FUNCTION_ARGS)
 	}
 
 	CollStatsResult result = { 0 };
-	BuildResultData(databaseName, collectionName, &result, collection, storageScale);
+	BuildResultData(databaseName, collectionName, &result, collection, storageScale,
+					aggregateMode);
 	if ((aggregateMode & CollStatsAggMode_Count) != 0)
 	{
 		if (result.count < INT32_MAX)
@@ -343,7 +350,8 @@ CollStatsCoordinator(Datum databaseName, Datum collectionName, int scale)
 	}
 	else
 	{
-		BuildResultData(databaseName, collectionName, &result, collection, scale);
+		BuildResultData(databaseName, collectionName, &result, collection, scale,
+						CollStatsAggMode_CountAndStorage);
 		response = BuildResponseMessage(&result);
 	}
 
@@ -358,19 +366,19 @@ CollStatsCoordinator(Datum databaseName, Datum collectionName, int scale)
  */
 static void
 BuildResultData(Datum databaseName, Datum collectionName, CollStatsResult *result,
-				MongoCollection *collection, int32 scale)
+				MongoCollection *collection, int32 scale, CollStatsAggMode mode)
 {
 	List *workerBsons;
 	int numValues = 3;
-	Datum values[3] = { databaseName, collectionName, Int32GetDatum(scale) };
-	Oid types[3] = { TEXTOID, TEXTOID, INT4OID };
+	Datum values[3] = { databaseName, collectionName, Float8GetDatum((float8) mode) };
+	Oid types[3] = { TEXTOID, TEXTOID, FLOAT8OID };
 	workerBsons = RunQueryOnAllServerNodes("CollStats", values, types, numValues,
 										   command_coll_stats_worker,
 										   ApiToApiInternalSchemaName,
 										   "coll_stats_worker");
 
 	/* Now that we have the worker BSON results, merge them to the final one */
-	MergeWorkerResults(result, collection, workerBsons, scale);
+	MergeWorkerResults(result, collection, workerBsons, scale, mode);
 }
 
 
@@ -381,7 +389,7 @@ BuildResultData(Datum databaseName, Datum collectionName, CollStatsResult *resul
  */
 static void
 MergeWorkerResults(CollStatsResult *result, MongoCollection *collection,
-				   List *workerResults, int scale)
+				   List *workerResults, int scale, CollStatsAggMode mode)
 {
 	/* To merge the results, we apply each shard's results consecutively until we have everything
 	 * each field is processed by its intent
@@ -508,54 +516,58 @@ MergeWorkerResults(CollStatsResult *result, MongoCollection *collection,
 							 "[collStats] Big collection. count/avgObjSize are taken from stats")));
 	}
 
-	/* Gather relevant data */
-	int32 avgObjSize = 0;
-	if (docCountResult == 0)
-	{
-		avgObjSize = 0;
-	}
-	else if (UsePgStatsLiveTuplesForCount &&
-			 docCountResult < CollStatsCountPolicyThreshold)
-	{
-		/* In this case, we can use the runtime to fetch the avg column width
-		 * but instead of using the AVG at runtime, we'll use a table sample of a small
-		 * set of rows to make this go quick. This ensures that even when stats lie
-		 * and the table may be much bigger than we expect, we spend minimal time on this.
-		 */
-		avgObjSize = GetAverageColumnWidthSampled(collection);
-	}
-	else if (isSmallCollection)
-	{
-		avgObjSize = GetAverageColumnWidthRuntime(collection);
-	}
-	else
-	{
-		/* Avg size cannot be smaller than the storage size - cap it at this value */
-		avgObjSize = (int32) (docColumnSizeTotalResult / docCountResult);
-		int32 avgSizeFromStorage = (int32_t) (result->storageSize * 1.0 / docCountResult);
-		if (avgSizeFromStorage > (avgObjSize * 2))
-		{
-			avgObjSize = avgSizeFromStorage;
-		}
-	}
-
-	/* Build Result Data */
 	result->count = docCountResult;
 	result->analyzedCount = docCountFromAnalyze;
-	result->avgObjSize = avgObjSize;
-	result->size = (docCountResult * avgObjSize) / (int64) scale;
-	result->totalIndexSize = (result->totalSize - result->storageSize) / (int64) scale;
-	result->totalSize = result->totalSize / (int64) scale;
-	result->storageSize = result->storageSize / (int64) scale;
 
+	/* Gather relevant data */
+	if ((mode & CollStatsAggMode_Storage) != 0 || ForceCollStatsDataCollection)
+	{
+		int32 avgObjSize = 0;
+		if (docCountResult == 0)
+		{
+			avgObjSize = 0;
+		}
+		else if (UsePgStatsLiveTuplesForCount &&
+				 docCountResult < CollStatsCountPolicyThreshold)
+		{
+			/* In this case, we can use the runtime to fetch the avg column width
+			 * but instead of using the AVG at runtime, we'll use a table sample of a small
+			 * set of rows to make this go quick. This ensures that even when stats lie
+			 * and the table may be much bigger than we expect, we spend minimal time on this.
+			 */
+			avgObjSize = GetAverageColumnWidthSampled(collection);
+		}
+		else if (isSmallCollection)
+		{
+			avgObjSize = GetAverageColumnWidthRuntime(collection);
+		}
+		else
+		{
+			/* Avg size cannot be smaller than the storage size - cap it at this value */
+			avgObjSize = (int32) (docColumnSizeTotalResult / docCountResult);
+			int32 avgSizeFromStorage = (int32_t) (result->storageSize * 1.0 /
+												  docCountResult);
+			if (avgSizeFromStorage > (avgObjSize * 2))
+			{
+				avgObjSize = avgSizeFromStorage;
+			}
+		}
 
-	bool excludeIdIndex = false;
-	bool inProgressOnly = true;
-	List *indexBuilds = CollectionIdGetIndexNames(collection->collectionId,
-												  excludeIdIndex, inProgressOnly);
-	result->indexSizes = MergeWorkerIndexDocs(collection, indexDocs, scale,
-											  &result->nindexes);
-	result->indexBuilds = indexBuilds;
+		result->avgObjSize = avgObjSize;
+		result->size = (docCountResult * avgObjSize) / (int64) scale;
+		result->totalIndexSize = (result->totalSize - result->storageSize) /
+								 (int64) scale;
+		result->totalSize = result->totalSize / (int64) scale;
+		result->storageSize = result->storageSize / (int64) scale;
+
+		bool excludeIdIndex = false;
+		bool inProgressOnly = true;
+		List *indexBuilds = CollectionIdGetIndexNames(collection->collectionId,
+													  excludeIdIndex, inProgressOnly);
+		result->indexSizes = MergeWorkerIndexDocs(collection, indexDocs, scale,
+												  &result->nindexes);
+		result->indexBuilds = indexBuilds;
+	}
 }
 
 
@@ -655,6 +667,25 @@ CollStatsWorker(void *fcinfoPointer)
 	Datum databaseName = PG_GETARG_DATUM(0);
 	Datum collectionName = PG_GETARG_DATUM(1);
 
+	double modeArgument = PG_GETARG_FLOAT8(2);
+
+
+	/* Consider this mode in filtering below - but this requires
+	 * the coordinator in a multi-node setup to be on the latest version.
+	 */
+	CollStatsAggMode mode = CollStatsAggMode_CountAndStorage;
+	if (IsClusterVersionAtleast(DocDB_V0, 108, 0) ||
+		DefaultInlineWriteOperations)
+	{
+		/* Ensure proper conversion to enum */
+		int argAsInt = (int) floor(modeArgument);
+		if (argAsInt > CollStatsAggMode_None &&
+			argAsInt <= CollStatsAggMode_Max)
+		{
+			mode = argAsInt;
+		}
+	}
+
 	MongoCollection *collection =
 		GetMongoCollectionByNameDatum(databaseName,
 									  collectionName,
@@ -680,18 +711,6 @@ CollStatsWorker(void *fcinfoPointer)
 		Assert(shardNames != NULL);
 
 		/*
-		 * Given the relevant shard tables, get the total size of the overall table
-		 * that is relevant to this node (sum up the table sizes across the shards
-		 * located in this node).
-		 */
-		int64 totalRelationSize, totalTableSize;
-		GetPostgresRelationSizes(shardOids, &totalRelationSize, &totalTableSize);
-
-		/* Write it out to the target writer */
-		PgbsonWriterAppendInt64(&writer, "total_rel_size", 14, totalRelationSize);
-		PgbsonWriterAppendInt64(&writer, "total_tbl_size", 14, totalTableSize);
-
-		/*
 		 * Next get statistics details: Fetch document count from statistics
 		 * We don't do runtime counts here - instead we do it in the coordinator
 		 * if it's needed.
@@ -708,19 +727,34 @@ CollStatsWorker(void *fcinfoPointer)
 
 
 		/*
-		 * Look at statistics for document sizes.
+		 * Given the relevant shard tables, get the total size of the overall table
+		 * that is relevant to this node (sum up the table sizes across the shards
+		 * located in this node).
 		 */
-		int32 averageDocSize = GetAverageDocumentSizeFromStats(shardNames);
+		int64 totalRelationSize, totalTableSize;
+		if ((mode & CollStatsAggMode_Storage) != 0 || ForceCollStatsDataCollection)
+		{
+			GetPostgresRelationSizes(shardOids, &totalRelationSize, &totalTableSize);
 
-		PgbsonWriterAppendInt32(&writer, "avg_doc_size", 12, averageDocSize);
+			/* Write it out to the target writer */
+			PgbsonWriterAppendInt64(&writer, "total_rel_size", 14, totalRelationSize);
+			PgbsonWriterAppendInt64(&writer, "total_tbl_size", 14, totalTableSize);
 
-		/*
-		 * Walk the indexes for these shards and write out their sizes.
-		 */
-		pgbson_writer indexWriter;
-		PgbsonWriterStartDocument(&writer, "index_sizes", 11, &indexWriter);
-		WriteIndexSizesScaledWorker(shardOids, &indexWriter);
-		PgbsonWriterEndDocument(&writer, &indexWriter);
+			/*
+			 * Look at statistics for document sizes.
+			 */
+			int32 averageDocSize = GetAverageDocumentSizeFromStats(shardNames);
+
+			PgbsonWriterAppendInt32(&writer, "avg_doc_size", 12, averageDocSize);
+
+			/*
+			 * Walk the indexes for these shards and write out their sizes.
+			 */
+			pgbson_writer indexWriter;
+			PgbsonWriterStartDocument(&writer, "index_sizes", 11, &indexWriter);
+			WriteIndexSizesScaledWorker(shardOids, &indexWriter);
+			PgbsonWriterEndDocument(&writer, &indexWriter);
+		}
 	}
 
 	return PgbsonWriterGetPgbson(&writer);

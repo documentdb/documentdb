@@ -22,6 +22,8 @@
 #include "utils/documentdb_errors.h"
 #include "vector/vector_spec.h"
 
+extern bool DefaultUseCompositeOpClass;
+
 
 IsMetadataCoordinator_HookType is_metadata_coordinator_hook = NULL;
 RunCommandOnMetadataCoordinator_HookType run_command_on_metadata_coordinator_hook = NULL;
@@ -68,11 +70,16 @@ TryGetCancelIndexBuildQuery_HookType try_get_cancel_index_build_query_hook =
 ShouldScheduleIndexBuilds_HookType should_schedule_index_builds_hook = NULL;
 
 GettShardIndexOids_HookType get_shard_index_oids_hook = NULL;
+UpdatePostgresIndex_HookType update_postgres_index_hook = NULL;
+GetOperationCancellationQuery_HookType get_operation_cancellation_query_hook = NULL;
 
 UserNameValidation_HookType
 	username_validation_hook = NULL;
 PasswordValidation_HookType
 	password_validation_hook = NULL;
+
+DefaultEnableCompositeOpClass_HookType
+	default_enable_composite_op_class_hook = NULL;
 
 /*
  * Single node scenario is always a metadata coordinator
@@ -393,7 +400,8 @@ TryGetShardNameForUnshardedCollection(Oid relationOid, uint64 collectionId, cons
 																tableName);
 	}
 
-	return NULL;
+	/* Single node: return tableName to enable direct Executor path */
+	return tableName;
 }
 
 
@@ -573,12 +581,60 @@ ShouldScheduleIndexBuildJobs(void)
 
 
 List *
-GetShardIndexOids(uint64_t collectionId, int indexId)
+GetShardIndexOids(uint64_t collectionId, int indexId, bool ignoreMissing)
 {
 	if (get_shard_index_oids_hook != NULL)
 	{
-		return get_shard_index_oids_hook(collectionId, indexId);
+		return get_shard_index_oids_hook(collectionId, indexId, ignoreMissing);
 	}
 
 	return NIL;
+}
+
+
+void
+UpdatePostgresIndexWithOverride(uint64_t collectionId, int indexId, int operation, bool
+								value,
+								void (*default_update)(uint64_t, int, int, bool))
+{
+	if (update_postgres_index_hook != NULL)
+	{
+		update_postgres_index_hook(collectionId, indexId, operation, value);
+	}
+	else
+	{
+		default_update(collectionId, indexId, operation, value);
+	}
+}
+
+
+const char *
+GetOperationCancellationQuery(int64 shardId, StringView *opIdView, int *nargs,
+							  Oid **argTypes,
+							  Datum **argValues, char **argNulls,
+							  const char *(*default_get_query)(int64, StringView *, int *,
+															   Oid **, Datum **, char **))
+{
+	if (get_operation_cancellation_query_hook != NULL)
+	{
+		return get_operation_cancellation_query_hook(shardId, opIdView, nargs, argTypes,
+													 argValues, argNulls);
+	}
+	else if (default_get_query == NULL)
+	{
+		return NULL;
+	}
+	return default_get_query(shardId, opIdView, nargs, argTypes, argValues, argNulls);
+}
+
+
+bool
+ShouldUseCompositeOpClassByDefault()
+{
+	if (default_enable_composite_op_class_hook != NULL)
+	{
+		return default_enable_composite_op_class_hook();
+	}
+
+	return DefaultUseCompositeOpClass;
 }

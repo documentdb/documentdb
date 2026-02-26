@@ -60,7 +60,8 @@ void BuildContinuationMap(pgbson *continuationValue, HTAB *cursorMap);
 void BuildTailableCursorContinuationMap(pgbson *continuationValue, HTAB *cursorMap);
 void SerializeContinuationsToWriter(pgbson_writer *writer, HTAB *cursorMap);
 void SerializeTailableContinuationsToWriter(pgbson_writer *writer, HTAB *cursorMap);
-
+pgbson * SerializeContinuationForWorker(HTAB *cursorMap, int32_t batchSize,
+										bool isTailable);
 pgbson * DrainSingleResultQuery(Query *query);
 
 void SetupCursorPagePreamble(pgbson_writer *topLevelWriter,

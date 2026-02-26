@@ -28,7 +28,7 @@ int IndexQueueEvictionIntervalInSec = DEFAULT_INDEX_BUILD_EVICTION_INTERVAL_IN_S
 #define DEFAULT_MAX_NUM_ACTIVE_USERS_INDEX_BUILDS 2
 int MaxNumActiveUsersIndexBuilds = DEFAULT_MAX_NUM_ACTIVE_USERS_INDEX_BUILDS;
 
-#define DEFAULT_MAX_TTL_DELETE_BATCH_SIZE 10000
+#define DEFAULT_MAX_TTL_DELETE_BATCH_SIZE 1000
 int MaxTTLDeleteBatchSize = DEFAULT_MAX_TTL_DELETE_BATCH_SIZE;
 
 #define DEFAULT_TTL_PURGER_STATEMENT_TIMEOUT 60000
@@ -37,20 +37,33 @@ int TTLPurgerStatementTimeout = DEFAULT_TTL_PURGER_STATEMENT_TIMEOUT;
 #define DEFAULT_TTL_PURGER_LOCK_TIMEOUT 10000
 int TTLPurgerLockTimeout = DEFAULT_TTL_PURGER_LOCK_TIMEOUT;
 
+/* TODO: remove this this TTL repeat mode is stabilized in production */
 #define DEFAULT_SINGLE_TTL_TASK_TIME_BUDGET 20000
 int SingleTTLTaskTimeBudget = DEFAULT_SINGLE_TTL_TASK_TIME_BUDGET;
 
 #define DEFAULT_TTL_TASK_MAX_RUNTIME_IN_MS 60000
 int TTLTaskMaxRunTimeInMS = DEFAULT_TTL_TASK_MAX_RUNTIME_IN_MS;
 
-/*TODO: Set this to true by default post 1.107 */
-#define DEFAULT_REPEAT_PURGE_INDEXES_FOR_TTL_TASK false
+#define DEFAULT_TTL_DELETE_SATURATION_RATIO_THRESHOLD 0.9
+double TTLDeleteSaturationThreshold = DEFAULT_TTL_DELETE_SATURATION_RATIO_THRESHOLD;
+
+#define DEFAULT_SLOW_TTL_BATCH_DELETE_THRESHOLD_IN_MS 10000
+int TTLSlowBatchDeleteThresholdInMS = DEFAULT_SLOW_TTL_BATCH_DELETE_THRESHOLD_IN_MS;
+
+#define DEFAULT_REPEAT_PURGE_INDEXES_FOR_TTL_TASK true
 bool RepeatPurgeIndexesForTTLTask = DEFAULT_REPEAT_PURGE_INDEXES_FOR_TTL_TASK;
 
-#define DEFAULT_ENABLE_BG_WORKER false
+#define DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES true
+bool TTLSkipCaughtUpIndexes = DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES;
+
+
+#define DEFAULT_ENABLE_TTL_DESC_SORT false
+bool EnableTTLDescSort = DEFAULT_ENABLE_TTL_DESC_SORT;
+
+#define DEFAULT_ENABLE_BG_WORKER true
 bool EnableBackgroundWorker = DEFAULT_ENABLE_BG_WORKER;
 
-#define DEFAULT_ENABLE_BG_WORKER_JOBS false
+#define DEFAULT_ENABLE_BG_WORKER_JOBS true
 bool EnableBackgroundWorkerJobs = DEFAULT_ENABLE_BG_WORKER_JOBS;
 
 #define DEFAULT_BG_WORKER_JOB_TIMEOUT_THRESHOLD_SEC 300
@@ -59,11 +72,17 @@ int BackgroundWorkerJobTimeoutThresholdSec = DEFAULT_BG_WORKER_JOB_TIMEOUT_THRES
 #define DEFAULT_BG_DATABASE_NAME "postgres"
 char *BackgroundWorkerDatabaseName = DEFAULT_BG_DATABASE_NAME;
 
-#define DEFAULT_BG_LATCH_TIMEOUT_SEC 10
+#define DEFAULT_BG_LATCH_TIMEOUT_SEC 1
 int LatchTimeOutSec = DEFAULT_BG_LATCH_TIMEOUT_SEC;
 
 #define DEFAULT_LOG_TTL_PROGRESS_ACTIVITY false
 bool LogTTLProgressActivity = DEFAULT_LOG_TTL_PROGRESS_ACTIVITY;
+
+#define DEFAULT_ENABLE_SELECTIVE_TTL_LOGGING true
+bool EnableSelectiveTTLLogging = DEFAULT_ENABLE_SELECTIVE_TTL_LOGGING;
+
+#define DEFAULT_ENABLE_TTL_BATCH_OBSERVABILITY true
+bool EnableTTLBatchObservability = DEFAULT_ENABLE_TTL_BATCH_OBSERVABILITY;
 
 #define DEFAULT_FORCE_INDEX_SCAN_TTL_TASK true
 bool ForceIndexScanForTTLTask = DEFAULT_FORCE_INDEX_SCAN_TTL_TASK;
@@ -93,6 +112,20 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
+		psprintf("%s.enableSelectiveTTLLogging", prefix),
+		gettext_noop(
+			"Whether to log highly saturated or slow ttl batches. It's turned off by default to reduce noise."),
+		NULL, &EnableSelectiveTTLLogging, DEFAULT_ENABLE_SELECTIVE_TTL_LOGGING,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableTTLBatchObservability", prefix),
+		gettext_noop(
+			"Whether to calculate and emit feature counters ttl_saturated_batches and ttl_slow_batches."),
+		NULL, &EnableTTLBatchObservability, DEFAULT_ENABLE_TTL_BATCH_OBSERVABILITY,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
 		psprintf("%s.forceIndexScanForTTLTask", prefix),
 		gettext_noop(
 			"Whether to force Index Scan for TTL task by locally disabling Sequential Scan and Bitmap Index Scan"),
@@ -118,7 +151,7 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		NULL, NULL, NULL);
 
 	DefineCustomIntVariable(
-		psprintf("%s.TTLTaskMaxRunTimeInMS", prefix),
+		psprintf("%s.TTLTaskMaxRunTimeInMS", newGucPrefix),
 		gettext_noop(
 			"Time budget assigned in milliseconds for single invocation of ttl task."),
 		NULL,
@@ -136,7 +169,40 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		NULL,
 		&RepeatPurgeIndexesForTTLTask,
 		DEFAULT_REPEAT_PURGE_INDEXES_FOR_TTL_TASK,
-		PGC_SUSET,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.TTLSkipCaughtUpIndexes", newGucPrefix),
+		gettext_noop(
+			"Whether to skip checking a TTL index further, once they are caught up during a TTL task invocation cycle."),
+		NULL,
+		&TTLSkipCaughtUpIndexes,
+		DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomRealVariable(
+		psprintf("%s.TTLDeleteSaturationThreshold", prefix),
+		gettext_noop(
+			"Logging threshold for ttl delete saturation ratio defined as total rows deleted in an invocation divided by the batch size."),
+		NULL,
+		&TTLDeleteSaturationThreshold,
+		DEFAULT_TTL_DELETE_SATURATION_RATIO_THRESHOLD, 0.0, 1.0,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.TTLSlowBatchDeleteThresholdInMS", prefix),
+		gettext_noop(
+			"Threshold for considering a single batch of ttl deletes to be slow."),
+		NULL,
+		&TTLSlowBatchDeleteThresholdInMS,
+		DEFAULT_SLOW_TTL_BATCH_DELETE_THRESHOLD_IN_MS, 0, INT_MAX,
+		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
 
@@ -158,6 +224,17 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		NULL,
 		&TTLPurgerLockTimeout,
 		DEFAULT_TTL_PURGER_LOCK_TIMEOUT, 1, INT_MAX,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableTTLDescSort", newGucPrefix),
+		gettext_noop(
+			"Whether or not to enable TTL descending sort on field."),
+		NULL,
+		&EnableTTLDescSort,
+		DEFAULT_ENABLE_TTL_DESC_SORT,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
@@ -204,13 +281,13 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		psprintf("%s.enableBackgroundWorker", newGucPrefix),
 		gettext_noop("Enable the extension Background worker."),
 		NULL, &EnableBackgroundWorker, DEFAULT_ENABLE_BG_WORKER,
-		PGC_SUSET, 0, NULL, NULL, NULL);
+		PGC_POSTMASTER, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableBackgroundWorkerJobs", newGucPrefix),
 		gettext_noop("Enable the execution of the pre-defined background worker jobs."),
 		NULL, &EnableBackgroundWorkerJobs, DEFAULT_ENABLE_BG_WORKER_JOBS,
-		PGC_SUSET, 0, NULL, NULL, NULL);
+		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(
 		psprintf("%s.backgroundWorkerJobTimeoutThresholdSec", newGucPrefix),

@@ -60,6 +60,12 @@ function GetInitDB()
   echo $(GetPostgresPath $pgVersion)/initdb
 }
 
+function GetPGConfig()
+{
+  local pgVersion=${PG_VERSION:-16}
+  echo $(GetPostgresPath $pgVersion)/pg_config
+}
+
 function StopServer()
 {
   local _directory=$1
@@ -74,11 +80,12 @@ function StartServer()
   local _directory=$1
   local _port=$2
   local _logPath=${3:-$_directory/pglog.log}
+  local _additionalArgs=${4:-''}
   local _pgctlPath=$(GetPGCTL)
 
   echo "Starting postgres in $_directory"
-  echo "Calling: $_pgctlPath start -D $_directory -o \"-p $_port\" -l $_logPath"
-  $_pgctlPath start -D $_directory -o "-p $_port" -l $_logPath
+  echo "Calling: $_pgctlPath start -D $_directory -o \"-p $_port\" -l $_logPath $_additionalArgs"
+  $_pgctlPath start -D $_directory -o "-p $_port" -l $_logPath $_additionalArgs
 }
 
 
@@ -100,6 +107,22 @@ function SetupPostgresServerExtensions()
   psql -p $port -U $user -d postgres -c "SELECT * FROM pg_extension WHERE extname = '$extensionName';"
 }
 
+
+function SetupCustomAdminUser()
+{
+  # This sets up a user
+  local user=$1
+  local pass=$2
+  local port=$3
+  local owner=$4
+
+  echo "Setting up custom user $user with owner $owner.";
+  if ! psql -p "$port" -U "$owner" -d postgres -c "SELECT 1 FROM pg_roles WHERE rolname = '$user';" | grep -q 1; then
+    psql -p $port -U $owner -d postgres -c "SELECT documentdb_api.create_user('{\"createUser\":\"$user\", \"pwd\":\"$pass\", \"roles\":[{\"role\":\"readWriteAnyDatabase\",\"db\":\"admin\"}, {\"role\":\"clusterAdmin\",\"db\":\"admin\"}]}');";
+  else
+    echo "Role $user already exists."
+  fi
+}
 
 function InitDatabaseExtended()
 {
@@ -134,6 +157,7 @@ function SetupPostgresConfigurations()
   echo cron.database_name = \'postgres\' | tee -a $installdir/postgresql.conf
   echo documentdb.enableBackgroundWorker = 'true' | tee -a $installdir/postgresql.conf
   echo documentdb.enableBackgroundWorkerJobs = 'true' | tee -a $installdir/postgresql.conf
+  echo documentdb.indexBuildsScheduledOnBgWorker = 'false' | tee -a $installdir/postgresql.conf
   echo ssl = off | tee -a $installdir/postgresql.conf
 }
 

@@ -1,0 +1,116 @@
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
+SET documentdb.next_collection_id TO 99800;
+SET documentdb.next_collection_index_id TO 99800;
+-- Test: $densify with partitionByFields on shard key should not crash (issue #464)
+-- When partitionByFields matches the shard key, the partition expression uses INT8
+-- shard_key_value column. The sort/eq operators must match that type.
+SELECT insert_one('db','densify_shard_test','{ "_id": 1, "a": "abc", "cost": 10 }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT insert_one('db','densify_shard_test','{ "_id": 2, "a": "abc", "cost": 5 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT insert_one('db','densify_shard_test','{ "_id": 3, "a": "def", "cost": 3 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT insert_one('db','densify_shard_test','{ "_id": 4, "a": "def", "cost": 7 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Shard the collection on the field used as partitionByFields
+SELECT documentdb_api.shard_collection('db', 'densify_shard_test', '{"a": "hashed"}', false);
+ shard_collection 
+------------------
+ 
+(1 row)
+
+-- Partition mode: should densify within each partition without crashing
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "densify_shard_test", "pipeline": [{"$densify": { "field": "cost", "partitionByFields": ["a"], "range": { "bounds": "partition", "step": 1 } } }, {"$sort": {"a": 1, "cost": 1}}]}');
+                                     document                                      
+-----------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "a" : "abc", "cost" : { "$numberInt" : "5" } }
+ { "a" : "abc", "cost" : { "$numberInt" : "6" } }
+ { "a" : "abc", "cost" : { "$numberInt" : "7" } }
+ { "a" : "abc", "cost" : { "$numberInt" : "8" } }
+ { "a" : "abc", "cost" : { "$numberInt" : "9" } }
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "10" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : "def", "cost" : { "$numberInt" : "3" } }
+ { "a" : "def", "cost" : { "$numberInt" : "4" } }
+ { "a" : "def", "cost" : { "$numberInt" : "5" } }
+ { "a" : "def", "cost" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "4" }, "a" : "def", "cost" : { "$numberInt" : "7" } }
+(11 rows)
+
+-- Range mode with shard key partition
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "densify_shard_test", "pipeline": [{"$densify": { "field": "cost", "partitionByFields": ["a"], "range": { "bounds": [4, 8], "step": 1 } } }, {"$sort": {"a": 1, "cost": 1}}]}');
+                                     document                                      
+-----------------------------------------------------------------------------------
+ { "a" : "abc", "cost" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : "abc", "cost" : { "$numberInt" : "5" } }
+ { "a" : "abc", "cost" : { "$numberInt" : "6" } }
+ { "a" : "abc", "cost" : { "$numberInt" : "7" } }
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "10" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : "def", "cost" : { "$numberInt" : "3" } }
+ { "a" : "def", "cost" : { "$numberInt" : "4" } }
+ { "a" : "def", "cost" : { "$numberInt" : "5" } }
+ { "a" : "def", "cost" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "4" }, "a" : "def", "cost" : { "$numberInt" : "7" } }
+(10 rows)
+
+-- Full mode with shard key partition
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "densify_shard_test", "pipeline": [{"$densify": { "field": "cost", "partitionByFields": ["a"], "range": { "bounds": "full", "step": 1 } } }, {"$sort": {"a": 1, "cost": 1}}]}');
+                                     document                                      
+-----------------------------------------------------------------------------------
+ { "a" : "abc", "cost" : { "$numberInt" : "3" } }
+ { "a" : "abc", "cost" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : "abc", "cost" : { "$numberInt" : "5" } }
+ { "a" : "abc", "cost" : { "$numberInt" : "6" } }
+ { "a" : "abc", "cost" : { "$numberInt" : "7" } }
+ { "a" : "abc", "cost" : { "$numberInt" : "8" } }
+ { "a" : "abc", "cost" : { "$numberInt" : "9" } }
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "10" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : "def", "cost" : { "$numberInt" : "3" } }
+ { "a" : "def", "cost" : { "$numberInt" : "4" } }
+ { "a" : "def", "cost" : { "$numberInt" : "5" } }
+ { "a" : "def", "cost" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "4" }, "a" : "def", "cost" : { "$numberInt" : "7" } }
+ { "a" : "def", "cost" : { "$numberInt" : "8" } }
+ { "a" : "def", "cost" : { "$numberInt" : "9" } }
+ { "a" : "def", "cost" : { "$numberInt" : "10" } }
+(16 rows)
+
+-- Test: $setWindowFields with partitionBy on shard key should not crash
+-- Same root cause as $densify: INT8 shard_key_value used as partition expression
+-- with BSON sort operators causes a segfault.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "densify_shard_test", "pipeline": [{"$setWindowFields": { "partitionBy": "$a", "sortBy": {"cost": 1}, "output": { "runningTotal": { "$sum": "$cost" } } } }, {"$sort": {"a": 1, "cost": 1}}]}');
+                                                          document                                                           
+-----------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "a" : "abc", "cost" : { "$numberInt" : "5" }, "runningTotal" : { "$numberInt" : "15" } }
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "runningTotal" : { "$numberInt" : "15" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : "def", "cost" : { "$numberInt" : "3" }, "runningTotal" : { "$numberInt" : "10" } }
+ { "_id" : { "$numberInt" : "4" }, "a" : "def", "cost" : { "$numberInt" : "7" }, "runningTotal" : { "$numberInt" : "10" } }
+(4 rows)
+
+-- Cleanup
+SELECT drop_collection('db', 'densify_shard_test');
+ drop_collection 
+-----------------
+ t
+(1 row)
+

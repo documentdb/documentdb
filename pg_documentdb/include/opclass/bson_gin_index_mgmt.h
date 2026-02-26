@@ -41,6 +41,9 @@ typedef enum IndexOptionsType
 
 	/* This is a composite index on a path */
 	IndexOptionsType_Composite,
+
+	/* The options for the unique shard path opclass */
+	IndexOptionsType_UniqueShardPath,
 } IndexOptionsType;
 
 
@@ -84,6 +87,7 @@ typedef struct
 	bool generateNotFoundTerm;
 	bool useReducedWildcardTerms;
 	int path;
+	int collation;
 } BsonGinSinglePathOptions;
 
 /*
@@ -101,6 +105,7 @@ typedef struct
 	bool isExclusion;
 	bool includeId;
 	int pathSpec;
+	int collation;
 } BsonGinWildcardProjectionPathOptions;
 
 /*
@@ -124,6 +129,13 @@ typedef struct
 	BsonGinIndexOptionsBase base;
 	int path;
 } BsonGinExclusionHashOptions;
+
+
+typedef struct
+{
+	BsonGinIndexOptionsBase base;
+	bool enableCompositeHashGeneration;
+} BsonShardPathExclusionOptions;
 
 /*
  * This is the serialized post-processed structure that holds the indexing options
@@ -168,18 +180,39 @@ typedef struct
 typedef struct
 {
 	BsonGinIndexOptionsBase base;
+
+	/* Offset into the string containing
+	 * the composite path spec.
+	 */
 	int compositePathSpec;
+
+	/*
+	 * The path index containing a wildcard
+	 * path (or -1 if there isn't).
+	 */
+	int wildcardPathIndex;
+
+	/* Whether or not to emit a reduced termset
+	 * for correlated documents in arrays for composite
+	 * indexes.
+	 */
+	bool enableCompositeReducedCorrelatedTerms;
 } BsonGinCompositePathOptions;
 
-
+bool ValidateIndexForQualifierElement(bytea *indexOptions,
+									  pgbsonelement *queryelement,
+									  BsonIndexStrategy strategy);
 bool ValidateIndexForQualifierValue(bytea *indexOptions, Datum queryValue,
 									BsonIndexStrategy
 									strategy);
-bool ValidateIndexForQualifierPathForDollarIn(bytea *indexOptions, const
-											  StringView *queryPath);
+bool ValidateIndexForQualifierPathForEquality(bytea *indexOptions, const
+											  StringView *queryPath,
+											  BsonIndexStrategy strat);
 
 Size FillSinglePathSpec(const char *prefix, void *buffer);
+Size FillCollationSpec(const char *collation, void *buffer);
 void ValidateSinglePathSpec(const char *prefix);
+void ValidateCollationSpec(const char *collationOption);
 Size FillDeprecatedStringSpec(const char *value, void *ptr);
 
 struct PathKey;
@@ -194,11 +227,6 @@ typedef struct SortIndexInputDetails
 
 
 struct IndexPath;
-bool CompositeIndexSupportsOrderByPushdown(struct IndexPath *indexPath,
-										   List *sortDetails,
-										   int32_t *maxPathKeySupported,
-										   bool *isReverseOrder,
-										   bool isGroupBy);
 bool CompositeIndexSupportsIndexOnlyScan(const struct IndexPath *indexPath);
 
 int32_t GetCompositeOpClassColumnNumber(const char *currentPath, void *contextOptions,
@@ -209,6 +237,9 @@ const char * GetCompositeFirstIndexPath(void *contextOptions);
 const char * GetFirstPathFromIndexOptionsIfApplicable(bytea *indexOptions,
 													  bool *isWildcardIndex);
 bool PathHasArrayIndexElements(const StringView *path);
+bool SubPathHasArrayIndexElements(const StringView *path, StringView subPath);
+
+void GetCollationFromIndexOptions(void *indexOptions, StringView *collationString);
 
 struct PlannerInfo;
 bool TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct
@@ -218,13 +249,22 @@ bool TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct
 #define Get_Index_Path_Option(options, field, result, resultFieldLength) \
 	const char *pathDefinition = GET_STRING_RELOPTION(options, field); \
 	if (pathDefinition == NULL) { resultFieldLength = 0; result = NULL; } \
-	else { resultFieldLength = *(uint32_t *) pathDefinition; result = pathDefinition + \
-																	  sizeof(uint32_t); }
+	else { memcpy(&resultFieldLength, pathDefinition, sizeof(uint32_t)); result = \
+			   pathDefinition + sizeof(uint32_t); }
 
 
 #define Get_Index_Path_Option_Length(options, field, resultFieldLength) \
 	const char *pathDefinition = GET_STRING_RELOPTION(options, field); \
 	if (pathDefinition == NULL) { resultFieldLength = 0; } \
-	else { resultFieldLength = *(uint32_t *) pathDefinition; }
+	else { memcpy(&resultFieldLength, pathDefinition, sizeof(uint32_t)); }
+
+/* Macro to retrieve the collation string, if any, value from the index options */
+#define Get_Index_Collation_Option(options, field, result, resultFieldLength) \
+	const char *collationDefinition = GET_STRING_RELOPTION(options, field); \
+	if (collationDefinition == NULL) { resultFieldLength = 0; result = NULL; } \
+	else { \
+		memcpy(&resultFieldLength, collationDefinition, sizeof(uint32_t)); \
+		result = resultFieldLength > 0 ? collationDefinition + sizeof(uint32_t) : NULL; \
+	}
 
 #endif

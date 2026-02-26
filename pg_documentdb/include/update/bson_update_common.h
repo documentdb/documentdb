@@ -16,6 +16,7 @@
 
 #include "io/bson_core.h"
 #include "utils/documentdb_errors.h"
+#include "utils/feature_counter.h"
 #include "aggregation/bson_positional_query.h"
 
 struct AggregationPipelineUpdateState;
@@ -96,6 +97,11 @@ typedef struct MongoUpdateOperatorSpec
 	/* An optional function for retreiving state pertinent to the
 	 * update node value */
 	UpdateOperatorGetFuncState updateWriterGetState;
+
+	/*
+	 * Feature identifier of this operator for feature usage tracking
+	 */
+	FeatureType featureId;
 } MongoUpdateOperatorSpec;
 
 /* aggregation */
@@ -110,7 +116,8 @@ struct AggregationPipelineUpdateState * GetAggregationPipelineUpdateState(const
 pgbson * ProcessAggregationPipelineUpdate(pgbson *sourceDoc,
 										  const struct AggregationPipelineUpdateState *
 										  updateState,
-										  bool isUpsert);
+										  bool isUpsert,
+										  bool *isReplacement);
 
 
 /* Update workflows */

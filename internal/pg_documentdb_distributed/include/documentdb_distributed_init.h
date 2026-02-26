@@ -11,5 +11,6 @@
 #define DOCUMENTDB_DISTRIBUTED_INIT_H
 
 void InitDocumentDBDistributedConfigurations(const char *prefix);
+void DocumentDBDistributed_InstallBsonMemVTablesLocal(void);
 
 #endif

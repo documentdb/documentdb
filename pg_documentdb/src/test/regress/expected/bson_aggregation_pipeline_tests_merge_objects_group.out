@@ -240,23 +240,23 @@ SELECT documentdb_api.shard_collection('db', 'mergeObjectsGroupColl', '{ "_id": 
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjectsGroupColl", "pipeline": [ { "$sort": { "category": 1 } }, { "$group": { "_id": "$year", "mergedStats": { "$mergeObjects": "$stats" } } } ] }');
                                                                                                document                                                                                                
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "_id" : { "$numberInt" : "2020" }, "mergedStats" : { "2020A" : { "$numberInt" : "50" }, "2020B" : { "$numberInt" : "20" }, "2019C" : { "$numberInt" : "80" }, "2019D" : { "$numberInt" : "90" } } }
  { "_id" : { "$numberInt" : "2019" }, "mergedStats" : { "2019A" : { "$numberInt" : "30" }, "2019B" : { "$numberInt" : "40" }, "2019C" : { "$numberInt" : "60" }, "2019D" : { "$numberInt" : "70" } } }
+ { "_id" : { "$numberInt" : "2020" }, "mergedStats" : { "2020A" : { "$numberInt" : "50" }, "2020B" : { "$numberInt" : "20" }, "2019C" : { "$numberInt" : "80" }, "2019D" : { "$numberInt" : "90" } } }
 (2 rows)
 
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjectsGroupColl", "pipeline": [ { "$sort": { "category": 1 } }, { "$group": { "_id": "$category", "mergedStats": { "$mergeObjects": "$stats" } } } ] }');
                                                                                                                       document                                                                                                                       
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "_id" : "Z", "mergedStats" : { "2019C" : { "$numberInt" : "80" }, "2019D" : { "$numberInt" : "90" } } }
- { "_id" : "Y", "mergedStats" : { "2020A" : { "$numberInt" : "50" }, "2019C" : { "$numberInt" : "60" }, "2019D" : { "$numberInt" : "70" } } }
  { "_id" : "X", "mergedStats" : { "2020A" : { "$numberInt" : "10" }, "2020B" : { "$numberInt" : "20" }, "2019A" : { "$numberInt" : "30" }, "2019B" : { "$numberInt" : "40" }, "2019C" : { "$numberInt" : "0" }, "2019D" : { "$numberInt" : "0" } } }
+ { "_id" : "Y", "mergedStats" : { "2020A" : { "$numberInt" : "50" }, "2019C" : { "$numberInt" : "60" }, "2019D" : { "$numberInt" : "70" } } }
 (3 rows)
 
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjectsGroupColl", "pipeline": [ { "$sort": { "category": 1 } }, { "$group": { "_id": "$year", "lastCategory": { "$mergeObjects": { "category": "$category" } } } } ] }');
                                    document                                   
 ------------------------------------------------------------------------------
- { "_id" : { "$numberInt" : "2020" }, "lastCategory" : { "category" : "Z" } }
  { "_id" : { "$numberInt" : "2019" }, "lastCategory" : { "category" : "Y" } }
+ { "_id" : { "$numberInt" : "2020" }, "lastCategory" : { "category" : "Z" } }
 (2 rows)
 
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjectsGroupColl", "pipeline": [ { "$sort": { "category": 1 } }, { "$group": { "_id": "$year", "shouldFail": { "$mergeObjects": "$category" } } } ] }');

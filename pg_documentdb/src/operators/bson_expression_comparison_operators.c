@@ -139,7 +139,7 @@ ParseComparisonOperator(const bson_value_t *argument,
 									comparisonType);
 		data->kind = AggregationExpressionKind_Constant;
 		list_free_deep(arguments);
-		ereport(DEBUG3, errmsg("Precomputed bson %s operator for constant comparison.",
+		ereport(DEBUG2, errmsg("Precomputed bson %s operator for constant comparison.",
 							   operatorName));
 	}
 	else

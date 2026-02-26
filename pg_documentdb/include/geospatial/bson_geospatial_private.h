@@ -33,7 +33,7 @@
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 # define WKB_BYTE_ORDER (unsigned char) 1
 #elif __BYTE_ORDER == __BIG_ENDIAN
-# define WKB_BYTE_ORDER = (unsigned char) 0
+# define WKB_BYTE_ORDER (unsigned char) 0
 #endif
 
 /*

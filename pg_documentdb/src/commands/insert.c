@@ -48,6 +48,24 @@
 #include "operators/bson_expr_eval.h"
 #include "planner/documentdb_planner.h"
 #include "optimizer/plancat.h"
+#include "utils/index_utils.h"
+
+
+/*
+ * Specifies how the insert command was invoked and which transactional
+ * semantics to apply.
+ */
+typedef enum InsertMode
+{
+	/* insert invoked via insert() — transactional insert */
+	InsertMode_Txn_Func = 0,
+
+	/* insert invoked via insert_txn_proc() — transactional insert */
+	InsertMode_Txn_Proc = 1,
+
+	/* insert invoked via insert_bulk() — non-transactional insert */
+	InsertMode_Bulk_Proc = 2,
+} InsertMode;
 
 /*
  * BatchInsertionSpec describes a batch of insert operations.
@@ -94,6 +112,7 @@ PG_FUNCTION_INFO_V1(command_insert);
 PG_FUNCTION_INFO_V1(command_insert_one);
 PG_FUNCTION_INFO_V1(command_insert_worker);
 PG_FUNCTION_INFO_V1(command_insert_bulk);
+PG_FUNCTION_INFO_V1(command_insert_txn_proc);
 
 
 static BatchInsertionSpec * BuildBatchInsertionSpec(bson_iter_t *insertCommandIter,
@@ -104,12 +123,12 @@ static List * BuildInsertionListFromPgbsonSequence(pgbsonsequence *docSequence,
 static void ProcessBatchInsertion(MongoCollection *collection,
 								  BatchInsertionSpec *batchSpec,
 								  text *transactionId, BatchInsertionResult *batchResult,
-								  bool isTransactional);
+								  InsertMode insertMode);
 static void DoBatchInsertNoTransactionId(MongoCollection *collection,
 										 BatchInsertionSpec *batchSpec,
 										 BatchInsertionResult *batchResult,
 										 ExprEvalState *evalState,
-										 bool isTransactional);
+										 InsertMode insertMode);
 
 static uint64 ProcessInsertion(MongoCollection *collection, Oid insertShardOid, const
 							   bson_value_t *document,
@@ -129,7 +148,7 @@ static uint64 InsertOneWithTransactionCore(uint64 collectionId, const
 static uint64 CallInsertWorkerForInsertOne(MongoCollection *collection, int64
 										   shardKeyHash,
 										   pgbson *document, text *transactionId);
-static Datum CommandInsertCore(PG_FUNCTION_ARGS, bool isTransactional, MemoryContext
+static Datum CommandInsertCore(PG_FUNCTION_ARGS, InsertMode insertMode, MemoryContext
 							   allocContext);
 static inline List * CreateValuesListForInsert(Const *shardKey, Expr *objectId,
 											   Expr *document, AttrNumber
@@ -154,7 +173,7 @@ bool EnableCreateCollectionOnInsert = true;
 extern bool UseLocalExecutionShardQueries;
 extern bool EnableBypassDocumentValidation;
 extern bool EnableSchemaValidation;
-extern bool EnableInsertCustomPlan;
+extern bool EnableUpdateBsonDocument;
 
 /*
  * command_insert handles the insert command invocation through a PostgreSQL function.
@@ -166,13 +185,12 @@ Datum
 command_insert(PG_FUNCTION_ARGS)
 {
 	ReportFeatureUsage(FEATURE_COMMAND_INSERT);
-	bool isTransactional = true;
-	PG_RETURN_DATUM(CommandInsertCore(fcinfo, isTransactional, CurrentMemoryContext));
+	PG_RETURN_DATUM(CommandInsertCore(fcinfo, InsertMode_Txn_Func, CurrentMemoryContext));
 }
 
 
 /*
- * command_insert_bulk handles the insert command invocation through a PostgreSQL procedure.
+ * command_insert_bulk handles the insert command invocation through a PostgreSQL procedure and commits after each batch.
  */
 Datum
 command_insert_bulk(PG_FUNCTION_ARGS)
@@ -186,11 +204,10 @@ command_insert_bulk(PG_FUNCTION_ARGS)
 							   " Please use the insert function instead")));
 	}
 
-	bool isTransactional = false;
 
 	/* For results we need a stable memory context across transactions */
 	MemoryContext stableContext = fcinfo->flinfo->fn_mcxt;
-	Datum result = CommandInsertCore(fcinfo, isTransactional, stableContext);
+	Datum result = CommandInsertCore(fcinfo, InsertMode_Bulk_Proc, stableContext);
 
 	/* If it's not transactional, pop the active snapshot created during the transaction start */
 	if (ActiveSnapshotSet())
@@ -205,6 +222,18 @@ command_insert_bulk(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_DATUM(result);
+}
+
+
+/*
+ * command_insert_txn_proc handles the insert command invocation through a PostgreSQL procedure.
+ * this function behaves the same way as command_insert.
+ */
+Datum
+command_insert_txn_proc(PG_FUNCTION_ARGS)
+{
+	ReportFeatureUsage(FEATURE_COMMAND_INSERT);
+	PG_RETURN_DATUM(CommandInsertCore(fcinfo, InsertMode_Txn_Proc, CurrentMemoryContext));
 }
 
 
@@ -600,7 +629,7 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts, Oi
 		paramListInfo->numParams = paramIndex;
 
 		uint64_t rowsProcessed = 0;
-		if (!EnableInsertCustomPlan || shardOid == InvalidOid)
+		if (shardOid == InvalidOid)
 		{
 			Query *query = CreateInsertQuery(collection, shardOid,
 											 valuesList);
@@ -644,27 +673,21 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts, Oi
 		}
 
 		int errorCode = errorData->sqlerrcode;
-		const char *errorCodeStr = unpack_sql_state(errorCode);
 		if (EreportCodeIsDocumentDBError(errorCode))
 		{
 			/*
 			 * TODO: Since there is no mapping from PG error to mongo error today in engine,
 			 * we can't deduce the mongo specific error code.
 			 */
-			ereport(LOG, (
-						errmsg(
-							"Optimistic Batch Insert failed. Retrying with single insert. documentDB errorCode %s",
-							errorCodeStr)));
+			elog_unredacted(
+				"Optimistic Batch Insert failed. Retrying with single insert. documentDB errorCode %d",
+				errorCode);
 		}
 		else
 		{
-			ereport(LOG, (
-						errmsg(
-							"Optimistic Batch Insert failed. Retrying with single insert. SQL Error %s",
-							errorCodeStr),
-						errdetail_log(
-							"Optimistic Batch Insert failed. Retrying with single insert. SQL Error %s",
-							errorCodeStr)));
+			elog_unredacted(
+				"Optimistic Batch Insert failed. Retrying with single insert. SQL Error %d",
+				errorCode);
 		}
 	}
 	PG_END_TRY();
@@ -674,7 +697,10 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts, Oi
 
 
 /*
- * Applies a single insert in a single sub-transaction.
+ * Performs a single insert; if it fails, rolls back the change.
+ * Applicable only for inserts invoked via a procedure.
+ *
+ * Applicable only when the insert batch contains a single document.
  */
 static bool
 DoSingleInsert(MongoCollection *collection,
@@ -683,6 +709,53 @@ DoSingleInsert(MongoCollection *collection,
 			   text *transactionId,
 			   BatchInsertionResult *batchResult, int insertIndex,
 			   ExprEvalState *evalState)
+{
+	/* declared volatile because of the longjmp in PG_CATCH */
+	volatile bool isSuccess = false;
+	volatile uint64 numDocsInserted = 0;
+
+	/* use a subtransaction to correctly handle failures */
+	MemoryContext oldContext = CurrentMemoryContext;
+
+	PG_TRY();
+	{
+		numDocsInserted = ProcessInsertion(collection, insertShardOid, document,
+										   transactionId, evalState);
+		batchResult->rowsInserted += numDocsInserted;
+		isSuccess = true;
+	}
+	PG_CATCH();
+	{
+		MemoryContextSwitchTo(oldContext);
+		ErrorData *errorData = CopyErrorDataAndFlush();
+
+		PopAllActiveSnapshots();
+		AbortCurrentTransaction();
+		StartTransactionCommand();
+
+		MemoryContextSwitchTo(batchResult->resultMemoryContext);
+		batchResult->writeErrors = lappend(batchResult->writeErrors,
+										   GetWriteErrorFromErrorData(errorData,
+																	  insertIndex));
+		MemoryContextSwitchTo(oldContext);
+		FreeErrorData(errorData);
+		isSuccess = false;
+	}
+	PG_END_TRY();
+	return isSuccess;
+}
+
+
+/*
+ * Applies a single insert in a single sub-transaction.
+ */
+static bool
+DoSingleInsertWithSubTxn(MongoCollection *collection,
+						 Oid insertShardOid,
+						 const bson_value_t *document,
+						 text *transactionId,
+						 BatchInsertionResult *batchResult, int insertIndex,
+						 ExprEvalState *evalState)
 {
 	/* declared volatile because of the longjmp in PG_CATCH */
 	volatile bool isSuccess = false;
@@ -713,6 +786,10 @@ DoSingleInsert(MongoCollection *collection,
 		/* Abort inner transaction */
 		RollbackAndReleaseCurrentSubTransaction();
 		CurrentResourceOwner = oldOwner;
+		if (IsOperatorInterventionError(errorData))
+		{
+			ReThrowError(errorData);
+		}
 
 		MemoryContextSwitchTo(batchResult->resultMemoryContext);
 		batchResult->writeErrors = lappend(batchResult->writeErrors,
@@ -740,8 +817,8 @@ DoSingleInsert(MongoCollection *collection,
  */
 static void
 ProcessBatchInsertion(MongoCollection *collection, BatchInsertionSpec *batchSpec,
-					  text *transactionId, BatchInsertionResult *batchResult, bool
-					  isTransactional)
+					  text *transactionId, BatchInsertionResult *batchResult,
+					  InsertMode insertMode)
 {
 	batchResult->ok = 1;
 	batchResult->rowsInserted = 0;
@@ -760,17 +837,26 @@ ProcessBatchInsertion(MongoCollection *collection, BatchInsertionSpec *batchSpec
 	}
 
 	/*
-	 * We cannot pass the same transactionId to ProcessUpdate when there are
-	 * multiple updates, since they would be considered retries of each
-	 * other. We pass NULL for now to disable retryable writes.
+	 * We cannot pass the same transactionId to BatchInsert when there are
+	 * multiple inserts, since they would be considered retries of each
+	 * other. We pass NULL for batch insert to disable retryable writes.
 	 */
-	if (transactionId != NULL && list_length(batchSpec->documents) == 1)
+	if (list_length(batchSpec->documents) == 1)
 	{
-		/* So at this point, we have a single document and transactionId != NULL */
+		/* So at this point, we have a single document */
 		int insertIndex = 0;
-		DoSingleInsert(collection, batchSpec->insertShardOid, linitial(
-						   batchSpec->documents),
-					   transactionId, batchResult, insertIndex, evalState);
+		if (insertMode == InsertMode_Txn_Proc)
+		{
+			DoSingleInsert(collection, batchSpec->insertShardOid,
+						   linitial(batchSpec->documents), transactionId,
+						   batchResult, 0, evalState);
+		}
+		else
+		{
+			DoSingleInsertWithSubTxn(collection, batchSpec->insertShardOid,
+									 linitial(batchSpec->documents), transactionId,
+									 batchResult, insertIndex, evalState);
+		}
 	}
 	else
 	{
@@ -778,7 +864,7 @@ ProcessBatchInsertion(MongoCollection *collection, BatchInsertionSpec *batchSpec
 		 * and/or we have more than 1 document. Do a batch insert directly.
 		 */
 		DoBatchInsertNoTransactionId(collection, batchSpec, batchResult, evalState,
-									 isTransactional);
+									 insertMode);
 	}
 
 	if (evalState != NULL)
@@ -794,7 +880,7 @@ ProcessBatchInsertion(MongoCollection *collection, BatchInsertionSpec *batchSpec
 static void
 DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *batchSpec,
 							 BatchInsertionResult *batchResult, ExprEvalState *evalState,
-							 bool isTransactional)
+							 InsertMode insertMode)
 {
 	List *insertions = batchSpec->documents;
 	bool isOrdered = batchSpec->isOrdered;
@@ -807,7 +893,7 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 	{
 		CHECK_FOR_INTERRUPTS();
 
-		if (!isTransactional && insertIndex > 0)
+		if (insertMode == InsertMode_Bulk_Proc && insertIndex > 0)
 		{
 			/* For each iteration of the loop, commit prior work */
 			bool setSnapshot = true;
@@ -843,9 +929,10 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 		insertCell = list_nth_cell(insertions, insertIndex);
 		const bson_value_t *document = lfirst(insertCell);
 		text *transactionId = NULL;
-		bool isSuccess = DoSingleInsert(collection, batchSpec->insertShardOid, document,
-										transactionId, batchResult,
-										insertIndex, evalState);
+		bool isSuccess = DoSingleInsertWithSubTxn(collection, batchSpec->insertShardOid,
+												  document,
+												  transactionId, batchResult,
+												  insertIndex, evalState);
 		insertIndex++;
 
 		if (!isSuccess && isOrdered)
@@ -867,8 +954,8 @@ ProcessInsertion(MongoCollection *collection,
 				 text *transactionId, ExprEvalState *evalState)
 {
 	if (transactionId != NULL &&
-		!DocumentBsonValueHasDocumentId(documentValue) &&
 		collection->shardKey != NULL &&
+		!DocumentBsonValueHasDocumentId(documentValue) &&
 		PgbsonHasDocumentId(collection->shardKey))
 	{
 		RetryableWriteResult writeResult;
@@ -917,7 +1004,7 @@ ProcessInsertion(MongoCollection *collection,
 													 collection->
 													 mongoDataCreationTimeVarAttrNumber);
 
-		if (!EnableInsertCustomPlan || optionalInsertShardOid == InvalidOid)
+		if (optionalInsertShardOid == InvalidOid)
 		{
 			Query *query = CreateInsertQuery(collection, optionalInsertShardOid,
 											 list_make1(
@@ -948,7 +1035,7 @@ ProcessInsertion(MongoCollection *collection,
 
 /* core implementation of insert command */
 static Datum
-CommandInsertCore(PG_FUNCTION_ARGS, bool isTransactional, MemoryContext allocContext)
+CommandInsertCore(PG_FUNCTION_ARGS, InsertMode insertMode, MemoryContext allocContext)
 {
 	if (PG_ARGISNULL(0))
 	{
@@ -1023,7 +1110,7 @@ CommandInsertCore(PG_FUNCTION_ARGS, bool isTransactional, MemoryContext allocCon
 
 		/* execute data inserts */
 		ProcessBatchInsertion(collection, batchSpec, transactionId, &batchResult,
-							  isTransactional);
+							  insertMode);
 	}
 
 	Datum values[2];
@@ -1249,6 +1336,7 @@ InsertOrReplaceDocument(uint64 collectionId, const char *shardTableName, int64
 	Oid argTypes[4];
 	Datum argValues[4];
 	int spiStatus PG_USED_FOR_ASSERTS_ONLY = 0;
+	uint64 planId;
 
 	SPI_connect();
 
@@ -1271,26 +1359,70 @@ InsertOrReplaceDocument(uint64 collectionId, const char *shardTableName, int64
 							 "%s.bson_from_bytea($3))",
 					 CoreSchemaName, CoreSchemaName);
 
-	if (shardTableName != NULL && shardTableName[0] != '\0')
+	if (EnableUpdateBsonDocument && IsClusterVersionAtleast(DocDB_V0, 109, 0))
 	{
-		/* Direct shard - we need to extract tableId_shardId as a suffix */
-		/* Prefix length is the length of documents_ */
-		const int prefixLength = 10;
-		const char *shardSuffix = shardTableName + prefixLength;
-		appendStringInfo(&query, " ON CONFLICT ON CONSTRAINT collection_pk_%s"
-								 " DO UPDATE set document = ( %s.bson_update_document(%s.documents_%s.document, %s.bson_from_bytea($4), '{}'::%s.bson)).newDocument",
-						 shardSuffix, ApiInternalSchemaName, ApiDataSchemaName,
-						 shardSuffix, CoreSchemaName, CoreSchemaName);
+		planId = QUERY_ID_INSERT_OR_REPLACE_NEW;
+
+		if (shardTableName != NULL && shardTableName[0] != '\0')
+		{
+			/* Direct shard - we need to extract tableId_shardId as a suffix */
+			/* Prefix length is the length of documents_ */
+			const int prefixLength = 10;
+			const char *shardSuffix = shardTableName + prefixLength;
+			appendStringInfo(&query, " ON CONFLICT ON CONSTRAINT collection_pk_%s"
+									 " DO UPDATE SET document ="
+									 " COALESCE(%s.update_bson_document("
+									 " %s.documents_%s.document, %s.bson_from_bytea($4), '{}'::%s.bson, NULL::%s.bson, NULL::%s.bson, NULL::TEXT),"
+									 " %s.documents_%s.document)",
+							 shardSuffix, ApiInternalSchemaNameV2, ApiDataSchemaName,
+							 shardSuffix, CoreSchemaName, CoreSchemaName, CoreSchemaName,
+							 CoreSchemaName, ApiDataSchemaName,
+							 shardSuffix);
+		}
+		else
+		{
+			appendStringInfo(&query,
+							 " ON CONFLICT ON CONSTRAINT collection_pk_" UINT64_FORMAT
+							 " DO UPDATE SET document ="
+							 " COALESCE(%s.update_bson_document(%s.documents_"UINT64_FORMAT
+							 ".document, %s.bson_from_bytea($4), '{}'::%s.bson, NULL::%s.bson, NULL::%s.bson, NULL::TEXT),"
+							 " %s.documents_"UINT64_FORMAT ".document)",
+							 collectionId, ApiInternalSchemaNameV2, ApiDataSchemaName,
+							 collectionId,
+							 CoreSchemaName, CoreSchemaName, CoreSchemaName,
+							 CoreSchemaName, ApiDataSchemaName, collectionId);
+		}
 	}
 	else
 	{
-		appendStringInfo(&query, " ON CONFLICT ON CONSTRAINT collection_pk_" UINT64_FORMAT
-						 " DO UPDATE set document = (%s.bson_update_document(%s.documents_"
-						 UINT64_FORMAT
-						 ".document, %s.bson_from_bytea($4), '{}'::%s.bson)).newDocument",
-						 collectionId, ApiInternalSchemaName, ApiDataSchemaName,
-						 collectionId,
-						 CoreSchemaName, CoreSchemaName);
+		planId = QUERY_ID_INSERT_OR_REPLACE;
+
+		if (shardTableName != NULL && shardTableName[0] != '\0')
+		{
+			/* Direct shard - we need to extract tableId_shardId as a suffix */
+			/* Prefix length is the length of documents_ */
+			const int prefixLength = 10;
+			const char *shardSuffix = shardTableName + prefixLength;
+			appendStringInfo(&query, " ON CONFLICT ON CONSTRAINT collection_pk_%s"
+									 " DO UPDATE set document = COALESCE( (%s.bson_update_document(%s.documents_%s.document, %s.bson_from_bytea($4), '{}'::%s.bson)).newDocument, %s.documents_%s.document)",
+							 shardSuffix, ApiInternalSchemaName, ApiDataSchemaName,
+							 shardSuffix, CoreSchemaName, CoreSchemaName,
+							 ApiDataSchemaName,
+							 shardSuffix);
+		}
+		else
+		{
+			appendStringInfo(&query,
+							 " ON CONFLICT ON CONSTRAINT collection_pk_" UINT64_FORMAT
+							 " DO UPDATE set document = COALESCE( (%s.bson_update_document(%s.documents_"
+							 UINT64_FORMAT
+							 ".document, %s.bson_from_bytea($4), '{}'::%s.bson)).newDocument, %s.documents_"UINT64_FORMAT
+							 ".document)",
+							 collectionId, ApiInternalSchemaName, ApiDataSchemaName,
+							 collectionId,
+							 CoreSchemaName, CoreSchemaName, ApiDataSchemaName,
+							 collectionId);
+		}
 	}
 
 	argTypes[0] = INT8OID;
@@ -1303,8 +1435,7 @@ InsertOrReplaceDocument(uint64 collectionId, const char *shardTableName, int64
 	argValues[3] = PointerGetDatum(CastPgbsonToBytea(updateSpecDoc));
 
 	SPIPlanPtr plan = GetSPIQueryPlanWithLocalShard(collectionId, shardTableName,
-													QUERY_ID_INSERT_OR_REPLACE,
-													query.data, argTypes,
+													planId, query.data, argTypes,
 													argCount);
 
 	spiStatus = SPI_execute_plan(plan, argValues, NULL, false, 1);

@@ -24,6 +24,7 @@
 #include "update/bson_update_common.h"
 #include "update/bson_update.h"
 #include "utils/fmgr_utils.h"
+#include "utils/type_cache.h"
 #include "utils/version_utils.h"
 #include "aggregation/bson_query.h"
 #include "commands/commands_common.h"
@@ -33,6 +34,9 @@
 
 CreateBsonUpdateTracker_HookType create_update_tracker_hook = NULL;
 BuildUpdateDescription_HookType build_update_description_hook = NULL;
+
+/* This GUC determines whether to use update_bson_document instead of the bson_update_document command. */
+extern bool EnableUpdateBsonDocument;
 
 /* TODO: This is a hack - in reality we should remove updateDesc and rewrite the query to be better */
 int NumBsonDocumentsUpdated = 0;
@@ -169,6 +173,37 @@ PG_FUNCTION_INFO_V1(bson_update_returned_value);
 Datum
 bson_update_document(PG_FUNCTION_ARGS)
 {
+	/* Ensure correct return type. TODO: Remove this check after full migration to update_bson_document. */
+	TupleDesc tupleDescriptor = NULL;
+	bool callerIsUpdateBsonDocument = EnableUpdateBsonDocument &&
+									  IsClusterVersionAtleast(DocDB_V0, 109, 0);
+	if (callerIsUpdateBsonDocument)
+	{
+		Oid resultTypeId = InvalidOid;
+		if (get_call_result_type(fcinfo, &resultTypeId, &tupleDescriptor) !=
+			TYPEFUNC_SCALAR)
+		{
+			elog(ERROR, "return type must be a scalar type");
+		}
+
+		if (resultTypeId != BsonTypeId())
+		{
+			elog(ERROR, "return type must be a single bson value");
+		}
+	}
+	else
+	{
+		if (get_call_result_type(fcinfo, NULL, &tupleDescriptor) != TYPEFUNC_COMPOSITE)
+		{
+			elog(ERROR, "return type must be a row type");
+		}
+
+		if (tupleDescriptor->natts != 2)
+		{
+			elog(ERROR, "incorrect number of output arguments");
+		}
+	}
+
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1) || PG_ARGISNULL(2))
 	{
 		/* be on the safe side fwiw */
@@ -182,8 +217,16 @@ bson_update_document(PG_FUNCTION_ARGS)
 	pgbson *arrayFiltersDoc = PG_GETARG_MAYBE_NULL_PGBSON(3);
 
 	bson_value_t variableSpec = { 0 };
-	if (EnableVariablesSupportForWriteCommands && PG_NARGS() > 5 &&
-		!PG_ARGISNULL(5))
+	if (callerIsUpdateBsonDocument)
+	{
+		if (EnableVariablesSupportForWriteCommands && PG_NARGS() > 4 && !PG_ARGISNULL(4))
+		{
+			pgbson *variableSpecDoc = PG_GETARG_PGBSON(4);
+			variableSpec = ConvertPgbsonToBsonValue(variableSpecDoc);
+		}
+	}
+	else if (EnableVariablesSupportForWriteCommands && PG_NARGS() > 5 &&
+			 !PG_ARGISNULL(5))
 	{
 		pgbson *variableSpecDoc = PG_GETARG_PGBSON(5);
 		variableSpec = ConvertPgbsonToBsonValue(variableSpecDoc);
@@ -217,23 +260,6 @@ bson_update_document(PG_FUNCTION_ARGS)
 		&updateSpecElement.bsonValue, &querySpec, arrayFilters,
 		&variableSpec, buildSourceDocOnUpsert);
 
-	/* Returns (newDocument bson, updateDesc bson) */
-	Datum values[2];
-	bool nulls[2];
-	memset(values, 0, sizeof(values));
-	memset(nulls, 0, sizeof(nulls));
-
-	TupleDesc tupleDescriptor = NULL;
-	if (get_call_result_type(fcinfo, NULL, &tupleDescriptor) != TYPEFUNC_COMPOSITE)
-	{
-		elog(ERROR, "return type must be a row type");
-	}
-
-	if (tupleDescriptor->natts != 2)
-	{
-		elog(ERROR, "The number of output arguments provided is not correct.");
-	}
-
 	pgbson *document;
 	if (metadata == NULL)
 	{
@@ -248,6 +274,29 @@ bson_update_document(PG_FUNCTION_ARGS)
 		document = BsonUpdateDocumentCore(sourceDocument,
 										  &updateSpecElement.bsonValue, metadata);
 	}
+
+	if (callerIsUpdateBsonDocument)
+	{
+		if (document != NULL)
+		{
+			NumBsonDocumentsUpdated++;
+			LastBsonUpdateReturnedNewValue = true;
+			PG_RETURN_POINTER(document);
+		}
+		else
+		{
+			/* No update is needed */
+			LastBsonUpdateReturnedNewValue = false;
+			PG_RETURN_NULL();
+		}
+	}
+
+	/* TODO : Remove below code once we move to update_bson_document udf completely */
+	/* Returns (newDocument bson, updateDesc bson) */
+	Datum values[2];
+	bool nulls[2];
+	memset(values, 0, sizeof(values));
+	memset(nulls, 0, sizeof(nulls));
 
 	if (document != NULL)
 	{
@@ -348,13 +397,9 @@ BsonUpdateDocumentCore(pgbson *sourceDocument, const bson_value_t *updateSpec,
 	{
 		case UpdateType_ReplaceDocument:
 		{
+			/* Replacement is always treated as modified document, even if the content is the same */
 			document = ProcessReplaceDocument(sourceDocument, updateSpec,
 											  isUpsert);
-			if (PgbsonEquals(sourceDocument, document) && !isUpsert)
-			{
-				/* signal that update was a no-op */
-				document = NULL;
-			}
 			break;
 		}
 
@@ -370,10 +415,11 @@ BsonUpdateDocumentCore(pgbson *sourceDocument, const bson_value_t *updateSpec,
 
 		case UpdateType_AggregationPipeline:
 		{
+			bool isReplacement = false;
 			document = ProcessAggregationPipelineUpdate(sourceDocument,
 														updateMetadata->
 														aggregationState,
-														isUpsert);
+														isUpsert, &isReplacement);
 
 			/*
 			 * TODO: Using PgbsonEquals() here might result in incorrectly deciding
@@ -390,7 +436,8 @@ BsonUpdateDocumentCore(pgbson *sourceDocument, const bson_value_t *updateSpec,
 			 *       To do that, we might want to use a single update-spec tree
 			 *       across all the stages in ProcessAggregationPipelineUpdate().
 			 */
-			if (PgbsonEquals(sourceDocument, document) && !isUpsert)
+			if (!isReplacement && !isUpsert &&
+				PgbsonEquals(sourceDocument, document))
 			{
 				/* signal that update was a no-op */
 				document = NULL;

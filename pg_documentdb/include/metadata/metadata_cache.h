@@ -15,33 +15,46 @@
 
 #include "utils/type_cache.h"
 
-extern PGDLLIMPORT char *ApiDataSchemaName;
-extern PGDLLIMPORT char *ApiSchemaName;
-extern PGDLLIMPORT char *ApiSchemaNameV2;
-extern PGDLLIMPORT char *ApiInternalSchemaName;
-extern PGDLLIMPORT char *ApiInternalSchemaNameV2;
-extern PGDLLIMPORT char *ExtensionObjectPrefix;
-extern PGDLLIMPORT char *ExtensionObjectPrefixV2;
-extern PGDLLIMPORT char *CoreSchemaName;
-extern PGDLLIMPORT char *CoreSchemaNameV2;
-extern PGDLLIMPORT char *FullBsonTypeName;
 extern PGDLLIMPORT char *ApiCatalogSchemaName;
 extern PGDLLIMPORT char *ApiCatalogSchemaNameV2;
-extern PGDLLIMPORT char *ApiToApiInternalSchemaName;
 extern PGDLLIMPORT char *ApiCatalogToApiInternalSchemaName;
-extern PGDLLIMPORT char *PostgisSchemaName;
-extern PGDLLIMPORT char *DocumentDBApiInternalSchemaName;
 extern PGDLLIMPORT char *ApiCatalogToCoreSchemaName;
+extern PGDLLIMPORT char *ApiDataSchemaName;
+extern PGDLLIMPORT char *ApiSchemaName;
+extern PGDLLIMPORT char *ApiInternalAdminSchemaName;
+extern PGDLLIMPORT char *ApiInternalBgworkerSchemaName;
+extern PGDLLIMPORT char *ApiInternalReadOnlySchemaName;
+extern PGDLLIMPORT char *ApiInternalReadWriteSchemaName;
+extern PGDLLIMPORT char *ApiInternalSchemaName;
+extern PGDLLIMPORT char *ApiInternalSchemaNameV2;
+extern PGDLLIMPORT char *ApiSchemaNameV2;
+extern PGDLLIMPORT char *ApiToApiInternalSchemaName;
+extern PGDLLIMPORT char *CoreSchemaName;
+extern PGDLLIMPORT char *CoreSchemaNameV2;
+extern PGDLLIMPORT char *DocumentDBApiInternalSchemaName;
+extern PGDLLIMPORT char *ExtensionObjectPrefix;
+extern PGDLLIMPORT char *ExtensionObjectPrefixV2;
+extern PGDLLIMPORT char *FullBsonTypeName;
+extern PGDLLIMPORT char *PostgisSchemaName;
 
 /* Roles */
 extern PGDLLIMPORT char *ApiAdminRole;
 extern PGDLLIMPORT char *ApiAdminRoleV2;
 extern PGDLLIMPORT char *ApiBgWorkerRole;
+extern PGDLLEXPORT char *ApiClusterAdminRole;
 extern PGDLLIMPORT char *ApiReadOnlyRole;
 extern PGDLLEXPORT char *ApiReadWriteRole;
+extern PGDLLEXPORT char *ApiReplicationRole;
 extern PGDLLEXPORT char *ApiRootInternalRole;
 extern PGDLLIMPORT char *ApiRootRole;
+extern PGDLLEXPORT char *ApiSettingsManagerRole;
 extern PGDLLEXPORT char *ApiUserAdminRole;
+
+/* Privileged Action System Roles */
+extern PGDLLEXPORT char *ApiCollectionFindRole;
+extern PGDLLEXPORT char *ApiCollectionInsertRole;
+extern PGDLLEXPORT char *ApiCollectionUpdateRole;
+extern PGDLLEXPORT char *ApiCollectionRemoveRole;
 
 extern MemoryContext DocumentDBApiMetadataCacheContext;
 
@@ -138,6 +151,7 @@ Oid TextEqualOperatorId(void);
 Oid TextNotEqualOperatorId(void);
 Oid TextLessOperatorId(void);
 Oid BsonEqualOperatorId(void);
+Oid BsonEqualFunctionOid(void);
 Oid BsonEqualMatchOperatorId(void);
 Oid BsonInOperatorId(void);
 Oid BsonQueryOperatorId(void);
@@ -150,6 +164,8 @@ Oid BsonLessThanOperatorId(void);
 Oid BsonGreaterThanEqualOperatorId(void);
 Oid BsonLessThanEqualOperatorId(void);
 Oid BsonGetValueFunctionOid(void);
+Oid BsonUniqueIndexEqualOperatorId(void);
+Oid BsonUniqueShardPathEqualOperatorId(void);
 Oid PostgresInt4PlusFunctionOid(void);
 Oid PostgresInt4LessOperatorOid(void);
 Oid PostgresInt4LessOperatorFunctionOid(void);
@@ -167,6 +183,7 @@ Oid HalfVectorTypeId(void);
 Oid IndexSpecTypeId(void);
 Oid ApiCatalogCollectionsTypeOid(void);
 Oid GetClusterBsonQueryTypeId(void);
+Oid GetClusterBsonQueryArrayTypeId(void);
 Oid GetBsonArrayTypeOid(void);
 Oid BsonIndexBoundsTypeId(void);
 Oid GetBsonIndexBoundsArrayTypeOid(void);
@@ -321,6 +338,7 @@ Oid ApiCatalogAggregationPipelineFunctionId(void);
 Oid ApiCatalogAggregationFindFunctionId(void);
 Oid ApiCatalogAggregationCountFunctionId(void);
 Oid ApiCatalogAggregationDistinctFunctionId(void);
+Oid ApiCatalogAggregationGetMoreFunctionId(void);
 Oid BsonCovariancePopAggregateFunctionOid(void);
 Oid BsonCovarianceSampAggregateFunctionOid(void);
 Oid BsonDollarAddFieldsFunctionOid(void);
@@ -350,6 +368,8 @@ Oid BsonDollarReplaceRootFunctionOid(void);
 Oid BsonDollarReplaceRootWithLetFunctionOid(void);
 Oid BsonDollarReplaceRootWithLetAndCollationFunctionOid(void);
 Oid BsonSumAggregateFunctionOid(void);
+Oid BsonCommandCountAggregateFunctionOid(void);
+Oid BsonCountAggregateFunctionOid(void);
 Oid BsonIntegralAggregateFunctionOid(void);
 Oid BsonDerivativeAggregateFunctionOid(void);
 Oid BsonAvgAggregateFunctionOid(void);
@@ -435,6 +455,8 @@ Oid ApiDataNamespaceOid(void);
 Oid UpdateWorkerFunctionOid(void);
 Oid InsertWorkerFunctionOid(void);
 Oid DeleteWorkerFunctionOid(void);
+Oid CommandNodeWorkerFunctionOid(void);
+Oid CursorGetMoreFunctionOid(void);
 
 /* Compat functions*/
 Oid DocumentDBCoreBsonToBsonFunctionOId(void);

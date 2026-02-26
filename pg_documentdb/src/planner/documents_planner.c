@@ -20,6 +20,7 @@
 #include <storage/lmgr.h>
 #include <optimizer/planner.h>
 #include "optimizer/pathnode.h"
+#include <optimizer/cost.h>
 #include <nodes/nodes.h>
 #include <nodes/makefuncs.h>
 #include <nodes/nodeFuncs.h>
@@ -69,9 +70,10 @@ typedef enum IndexPriorityOrdering
 {
 	IndexPriorityOrdering_PrimaryKey = 0,
 	IndexPriorityOrdering_Composite = 1,
-	IndexPriorityOrdering_Regular = 2,
-	IndexPriorityOrdering_Wildcard = 3,
-	IndexPriorityOrdering_Other = 4
+	IndexPriorityOrdering_Composite_Wildcard = 2,
+	IndexPriorityOrdering_Regular = 3,
+	IndexPriorityOrdering_Wildcard = 4,
+	IndexPriorityOrdering_Other = 5
 } IndexPriorityOrdering;
 
 typedef struct ReplaceDocumentDbCollectionContext
@@ -122,10 +124,6 @@ static void ForceExcludeNonIndexPaths(PlannerInfo *root, RelOptInfo *rel,
 static void ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 											RangeTblEntry *rte, uint64 collectionId, bool
 											isShardQuery);
-static void ExtensionRelPathlistHookCoreLegacy(PlannerInfo *root, RelOptInfo *rel, Index
-											   rti,
-											   RangeTblEntry *rte, uint64 collectionId,
-											   bool isShardQuery);
 
 extern bool ForceRUMIndexScanToBitmapHeapScan;
 extern bool EnableCollation;
@@ -134,11 +132,13 @@ extern bool EnableVariablesSupportForWriteCommands;
 extern bool EnableIndexOrderbyPushdown;
 extern bool ForceDisableSeqScan;
 extern bool EnableExtendedExplainPlans;
-extern bool UseLegacyForcePushdownBehavior;
-extern bool EnableIndexPriorityOrdering;
 extern bool EnableLogRelationIndexesOrder;
 extern bool ForceBitmapScanForLookup;
 extern bool EnableIndexOnlyScan;
+extern bool EnableCursorsOnAggregationQueryRewrite;
+extern bool EnableIdIndexCustomCostFunction;
+extern bool EnableCompositeParallelIndexScan;
+extern bool ForceParallelScanIfAvailable;
 
 planner_hook_type ExtensionPreviousPlannerHook = NULL;
 set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook = NULL;
@@ -437,279 +437,6 @@ InMatchIsEquvalentTo(ScalarArrayOpExpr *opExpr, const bson_value_t *arrayValue)
 }
 
 
-/*
- * Given a primary key lookup query, trims the restrictInfo based on the lookup
- */
-static void
-TrimPrimaryKeyQuals(List *restrictInfo, IndexPath *primaryKeyPath)
-{
-	RestrictInfo *objectIdFilter = NULL;
-	ScalarArrayOpExpr *objectIdInFilter = NULL;
-	AttrNumber objectAttr = InvalidAttrNumber;
-	Const *rightConst = NULL;
-	Oid opNo = InvalidOid;
-	pgbsonelement queryElement = { 0 };
-	bson_value_t objectIdColumnFilter = { 0 };
-
-	ListCell *cell;
-	foreach(cell, primaryKeyPath->indexclauses)
-	{
-		IndexClause *iclause = lfirst_node(IndexClause, cell);
-		if (iclause->indexcol == 1 && list_length(iclause->indexquals) > 0)
-		{
-			ListCell *filterCell;
-			foreach(filterCell, iclause->indexquals)
-			{
-				objectIdFilter = lfirst(filterCell);
-
-				if (TryExtractDataFromRestrictInfo(objectIdFilter, &objectAttr, &opNo,
-												   &rightConst) &&
-					opNo == BsonEqualOperatorId() &&
-					TryGetSinglePgbsonElementFromPgbson(DatumGetPgBsonPacked(
-															rightConst->constvalue),
-														&queryElement))
-				{
-					objectIdColumnFilter = queryElement.bsonValue;
-					break;
-				}
-				else if (IsA(objectIdFilter->clause, ScalarArrayOpExpr))
-				{
-					ScalarArrayOpExpr *arrayOpExpr =
-						(ScalarArrayOpExpr *) objectIdFilter->clause;
-					if (arrayOpExpr->useOr)
-					{
-						objectIdInFilter = arrayOpExpr;
-						break;
-					}
-				}
-			}
-		}
-	}
-
-	/* Deterministically pick the primary key for $in/$eq similar to the path below */
-	if (opNo == BsonEqualOperatorId() || IsA(objectIdFilter->clause, ScalarArrayOpExpr))
-	{
-		primaryKeyPath->indextotalcost = 0;
-		primaryKeyPath->path.startup_cost = 0;
-		primaryKeyPath->path.total_cost = 0;
-		if (opNo == BsonEqualOperatorId())
-		{
-			/* For primary key, force cardinality to 1 */
-			primaryKeyPath->path.rows = 1;
-		}
-	}
-
-	if (objectIdColumnFilter.value_type == BSON_TYPE_EOD && objectIdInFilter == NULL)
-	{
-		return;
-	}
-
-	foreach(cell, restrictInfo)
-	{
-		RestrictInfo *rinfo = lfirst_node(RestrictInfo, cell);
-		if (TryExtractDataFromRestrictInfo(rinfo, &objectAttr, &opNo, &rightConst) &&
-			objectAttr == DOCUMENT_DATA_TABLE_DOCUMENT_VAR_ATTR_NUMBER)
-		{
-			if (objectIdColumnFilter.value_type != BSON_TYPE_EOD &&
-				opNo == BsonEqualMatchRuntimeOperatorId() &&
-				TryGetSinglePgbsonElementFromPgbson(DatumGetPgBsonPacked(
-														rightConst->constvalue),
-													&queryElement) &&
-				queryElement.pathLength == 3 && strcmp(queryElement.path, "_id") == 0 &&
-				BsonValueEquals(&objectIdColumnFilter, &queryElement.bsonValue))
-			{
-				cell->ptr_value = objectIdFilter;
-				return;
-			}
-		}
-		else if (objectIdInFilter != NULL &&
-				 TryExtractObjectIdDataFormFuncExprRestrictInfo(rinfo,
-																BsonInMatchFunctionId(),
-																&queryElement.bsonValue)
-				 &&
-				 InMatchIsEquvalentTo(objectIdInFilter, &queryElement.bsonValue))
-		{
-			cell->ptr_value = objectIdFilter;
-			return;
-		}
-	}
-}
-
-
-/*
- * Given that our RUM index cost is 0, currently, the planner may prefer putting in
- * the RUM index over other indexes that may be available. This is bad for primary key
- * lookup scenarios. Consequently, in cases where we have the primary key available
- * force-add a btree lookup.
- * TODO: Remove once we have proper statistics and costs for RUM index.
- */
-static void
-AddPointLookupQuery(List *restrictInfo, PlannerInfo *root, RelOptInfo *rel)
-{
-	RestrictInfo *shardKeyFilter = NULL;
-	RestrictInfo *objectIdFilter = NULL;
-	int32_t docObjectIdFilterEqualsIndex = -1;
-	int32_t docObjectIdFilterInIndex = -1;
-	bson_value_t docObjectIdFilter = { 0 };
-	bson_value_t docObjectIdInFilter = { 0 };
-	bson_value_t objectIdColumnFilter = { 0 };
-	AttrNumber objectAttr = InvalidAttrNumber;
-	Const *rightConst = NULL;
-	Oid opNo = InvalidOid;
-	pgbsonelement queryElement = { 0 };
-
-	ListCell *cell;
-	foreach(cell, restrictInfo)
-	{
-		RestrictInfo *rinfo = lfirst_node(RestrictInfo, cell);
-		if (IsA(rinfo->clause, OpExpr))
-		{
-			if (!TryExtractDataFromRestrictInfo(rinfo, &objectAttr, &opNo, &rightConst))
-			{
-				continue;
-			}
-
-			if (objectAttr == DOCUMENT_DATA_TABLE_SHARD_KEY_VALUE_VAR_ATTR_NUMBER &&
-				opNo == BigintEqualOperatorId())
-			{
-				shardKeyFilter = rinfo;
-				continue;
-			}
-
-			if (objectAttr == DOCUMENT_DATA_TABLE_OBJECT_ID_VAR_ATTR_NUMBER &&
-				opNo == BsonEqualOperatorId())
-			{
-				objectIdFilter = rinfo;
-				if (TryGetSinglePgbsonElementFromPgbson(DatumGetPgBsonPacked(
-															rightConst->constvalue),
-														&queryElement))
-				{
-					objectIdColumnFilter = queryElement.bsonValue;
-				}
-
-				continue;
-			}
-
-			if (objectAttr == DOCUMENT_DATA_TABLE_DOCUMENT_VAR_ATTR_NUMBER &&
-				opNo == BsonEqualMatchRuntimeOperatorId() &&
-				TryGetSinglePgbsonElementFromPgbson(DatumGetPgBsonPacked(
-														rightConst->constvalue),
-													&queryElement) &&
-				queryElement.pathLength == 3 && strcmp(queryElement.path, "_id") == 0)
-			{
-				docObjectIdFilterEqualsIndex = list_cell_number(restrictInfo, cell);
-				docObjectIdFilter = queryElement.bsonValue;
-			}
-		}
-		else if (IsA(rinfo->clause, FuncExpr) &&
-				 TryExtractObjectIdDataFormFuncExprRestrictInfo(rinfo,
-																BsonInMatchFunctionId(),
-																&docObjectIdInFilter))
-		{
-			docObjectIdFilterInIndex = list_cell_number(restrictInfo, cell);
-		}
-		else if (IsA(rinfo->clause, ScalarArrayOpExpr))
-		{
-			/* Object_id IN fields */
-			ScalarArrayOpExpr *arrayExpr = (ScalarArrayOpExpr *) rinfo->clause;
-			if (!arrayExpr->useOr)
-			{
-				continue;
-			}
-
-			if (list_length(arrayExpr->args) != 2)
-			{
-				continue;
-			}
-
-			Expr *leftExpr = linitial(arrayExpr->args);
-			if (!IsA(leftExpr, Var))
-			{
-				continue;
-			}
-
-			Var *leftVar = (Var *) leftExpr;
-			if (leftVar->varattno == DOCUMENT_DATA_TABLE_OBJECT_ID_VAR_ATTR_NUMBER &&
-				arrayExpr->opno == BsonEqualOperatorId())
-			{
-				objectIdFilter = rinfo;
-			}
-		}
-	}
-
-	if (shardKeyFilter != NULL && objectIdFilter != NULL && rel->indexlist != NIL)
-	{
-		ListCell *index;
-		foreach(index, rel->indexlist)
-		{
-			IndexOptInfo *indexInfo = lfirst(index);
-			if (IsBtreePrimaryKeyIndex(indexInfo))
-			{
-				IndexClause *shardKeyClause = makeNode(IndexClause);
-				shardKeyClause->rinfo = shardKeyFilter;
-				shardKeyClause->indexquals = list_make1(shardKeyFilter);
-				shardKeyClause->lossy = false;
-				shardKeyClause->indexcol = 0;
-				shardKeyClause->indexcols = NIL;
-
-				IndexClause *objectIdClause = makeNode(IndexClause);
-				objectIdClause->rinfo = objectIdFilter;
-				objectIdClause->indexquals = list_make1(objectIdFilter);
-				objectIdClause->lossy = false;
-				objectIdClause->indexcol = 1;
-				objectIdClause->indexcols = NIL;
-
-				List *clauses = list_make2(shardKeyClause, objectIdClause);
-				List *orderbys = NIL;
-				List *orderbyCols = NIL;
-				List *pathKeys = NIL;
-				bool indexOnly = false;
-				Relids outerRelids = NULL;
-				double loopCount = 1;
-				bool partialPath = false;
-				IndexPath *path = create_index_path(root, indexInfo, clauses, orderbys,
-													orderbyCols, pathKeys,
-													ForwardScanDirection, indexOnly,
-													outerRelids,
-													loopCount, partialPath);
-				path->indextotalcost = 0;
-				path->path.startup_cost = 0;
-				path->path.total_cost = 0;
-
-				/* Set cardinality for primary key lookup */
-				if (docObjectIdFilterEqualsIndex >= 0)
-				{
-					path->path.rows = 1;
-				}
-
-				add_path(rel, (Path *) path);
-
-				if (objectIdColumnFilter.value_type != BSON_TYPE_EOD &&
-					docObjectIdFilter.value_type != BSON_TYPE_EOD &&
-					BsonValueEquals(&objectIdColumnFilter, &docObjectIdFilter) &&
-					docObjectIdFilterEqualsIndex >= 0)
-				{
-					/* We can swap out the docId with the objectId */
-					list_nth_cell(restrictInfo, docObjectIdFilterEqualsIndex)->ptr_value =
-						objectIdFilter;
-				}
-				else if (docObjectIdFilterInIndex >= 0 &&
-						 IsA(objectIdFilter->clause, ScalarArrayOpExpr) &&
-						 InMatchIsEquvalentTo(
-							 (ScalarArrayOpExpr *) objectIdFilter->clause,
-							 &docObjectIdInFilter))
-				{
-					list_nth_cell(restrictInfo, docObjectIdFilterInIndex)->ptr_value =
-						objectIdFilter;
-				}
-
-				return;
-			}
-		}
-	}
-}
-
-
 static void
 ExtensionRelPathlistHookCore(PlannerInfo *root, RelOptInfo *rel, Index rti,
 							 RangeTblEntry *rte)
@@ -735,115 +462,7 @@ ExtensionRelPathlistHookCore(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		return;
 	}
 
-	if (UseLegacyForcePushdownBehavior)
-	{
-		ExtensionRelPathlistHookCoreLegacy(root, rel, rti, rte, collectionId,
-										   isShardQuery);
-	}
-	else
-	{
-		ExtensionRelPathlistHookCoreNew(root, rel, rti, rte, collectionId, isShardQuery);
-	}
-}
-
-
-static void
-ExtensionRelPathlistHookCoreLegacy(PlannerInfo *root, RelOptInfo *rel, Index rti,
-								   RangeTblEntry *rte, uint64 collectionId, bool
-								   isShardQuery)
-{
-	ReplaceExtensionFunctionContext indexContext = {
-		.queryDataForVectorSearch = { 0 },
-		.hasVectorSearchQuery = false,
-		.hasStreamingContinuationScan = false,
-		.primaryKeyLookupPath = NULL,
-		.inputData = {
-			.collectionId = collectionId,
-			.isShardQuery = isShardQuery,
-			.rteIndex = rti,
-		},
-		.forceIndexQueryOpData = {
-			.type = ForceIndexOpType_None,
-			.path = NULL,
-			.opExtraState = NULL
-		}
-	};
-
-	if (ForceDisableSeqScan)
-	{
-		ForceExcludeNonIndexPaths(root, rel, rti, rte);
-	}
-
-	/*
-	 * Replace all function operators that haven't been transformed in indexed
-	 * paths into OpExpr clauses.
-	 */
-	ReplaceExtensionFunctionOperatorsInPaths(root, rel, rel->pathlist, PARENTTYPE_NONE,
-											 &indexContext);
-
-	/* If the query is operating on the shard of a distributed table
-	 * (or a normal non documentdb-table), then we swap this out with the operators
-	 */
-	if (indexContext.primaryKeyLookupPath != NULL)
-	{
-		TrimPrimaryKeyQuals(rel->baserestrictinfo, indexContext.primaryKeyLookupPath);
-	}
-	else
-	{
-		AddPointLookupQuery(rel->baserestrictinfo, root, rel);
-	}
-
-	rel->baserestrictinfo =
-		ReplaceExtensionFunctionOperatorsInRestrictionPaths(rel->baserestrictinfo,
-															&indexContext);
-
-	if (EnableIndexOrderbyPushdown)
-	{
-		ConsiderIndexOrderByPushdown(root, rel, rte, rti, &indexContext);
-	}
-
-	ForceIndexForQueryOperators(root, rel, &indexContext);
-
-	/*
-	 * Update any paths with custom scans as appropriate.
-	 */
-	bool updatedPaths = UpdatePathsWithExtensionStreamingCursorPlans(root, rel, rte);
-	if (!updatedPaths)
-	{
-		/* Not a streaming cursor scenario.
-		 * Streaming cursors auto convert into Bitmap Paths.
-		 * Handle force conversion of bitmap paths.
-		 */
-		if (IsBitmapHeapConversionSupported(root, rel))
-		{
-			UpdatePathsToForceRumIndexScanToBitmapHeapScan(root, rel);
-		}
-	}
-
-	/* For vector, text search inject custom scan path to track lifetime of
-	 * $meta/ivfprobes.
-	 */
-	if (indexContext.hasVectorSearchQuery)
-	{
-		AddExtensionQueryScanForVectorQuery(root, rel, rte,
-											&indexContext.queryDataForVectorSearch);
-	}
-	else if (indexContext.forceIndexQueryOpData.type == ForceIndexOpType_Text)
-	{
-		QueryTextIndexData *textIndexData =
-			(QueryTextIndexData *) indexContext.forceIndexQueryOpData.opExtraState;
-		if (textIndexData != NULL && textIndexData->indexOptions != NULL &&
-			textIndexData->query != (Datum) 0)
-		{
-			AddExtensionQueryScanForTextQuery(root, rel, rte, textIndexData);
-		}
-	}
-
-	if (EnableExtendedExplainPlans)
-	{
-		/* Add the custom scan wrapper for explain plans */
-		AddExplainCustomScanWrapper(root, rel, rte);
-	}
+	ExtensionRelPathlistHookCoreNew(root, rel, rti, rte, collectionId, isShardQuery);
 }
 
 
@@ -903,7 +522,7 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 
 	if (EnableIndexOrderbyPushdown)
 	{
-		ConsiderIndexOrderByPushdown(root, rel, rte, rti, &indexContext);
+		ConsiderIndexOrderByPushdownForId(root, rel, rte, rti, &indexContext);
 	}
 
 	if (EnableIndexOnlyScan)
@@ -917,17 +536,28 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	bool updatedPaths = false;
 	if (indexContext.hasStreamingContinuationScan)
 	{
-		updatedPaths = UpdatePathsWithExtensionStreamingCursorPlans(root, rel, rte);
+		updatedPaths = UpdatePathsWithExtensionStreamingCursorPlans(root, rel, rte,
+																	&indexContext);
 	}
 
 	/* Not a streaming cursor scenario.
 	 * Streaming cursors auto convert into Bitmap Paths.
 	 * Handle force conversion of bitmap paths.
 	 */
-	if (!updatedPaths &&
-		IsBitmapHeapConversionSupported(root, rel))
+	if (!updatedPaths)
 	{
-		UpdatePathsToForceRumIndexScanToBitmapHeapScan(root, rel);
+		if (IsBitmapHeapConversionSupported(root, rel))
+		{
+			UpdatePathsToForceRumIndexScanToBitmapHeapScan(root, rel);
+		}
+		else if (indexContext.forceIndexQueryOpData.type == ForceIndexOpType_Text)
+		{
+			/* Text indexes require bitmap paths since we leverage bitmapquals
+			 * to run the meta_qual.
+			 * TODO support indexscan if available.
+			 */
+			UpdatePathsToForceRumIndexScanToBitmapHeapScan(root, rel);
+		}
 	}
 
 	/* For vector, text search inject custom scan path to track lifetime of
@@ -953,6 +583,16 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	{
 		/* Finally: Add the custom scan wrapper for explain plans */
 		AddExplainCustomScanWrapper(root, rel, rte);
+	}
+
+	if (ForceParallelScanIfAvailable)
+	{
+		ListCell *cell;
+		foreach(cell, rel->pathlist)
+		{
+			Path *path = lfirst(cell);
+			path->total_cost += disable_cost;
+		}
 	}
 }
 
@@ -1009,8 +649,12 @@ GetIndexOptInfoSortOrder(const IndexOptInfo *info, int *pathCount)
 	/* If it is composite op class it's the next priority. Since composite indexes have a single column, we just get the first column for the opclass. */
 	if (IsCompositeOpFamilyOid(amOid, firstOpClassOid))
 	{
-		*pathCount = GetCompositeOpClassPathCount(info->opclassoptions[0]);
-		return IndexPriorityOrdering_Composite;
+		/* Weight single path composite before wildcard */
+		BsonGinCompositePathOptions *options =
+			(BsonGinCompositePathOptions *) info->opclassoptions[0];
+		*pathCount = GetCompositeOpClassPathCount(options);
+		return options->wildcardPathIndex >= 0 ?
+			   IndexPriorityOrdering_Composite_Wildcard : IndexPriorityOrdering_Composite;
 	}
 
 	/* Wildcard indexes should go after exact path indexes. */
@@ -1154,9 +798,29 @@ ExtensionGetRelationInfoHookCore(PlannerInfo *root, Oid relationObjectId,
 		return;
 	}
 
-	if (EnableIndexPriorityOrdering && rel->indexlist != NIL)
+	if (rel->indexlist != NIL)
 	{
 		list_sort(rel->indexlist, CompareIndexOptionsFunc);
+	}
+
+	/* In this path btree will be first if any */
+	if (list_length(rel->indexlist) > 0)
+	{
+		ListCell *cell;
+		foreach(cell, rel->indexlist)
+		{
+			IndexOptInfo *firstIndex = lfirst(cell);
+			if (EnableIdIndexCustomCostFunction && firstIndex->relam == BTREE_AM_OID)
+			{
+				firstIndex->amcostestimate = documentdb_btcostestimate;
+			}
+			else if (firstIndex->ncolumns == 1 &&
+					 IsCompositeOpFamilyOidWithParallelSupport(firstIndex->relam,
+															   firstIndex->opfamily[0]))
+			{
+				firstIndex->amcanparallel = EnableCompositeParallelIndexScan;
+			}
+		}
 	}
 
 	if (EnableLogRelationIndexesOrder)
@@ -1206,7 +870,8 @@ IsAggregationFunction(Oid funcId)
 	return funcId == ApiCatalogAggregationPipelineFunctionId() ||
 		   funcId == ApiCatalogAggregationFindFunctionId() ||
 		   funcId == ApiCatalogAggregationCountFunctionId() ||
-		   funcId == ApiCatalogAggregationDistinctFunctionId();
+		   funcId == ApiCatalogAggregationDistinctFunctionId() ||
+		   funcId == ApiCatalogAggregationGetMoreFunctionId();
 }
 
 
@@ -1244,7 +909,8 @@ DocumentDbQueryFlagsWalker(Node *node, DocumentDbQueryFlagsState *queryFlags)
 			FuncExpr *funcExpr = (FuncExpr *) rangeTblFunc->funcexpr;
 
 			/* Defer the func check until we really have to */
-			if (list_length(funcExpr->args) != 2)
+			if (list_length(funcExpr->args) != 2 &&
+				list_length(funcExpr->args) != 3)
 			{
 				return false;
 			}
@@ -1775,33 +1441,6 @@ HasUnresolvedExternParamsWalker(Node *expression, ParamListInfo boundParams)
 }
 
 
-static bool
-CheckRelNameValidity(const char *relName, uint64_t *collectionId)
-{
-	if (relName == NULL ||
-		strncmp(relName, "documents_", 10) != 0)
-	{
-		return false;
-	}
-
-	/* We use strtoull since it returns the first character that didn't match
-	 * We expect this to return the '_' character when it's a collection shard
-	 * like ApiDataSchemaName.documents_1_111 and the parsed value will be 1.
-	 * Alternatively, this will be \0 and the parsed value will be 1 if the
-	 * table is documents_1 (parent table).
-	 */
-	char *numEndPointer = NULL;
-	uint64 parsedCollectionId = strtoull(&relName[10], &numEndPointer, 10);
-	if (IsShardTableForDocumentDbTable(relName, numEndPointer))
-	{
-		*collectionId = parsedCollectionId;
-		return true;
-	}
-
-	return false;
-}
-
-
 /*
  * Returns true if the relation of RTE pointed to
  * is a DocumentDB table base collection. e.g.
@@ -1841,7 +1480,9 @@ IsRTEShardForDocumentDbCollection(RangeTblEntry *rte, bool *isDocumentDbDataName
 	{
 		Form_pg_class reltup = (Form_pg_class) GETSTRUCT(tp);
 		const char *relNameStr = NameStr(reltup->relname);
-		bool isValid = CheckRelNameValidity(relNameStr, collectionId);
+		bool validateShardTableName = true;
+		bool isValid = CheckRelNameValidity(relNameStr, collectionId,
+											validateShardTableName);
 		ReleaseSysCache(tp);
 		return isValid;
 	}
@@ -1898,7 +1539,8 @@ ProcessWorkerWriteQueryPath(PlannerInfo *root, RelOptInfo *rel, Index rti,
 
 	if (!(funcExpr->funcid == UpdateWorkerFunctionOid() ||
 		  funcExpr->funcid == InsertWorkerFunctionOid() ||
-		  funcExpr->funcid == DeleteWorkerFunctionOid()))
+		  funcExpr->funcid == DeleteWorkerFunctionOid() ||
+		  funcExpr->funcid == CommandNodeWorkerFunctionOid()))
 	{
 		return false;
 	}
@@ -2073,14 +1715,16 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 
 	FuncExpr *aggregationFunc = (FuncExpr *) rangeTblFunc->funcexpr;
 
-	if (list_length(aggregationFunc->args) != 2)
+	if (list_length(aggregationFunc->args) != 2 &&
+		list_length(aggregationFunc->args) != 3)
 	{
 		ereport(ERROR, (errmsg(
-							"Aggregation pipeline node should have 2 args. This is unexpected")));
+							"Aggregation pipeline node should have 2 or 3 args. This is unexpected")));
 	}
 
 	Node *databaseArg = linitial(aggregationFunc->args);
 	Node *secondArg = lsecond(aggregationFunc->args);
+	Node *thirdArg = NULL;
 
 	if (!IsA(secondArg, Const) || !IsA(databaseArg, Const))
 	{
@@ -2094,6 +1738,23 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 		 * to be evaluated during the EXECUTE)
 		 */
 		return query;
+	}
+
+	if (list_length(aggregationFunc->args) == 3)
+	{
+		thirdArg = lthird(aggregationFunc->args);
+		if (!IsA(thirdArg, Const))
+		{
+			thirdArg = EvaluateBoundParameters(thirdArg, boundParams);
+		}
+
+		if (!IsA(thirdArg, Const))
+		{
+			/* Let the runtime deal with this (This will either go to the runtime function and fail,
+			 * or noop due to prepared and come back here
+			 * to be evaluated during the EXECUTE)*/
+			return query;
+		}
 	}
 
 	Const *databaseConst = (Const *) databaseArg;
@@ -2135,6 +1796,21 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 										   pipeline,
 										   setStatementTimeout);
 	}
+	else if (aggregationFunc->funcid == ApiCatalogAggregationGetMoreFunctionId())
+	{
+		Const *thirdConst = (Const *) thirdArg;
+		if (thirdConst->constisnull)
+		{
+			ereport(ERROR, (errmsg(
+								"Aggregation pipeline arguments should not be null. This is unexpected")));
+		}
+
+		finalQuery = GenerateGetMoreQuery(DatumGetTextPP(databaseConst->constvalue),
+										  pipeline, DatumGetPgBson(
+											  thirdConst->constvalue),
+										  &queryData, enableCursorParam,
+										  setStatementTimeout);
+	}
 	else
 	{
 		ereport(ERROR, (errmsg(
@@ -2160,6 +1836,11 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 
 		/* For point reads, allow for fast path planning */
 		*plan = TryCreatePointReadPlan(finalQuery);
+	}
+
+	if (EnableCursorsOnAggregationQueryRewrite)
+	{
+		ereport(DEBUG1, (errmsg("Aggregation cursorKind is %d", queryData.cursorKind)));
 	}
 
 	return finalQuery;

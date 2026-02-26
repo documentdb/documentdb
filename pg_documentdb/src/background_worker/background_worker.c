@@ -41,6 +41,7 @@
 #include "api_hooks_def.h"
 #include "background_worker/background_worker_job.h"
 #include "commands/connection_management.h"
+#include "infrastructure/job_management.h"
 #include "metadata/metadata_cache.h"
 #include "utils/error_utils.h"
 #include "utils/index_utils.h"
@@ -64,7 +65,6 @@ extern char *BackgroundWorkerDatabaseName;
 extern char *LocalhostConnectionString;
 
 extern int LatchTimeOutSec;
-extern bool EnableBackgroundWorkerJobs;
 extern int BackgroundWorkerJobTimeoutThresholdSec;
 
 static bool BackgroundWorkerReloadConfig = false;
@@ -353,6 +353,12 @@ RegisterBackgroundWorkerJob(BackgroundWorkerJob job)
 	{
 		ereport(ERROR, (errmsg(
 							"Registering a new background worker job must happen during shared_preload_libraries")));
+	}
+
+	if (!EnableBackgroundWorker)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register background worker job when background worker is disabled")));
 	}
 
 	if (JobEntries >= MAX_BACKGROUND_WORKER_JOBS)

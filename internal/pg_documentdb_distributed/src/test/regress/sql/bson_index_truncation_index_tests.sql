@@ -1,7 +1,7 @@
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
-SET citus.next_shard_id TO 640000;
-SET documentdb.next_collection_id TO 6400;
-SET documentdb.next_collection_index_id TO 6400;
+SET citus.next_shard_id TO 930000;
+SET documentdb.next_collection_id TO 9300;
+SET documentdb.next_collection_index_id TO 9300;
 
 -- Set configs to something reasonable for testing.
 set documentdb.indexTermLimitOverride to 100;
@@ -9,7 +9,7 @@ set documentdb.indexTermLimitOverride to 100;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "index_truncation_tests", "indexes": [ { "key": { "ikey": 1 }, "name": "ikey_1", "enableLargeIndexKeys": true } ] }');
 
 -- now we have an index with truncation enabled and 100 chars.
-\d documentdb_data.documents_6400;
+\d documentdb_data.documents_9300;
 
 
 
@@ -243,7 +243,7 @@ SELECT documentdb_api.drop_collection('db','index_truncation_tests');
 
 set documentdb.indexTermLimitOverride to 60;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "index_truncation_tests", "indexes": [ { "key": { "ikey": 1 }, "name": "ikey_1", "enableLargeIndexKeys": true } ] }');
-\d documentdb_data.documents_6401
+\d documentdb_data.documents_9301
 
 -- empty array
 SELECT documentdb_api.insert_one('db', 'index_truncation_tests', '{ "_id": 1, "ikey": [] }');
@@ -339,7 +339,7 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests') W
 SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests') WHERE document @@ '{ "ikey": { "$elemMatch": { "$all": [ 2345 ] }} }';
 
 
-DELETE FROM documentdb_data.documents_6401;
+DELETE FROM documentdb_data.documents_9301;
 
 -- Specific operator tests.
 -- $gt
@@ -633,7 +633,7 @@ SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documen
 SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_single_path_generated_terms('{"_id": 31, "ikey" : { "userName": "myFirstUserName", "address": "1st avenue, Rua Amalho" }}'::bson, 'ikey', false, true, true, 60) term;
 
 -- start fresh with documents
-DELETE FROM documentdb_data.documents_6401;
+DELETE FROM documentdb_data.documents_9301;
 
 -- $eq on something that's past truncation.
 BEGIN;
@@ -686,9 +686,9 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests') W
 ROLLBACK;
 
 -- finally shard_collection and ensure it's Truncation limit is still there.
-SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 6401 ORDER BY index_id;
+SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 9301 ORDER BY index_id;
 SELECT documentdb_api.shard_collection('db', 'index_truncation_tests', '{ "_id": "hashed" }', false);
-\d documentdb_data.documents_6401
+\d documentdb_data.documents_9301
 
 /* testing wildcard indexes */
 SET documentdb.indexTermLimitOverride TO 100;
@@ -696,7 +696,7 @@ SET documentdb.maxWildcardIndexKeySize TO 50;
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "wildcard_index_truncation_tests", "indexes": [ { "key": { "$**": 1 }, "name": "wkey_1", "enableLargeIndexKeys": true } ] }');
 
-\d documentdb_data.documents_6402
+\d documentdb_data.documents_9302
 
 /* should fail fue to maximum size exceeded */
 SELECT documentdb_api.insert_one('db', 'wildcard_index_truncation_tests', '{"_id": 1, "thiskeyislargerthanthemaximumallowedsizeof50characters" : "sample_value"}');
@@ -720,7 +720,7 @@ set documentdb.indexTermLimitOverride to 60;
 /* should create wildcard for single path */
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "wildcard_index_truncation_tests_single_field", "indexes": [ { "key": { "a.b.$**": 1 }, "name": "wkey_2", "enableLargeIndexKeys": true } ] }');
 
-\d documentdb_data.documents_6403
+\d documentdb_data.documents_9303
 
 /* should succeed and truncate index term with wildcard index */
 SELECT documentdb_api.insert_one('db', 'wildcard_index_truncation_tests_single_field', '{ "_id": 1, "a": { "b": { "c": "this is a string that does violate the index term limit as it goes much over the 100 character limit of strings" } } }');
@@ -781,7 +781,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
                                     ] 
                                 }');
 
-\d documentdb_data.documents_6404
+\d documentdb_data.documents_9304
 
 /* should succeed and truncate index term with wildcard index */
 SELECT documentdb_api.insert_one('db', 'wildcard_index_truncation_tests_wildcard_projection', '{ "_id": 1, "a": "this is a string that does violate the index term limit as it goes much over the 100 character limit of strings", "c": 2 }');
@@ -820,23 +820,23 @@ set documentdb.indexTermLimitOverride to 60;
 
 /* enableLargeIndexKeys should be false because it was explicitly set to false */
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "test_default_trunc1", "indexes": [ { "key": { "a.b": 1 }, "name": "key" } ] }');
-SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 6405 ORDER BY index_id;
+SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 9305 ORDER BY index_id;
 
 /* enableLargeIndexKeys should be true because it was not explicitly set to false */
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "test_default_trunc2", "indexes": [ { "key": { "a.b": 1 }, "name": "key" } ] }');
-SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 6406 ORDER BY index_id;
+SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 9306 ORDER BY index_id;
 
 /* enableLargeIndexKeys should be false because index does not support it (ttl index) */
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "test_default_trunc3", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}');
-SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 6407 ORDER BY index_id;
+SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 9307 ORDER BY index_id;
 
 /* enableLargeIndexKeys should be false because index does not support it (hashed) */
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "test_default_trunc4", "indexes": [ { "key": { "a.b": "hashed" }, "name": "key" } ] }');
-SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 6408 ORDER BY index_id;
+SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 9308 ORDER BY index_id;
 
 /* enableLargeIndexKeys should be false because index does not support it (text) */
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "test_default_trunc5", "indexes": [ { "key": { "a.b": "text" }, "name": "key" } ] }');
-SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 6409 ORDER BY index_id;
+SELECT * FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 9309 ORDER BY index_id;
 
 
 -- Additional tests for bug where index term length optimization with '$' was not consistent, i.e., we would generate prefix like 'ikey' and '$.0'

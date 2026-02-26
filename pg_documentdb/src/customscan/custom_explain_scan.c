@@ -138,6 +138,8 @@ static const ExtensibleNodeMethods InputQueryStateMethods =
 	ReadUnsupportedExtensionQueryScanNode
 };
 
+extern bool EnableExtendedExplainOnAnalyzeOff;
+
 
 /*
  * Registers any custom nodes that the extension Scan produces.
@@ -147,6 +149,7 @@ void
 RegisterExplainScanNodes(void)
 {
 	RegisterExtensibleNodeMethods(&InputQueryStateMethods);
+	RegisterCustomScanMethods(&ExplainQueryScanMethods);
 }
 
 
@@ -473,27 +476,40 @@ ExplainQueryScanReScanCustomScan(CustomScanState *node)
 
 
 static void
-ExplainIndexScanState(IndexScanDesc indexScan, ExplainState *es)
+ExplainIndexScanState(IndexScanDesc indexScan, Oid indexOid, List *indexQuals,
+					  List *indexOrderBy, ScanDirection indexScanDir, ExplainState *es)
 {
+	ExplainOpenGroup("index_top_level", NULL, true, es);
+	const char *indexName = ExtensionExplainGetIndexName(indexOid);
+	ExplainPropertyText("indexName", indexName, es);
 	if (indexScan == NULL)
 	{
-		return;
+		if (EnableExtendedExplainOnAnalyzeOff)
+		{
+			/* Explain without analyze, try to explain based on the quals and orderby */
+			Relation index_rel = index_open(indexOid, NoLock);
+			if (IsCompositeOpClass(index_rel))
+			{
+				ExplainRawCompositeScan(index_rel, indexQuals, indexOrderBy, indexScanDir,
+										es);
+			}
+			index_close(index_rel, NoLock);
+		}
+	}
+	else
+	{
+		/* Add any index scan related information here */
+		if (IsCompositeOpClass(indexScan->indexRelation))
+		{
+			ExplainCompositeScan(indexScan, es);
+		}
+		else if (IsBsonRegularIndexAm(indexScan->indexRelation->rd_rel->relam))
+		{
+			/* Do stuff to explain regular index am */
+			ExplainRegularIndexScan(indexScan, es);
+		}
 	}
 
-	/* Add any index scan related information here */
-	ExplainOpenGroup("index_top_level", NULL, true, es);
-	const char *indexName = ExtensionExplainGetIndexName(
-		indexScan->indexRelation->rd_rel->oid);
-	ExplainPropertyText("indexName", indexName, es);
-	if (IsCompositeOpClass(indexScan->indexRelation))
-	{
-		ExplainCompositeScan(indexScan, es);
-	}
-	else if (IsBsonRegularIndexAm(indexScan->indexRelation->rd_rel->relam))
-	{
-		/* Do stuff to explain regular index am */
-		ExplainRegularIndexScan(indexScan, es);
-	}
 	ExplainCloseGroup("index_top_level", NULL, true, es);
 }
 
@@ -506,17 +522,26 @@ WalkAndExplainScanState(PlanState *scanState, ExplainState *es)
 	if (IsA(scanState, IndexScanState))
 	{
 		IndexScanState *indexScanState = (IndexScanState *) scanState;
-		ExplainIndexScanState(indexScanState->iss_ScanDesc, es);
+		IndexScan *scan = (IndexScan *) indexScanState->ss.ps.plan;
+		ExplainIndexScanState(indexScanState->iss_ScanDesc, scan->indexid,
+							  scan->indexqual, scan->indexorderby, scan->indexorderdir,
+							  es);
 	}
 	else if (IsA(scanState, IndexOnlyScanState))
 	{
 		IndexOnlyScanState *indexOnlyScanState = (IndexOnlyScanState *) scanState;
-		ExplainIndexScanState(indexOnlyScanState->ioss_ScanDesc, es);
+		IndexOnlyScan *scan = (IndexOnlyScan *) indexOnlyScanState->ss.ps.plan;
+		ExplainIndexScanState(indexOnlyScanState->ioss_ScanDesc, scan->indexid,
+							  scan->indexqual, scan->indexorderby, scan->indexorderdir,
+							  es);
 	}
 	else if (IsA(scanState, BitmapIndexScanState))
 	{
 		BitmapIndexScanState *bitmapIndexScanState = (BitmapIndexScanState *) scanState;
-		ExplainIndexScanState(bitmapIndexScanState->biss_ScanDesc, es);
+		BitmapIndexScan *scan = (BitmapIndexScan *) bitmapIndexScanState->ss.ps.plan;
+		List *indexOrderBy = NIL;
+		ExplainIndexScanState(bitmapIndexScanState->biss_ScanDesc, scan->indexid,
+							  scan->indexqual, indexOrderBy, NoMovementScanDirection, es);
 	}
 	else if (IsA(scanState, BitmapAndState))
 	{
@@ -600,5 +625,7 @@ OutInputQueryScanNode(StringInfo str, const struct ExtensibleNode *raw_node)
 static void
 ReadUnsupportedExtensionQueryScanNode(struct ExtensibleNode *node)
 {
-	ereport(ERROR, (errmsg("Read for node type CustomQueryScan not implemented")));
+	ExplainInputQueryState *newNode = (ExplainInputQueryState *) node;
+	newNode->extensible.type = T_ExtensibleNode;
+	newNode->extensible.extnodename = InputContinuationNodeName;
 }

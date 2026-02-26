@@ -39,9 +39,17 @@ We want to ensure all contributions made by the developer community are correctl
 
 DocumentDB requires every contribution to be signed with a DCO through a known identity. Anonymous names or pseudonyms cannot be used. An example of a DCO signed commit message is:
 
-Signed-off-by: John Doe <john.doe@email.com>
+```bash
+Commit message
 
-git commit --signoff can also be used to automatically add the Signed-off-by message to the end of a commit message if git configs have been set to include user.name and user.email.
+Signed-off-by: John Doe <john.doe@email.com>
+```
+
+Git includes a `-s` command line option to append this line automatically to your commit message (provided you have configured your `user.name` and `user.email` in your git configuration):
+
+```bash
+git commit -s -m 'Commit message'
+```
 
 Commits of any form require a DCO, including revert commits.
 

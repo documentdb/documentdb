@@ -1,0 +1,148 @@
+name: DocumentDB Release Pipeline
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create GitHub release'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  extract-version:
+    name: Extract Version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+      version_dash: ${{ steps.extract.outputs.version_dash }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract Version from Control File
+        id: extract
+        run: |
+          # Extract version from control file (format: X.Y-Z)
+          VERSION=$(grep -E "^default_version" pg_documentdb_core/documentdb_core.control | sed -E "s/.*'([0-9]+\.[0-9]+-[0-9]+)'.*/\1/")
+          
+          if [ -z "$VERSION" ]; then
+            echo "::error::Unable to extract version from control file."
+            exit 1
+          fi
+          
+          # VERSION is in format X.Y-Z (e.g., 0.109-0)
+          # Convert to dots format for package building: X.Y.Z (e.g., 0.109.0)
+          VERSION_DOTS=$(echo $VERSION | sed "s/-/./g")
+          
+          echo "Extracted Version (dash format): $VERSION"
+          echo "Converted to dots format: $VERSION_DOTS"
+          echo "version=$VERSION_DOTS" >> $GITHUB_OUTPUT
+          echo "version_dash=$VERSION" >> $GITHUB_OUTPUT
+
+  build-deb-packages:
+    name: Build DEB Packages
+    needs: extract-version
+    uses: ./.github/workflows/build_deb_packages.yml
+    with:
+      version: ${{ needs.extract-version.outputs.version }}
+      use_full_matrix: true
+
+  build-rpm-packages:
+    name: Build RPM Packages
+    needs: extract-version
+    uses: ./.github/workflows/build_rpm_packages.yml
+    with:
+      version: ${{ needs.extract-version.outputs.version }}
+      use_full_matrix: true
+
+  build-gateway-images:
+    name: Build Gateway Images
+    needs: extract-version
+    uses: ./.github/workflows/build_gateway.yml
+    with:
+      push_images: true
+
+  create-release:
+    name: Create GitHub Release
+    needs: [extract-version, build-deb-packages, build-rpm-packages, build-gateway-images]
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.create_release)
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare Release Variables
+        run: |
+          VERSION_DASH="${{ needs.extract-version.outputs.version_dash }}"
+          RELEASE_DATE=$(date '+%B %d, %Y' | sed 's/ 0/ /')
+          echo "VERSION_DASH=$VERSION_DASH" >> $GITHUB_ENV
+          echo "RELEASE_NAME=v${VERSION_DASH} (${RELEASE_DATE})" >> $GITHUB_ENV
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./release-artifacts
+
+      - name: Organize artifacts
+        run: |
+          mkdir -p ./packages
+          # Copy all package files to packages directory (exclude debug symbols)
+          find ./release-artifacts -type f \( -name "*.deb" -o -name "*.rpm" \) ! -name "*dbgsym*" -exec cp {} ./packages/ \;
+          ls -lh ./packages/
+          echo "Total packages: $(ls -1 ./packages/ | wc -l)"
+
+      - name: Extract Changelog for Version
+        id: changelog
+        run: |
+          VERSION_DASH="${{ env.VERSION_DASH }}"
+          CHANGELOG_FILE="CHANGELOG.md"
+          
+          if ! grep -q "### documentdb v${VERSION_DASH}" "$CHANGELOG_FILE"; then
+            echo "Warning: Version v${VERSION_DASH} not found in CHANGELOG.md"
+            echo "Release ${VERSION_DASH}" > changelog_excerpt.md
+          else
+            # Extract from this version header to the next version header
+            # The pattern matches from the target version to any line starting with "### documentdb v"
+            # Then we remove the last line (which is the next version header)
+            sed -n "/^### documentdb v${VERSION_DASH}/,/^### documentdb v[0-9]/p" "$CHANGELOG_FILE" | \
+              sed '$d' > changelog_excerpt.md
+            
+            # If extraction is empty or too short, add fallback
+            if [ ! -s changelog_excerpt.md ] || [ $(wc -l < changelog_excerpt.md) -le 1 ]; then
+              echo "### documentdb v${VERSION_DASH}" > changelog_excerpt.md
+              echo "" >> changelog_excerpt.md
+              echo "Release ${VERSION_DASH}" >> changelog_excerpt.md
+            fi
+          fi
+          
+          echo "=== Changelog excerpt ==="
+          cat changelog_excerpt.md
+          echo "========================"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION_DASH }}
+          name: ${{ env.RELEASE_NAME }}
+          body_path: changelog_excerpt.md
+          draft: true
+          prerelease: true
+          files: |
+            ./packages/*

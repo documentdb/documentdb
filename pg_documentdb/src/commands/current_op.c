@@ -32,6 +32,7 @@
 #include "metadata/index.h"
 #include "utils/guc_utils.h"
 #include "index_am/index_am_utils.h"
+#include "commands/diagnostic_commands.h"
 
 
 /*
@@ -95,6 +96,12 @@ typedef struct
 	/* The shard_id of the entity running this activity */
 	int32 shardId;
 
+	/* The backend type for the process */
+	const char *backendType;
+
+	/* The leader PID if this is a worker */
+	int64 leaderPid;
+
 	/* collection name determined from the table name */
 	const char *processedMongoCollection;
 
@@ -142,11 +149,13 @@ extern bool CurrentOpAddSqlCommand;
 
 /* Single node scenario - the global_pid can be assumed to be just the one for the coordinator */
 char *DistributedOperationsQuery =
-	"SELECT *, (10000000000 + pid)::int8 as global_pid, FALSE as worker_query, 0 AS groupid FROM pg_stat_activity";
+	"SELECT *, (" SINGLE_NODE_ID_STR
+	" + pid)::int8 as global_pid, FALSE as worker_query, 0 AS groupid FROM pg_stat_activity";
 
 /* Similar in logic to the distributed node-id calculation */
 const char *FirstLockingPidQuery =
-	"SELECT array_agg( (($2 / 10000000000) * 10000000000) + pid::integer) FROM unnest(pg_blocking_pids($1::integer)) pid LIMIT 1";
+	"SELECT array_agg( (($2 / " SINGLE_NODE_ID_STR ") * " SINGLE_NODE_ID_STR
+	") + pid::integer) FROM unnest(pg_blocking_pids($1::integer)) pid LIMIT 1";
 
 
 /* Application name of any distributed operation schedulers. */
@@ -174,9 +183,15 @@ command_current_op_command(PG_FUNCTION_ARGS)
 Datum
 command_current_op(PG_FUNCTION_ARGS)
 {
+	return current_op(PG_GETARG_PGBSON(0));
+}
+
+
+Datum
+current_op(pgbson *commandSpec)
+{
 	ReportFeatureUsage(FEATURE_COMMAND_CURRENTOP);
 
-	pgbson *commandSpec = PG_GETARG_PGBSON(0);
 	pgbson *filterSpec = NULL;
 	pgbson *aggregateSpec = BuildAggregateSpecFromCommandSpec(commandSpec, &filterSpec);
 
@@ -471,7 +486,10 @@ WorkerGetBaseActivities()
 						   " pa.wait_event_type AS wait_event_type, "
 						   " pa.global_pid || ':' || (EXTRACT(epoch FROM pa.query_start) * 1000000)::numeric(20,0) AS op_id, "
 						   " EXTRACT(epoch FROM now() - pa.state_change)::bigint AS state_change_since, "
-						   " pa.groupid AS shard_id FROM (");
+						   " pa.groupid AS shard_id, "
+						   " pa.backend_type AS backend_type, "
+						   " pa.leader_pid::bigint AS leaderPid "
+						   " FROM (");
 
 	appendStringInfoString(queryInfo, DistributedOperationsQuery);
 
@@ -505,7 +523,7 @@ WorkerGetBaseActivities()
 							 DistributedApplicationNamePrefix);
 		}
 
-		appendStringInfo(queryInfo, ") ");
+		appendStringInfoString(queryInfo, ") ");
 	}
 
 	List *workerActivities = NIL;
@@ -667,6 +685,26 @@ WorkerGetBaseActivities()
 			activity->shardId = DatumGetInt32(resultDatum);
 		}
 
+		/* backend_type (Attr 12) */
+		resultDatum = SPI_getbinval(SPI_tuptable->vals[0],
+									SPI_tuptable->tupdesc, 12,
+									&isNull);
+		if (!isNull)
+		{
+			spiContext = MemoryContextSwitchTo(priorMemoryContext);
+			activity->backendType = TextDatumGetCString(resultDatum);
+			MemoryContextSwitchTo(spiContext);
+		}
+
+		/* leader_pid (Attr 13) */
+		resultDatum = SPI_getbinval(SPI_tuptable->vals[0],
+									SPI_tuptable->tupdesc, 13,
+									&isNull);
+		if (!isNull)
+		{
+			activity->leaderPid = DatumGetInt64(resultDatum);
+		}
+
 		spiContext = MemoryContextSwitchTo(priorMemoryContext);
 		workerActivities = lappend(workerActivities, activity);
 		MemoryContextSwitchTo(spiContext);
@@ -723,6 +761,18 @@ WriteOneActivityToDocument(SingleWorkerActivity *workerActivity,
 	PgbsonWriterAppendInt64(singleActivityWriter, "op_prefix", 9,
 							workerActivity->globalPid);
 
+
+	if (workerActivity->backendType != NULL &&
+		strcmp(workerActivity->backendType, "parallel worker") == 0)
+	{
+		PgbsonWriterAppendBool(singleActivityWriter, "parallelWorker", 14, true);
+	}
+
+	if (workerActivity->leaderPid != 0)
+	{
+		PgbsonWriterAppendInt64(singleActivityWriter, "leaderOpPattern", 14,
+								workerActivity->leaderPid);
+	}
 
 	if (isActive)
 	{
@@ -1386,6 +1436,10 @@ PhaseToUserMessage(const char *phaseString)
 	{
 		return "Initializing index.";
 	}
+	else if (strcmp(phaseString, "building index: initializing") == 0)
+	{
+		return "Initializing index";
+	}
 	else if (strcmp(phaseString, "waiting for old snapshots") == 0)
 	{
 		return "Index is waiting for commands to reach snapshot threshold.";
@@ -1421,6 +1475,10 @@ PhaseToUserMessage(const char *phaseString)
 	else if (strstr(phaseString, "merging tuples") != NULL)
 	{
 		return "Merging tuples into index (building index).";
+	}
+	else if (strstr(phaseString, "writing WAL files") != NULL)
+	{
+		return "Writing WAL files (building index).";
 	}
 	else if (strcmp(phaseString, "cleaning up") == 0)
 	{
@@ -1488,23 +1546,25 @@ WriteIndexBuildProgressAndGetMessage(SingleWorkerActivity *activity,
 	StringInfo str = makeStringInfo();
 
 	/* NULLIF(blocks_total) ensures that "Progress" is NULL if blocks_total is 0 so we don't get div by zero errors and row_get_bson skips the field. */
-	appendStringInfo(str,
-					 "WITH c1 AS (SELECT phase, blocks_done, blocks_total, (blocks_done * 100.0 / NULLIF(blocks_total, 0)) AS \"Progress\", "
-					 " tuples_done AS \"terms_done\", tuples_total AS \"terms_total\", "
-					 " (tuples_done * 100.0 / NULLIF(tuples_total, 0)) AS \"terms_progress\", ");
+	appendStringInfoString(str,
+						   "WITH c1 AS (SELECT phase, command LIKE '%%CONCURRENTLY%%' AS concurrent, blocks_done, blocks_total, (blocks_done * 100.0 / NULLIF(blocks_total, 0)) AS \"Progress\", "
+						   " tuples_done AS \"terms_done\", tuples_total AS \"terms_total\", "
+						   " (tuples_done * 100.0 / NULLIF(tuples_total, 0)) AS \"terms_progress\", ");
 
 	if (DefaultInlineWriteOperations)
 	{
 		/* Match the distributed set up to say a single node has a global pid of node 1 + PID (Similar to citus logic) */
-		appendStringInfo(str,
-						 " (10000000000 + current_locker_pid)::int8 AS AS \"Waiting on op_prefix\""
-						 " FROM pg_stat_progress_create_index WHERE (10000000000 + current_locker_pid)::int8 = $1), ");
+		appendStringInfoString(str,
+							   " (" SINGLE_NODE_ID_STR
+							   " + current_locker_pid)::int8 AS \"Waiting on op_prefix\""
+							   " FROM pg_stat_progress_create_index WHERE ("
+							   SINGLE_NODE_ID_STR " + current_locker_pid)::int8 = $1), ");
 	}
 	else
 	{
-		appendStringInfo(str,
-						 " pg_catalog.citus_calculate_gpid(pg_catalog.citus_nodeid_for_gpid($1), current_locker_pid::integer) AS \"Waiting on op_prefix\""
-						 " FROM pg_stat_progress_create_index WHERE pid IN (SELECT process_id FROM pg_catalog.get_all_active_transactions() WHERE global_pid = $1)), ");
+		appendStringInfoString(str,
+							   " pg_catalog.citus_calculate_gpid(pg_catalog.citus_nodeid_for_gpid($1), current_locker_pid::integer) AS \"Waiting on op_prefix\""
+							   " FROM pg_stat_progress_create_index WHERE pid IN (SELECT process_id FROM pg_catalog.get_all_active_transactions() WHERE global_pid = $1)), ");
 	}
 
 	appendStringInfo(str,

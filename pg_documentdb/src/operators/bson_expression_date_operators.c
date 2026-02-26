@@ -2554,7 +2554,7 @@ GetTimestampStringWithDefaultFormat(const bson_value_t *timeStampBsonElement,
 					   timeStampBsonElement->value.v_timestamp.increment;
 
 	/* Default format is: Month name (3 letters) dd hours:minutes:seconds:milliseconds which is 19 chars*/
-	char buffer[19] = { 0 };
+	char buffer[128] = { 0 };
 
 	Datum pgTimestamp = GetPgTimestampFromEpochWithTimezone(dateInMs, timezone);
 
@@ -2588,8 +2588,9 @@ GetTimestampStringWithDefaultFormat(const bson_value_t *timeStampBsonElement,
 		}
 	}
 
-	sprintf(buffer, "%s %02d %02d:%02d:%02d:%03d", formattedMonthName, day, hour, minute,
-			second, millisecond);
+	pg_sprintf(buffer, "%s %02d %02d:%02d:%02d:%03d", formattedMonthName, day, hour,
+			   minute,
+			   second, millisecond);
 
 	StringView result = {
 		.length = 19,

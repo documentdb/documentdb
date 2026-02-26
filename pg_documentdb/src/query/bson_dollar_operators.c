@@ -29,6 +29,8 @@
 #include "collation/collation.h"
 #include "utils/version_utils.h"
 #include "aggregation/bson_query.h"
+#include "opclass/bson_gin_composite.h"
+#include "opclass/bson_gin_index_term.h"
 
 /*
  * Custom bson_orderBy options to allow specific types when sorting.
@@ -284,7 +286,6 @@ typedef struct
 typedef bool (*IsQueryFilterNullFunc)(const TraverseValidateState *state);
 extern bool EnableCollation;
 extern bool EnableNowSystemVariable;
-extern bool UseLegacyNullEqualityBehavior;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -503,16 +504,8 @@ CompareBsonValueAgainstQuery(const pgbsonelement *element,
 	TraverseElementValidateState elementValidationState = { 0 };
 
 	pgbsonelement filterElement;
-
-	if (EnableCollation)
-	{
-		elementValidationState.collationString = PgbsonToSinglePgbsonElementWithCollation(
-			filter, &filterElement);
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement(filter, &filterElement);
-	}
+	elementValidationState.collationString = PgbsonToSinglePgbsonElementWithCollation(
+		filter, &filterElement);
 
 	elementValidationState.traverseState.matchFunc = compareFunc;
 	elementValidationState.filter = &filterElement;
@@ -561,15 +554,8 @@ PG_FUNCTION_INFO_V1(bson_dollar_in);
 PG_FUNCTION_INFO_V1(bson_dollar_ne);
 PG_FUNCTION_INFO_V1(bson_dollar_nin);
 PG_FUNCTION_INFO_V1(bson_dollar_exists);
-PG_FUNCTION_INFO_V1(command_bson_orderby);
-PG_FUNCTION_INFO_V1(command_bson_orderby_reverse);
 PG_FUNCTION_INFO_V1(bson_orderby_partition);
 PG_FUNCTION_INFO_V1(bson_vector_orderby);
-PG_FUNCTION_INFO_V1(bson_orderby_compare);
-PG_FUNCTION_INFO_V1(bson_orderby_compare_sort_support);
-PG_FUNCTION_INFO_V1(bson_orderby_lt);
-PG_FUNCTION_INFO_V1(bson_orderby_eq);
-PG_FUNCTION_INFO_V1(bson_orderby_gt);
 
 PG_FUNCTION_INFO_V1(bson_dollar_bits_all_clear);
 PG_FUNCTION_INFO_V1(bson_dollar_bits_any_clear);
@@ -608,6 +594,15 @@ PG_FUNCTION_INFO_V1(bson_value_dollar_bits_all_clear);
 PG_FUNCTION_INFO_V1(bson_value_dollar_bits_any_clear);
 PG_FUNCTION_INFO_V1(bson_value_dollar_bits_all_set);
 PG_FUNCTION_INFO_V1(bson_value_dollar_bits_any_set);
+
+PG_FUNCTION_INFO_V1(command_bson_orderby);
+PG_FUNCTION_INFO_V1(command_bson_orderby_reverse);
+PG_FUNCTION_INFO_V1(bson_orderby_compare);
+PG_FUNCTION_INFO_V1(bson_orderby_compare_sort_support);
+PG_FUNCTION_INFO_V1(bson_orderby_lt);
+PG_FUNCTION_INFO_V1(bson_orderby_eq);
+PG_FUNCTION_INFO_V1(bson_orderby_gt);
+PG_FUNCTION_INFO_V1(command_bson_orderby_index);
 
 /*
  * Traverses the document for a given dot-path notation
@@ -1248,27 +1243,18 @@ bson_dollar_range(PG_FUNCTION_ARGS)
 	 */
 
 	pgbsonelement filterElement;
+	const char *collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
+																		   &filterElement);
 
-	if (EnableCollation)
+	if (IsCollationValid(collationString))
 	{
-		const char *collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
-																			   &
-																			   filterElement);
-
-		if (IsCollationValid(collationString))
-		{
-			/* TODO (workitem=3423305): Index pushdwon on $range operator with collation (see method description for more details) */
-			/* This code path is not expected to be excercised until $range with collation is pushed down to the index. */
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR), errmsg(
-								"operator $range or operators that can be optimized to $range is not supported with collation"),
-							errdetail_log(
-								"operator $range or operators that can be optimized to $range is not supported with collation : %s",
-								collationString)));
-		}
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement(filter, &filterElement);
+		/* TODO (workitem=3423305): Index pushdwon on $range operator with collation (see method description for more details) */
+		/* This code path is not expected to be excercised until $range with collation is pushed down to the index. */
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR), errmsg(
+							"operator $range or operators that can be optimized to $range is not supported with collation"),
+						errdetail_log(
+							"operator $range or operators that can be optimized to $range is not supported with collation : %s",
+							collationString)));
 	}
 
 	rangeState.elementState.filter = &filterElement;
@@ -1276,9 +1262,12 @@ bson_dollar_range(PG_FUNCTION_ARGS)
 	rangeState.isMinConditionSet = false;
 	rangeState.isMaxConditionSet = false;
 
-	if (rangeState.params.isFullScan)
+	if (rangeState.params.isFullScan || rangeState.params.isElemMatch)
 	{
-		/* if the range is a full scan, we don't need to traverse the document */
+		/* if the range is a full scan, we don't need to traverse the document
+		 * similarly for $elemMatch this range query is only used on the index
+		 * so we bypass the runtime recheck and let the runtime filter handle it.
+		 */
 		PG_RETURN_BOOL(true);
 	}
 
@@ -1777,6 +1766,70 @@ command_bson_orderby_reverse(PG_FUNCTION_ARGS)
 	PG_FREE_IF_COPY(document, 0);
 	PG_FREE_IF_COPY(filter, 1);
 	PG_RETURN_DATUM(returnedBson);
+}
+
+
+Datum
+command_bson_orderby_index(PG_FUNCTION_ARGS)
+{
+	pgbson *document = PG_GETARG_PGBSON_PACKED(0);
+	pgbson *sortSpec = PG_GETARG_PGBSON_PACKED(1);
+	StringView collationStringView = { 0 };
+
+	if (EnableCollation && PG_NARGS() > 2 && !PG_ARGISNULL(2))
+	{
+		/* TODO: Remove alloc here */
+		text *collationText = PG_GETARG_TEXT_PP(2);
+		collationStringView.string = text_to_cstring(collationText);
+		collationStringView.length = VARSIZE_ANY_EXHDR(collationText);
+	}
+
+	uint32_t numTerms = 0;
+	Datum *terms = GenerateCompositeTermsFromIndexSpec(document, sortSpec, &numTerms);
+
+	PG_FREE_IF_COPY(document, 0);
+	PG_FREE_IF_COPY(sortSpec, 1);
+
+	if (numTerms == 0)
+	{
+		PG_RETURN_NULL();
+	}
+
+	Datum selectedDatum = terms[0];
+	if (numTerms > 1)
+	{
+		/*
+		 * Pick the min value: Descending should sort the max first due to how comparisons of
+		 * descending terms work - also free unused terms along the way.
+		 */
+		for (uint32_t i = 1; i < numTerms; i++)
+		{
+			int32_t cmp = CompareSerializedBsonIndexTermWithCollation(selectedDatum,
+																	  terms[i],
+																	  collationStringView.
+																	  string);
+			if (cmp > 0)
+			{
+				pfree(DatumGetByteaP(selectedDatum));
+				selectedDatum = terms[i];
+			}
+			else
+			{
+				pfree(DatumGetByteaP(terms[i]));
+			}
+		}
+	}
+
+	pfree(terms);
+	if (collationStringView.string != NULL)
+	{
+		selectedDatum =
+			PointerGetDatum(FormCollatedIndexTerm(DatumGetByteaP(selectedDatum),
+												  collationStringView.string,
+												  collationStringView.length));
+	}
+
+	PG_RETURN_DATUM(selectedDatum);
 }
 
 
@@ -2793,8 +2846,9 @@ CompareBsonValueAgainstQueryCore(const pgbsonelement *element,
 		}
 
 		filterElement->pathLength = 0;
-		TraverseBson(&documentIterator, filterElement->path, state,
-					 executionFuncs);
+		StringView pathView = CreateStringViewFromString(filterElement->path);
+		TraverseBsonPathStringView(&documentIterator, &pathView, state,
+								   executionFuncs);
 		return ProcessQueryResultAndGetMatch(isQueryFilterNull, state);
 	}
 }
@@ -2817,15 +2871,8 @@ CompareBsonAgainstQuery(const pgbson *element,
 	TraverseElementValidateState state = { 0 };
 	PgbsonInitIterator(element, &documentIterator);
 
-	if (EnableCollation)
-	{
-		state.collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
-																		 &filterElement);
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement(filter, &filterElement);
-	}
+	state.collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
+																	 &filterElement);
 
 	filterElement.pathLength = 0;
 	state.filter = &filterElement;
@@ -2833,7 +2880,7 @@ CompareBsonAgainstQuery(const pgbson *element,
 	bool isFilterNull = isQueryFilterNull != NULL && isQueryFilterNull(
 		&state.traverseState);
 	const TraverseBsonExecutionFuncs *execFuncs = &CompareExecutionFuncs;
-	if (isFilterNull && !UseLegacyNullEqualityBehavior)
+	if (isFilterNull)
 	{
 		/* if the filter is null, start by assuming path mismatch. If we find
 		 * pathNotFound, it'll get overwritten. This way we can track explicitly
@@ -3356,29 +3403,22 @@ PopulateRegexState(PG_FUNCTION_ARGS, TraverseRegexValidateState *state)
 	const RegexData *regexState;
 	pgbsonelement filterElement;
 
-	if (EnableCollation)
-	{
-		/* collation does not take effect on $regex  */
-		PgbsonToSinglePgbsonElementWithCollation(filter, &filterElement);
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement(filter, &filterElement);
-	}
+	/* collation does not take effect on $regex  */
+	PgbsonToSinglePgbsonElement(filter, &filterElement);
 
 	/* State populated if and only if cached state is unusable */
-	RegexData localState = { 0 };
-
 	SetCachedFunctionState(regexState, RegexData, 1, PopulateRegexFromQuery,
 						   &filterElement);
 	if (regexState == NULL)
 	{
 		/* Cache not available */
-		PopulateRegexFromQuery(&localState, &filterElement);
-		regexState = &localState;
+		PopulateRegexFromQuery(&state->regexData, &filterElement);
+	}
+	else
+	{
+		state->regexData = *regexState;
 	}
 
-	state->regexData = *regexState;
 	state->traverseState.matchFunc = CompareRegexMatch;
 	return filterElement;
 }
@@ -3460,15 +3500,8 @@ static void
 PopulateElemMatchStateFromQuery(BsonElemMatchQueryState *state, const pgbson *filter)
 {
 	pgbsonelement filterElement;
-	if (EnableCollation)
-	{
-		state->collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
-																		  &filterElement);
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement(filter, &filterElement);
-	}
+	state->collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
+																	  &filterElement);
 
 	state->isEmptyElemMatch = IsBsonValueEmptyDocument(&filterElement.bsonValue);
 	state->expressionEvaluationState = GetExpressionEvalStateWithCollation(
@@ -3551,16 +3584,9 @@ PopulateDollarAllStateFromQuery(BsonDollarAllQueryState *dollarAllState,
 								const pgbson *filter)
 {
 	pgbsonelement filterElement;
-	if (EnableCollation)
-	{
-		dollarAllState->collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
-																				   &
-																				   filterElement);
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement(filter, &filterElement);
-	}
+	dollarAllState->collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
+																			   &
+																			   filterElement);
 
 	if (filterElement.bsonValue.value_type != BSON_TYPE_ARRAY)
 	{
@@ -3760,19 +3786,10 @@ PopulateDollarInStateFromQuery(BsonDollarInQueryState *dollarInState,
 {
 	pgbsonelement filterElement;
 	bson_iter_t arrayIterator;
-	const char *collationString = NULL;
+	const char *collationString = PgbsonToSinglePgbsonElementWithCollation(
+		(pgbson *) filter, &filterElement);
 
-	if (EnableCollation)
-	{
-		collationString = PgbsonToSinglePgbsonElementWithCollation(
-			(pgbson *) filter, &filterElement);
-
-		dollarInState->collationString = collationString;
-	}
-	else
-	{
-		PgbsonToSinglePgbsonElement((pgbson *) filter, &filterElement);
-	}
+	dollarInState->collationString = collationString;
 
 	BsonValueInitIterator(&filterElement.bsonValue, &arrayIterator);
 

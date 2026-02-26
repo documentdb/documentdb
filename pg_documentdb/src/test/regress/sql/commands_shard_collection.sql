@@ -237,3 +237,8 @@ SELECT documentdb_api.shard_collection('db', 'nonExistingCollection', '{ "a.b": 
 SELECT documentdb_api.create_collection('db', 'nonShardedCollection');
 SELECT documentdb_api.shard_collection('db', 'nonShardedCollection', '{ "a.b": "hashed" }', true);
 
+-- shard_collection should not crash when implicit CreateCollection fails (issue #462)
+-- Force a collection ID collision by resetting next_collection_id
+SET documentdb.next_collection_id TO 5000;
+SELECT documentdb_api.shard_collection('db', 'shard_462_crash_test', '{ "_id": "hashed" }', false);
+

@@ -1608,7 +1608,7 @@ GetDecimal128FromInt64(int64_t value)
  *
  * Quantize(X, Y) => Returns a quantized decimal128 which has same numerical value as X and exponent as Y
  */
-static bson_decimal128_t
+bson_decimal128_t
 GetBsonValueAsDecimal128Core(const bson_value_t *value, bool shouldQuantizeDouble)
 {
 	if (!BsonValueIsNumberOrBool(value) && value->value_type != BSON_TYPE_DATE_TIME)

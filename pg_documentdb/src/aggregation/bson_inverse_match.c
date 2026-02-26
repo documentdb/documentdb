@@ -162,6 +162,8 @@ EvaluateInverseMatch(pgbson *document, const InverseMatchArgs *args)
 	MemoryContext memoryContext = CurrentMemoryContext;
 	ExprEvalState *exprEvalState = GetExpressionEvalState(&queryValue, memoryContext);
 
+	pgbson_writer valueWriter;
+	PgbsonWriterInit(&valueWriter);
 	bson_value_t queryInput;
 	if (args->queryInputExpression.kind == AggregationExpressionKind_Constant)
 	{
@@ -169,9 +171,7 @@ EvaluateInverseMatch(pgbson *document, const InverseMatchArgs *args)
 	}
 	else
 	{
-		pgbson_writer valueWriter;
 		pgbson_element_writer elementWriter;
-		PgbsonWriterInit(&valueWriter);
 		bool isNullOnEmpty = false;
 		ExpressionVariableContext *variableContext = NULL;
 		StringView path = { .string = "", .length = 0 };

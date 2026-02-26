@@ -83,14 +83,14 @@ SELECT object_id, document FROM documentdb_api.collection('db', 'decimal128') WH
 ROLLBACK;
 
 -- Overflow operation with decimal128
-SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "a": { "b": {"$numberDecimal": "9.999999999999999999999999999999999e6144"} } }',
-                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "2"} } } }', '{}');
-SELECT newDocument as bson_update_document  FROM documentdb_api_internal.bson_update_document('{"_id": 1, "a": { "b": {"$numberDecimal": "-9.999999999999999999999999999999999e6144"} } }',
-                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "2"} } } }', '{}');
-SELECT newDocument as bson_update_document  FROM documentdb_api_internal.bson_update_document('{"_id": 1, "a": { "b": {"$numberDecimal": "9.999999999999999999999999999999999e6144"} } }',
-                                                '{ "": { "$inc": { "a.b": {"$numberDecimal": "1.111111111111111111111111111111111e6144"} } } }', '{}');
-SELECT newDocument as bson_update_document  FROM documentdb_api_internal.bson_update_document('{"_id": 1, "a": { "b": {"$numberDecimal": "-9.999999999999999999999999999999999e6144"} } }',
-                                                '{ "": { "$inc": { "a.b": {"$numberDecimal": "-1.111111111111111111111111111111111e6144"} } } }', '{}');
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberDecimal": "9.999999999999999999999999999999999e6144"} } }',
+                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "2"} } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson,NULL::TEXT);
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberDecimal": "-9.999999999999999999999999999999999e6144"} } }',
+                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "2"} } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson,NULL::TEXT);
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberDecimal": "9.999999999999999999999999999999999e6144"} } }',
+                                                '{ "": { "$inc": { "a.b": {"$numberDecimal": "1.111111111111111111111111111111111e6144"} } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson,NULL::TEXT);
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberDecimal": "-9.999999999999999999999999999999999e6144"} } }',
+                                                '{ "": { "$inc": { "a.b": {"$numberDecimal": "-1.111111111111111111111111111111111e6144"} } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson,NULL::TEXT);
 
 -- Testing index on decimal 128 values
 
@@ -117,36 +117,36 @@ ROLLBACK;
 -- Testing cases where decimal128 operations will signal exception with intel math lib and validating if these matches protocol defined behavior
 -- Testing to decimal128 conversion methods using $mul, because $convert is not implemented yet (decimal128 to other types can't be tested now)
 -- TODO Add proper test after implementing $convert
-SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "a": { "b": {"$numberInt": "2147483647"} } }',
-                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "1"} } } }', '{}');
-SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "a": { "b": {"$numberInt": "-2147483648"} } }',
-                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "1"} } } }', '{}');
-SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "a": { "b": {"$numberLong": "9223372036854775807"} } }',
-                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "1"} } } }', '{}');
-SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "a": { "b": {"$numberLong": "-9223372036854775808"} } }',
-                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "1"} } } }', '{}');
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberInt": "2147483647"} } }',
+                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "1"} } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson,NULL::TEXT);
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberInt": "-2147483648"} } }',
+                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "1"} } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson,NULL::TEXT);
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberLong": "9223372036854775807"} } }',
+                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "1"} } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson,NULL::TEXT);
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberLong": "-9223372036854775808"} } }',
+                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "1"} } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson,NULL::TEXT);
 -- normal & inexact double conversion
-SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "a": { "b": {"$numberDouble": "-9.99000000000000000e+02"} } }',
-                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "1"} } } }', '{}');
-SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "a": { "b": {"$numberDouble": "9.535874331e+301"} } }',
-                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "1"} } } }', '{}');
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberDouble": "-9.99000000000000000e+02"} } }',
+                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "1"} } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson,NULL::TEXT);
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberDouble": "9.535874331e+301"} } }',
+                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "1"} } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson,NULL::TEXT);
 
 
 -- Inexact result
-SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "a": { "b": {"$numberDecimal": "+6794057649266099302E-6176"} } }',
-                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "+4548926796094754899573057849605421E+2026"} } } }', '{}');
-SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "a": { "b": {"$numberDecimal": "+6794057649266099302E-6176"} } }',
-                                                '{ "": { "$inc": { "a.b": {"$numberDecimal": "+4548926796094754899573057849605421E+2026"} } } }', '{}');
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberDecimal": "+6794057649266099302E-6176"} } }',
+                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "+4548926796094754899573057849605421E+2026"} } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson,NULL::TEXT);
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberDecimal": "+6794057649266099302E-6176"} } }',
+                                                '{ "": { "$inc": { "a.b": {"$numberDecimal": "+4548926796094754899573057849605421E+2026"} } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson,NULL::TEXT);
 
 -- Overflow signal with inexact
-SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "a": { "b": {"$numberDecimal": "+9579756848909076089047118570486504E+6111"} } }',
-                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "+1938648456739575048278564590634903E+6111"} } } }', '{}');
-SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "a": { "b": {"$numberDecimal": "+9579756848909076089047118570486504E+6111"} } }',
-                                                '{ "": { "$inc": { "a.b": {"$numberDecimal": "+1938648456739575048278564590634903E+6111"} } } }', '{}');
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberDecimal": "+9579756848909076089047118570486504E+6111"} } }',
+                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "+1938648456739575048278564590634903E+6111"} } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson,NULL::TEXT);
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberDecimal": "+9579756848909076089047118570486504E+6111"} } }',
+                                                '{ "": { "$inc": { "a.b": {"$numberDecimal": "+1938648456739575048278564590634903E+6111"} } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson,NULL::TEXT);
 
 -- Underflow signal with inexact (no test case found for $inc)
-SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "a": { "b": {"$numberDecimal": "-7548269564658974956438658719038456E-6120"} } }',
-                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "+9875467895987245907845734785643106E-2179"} } } }', '{}');
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberDecimal": "-7548269564658974956438658719038456E-6120"} } }',
+                                                '{ "": { "$mul": { "a.b": {"$numberDecimal": "+9875467895987245907845734785643106E-2179"} } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson,NULL::TEXT);
 
 -- Invalid exceptions are skipped because no valid test cases found (this is generally signalled if "SNaN" is part of operation which is not valid Decimal128 value to store)
 

@@ -49,7 +49,7 @@ ERROR:  Must specify either index name or key pattern.
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": []}');
 ERROR:  The BSON field 'collMod.index' has an incorrect type 'array'; it should be of type 'object'.
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"name": "c_1"}}');
-ERROR:  no expireAfterSeconds or hidden field
+ERROR:  no expireAfterSeconds, hidden, prepareUnique or unique field
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"name": 1}}');
 ERROR:  The BSON field 'collMod.index.name' has an incorrect type 'int'; it should be of type 'string'.
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"keyPattern": 1}}');
@@ -61,7 +61,7 @@ ERROR:  The BSON field 'collMod.index.keyPattern' has an incorrect type 'int'; i
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"keyPattern": {"c": 1}, "name": "c_1"}}');
 ERROR:  Both name and key pattern cannot be present
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"keyPattern": {"c": 1}}}');
-ERROR:  no expireAfterSeconds or hidden field
+ERROR:  no expireAfterSeconds, hidden, prepareUnique or unique field
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"name": 1, "expireAfterSeconds": true}}');
 ERROR:  The BSON field 'collMod.index.name' has an incorrect type 'int'; it should be of type 'string'.
 SELECT documentdb_api.coll_mod('commands', 'collModTest', '{"collMod": "collModTest", "index": {"name": 1, "expireAfterSeconds": {}}}');
@@ -187,9 +187,9 @@ SELECT documentdb_api.coll_mod('commands', 'collModTest',
 SELECT * FROM documentdb_api_catalog.collection_indexes
     WHERE (index_spec).index_name = 'b_ttl' AND
     (index_spec).index_expire_after_seconds = 2; -- After update
- collection_id | index_id |                         index_spec                         | index_is_valid 
+ collection_id | index_id |                                                     index_spec                                                      | index_is_valid 
 ---------------------------------------------------------------------
-         25001 |    25003 | (b_ttl,"{ ""b"" : { ""$numberInt"" : ""1"" } }",,,,,2,2,,) | t
+         25001 |    25003 | (b_ttl,"{ ""b"" : { ""$numberInt"" : ""1"" } }",,,,,2,2,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""1"" } }") | t
 (1 row)
 
 SELECT pg_sleep(2);

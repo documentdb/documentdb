@@ -7,10 +7,11 @@
  *
  *-------------------------------------------------------------------------
  */
+
 #include "aggregation/bson_project_operator.h"
 #include "utils/documentdb_errors.h"
 #include "types/decimal128.h"
-
+#include "collation/collation.h"
 
 typedef enum FindProjectionOperators
 {
@@ -106,6 +107,9 @@ typedef struct ProjectFindBsonPathTreeState
 	 * Number of $elemMatch Projection
 	 */
 	uint32_t totalElemMatchProjections;
+
+	/* collation string to be used for comparison */
+	const char *collationString;
 } ProjectFindBsonPathTreeState;
 
 /*
@@ -215,11 +219,17 @@ BuildBsonPathTreeFunctions FindPathTreeFunctions =
 
 
 void *
-GetPathTreeStateForFind(pgbson *querySpec)
+GetPathTreeStateForFind(pgbson *querySpec, const char *collationString)
 {
 	ProjectFindBsonPathTreeState *findTreeState = palloc0(
 		sizeof(ProjectFindBsonPathTreeState));
 	findTreeState->querySpec = querySpec;
+
+	if (IsCollationApplicable(collationString))
+	{
+		findTreeState->collationString = collationString;
+	}
+
 	return findTreeState;
 }
 
@@ -509,7 +519,7 @@ PostProcessLeafNodeForFind(void *state, const StringView *path, BsonPathNode *ch
 				bson_value_t queryValue = ConvertPgbsonToBsonValue(
 					treeState->querySpec);
 				treeState->positionalOperatorState->positionalQueryData =
-					GetPositionalQueryData(&queryValue);
+					GetPositionalQueryData(&queryValue, treeState->collationString);
 			}
 		}
 

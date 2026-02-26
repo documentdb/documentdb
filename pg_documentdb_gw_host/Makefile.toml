@@ -1,0 +1,28 @@
+[config]
+default_to_workspace = false
+
+[tasks.format-check]
+command = "cargo"
+args = ["fmt", "--all", "--check"]
+
+# Clippy uses PG version-specific features via PGVERSION env var (e.g., PGVERSION=16).
+# Defaults to pg16 if not set.
+[tasks.clippy]
+clear = true
+script = '''
+PG_FEATURE="pg${PGVERSION:-16}"
+cargo clippy --all-targets --no-default-features --features "$PG_FEATURE" --frozen -- -D warnings
+'''
+
+[tasks.lint]
+dependencies = ["format-check", "clippy"]
+
+[tasks.build]
+clear = true
+script = '''
+PG_FEATURE="pg${PGVERSION:-16}"
+cargo build --features "$PG_FEATURE" --no-default-features
+'''
+
+[tasks.dev]
+dependencies = ["build", "lint"]

@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+# set script_dir to the parent directory of the script
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 # Function to display help message
 function show_help {
     echo "Usage: $0 --os <OS> --pg <PG_VERSION> [--test-clean-install] [--output-dir <DIR>] [-h|--help]"
@@ -11,7 +14,7 @@ function show_help {
     echo ""
     echo "Mandatory Arguments:"
     echo "  --os                 OS to build packages for. Possible values: [deb11, deb12, ubuntu22.04, ubuntu24.04, rhel8, rhel9]"
-    echo "  --pg                 PG version to build packages for. Possible values: [15, 16, 17]"
+    echo "  --pg                 PG version to build packages for. Possible values: [15, 16, 17, 18]"
     echo ""
     echo "Optional Arguments:"
     echo "  --version            The version of documentdb to build. Examples: [0.100.0, 0.101.0]"
@@ -26,7 +29,7 @@ OS=""
 PG=""
 DOCUMENTDB_VERSION=""
 TEST_CLEAN_INSTALL=false
-OUTPUT_DIR="packaging"  # Default value for output directory
+OUTPUT_DIR="packaging"  # Default value for output directory (relative to script_dir)
 PACKAGE_TYPE=""  # Will be set to "deb" or "rpm"
 
 # Process arguments to convert long options to short ones
@@ -52,11 +55,11 @@ while [[ $# -gt 0 ]]; do
         --pg)
             shift
             case $1 in
-                15|16|17)
+                15|16|17|18)
                     PG=$1
                     ;;
                 *)
-                    echo "Invalid --pg value. Allowed values are [15, 16, 17]"
+                    echo "Invalid --pg value. Allowed values are [15, 16, 17, 18]"
                     exit 1
                     ;;
             esac
@@ -114,7 +117,7 @@ DOCKERFILE=""
 OS_VERSION_NUMBER=""
 
 if [[ "$PACKAGE_TYPE" == "deb" ]]; then
-    DOCKERFILE="packaging/deb/Dockerfile"
+    DOCKERFILE="${script_dir}/packaging/deb/Dockerfile-deb"
     case $OS in
         deb11)
             DOCKER_IMAGE="debian:bullseye"
@@ -135,11 +138,11 @@ if [[ "$PACKAGE_TYPE" == "deb" ]]; then
 elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
     case $OS in
         rhel8)
-            DOCKERFILE="packaging/rpm/rhel-8/Dockerfile"
+            DOCKERFILE="${script_dir}/packaging/rpm/rhel-8/Dockerfile-rhel8"
             DOCKER_IMAGE="rockylinux:8"
             ;;
         rhel9)
-            DOCKERFILE="packaging/rpm/rhel-9/Dockerfile"
+            DOCKERFILE="${script_dir}/packaging/rpm/rhel-9/Dockerfile-rhel9"
             DOCKER_IMAGE="rockylinux:9"
             ;;
         *)
@@ -151,9 +154,7 @@ fi
 
 TAG=documentdb-build-packages-$OS-pg$PG:latest
 
-repo_root=$(git rev-parse --show-toplevel)
-abs_output_dir="$repo_root/$OUTPUT_DIR"
-cd "$repo_root"
+abs_output_dir="$script_dir/$OUTPUT_DIR"
 
 echo "Building $PACKAGE_TYPE packages for OS: $OS, PostgreSQL version: $PG, DOCUMENTDB version: $DOCUMENTDB_VERSION"
 echo "Output directory: $abs_output_dir"
@@ -166,14 +167,14 @@ if [[ "$PACKAGE_TYPE" == "deb" ]]; then
     docker build -t "$TAG" -f "$DOCKERFILE" \
         --build-arg BASE_IMAGE="$DOCKER_IMAGE" \
         --build-arg POSTGRES_VERSION="$PG" \
-        --build-arg DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" .
+        --build-arg DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" "$script_dir"
     # Run the Docker container to build the packages
     docker run --rm --env OS="$OS" --env POSTGRES_VERSION="$PG" --env DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" -v "$abs_output_dir:/output" "$TAG"
 elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
     docker build -t "$TAG" -f "$DOCKERFILE" \
         --build-arg BASE_IMAGE="$DOCKER_IMAGE" \
         --build-arg POSTGRES_VERSION="$PG" \
-        --build-arg DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" .
+        --build-arg DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" "$script_dir"
     # Run the Docker container to build the packages
     docker run --rm --env OS="$OS" --env POSTGRES_VERSION="$PG" --env DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" -v "$abs_output_dir:/output" "$TAG"
 fi
@@ -187,14 +188,13 @@ if [[ $TEST_CLEAN_INSTALL == true ]]; then
         deb_package_name=$(ls "$abs_output_dir" | grep -E "${OS}-postgresql-$PG-documentdb_${DOCUMENTDB_VERSION}.*\.deb" | grep -v "dbg" | head -n 1)
         deb_package_rel_path="$OUTPUT_DIR/$deb_package_name"
 
-        echo "Debian package path: $deb_package_rel_path"
+        echo "Debian package path passed into Docker build: $deb_package_rel_path"
 
         # Build the Docker image while showing the output to the console
-        docker build -t documentdb-test-packages:latest -f packaging/test_packages/deb/Dockerfile \
+    docker build -t documentdb-test-packages:latest -f "${script_dir}/packaging/test_packages/deb/Dockerfile-deb-test" \
             --build-arg BASE_IMAGE="$DOCKER_IMAGE" \
             --build-arg POSTGRES_VERSION="$PG" \
-            --build-arg DEB_PACKAGE_REL_PATH="$deb_package_rel_path" .
-
+            --build-arg DEB_PACKAGE_REL_PATH="$deb_package_rel_path" "$script_dir"
         # Run the Docker container to test the packages
         docker run --rm documentdb-test-packages:latest
 
@@ -205,14 +205,14 @@ if [[ $TEST_CLEAN_INSTALL == true ]]; then
             exit 1
         fi
         package_rel_path="$OUTPUT_DIR/$rpm_package_name"
-        
-        echo "RPM package path for testing: $package_rel_path"
+
+        echo "RPM package path passed into Docker build: $package_rel_path"
         
         # Select the correct test Dockerfile for RHEL 8 or RHEL 9
         if [[ "$OS" == "rhel8" ]]; then
-            TEST_DOCKERFILE="packaging/test_packages/rhel-8/Dockerfile"
+            TEST_DOCKERFILE="${script_dir}/packaging/test_packages/rhel-8/Dockerfile-rhel8-test"
         elif [[ "$OS" == "rhel9" ]]; then
-            TEST_DOCKERFILE="packaging/test_packages/rhel-9/Dockerfile"
+            TEST_DOCKERFILE="${script_dir}/packaging/test_packages/rhel-9/Dockerfile-rhel9-test"
         else
             echo "Error: Unknown RPM OS for test Dockerfile: $OS"
             exit 1
@@ -220,7 +220,7 @@ if [[ $TEST_CLEAN_INSTALL == true ]]; then
         docker build -t documentdb-test-rpm-packages:latest -f "$TEST_DOCKERFILE" \
             --build-arg BASE_IMAGE="$DOCKER_IMAGE" \
             --build-arg POSTGRES_VERSION="$PG" \
-            --build-arg RPM_PACKAGE_REL_PATH="$package_rel_path" .
+            --build-arg RPM_PACKAGE_REL_PATH="$package_rel_path" "$script_dir"
             
         # Run the Docker container to test the packages
         docker run --rm --env POSTGRES_VERSION="$PG" documentdb-test-rpm-packages:latest

@@ -752,8 +752,7 @@ ProcessResultForDollarGetField(bson_value_t field, bson_value_t input)
 							ERRCODE_DOCUMENTDB_LOCATION3041704),
 						errmsg(
 							"$getField  needs 'field' to evaluate to a String type, but received %s ",
-							field.value_type == BSON_TYPE_EOD ? "missing" : BsonTypeName(
-								field.value_type))));
+							BsonTypeNameExtended(field.value_type))));
 	}
 
 	bson_iter_t inputIter;

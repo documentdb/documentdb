@@ -68,9 +68,6 @@ bool ForceDisableSeqScan = DEFAULT_FORCE_DISABLE_SEQ_SCAN;
 #define DEFAULT_CURRENTOP_ADD_SQL_COMMAND false
 bool CurrentOpAddSqlCommand = DEFAULT_CURRENTOP_ADD_SQL_COMMAND;
 
-#define DEFAULT_ALTERNATE_INDEX_HANDLER ""
-char *AlternateIndexHandler = DEFAULT_ALTERNATE_INDEX_HANDLER;
-
 #define DEFAULT_LOG_RELATION_INDEXES_ORDER false
 bool EnableLogRelationIndexesOrder = DEFAULT_LOG_RELATION_INDEXES_ORDER;
 
@@ -83,8 +80,23 @@ bool EnableDebugQueryText = DEFAULT_ENABLE_DEBUG_QUERY_TEXT;
 #define DEFAULT_ENABLE_MULTI_INDEX_RUM_JOIN false
 bool EnableMultiIndexRumJoin = DEFAULT_ENABLE_MULTI_INDEX_RUM_JOIN;
 
-#define DEFAULT_ENABLE_TTL_DESC_SORT false
-bool EnableTTLDescSort = DEFAULT_ENABLE_TTL_DESC_SORT;
+#define DEFAULT_FORCE_UPDATE_INDEX_INLINE false
+bool ForceUpdateIndexInline = DEFAULT_FORCE_UPDATE_INDEX_INLINE;
+
+#define DEFAULT_FORCE_RUN_DIAGNOSTIC_COMMAND_INLINE false
+bool ForceRunDiagnosticCommandInline = DEFAULT_FORCE_RUN_DIAGNOSTIC_COMMAND_INLINE;
+
+#define DEFAULT_FORCE_INDEX_ONLY_SCAN_IF_AVAILABLE false
+bool ForceIndexOnlyScanIfAvailable = DEFAULT_FORCE_INDEX_ONLY_SCAN_IF_AVAILABLE;
+
+#define DEFAULT_FORCE_PARALLEL_SCAN_IF_AVAILABLE false
+bool ForceParallelScanIfAvailable = DEFAULT_FORCE_PARALLEL_SCAN_IF_AVAILABLE;
+
+#define DEFAULT_ENABLE_RBAC_COMPLIANT_SCHEMAS false
+bool EnableRbacCompliantSchemas = DEFAULT_ENABLE_RBAC_COMPLIANT_SCHEMAS;
+
+#define DEFAULT_DISABLE_EXTENDED_RUM_EXPLAIN_PLANS false
+bool DisableExtendedRumExplainPlans = DEFAULT_DISABLE_EXTENDED_RUM_EXPLAIN_PLANS;
 
 void
 InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
@@ -251,13 +263,6 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, &CurrentOpAddSqlCommand, DEFAULT_CURRENTOP_ADD_SQL_COMMAND,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
-	DefineCustomStringVariable(
-		psprintf("%s.alternate_index_handler_name", prefix),
-		gettext_noop(
-			"The name of the index handler to use as opposed to rum (currently for testing only)."),
-		NULL, &AlternateIndexHandler, DEFAULT_ALTERNATE_INDEX_HANDLER,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
 	DefineCustomBoolVariable(
 		psprintf("%s.logRelationIndexesOrder", newGucPrefix),
 		gettext_noop(
@@ -290,13 +295,48 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableTTLDescSort", newGucPrefix),
+		psprintf("%s.forceUpdateIndexInline", newGucPrefix),
 		gettext_noop(
-			"Whether or not to enable TTL descending sort on field."),
-		NULL,
-		&EnableTTLDescSort,
-		DEFAULT_ENABLE_TTL_DESC_SORT,
-		PGC_USERSET,
-		0,
-		NULL, NULL, NULL);
+			"Whether or not to force update index inline in the current node or go through the worker route."),
+		NULL, &ForceUpdateIndexInline, DEFAULT_FORCE_UPDATE_INDEX_INLINE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceRunDiagnosticCommandInline", newGucPrefix),
+		gettext_noop(
+			"Whether or not to force running diagnostic commands in inline mode."),
+		NULL, &ForceRunDiagnosticCommandInline,
+		DEFAULT_FORCE_RUN_DIAGNOSTIC_COMMAND_INLINE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceIndexOnlyScanIfAvailable", newGucPrefix),
+		gettext_noop(
+			"If an indexonlyscan is available, force use it in the plan."),
+		NULL, &ForceIndexOnlyScanIfAvailable,
+		DEFAULT_FORCE_INDEX_ONLY_SCAN_IF_AVAILABLE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceParallelScanIfAvailable", newGucPrefix),
+		gettext_noop(
+			"If a parallel plan is available, force use it in the plan."),
+		NULL, &ForceParallelScanIfAvailable,
+		DEFAULT_FORCE_PARALLEL_SCAN_IF_AVAILABLE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableRbacCompliantSchemas", newGucPrefix),
+		gettext_noop(
+			"Enables RBAC compliant schemas."),
+		NULL, &EnableRbacCompliantSchemas, DEFAULT_ENABLE_RBAC_COMPLIANT_SCHEMAS,
+		PGC_POSTMASTER, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.disableExtendedRumExplainPlans", newGucPrefix),
+		gettext_noop(
+			"Disable extended rum explain plan overrides. Used to match default rum explains"),
+		NULL, &DisableExtendedRumExplainPlans,
+		DEFAULT_DISABLE_EXTENDED_RUM_EXPLAIN_PLANS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
 }

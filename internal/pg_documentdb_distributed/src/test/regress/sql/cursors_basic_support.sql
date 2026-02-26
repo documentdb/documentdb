@@ -92,6 +92,11 @@ BEGIN;
 set local enable_seqscan TO OFF;
     -- now query them with varying page sizes using cursors - this will convert to a bitmap scan (as it's an index scan).
     SELECT document FROM documentdb_api.collection('db', 'cursors_basic') WHERE documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount": 1 }') AND document @@ '{ "a.b": { "$gt": 2 }}';
+ROLLBACK;
+
+BEGIN;
+set local enable_seqscan TO OFF;
+    -- now query them with varying page sizes using cursors - this will convert to a bitmap scan (as it's an index scan).
     EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'cursors_basic') WHERE documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount": 1 }') AND document @@ '{ "a.b": { "$gt": 2 }}';
 ROLLBACK;
 
@@ -100,6 +105,12 @@ set local enable_seqscan TO OFF;
 set local enable_indexscan TO OFF;
     -- now query them with varying page sizes using cursors - this should work as a normal bitmap heap scan.
     SELECT document FROM documentdb_api.collection('db', 'cursors_basic') WHERE documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount": 1 }') AND document @@ '{ "a.b": { "$gt": 2 }}';
+ROLLBACK;
+
+BEGIN;
+set local enable_seqscan TO OFF;
+set local enable_indexscan TO OFF;
+    -- now query them with varying page sizes using cursors - this should work as a normal bitmap heap scan.
     EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'cursors_basic') WHERE documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount": 1 }') AND document @@ '{ "a.b": { "$gt": 2 }}';
 ROLLBACK;
 
@@ -121,6 +132,13 @@ set local parallel_setup_cost TO 0;
 set local enable_seqscan TO ON;
 set local enable_indexscan TO OFF;
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'cursors_basic') WHERE documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount": 1 }') AND document @@ '{ "a.b": { "$gt": 2 }}';
+ROLLBACK;
+
+BEGIN;
+set local parallel_tuple_cost TO 0;
+set local parallel_setup_cost TO 0;
+set local enable_seqscan TO ON;
+set local enable_indexscan TO OFF;
 SELECT document FROM documentdb_api.collection('db', 'cursors_basic') WHERE documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount": 1 }') AND document @@ '{ "a.b": { "$gt": 2 }}';
 ROLLBACK;
 

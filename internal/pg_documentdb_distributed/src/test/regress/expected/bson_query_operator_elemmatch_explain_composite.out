@@ -45,44 +45,67 @@ SELECT documentdb_api.insert_one('comp_elmdb', 'cmp_elemmatch_ops', '{ "_id": 2,
 (1 row)
 
 -- pushes to the price index
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
-    '{ "find": "cmp_elemmatch_ops", "filter": { "price": { "$elemMatch": { "$gt": 120, "$lt": 150 } } } }');
-                                                                     QUERY PLAN                                                                      
+set documentdb.enableExtendedExplainPlans to on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
+    '{ "find": "cmp_elemmatch_ops", "filter": { "price": { "$elemMatch": { "$gt": 120, "$lt": 150 } } } }') $cmd$);
+                                                                                                                                run_explain_and_trim                                                                                                                                
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_10641_1064002 collection (actual rows=1 loops=1)
-   Filter: (document @#? '{ "price" : { "$gt" : { "$numberInt" : "120" }, "$lt" : { "$numberInt" : "150" } } }'::bson)
-   Rows Removed by Filter: 1
-   Heap Blocks: exact=1
-   ->  Bitmap Index Scan on price_1 (actual rows=2 loops=1)
-         Index Cond: ((document @> '{ "price" : { "$numberInt" : "120" } }'::bson) AND (document @< '{ "price" : { "$numberInt" : "150" } }'::bson))
-(6 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   indexName: price_1
+   indexKey: {"price": 1}
+   isMultiKey: true
+   indexBounds: ["price": (120, 150)]
+   innerScanLoops: 1 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+   ->  Bitmap Heap Scan on documents_10641_1064002 collection (actual rows=1 loops=1)
+         Filter: (document @#? '{ "price" : { "$gt" : { "$numberInt" : "120" }, "$lt" : { "$numberInt" : "150" } } }'::bson)
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on price_1 (actual rows=1 loops=1)
+               Index Cond: (document @<> '{ "price" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "2" }, "value" : { "$numberInt" : "120" }, "isTopLevel" : true }, { "op" : { "$numberInt" : "4" }, "value" : { "$numberInt" : "150" }, "isTopLevel" : true } ] } }'::bson)
+(13 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
-    '{ "find": "cmp_elemmatch_ops", "filter": { "price": { "$elemMatch": { "$in": [ 120, 140 ], "$gt": 121 } } } }');
-                                                                                     QUERY PLAN                                                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
+    '{ "find": "cmp_elemmatch_ops", "filter": { "price": { "$elemMatch": { "$in": [ 120, 140 ], "$gt": 121 } } } }') $cmd$);
+                                                                                                                                               run_explain_and_trim                                                                                                                                               
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_10641_1064002 collection (actual rows=1 loops=1)
-   Filter: (document @#? '{ "price" : { "$in" : [ { "$numberInt" : "120" }, { "$numberInt" : "140" } ], "$gt" : { "$numberInt" : "121" } } }'::bson)
-   Rows Removed by Filter: 1
-   Heap Blocks: exact=1
-   ->  Bitmap Index Scan on price_1 (actual rows=2 loops=1)
-         Index Cond: ((document @*= '{ "price" : [ { "$numberInt" : "120" }, { "$numberInt" : "140" } ] }'::bson) AND (document @> '{ "price" : { "$numberInt" : "121" } }'::bson))
-(6 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   indexName: price_1
+   indexKey: {"price": 1}
+   isMultiKey: true
+   indexBounds: ["price": (121, 120]], ["price": [140, 140]]
+   innerScanLoops: 1 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 1)]
+   ->  Bitmap Heap Scan on documents_10641_1064002 collection (actual rows=1 loops=1)
+         Filter: (document @#? '{ "price" : { "$in" : [ { "$numberInt" : "120" }, { "$numberInt" : "140" } ], "$gt" : { "$numberInt" : "121" } } }'::bson)
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on price_1 (actual rows=1 loops=1)
+               Index Cond: (document @<> '{ "price" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "6" }, "value" : [ { "$numberInt" : "120" }, { "$numberInt" : "140" } ], "isTopLevel" : true }, { "op" : { "$numberInt" : "2" }, "value" : { "$numberInt" : "121" }, "isTopLevel" : true } ] } }'::bson)
+(13 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
-    '{ "find": "cmp_elemmatch_ops", "filter": { "price": { "$elemMatch": { "$type": "number" } } } }');
-                                   QUERY PLAN                                   
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
+    '{ "find": "cmp_elemmatch_ops", "filter": { "price": { "$elemMatch": { "$type": "number" } } } }') $cmd$);
+                                                                          run_explain_and_trim                                                                           
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_10641_1064002 collection (actual rows=2 loops=1)
-   Filter: (document @#? '{ "price" : { "$type" : "number" } }'::bson)
-   Heap Blocks: exact=1
-   ->  Bitmap Index Scan on price_1 (actual rows=2 loops=1)
-         Index Cond: (document @# '{ "price" : "number" }'::bson)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   indexName: price_1
+   indexKey: {"price": 1}
+   isMultiKey: true
+   indexBounds: ["price": [-Infinity, Infinity]]
+   innerScanLoops: 2 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   ->  Bitmap Heap Scan on documents_10641_1064002 collection (actual rows=2 loops=1)
+         Filter: (document @#? '{ "price" : { "$type" : "number" } }'::bson)
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on price_1 (actual rows=2 loops=1)
+               Index Cond: (document @<> '{ "price" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "12" }, "value" : "number", "isTopLevel" : true } ] } }'::bson)
+(13 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
-    '{ "find": "cmp_elemmatch_ops", "filter": { "price": { "$elemMatch": { "$ne": 160 } } } }');
-                                     QUERY PLAN                                      
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
+    '{ "find": "cmp_elemmatch_ops", "filter": { "price": { "$elemMatch": { "$ne": 160 } } } }') $cmd$);
+                                run_explain_and_trim                                 
 ---------------------------------------------------------------------
  Bitmap Heap Scan on documents_10641_1064002 collection (actual rows=2 loops=1)
    Recheck Cond: (shard_key_value = '10641'::bigint)
@@ -92,9 +115,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
          Index Cond: (shard_key_value = '10641'::bigint)
 (6 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
-    '{ "find": "cmp_elemmatch_ops", "filter": { "price": { "$elemMatch": { "$nin": [ 160, 110, 140] } } } }');
-                                                                  QUERY PLAN                                                                  
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
+    '{ "find": "cmp_elemmatch_ops", "filter": { "price": { "$elemMatch": { "$nin": [ 160, 110, 140] } } } }') $cmd$);
+                                                             run_explain_and_trim                                                             
 ---------------------------------------------------------------------
  Bitmap Heap Scan on documents_10641_1064002 collection (actual rows=1 loops=1)
    Recheck Cond: (shard_key_value = '10641'::bigint)
@@ -124,26 +147,193 @@ SELECT documentdb_api.insert_one('comp_elmdb', 'cmp_elemmatch_ops', '{ "_id": 5,
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
-    '{ "find": "cmp_elemmatch_ops", "filter": { "brands": { "$elemMatch": { "name": "alpha", "rating": 2 } } } }');
-                                               QUERY PLAN                                                
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
+    '{ "find": "cmp_elemmatch_ops", "filter": { "brands": { "$elemMatch": { "name": "alpha", "rating": 2 } } } }') $cmd$);
+                                                                                     run_explain_and_trim                                                                                      
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_10641_1064002 collection (actual rows=1 loops=1)
-   Filter: (document @#? '{ "brands" : { "name" : "alpha", "rating" : { "$numberInt" : "2" } } }'::bson)
-   Rows Removed by Filter: 1
-   Heap Blocks: exact=1
-   ->  Bitmap Index Scan on "brands.rating_1" (actual rows=2 loops=1)
-         Index Cond: (document @= '{ "brands.rating" : { "$numberInt" : "2" } }'::bson)
-(6 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   indexName: brands.rating_1
+   indexKey: {"brands.rating": 1}
+   isMultiKey: true
+   indexBounds: ["brands.rating": [2, 2]]
+   innerScanLoops: 2 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 2)]
+   ->  Bitmap Heap Scan on documents_10641_1064002 collection (actual rows=1 loops=1)
+         Filter: (document @#? '{ "brands" : { "name" : "alpha", "rating" : { "$numberInt" : "2" } } }'::bson)
+         Rows Removed by Filter: 1
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on "brands.rating_1" (actual rows=2 loops=1)
+               Index Cond: (document @<> '{ "brands.rating" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "2" }, "isTopLevel" : false } ] } }'::bson)
+(14 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
-    '{ "find": "cmp_elemmatch_ops", "filter": { "brands": { "$elemMatch": { "name": "alpha" } } } }');
-                                   QUERY PLAN                                   
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
+    '{ "find": "cmp_elemmatch_ops", "filter": { "brands": { "$elemMatch": { "name": "alpha" } } } }') $cmd$);
+                                                                             run_explain_and_trim                                                                             
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_10641_1064002 collection (actual rows=3 loops=1)
-   Filter: (document @#? '{ "brands" : { "name" : "alpha" } }'::bson)
-   Heap Blocks: exact=1
-   ->  Bitmap Index Scan on "brands.name_1" (actual rows=3 loops=1)
-         Index Cond: (document @= '{ "brands.name" : "alpha" }'::bson)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+   indexName: brands.name_1
+   indexKey: {"brands.name": 1}
+   isMultiKey: true
+   indexBounds: ["brands.name": ["alpha", "alpha"]]
+   innerScanLoops: 3 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3)]
+   ->  Bitmap Heap Scan on documents_10641_1064002 collection (actual rows=3 loops=1)
+         Filter: (document @#? '{ "brands" : { "name" : "alpha" } }'::bson)
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on "brands.name_1" (actual rows=3 loops=1)
+               Index Cond: (document @<> '{ "brands.name" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "alpha", "isTopLevel" : false } ] } }'::bson)
+(13 rows)
+
+-- test elemMatch behavior when confronted with multiple arrays
+SELECT documentdb_api.insert_one('comp_elmdb', 'cmp_elemmatch_ops', '{ "_id": 6, "brands": [ { "name": [ "gurci", "dolte" ], "rating": 5 } ]}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- this technically matches the doc 6 above and the elemMatches don't get joined.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
+    '{ "find": "cmp_elemmatch_ops", "filter": { "brands": { "$elemMatch": { "name": { "$gt": "gabba", "$lt": "ergo" } } } } }') $cmd$);
+                                                                                                                  run_explain_and_trim                                                                                                                   
+---------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   indexName: brands.name_1
+   indexKey: {"brands.name": 1}
+   isMultiKey: true
+   indexBounds: ["brands.name": ("gabba", { })], ["brands.name": ["", "ergo")]
+   innerScanLoops: 4 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1), (isInequality: true, estimatedEntryCount: 7)]
+   ->  Bitmap Heap Scan on documents_10641_1064002 collection (actual rows=1 loops=1)
+         Filter: (document @#? '{ "brands" : { "name" : { "$gt" : "gabba", "$lt" : "ergo" } } }'::bson)
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on "brands.name_1" (actual rows=1 loops=1)
+               Index Cond: (document @<> '{ "brands.name" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "2" }, "value" : "gabba", "isTopLevel" : false }, { "op" : { "$numberInt" : "4" }, "value" : "ergo", "isTopLevel" : false } ] } }'::bson)
+(13 rows)
+
+-- this can now join the elemMatch filters
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
+    '{ "find": "cmp_elemmatch_ops", "filter": { "brands.name": { "$elemMatch": { "$gt": "gabba", "$lt": "ergo" } } } }') $cmd$);
+                                                                                                                 run_explain_and_trim                                                                                                                  
+---------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+   indexName: brands.name_1
+   indexKey: {"brands.name": 1}
+   isMultiKey: true
+   indexBounds: ["brands.name": ("gabba", "ergo")]
+   innerScanLoops: 0 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
+   ->  Bitmap Heap Scan on documents_10641_1064002 collection (actual rows=0 loops=1)
+         Filter: (document @#? '{ "brands.name" : { "$gt" : "gabba", "$lt" : "ergo" } }'::bson)
+         ->  Bitmap Index Scan on "brands.name_1" (actual rows=0 loops=1)
+               Index Cond: (document @<> '{ "brands.name" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "2" }, "value" : "gabba", "isTopLevel" : true }, { "op" : { "$numberInt" : "4" }, "value" : "ergo", "isTopLevel" : true } ] } }'::bson)
+(12 rows)
+
+-- disjoint filter handling for elemMatch and non elemMatch: this matches a document since these are matching different elements of the array.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('comp_elmdb',
+    '{ "find": "cmp_elemmatch_ops", "filter": { "price": { "$eq": 110, "$elemMatch": { "$gt": 155, "$lt": 165 } } } }') $cmd$);
+                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                  
+---------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   indexName: price_1
+   indexKey: {"price": 1}
+   isMultiKey: true
+   indexBounds: ["price": [110, 110]], ["price": (155, 165)]
+   innerScanLoops: 1 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 1), (isInequality: true, estimatedEntryCount: 1)]
+   ->  Bitmap Heap Scan on documents_10641_1064002 collection (actual rows=1 loops=1)
+         Recheck Cond: (document @= '{ "price" : { "$numberInt" : "110" } }'::bson)
+         Filter: (document @#? '{ "price" : { "$gt" : { "$numberInt" : "155" }, "$lt" : { "$numberInt" : "165" } } }'::bson)
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on price_1 (actual rows=1 loops=1)
+               Index Cond: ((document @= '{ "price" : { "$numberInt" : "110" } }'::bson) AND (document @<> '{ "price" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "2" }, "value" : { "$numberInt" : "155" }, "isTopLevel" : true }, { "op" : { "$numberInt" : "4" }, "value" : { "$numberInt" : "165" }, "isTopLevel" : true } ] } }'::bson))
+(14 rows)
+
+-- test scenarios with prefix index and suffix object filters
+SELECT COUNT(documentdb_api.insert_one('comp_elmdb', 'setup_1', 
+    FORMAT('{ "_id": %s, "orgId": "8970674054893216127", "delFlag": 1, "state": 1, "workflowNodeList": [ { "nodePersonList": [ { "state": 4, "delFlag": 1, "personId": "5521063216615886977" } ] }] }', i)::bson)) FROM generate_series(1, 1000) i;
+NOTICE:  creating collection
+ count 
+---------------------------------------------------------------------
+  1000
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_elmdb',
+    '{ "createIndexes": "setup_1", "indexes": [ { "key": { "orgId": 1, "delFlag": 1, "state": 1, "workFlowNodeList.nodePersonList.personId": 1, "workFlowNodeList.nodePersonList.state": 1, "workFlowNodeList.nodePersonList.delFlag": 1, "name": 1 }, "name": "idx2", "enableOrderedIndex": true } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE documentdb_data.documents_10642;
+EXPLAIN (VERBOSE ON, COSTS OFF, VERBOSE ON) SELECT document from bson_aggregation_find('comp_elmdb',
+    '{ "find": "setup_1", "filter": { "orgId": { "$in": [ "8970674054893216127", "7368253168030687073" ] }, "delFlag": 1, "state": { "$in": [ 1, 2, 3 ] }, "workFlowNodeList.nodePersonList": { "$elemMatch": { "personId": "5521063216615886977", "state": 4, "delFlag": 1 } } } }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
+---------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   indexName: idx2
+   indexKey: {"orgId": 1,"delFlag": 1,"state": 1,"workFlowNodeList.nodePersonList.personId": 1,"workFlowNodeList.nodePersonList.state": 1,"workFlowNodeList.nodePersonList.delFlag": 1,"name": 1}
+   isMultiKey: false
+   indexBounds: ["orgId": ["8970674054893216127", "8970674054893216127"], "delFlag": [1, 1], "state": [1, 1], "workFlowNodeList.nodePersonList.personId": ["5521063216615886977", "5521063216615886977"], "workFlowNodeList.nodePersonList.state": [4, 4], "workFlowNodeList.nodePersonList.delFlag": [1, 1], "name": (MinKey, MaxKey)], ["orgId": ["7368253168030687073", "7368253168030687073"], "delFlag": [1, 1], "state": [1, 1], "workFlowNodeList.nodePersonList.personId": ["5521063216615886977", "5521063216615886977"], "workFlowNodeList.nodePersonList.state": [4, 4], "workFlowNodeList.nodePersonList.delFlag": [1, 1], "name": (MinKey, MaxKey)], ["orgId": ["8970674054893216127", "8970674054893216127"], "delFlag": [1, 1], "state": [2, 2], "workFlowNodeList.nodePersonList.personId": ["5521063216615886977", "5521063216615886977"], "workFlowNodeList.nodePersonList.state": [4, 4], "workFlowNodeList.nodePersonList.delFlag": [1, 1], "name": (MinKey, MaxKey)], ["orgId": ["7368253168030687073", "7368253168030687073"], "delFlag": [1, 1], "state": [2, 2], "workFlowNodeList.nodePersonList.personId": ["5521063216615886977", "5521063216615886977"], "workFlowNodeList.nodePersonList.state": [4, 4], "workFlowNodeList.nodePersonList.delFlag": [1, 1], "name": (MinKey, MaxKey)], ["orgId": ["8970674054893216127", "8970674054893216127"], "delFlag": [1, 1], "state": [3, 3], "workFlowNodeList.nodePersonList.personId": ["5521063216615886977", "5521063216615886977"], "workFlowNodeList.nodePersonList.state": [4, 4], "workFlowNodeList.nodePersonList.delFlag": [1, 1], "name": (MinKey, MaxKey)], ["orgId": ["7368253168030687073", "7368253168030687073"], "delFlag": [1, 1], "state": [3, 3], "workFlowNodeList.nodePersonList.personId": ["5521063216615886977", "5521063216615886977"], "workFlowNodeList.nodePersonList.state": [4, 4], "workFlowNodeList.nodePersonList.delFlag": [1, 1], "name": (MinKey, MaxKey)]
+   ->  Index Scan using idx2 on documentdb_data.documents_10642_1064004 collection
+         Output: document
+         Index Cond: ((collection.document @*= '{ "orgId" : [ "8970674054893216127", "7368253168030687073" ] }'::bson) AND (collection.document @= '{ "delFlag" : { "$numberInt" : "1" } }'::bson) AND (collection.document @*= '{ "state" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson) AND (collection.document @<> '{ "workFlowNodeList.nodePersonList.personId" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "5521063216615886977", "isTopLevel" : false } ] } }'::bson) AND (collection.document @<> '{ "workFlowNodeList.nodePersonList.state" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "4" }, "isTopLevel" : false } ] } }'::bson) AND (collection.document @<> '{ "workFlowNodeList.nodePersonList.delFlag" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" }, "isTopLevel" : false } ] } }'::bson))
+         Filter: (collection.document @#? '{ "workFlowNodeList.nodePersonList" : { "personId" : "5521063216615886977", "state" : { "$numberInt" : "4" }, "delFlag" : { "$numberInt" : "1" } } }'::bson)
+(10 rows)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_elmdb',
+    '{ "createIndexes": "setup_1", "indexes": [ { "key": {"orgId": 1, "delFlag": 1, "state":1, "createTime": -1 }, "name": "idx1", "enableOrderedIndex": true } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- picks idx1 due to cost function being equivalent.
+ANALYZE documentdb_data.documents_10642;
+EXPLAIN (VERBOSE ON, COSTS OFF, VERBOSE ON) SELECT document from bson_aggregation_find('comp_elmdb',
+    '{ "find": "setup_1", "filter": { "orgId": { "$in": [ "8970674054893216127", "7368253168030687073" ] }, "delFlag": 1, "state": { "$in": [ 1, 2, 3 ] }, "workFlowNodeList.nodePersonList": { "$elemMatch": { "personId": "5521063216615886977", "state": 4, "delFlag": 1 } } } }');
+                                                                                                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                            
+---------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   indexName: idx1
+   indexKey: {"orgId": 1,"delFlag": 1,"state": 1,"createTime": -1}
+   isMultiKey: false
+   indexBounds: ["orgId": ["8970674054893216127", "8970674054893216127"], "delFlag": [1, 1], "state": [1, 1], "createTime": DESC(MinKey, MaxKey)], ["orgId": ["7368253168030687073", "7368253168030687073"], "delFlag": [1, 1], "state": [1, 1], "createTime": DESC(MinKey, MaxKey)], ["orgId": ["8970674054893216127", "8970674054893216127"], "delFlag": [1, 1], "state": [2, 2], "createTime": DESC(MinKey, MaxKey)], ["orgId": ["7368253168030687073", "7368253168030687073"], "delFlag": [1, 1], "state": [2, 2], "createTime": DESC(MinKey, MaxKey)], ["orgId": ["8970674054893216127", "8970674054893216127"], "delFlag": [1, 1], "state": [3, 3], "createTime": DESC(MinKey, MaxKey)], ["orgId": ["7368253168030687073", "7368253168030687073"], "delFlag": [1, 1], "state": [3, 3], "createTime": DESC(MinKey, MaxKey)]
+   ->  Index Scan using idx1 on documentdb_data.documents_10642_1064004 collection
+         Output: document
+         Index Cond: ((collection.document @*= '{ "orgId" : [ "8970674054893216127", "7368253168030687073" ] }'::bson) AND (collection.document @= '{ "delFlag" : { "$numberInt" : "1" } }'::bson) AND (collection.document @*= '{ "state" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson))
+         Filter: (collection.document @#? '{ "workFlowNodeList.nodePersonList" : { "personId" : "5521063216615886977", "state" : { "$numberInt" : "4" }, "delFlag" : { "$numberInt" : "1" } } }'::bson)
+(10 rows)
+
+set enable_seqscan to off;
+set enable_bitmapscan to off;
+set documentdb.enablecompositeindexplanner to on;
+-- TODO: We need to ensure the costing of rum indexes with composite works better here.
+SELECT documentdb_distributed_test_helpers.drop_primary_key('comp_elmdb', 'setup_1');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+EXPLAIN (VERBOSE ON, COSTS OFF, VERBOSE ON) SELECT document from bson_aggregation_find('comp_elmdb',
+    '{ "find": "setup_1", "filter": { "orgId": { "$in": [ "8970674054893216127", "7368253168030687073" ] }, "delFlag": 1, "state": { "$in": [ 1, 2, 3 ] }, "workFlowNodeList.nodePersonList": { "$elemMatch": { "personId": "5521063216615886977", "state": 4, "delFlag": 1 } } } }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
+---------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   indexName: idx2
+   indexKey: {"orgId": 1,"delFlag": 1,"state": 1,"workFlowNodeList.nodePersonList.personId": 1,"workFlowNodeList.nodePersonList.state": 1,"workFlowNodeList.nodePersonList.delFlag": 1,"name": 1}
+   isMultiKey: false
+   indexBounds: ["orgId": ["8970674054893216127", "8970674054893216127"], "delFlag": [1, 1], "state": [1, 1], "workFlowNodeList.nodePersonList.personId": ["5521063216615886977", "5521063216615886977"], "workFlowNodeList.nodePersonList.state": [4, 4], "workFlowNodeList.nodePersonList.delFlag": [1, 1], "name": (MinKey, MaxKey)], ["orgId": ["7368253168030687073", "7368253168030687073"], "delFlag": [1, 1], "state": [1, 1], "workFlowNodeList.nodePersonList.personId": ["5521063216615886977", "5521063216615886977"], "workFlowNodeList.nodePersonList.state": [4, 4], "workFlowNodeList.nodePersonList.delFlag": [1, 1], "name": (MinKey, MaxKey)], ["orgId": ["8970674054893216127", "8970674054893216127"], "delFlag": [1, 1], "state": [2, 2], "workFlowNodeList.nodePersonList.personId": ["5521063216615886977", "5521063216615886977"], "workFlowNodeList.nodePersonList.state": [4, 4], "workFlowNodeList.nodePersonList.delFlag": [1, 1], "name": (MinKey, MaxKey)], ["orgId": ["7368253168030687073", "7368253168030687073"], "delFlag": [1, 1], "state": [2, 2], "workFlowNodeList.nodePersonList.personId": ["5521063216615886977", "5521063216615886977"], "workFlowNodeList.nodePersonList.state": [4, 4], "workFlowNodeList.nodePersonList.delFlag": [1, 1], "name": (MinKey, MaxKey)], ["orgId": ["8970674054893216127", "8970674054893216127"], "delFlag": [1, 1], "state": [3, 3], "workFlowNodeList.nodePersonList.personId": ["5521063216615886977", "5521063216615886977"], "workFlowNodeList.nodePersonList.state": [4, 4], "workFlowNodeList.nodePersonList.delFlag": [1, 1], "name": (MinKey, MaxKey)], ["orgId": ["7368253168030687073", "7368253168030687073"], "delFlag": [1, 1], "state": [3, 3], "workFlowNodeList.nodePersonList.personId": ["5521063216615886977", "5521063216615886977"], "workFlowNodeList.nodePersonList.state": [4, 4], "workFlowNodeList.nodePersonList.delFlag": [1, 1], "name": (MinKey, MaxKey)]
+   ->  Index Scan using idx2 on documentdb_data.documents_10642_1064004 collection
+         Output: document
+         Index Cond: ((collection.document @*= '{ "orgId" : [ "8970674054893216127", "7368253168030687073" ] }'::bson) AND (collection.document @= '{ "delFlag" : { "$numberInt" : "1" } }'::bson) AND (collection.document @*= '{ "state" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson) AND (collection.document @<> '{ "workFlowNodeList.nodePersonList.personId" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "5521063216615886977", "isTopLevel" : false } ] } }'::bson) AND (collection.document @<> '{ "workFlowNodeList.nodePersonList.state" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "4" }, "isTopLevel" : false } ] } }'::bson) AND (collection.document @<> '{ "workFlowNodeList.nodePersonList.delFlag" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" }, "isTopLevel" : false } ] } }'::bson))
+         Filter: (collection.document @#? '{ "workFlowNodeList.nodePersonList" : { "personId" : "5521063216615886977", "state" : { "$numberInt" : "4" }, "delFlag" : { "$numberInt" : "1" } } }'::bson)
+(10 rows)
 

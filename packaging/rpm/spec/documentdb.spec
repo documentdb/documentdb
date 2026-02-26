@@ -29,7 +29,7 @@ Requires:       (postgresql%{pg_version} or percona-postgresql%{pg_version})
 Requires:       (postgresql%{pg_version}-server or percona-postgresql%{pg_version}-server)
 Requires:       (pgvector_%{pg_version} or percona-pgvector_%{pg_version})
 Requires:       pg_cron_%{pg_version}
-Requires:       postgis34_%{pg_version}
+Requires:       postgis36_%{pg_version}
 Requires:       rum_%{pg_version}
 # Libbson is now bundled, so no runtime Requires for it.
 # pcre2 is statically linked.
@@ -88,12 +88,9 @@ rm -rf %{buildroot}/usr/src/documentdb/build
 
 %files
 %defattr(-,root,root,-)
-/usr/pgsql-%{pg_version}/lib/pg_documentdb_core.so
-/usr/pgsql-%{pg_version}/lib/pg_documentdb.so
-/usr/pgsql-%{pg_version}/share/extension/documentdb_core.control
-/usr/pgsql-%{pg_version}/share/extension/documentdb_core--*.sql
-/usr/pgsql-%{pg_version}/share/extension/documentdb.control
-/usr/pgsql-%{pg_version}/share/extension/documentdb--*.sql
+/usr/pgsql-%{pg_version}/lib/*.so
+/usr/pgsql-%{pg_version}/share/extension/*.control
+/usr/pgsql-%{pg_version}/share/extension/*.sql
 /usr/src/documentdb
 /usr/lib/intelmathlib/LIBRARY/libbid.a
 # Bundled libbson files:

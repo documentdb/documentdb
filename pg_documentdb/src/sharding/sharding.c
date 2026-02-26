@@ -28,11 +28,17 @@
 #include "metadata/collection.h"
 #include "collation/collation.h"
 #include "utils/guc_utils.h"
+#include "utils/version_utils.h"
+#include "utils/version_utils.h"
+#include "utils/list_utils.h"
 
 extern bool EnableNativeColocation;
 extern int ShardingMaxChunks;
 extern bool RecreateRetryTableOnSharding;
 extern char *ApiGucPrefixV2;
+extern bool EnableRbacCompliantSchemas;
+extern bool EnablePrepareUnique;
+extern bool ForceUpdateIndexInline;
 
 /* Metadata about shard keys - this is unchanged through
  * iterating though the query for the shard key.
@@ -142,6 +148,9 @@ static void ShardCollectionLegacy(PG_FUNCTION_ARGS);
 static void ParseShardCollectionRequest(pgbson *args, ShardCollectionArgs *shardArgs);
 static void ParseReshardCollectionRequest(pgbson *args, ShardCollectionArgs *shardArgs);
 static void ParseUnshardCollectionRequest(pgbson *args, ShardCollectionArgs *shardArgs);
+static void RunPrepareUniqueForCollectionIndexes(const char *databaseName, const
+												 char *collectionName, Datum
+												 indexNamesArray);
 
 
 /*
@@ -1205,7 +1214,15 @@ ShardCollectionCore(ShardCollectionArgs *args)
 		collection = GetMongoCollectionByNameDatum(
 			databaseDatum, collectionDatum, AccessShareLock);
 
-		Assert(collection != NULL);
+		if (collection == NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("Failed to create collection %s.%s for sharding",
+								   args->databaseName, args->collectionName),
+							errdetail_log(
+								"Collection was not found after implicit create for sharding for %s.%s",
+								args->databaseName, args->collectionName)));
+		}
 	}
 
 	if (collection->shardKey == NULL &&
@@ -1312,6 +1329,9 @@ ShardCollectionCore(ShardCollectionArgs *args)
 	if (args->numChunks > 0)
 	{
 		shardCount = args->numChunks;
+
+		/* Custom numChunks requires breaking colocation */
+		colocateWith = "none";
 	}
 
 	const char *distributionColumn = "shard_key_value";
@@ -1390,11 +1410,25 @@ ShardCollectionCore(ShardCollectionArgs *args)
 					 tmpDataTableName, collection->tableName);
 	ExtensionExecuteQueryViaSPI(queryInfo->data, readOnly, SPI_OK_UTILITY, &isNull);
 
-	/* Update new table owner to admin role */
-	resetStringInfo(queryInfo);
-	appendStringInfo(queryInfo,
-					 "ALTER TABLE %s OWNER TO %s",
-					 qualifiedDataTableName, ApiAdminRole);
+	/* TODO: Remove GUC before migrating ownership of old documents to to documentdb_readwrite_role*/
+	if (EnableRbacCompliantSchemas && IsClusterVersionAtleast(DocDB_V0, 110, 0))
+	{
+		/* Update new table owner to readwrite role */
+		resetStringInfo(queryInfo);
+		appendStringInfo(queryInfo,
+						 "ALTER TABLE %s OWNER TO %s",
+						 qualifiedDataTableName, ApiReadWriteRole);
+	}
+	else
+	{
+		/* Update new table owner to admin role */
+		resetStringInfo(queryInfo);
+		appendStringInfo(queryInfo,
+						 "ALTER TABLE %s OWNER TO %s",
+						 qualifiedDataTableName, ApiAdminRole);
+	}
+
+
 	ExtensionExecuteQueryViaSPI(queryInfo->data, readOnly, SPI_OK_UTILITY, &isNull);
 
 	/* Make GUC default eventually: Recreate retry_table here with new shards */
@@ -1413,6 +1447,28 @@ ShardCollectionCore(ShardCollectionArgs *args)
 		int shardCountForRetry = 0;
 		CreateRetryTable(retryTableNameInfo->data, qualifiedDataTableName,
 						 distributionColumn, shardCountForRetry);
+	}
+
+	bool isPrepareUniqueArrayNull = true;
+	Datum prepareUniqueNamesArray = (Datum) 0;
+
+	bool isPrepareUniqueSupported = EnablePrepareUnique &&
+									IsClusterVersionAtleast(DocDB_V0, 109, 0);
+	if (isPrepareUniqueSupported)
+	{
+		/* Get prepareUnique index names that need to be converted after rebuilt. */
+		resetStringInfo(queryInfo);
+		appendStringInfo(queryInfo,
+						 " SELECT array_agg((index_spec).index_name)::text[] FROM %s.collection_indexes WHERE "
+						 "(index_is_valid OR %s.index_build_is_in_progress(index_id)) AND collection_id = %lu AND "
+						 "(index_spec).index_options::%s OPERATOR(%s.@@) '{\"prepareUnique\": true}';",
+						 ApiCatalogSchemaName, ApiInternalSchemaName,
+						 collection->collectionId, FullBsonTypeName,
+						 ApiCatalogSchemaName);
+
+		prepareUniqueNamesArray = ExtensionExecuteQueryViaSPI(queryInfo->data, readOnly,
+															  SPI_OK_SELECT,
+															  &isPrepareUniqueArrayNull);
 	}
 
 	/* Get all valid or in progress indexes and delete them from metadata entries related to the collection.
@@ -1463,8 +1519,10 @@ ShardCollectionCore(ShardCollectionArgs *args)
 		int savedGUCLevel = NewGUCNestLevel();
 		SetGUCLocally(psprintf("%s.defaultUseCompositeOpClass", ApiGucPrefixV2), "false");
 
+		bool buildAsUniqueForPrepareUnique = isPrepareUniqueSupported;
 		CreateIndexesArg createIndexesArg = ParseCreateIndexesArg(databaseDatum,
-																  createIndexesMsg);
+																  createIndexesMsg,
+																  buildAsUniqueForPrepareUnique);
 		bool skipCheckCollectionCreate = createIndexesArg.blocking;
 		bool uniqueIndexOnly = false;
 
@@ -1473,11 +1531,74 @@ ShardCollectionCore(ShardCollectionArgs *args)
 										skipCheckCollectionCreate, uniqueIndexOnly);
 
 		RollbackGUCChange(savedGUCLevel);
+
+		/* if there were any prepareUnique indexes, run coll mod on the new collection to make them unique */
+		if (!isPrepareUniqueArrayNull)
+		{
+			RunPrepareUniqueForCollectionIndexes(args->databaseName,
+												 args->collectionName,
+												 prepareUniqueNamesArray);
+		}
 	}
 }
 
 
 static void
+RunPrepareUniqueForCollectionIndexes(const char *databaseName, const char *collectionName,
+									 Datum indexNamesArray)
+{
+	Datum *elems = NULL;
+	int nelems = 0;
+	int nargs = 3;
+	Oid argTypes[3] = { TEXTOID, TEXTOID, BsonTypeId() };
+	Datum values[3];
+	values[0] = CStringGetTextDatum(databaseName);
+	values[1] = CStringGetTextDatum(collectionName);
+	char *argNulls = NULL;
+	bool readOnly = false;
+
+	ArrayExtractDatums(DatumGetArrayTypeP(indexNamesArray), TEXTOID,
+					   &elems, NULL, &nelems);
+
+	StringInfo queryInfo = makeStringInfo();
+	appendStringInfo(queryInfo,
+					 "SELECT %s.coll_mod($1, $2, $3)",
+					 ApiSchemaNameV2);
+
+	for (int i = 0; i < nelems; i++)
+	{
+		const char *indexName = TextDatumGetCString(elems[i]);
+		pgbson_writer collModSpecWriter;
+		PgbsonWriterInit(&collModSpecWriter);
+		PgbsonWriterAppendUtf8(&collModSpecWriter, "collMod", 7,
+							   collectionName);
+
+		pgbson_writer indexArgWriter;
+		PgbsonWriterStartDocument(&collModSpecWriter, "index", 5, &indexArgWriter);
+		PgbsonWriterAppendUtf8(&indexArgWriter, "name", 4,
+							   indexName);
+		PgbsonWriterAppendBool(&indexArgWriter, "prepareUnique", 13, true);
+		PgbsonWriterEndDocument(&collModSpecWriter, &indexArgWriter);
+
+		values[2] = PointerGetDatum(PgbsonWriterGetPgbson(&collModSpecWriter));
+
+		bool isNull = true;
+		ExtensionExecuteQueryWithArgsViaSPI(queryInfo->data, nargs, argTypes,
+											values, argNulls, readOnly,
+											SPI_OK_SELECT, &isNull);
+
+		if (isNull)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"Failed to convert prepareUnique index: \"%s\" when sharding the collection",
+								indexName)));
+		}
+	}
+}
+
+
+void
 ParseNamespaceName(const char *namespacePath, char **databaseName, char **collectionName)
 {
 	StringView strView = CreateStringViewFromString(namespacePath);

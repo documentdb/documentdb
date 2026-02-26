@@ -13,8 +13,10 @@
 
 #include <optimizer/plancat.h>
 
+struct ReplaceExtensionFunctionContext;
 bool UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
-												  RangeTblEntry *rte);
+												  RangeTblEntry *rte, struct
+												  ReplaceExtensionFunctionContext *context);
 
 void UpdatePathsToForceRumIndexScanToBitmapHeapScan(PlannerInfo *root, RelOptInfo *rel);
 

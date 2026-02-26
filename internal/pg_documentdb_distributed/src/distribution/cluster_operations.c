@@ -19,10 +19,12 @@
 #include "nodes/makefuncs.h"
 
 #include "utils/documentdb_errors.h"
+#include "infrastructure/job_management.h"
 #include "metadata/collection.h"
 #include "metadata/index.h"
 #include "metadata/metadata_cache.h"
 #include "utils/guc_utils.h"
+#include "utils/lsyscache.h"
 #include "utils/query_utils.h"
 #include "utils/version_utils.h"
 #include "utils/error_utils.h"
@@ -35,9 +37,9 @@ extern char *ApiGucPrefix;
 extern char *ClusterAdminRole;
 
 char *ApiDistributedSchemaName = "documentdb_api_distributed";
+char *ApiDistributedSchemaNameV2 = "documentdb_api_distributed";
 char *DistributedExtensionName = "documentdb_distributed";
 bool CreateDistributedFunctions = false;
-bool CreateIndexBuildQueueTable = false;
 
 typedef struct ClusterOperationVersions
 {
@@ -49,7 +51,7 @@ extern char * GetIndexQueueName(void);
 
 static char * GetClusterInitializedVersion(void);
 static void DistributeCrudFunctions(void);
-static void CreateIndexBuildsTable(void);
+static void CreateIndexBuildsTable(bool includeOptions, bool includeDropCommandType);
 static void CreateValidateDbNameTrigger(void);
 static void AlterDefaultDatabaseObjects(void);
 static char * UpdateClusterMetadata(bool isInitialize);
@@ -59,7 +61,6 @@ static void CreateDistributedFunction(const char *functionName, const
 									  const char *colocateWith, const
 									  char *forceDelegation);
 static void DropLegacyChangeStream(void);
-static void AddUserColumnsToIndexQueue(void);
 static void TriggerInvalidateClusterMetadata(void);
 static void AddCollectionsTableViewDefinition(void);
 static void AddCollectionsTableValidationColumns(void);
@@ -69,6 +70,7 @@ static void GetInstalledVersion(ExtensionVersion *installedVersion);
 static void ParseVersionString(ExtensionVersion *extensionVersion, char *versionString);
 static bool SetupCluster(bool isInitialize);
 static void SetPermissionsForReadOnlyRole(void);
+static void SetPermissionsForReadWriteRole(void);
 static void CheckAndReplicateReferenceTable(const char *schema, const char *tableName);
 static void UpdateChangesTableOwnerToAdminRole(void);
 
@@ -239,9 +241,12 @@ SetupCluster(bool isInitialize)
 		AddCollectionsTableValidationColumns();
 	}
 
-	if (ShouldRunSetupForVersion(&versions, DocDB_V0, 12, 0))
+	if (ShouldRunSetupForVersion(&versions, DocDB_V0, 12, 0) &&
+		!ShouldRunSetupForVersion(&versions, DocDB_V0, 109, 0))
 	{
-		CreateIndexBuildsTable();
+		bool includeOptions = false;
+		bool includeDropCommandType = false;
+		CreateIndexBuildsTable(includeOptions, includeDropCommandType);
 	}
 
 	if (ShouldRunSetupForVersion(&versions, DocDB_V0, 12, 0) &&
@@ -258,7 +263,6 @@ SetupCluster(bool isInitialize)
 	if (ShouldRunSetupForVersion(&versions, DocDB_V0, 14, 0))
 	{
 		DropLegacyChangeStream();
-		AddUserColumnsToIndexQueue();
 	}
 
 	if (ShouldRunSetupForVersion(&versions, DocDB_V0, 15, 0))
@@ -325,6 +329,23 @@ SetupCluster(bool isInitialize)
 		UpdateChangesTableOwnerToAdminRole();
 	}
 
+	if (ShouldRunSetupForVersion(&versions, DocDB_V0, 109, 0))
+	{
+		bool includeOptions = true;
+		bool includeDropCommandType = true;
+		CreateIndexBuildsTable(includeOptions, includeDropCommandType);
+	}
+
+	if (ShouldRunSetupForVersion(&versions, DocDB_V0, 110, 0))
+	{
+		SetPermissionsForReadWriteRole();
+
+		/* Make roles a reference table so it's replicated to all nodes */
+		StringInfo tableName = makeStringInfo();
+		appendStringInfo(tableName, "%s.roles", ApiCatalogSchemaName);
+		CreateReferenceTable(tableName->data);
+	}
+
 	/* we call the post setup cluster hook to allow the extension to do any additional setup */
 	PostSetupClusterHook(isInitialize, &ShouldRunSetupForVersionForHook, &versions);
 
@@ -371,12 +392,16 @@ DistributeCrudFunctions()
 
 	char changesRelation[50];
 	sprintf(changesRelation, "%s.changes", ApiDataSchemaName);
-	const char *distributionColumn = "shard_key_value";
-	const char *colocateWith = "none";
-	int shardCount = 0;
-	DistributePostgresTable(changesRelation, distributionColumn, colocateWith,
-							shardCount);
+	Oid changesRelationOid = get_relname_relid("changes", ApiDataNamespaceOid());
 
+	if (changesRelationOid != InvalidOid)
+	{
+		const char *distributionColumn = "shard_key_value";
+		const char *colocateWith = "none";
+		int shardCount = 0;
+		DistributePostgresTable(changesRelation, distributionColumn, colocateWith,
+								shardCount);
+	}
 
 	if (!CreateDistributedFunctions)
 	{
@@ -422,97 +447,28 @@ DistributeCrudFunctions()
 }
 
 
-static void
-CreateIndexBuildQueueCore()
-{
-	bool readOnly = false;
-	bool isNull = false;
-
-	StringInfo dropStr = makeStringInfo();
-	appendStringInfo(dropStr,
-					 "DROP TABLE IF EXISTS %s;", GetIndexQueueName());
-	ExtensionExecuteQueryViaSPI(dropStr->data, readOnly, SPI_OK_UTILITY,
-								&isNull);
-
-	StringInfo createStr = makeStringInfo();
-	appendStringInfo(createStr,
-					 "CREATE TABLE IF NOT EXISTS %s ("
-					 "index_cmd text not null,"
-
-	                 /* 'C' for CREATE INDEX and 'R' for REINDEX */
-					 "cmd_type char CHECK (cmd_type IN ('C', 'R')),"
-					 "index_id integer not null,"
-
-	                 /* index_cmd_status gets represented as enum IndexCmdStatus in index.h */
-					 "index_cmd_status integer default 1,"
-					 "global_pid bigint,"
-					 "start_time timestamp WITH TIME ZONE,"
-					 "collection_id bigint not null,"
-
-	                 /* Used to enter the error encounter during execution of index_cmd */
-					 "comment %s.bson,"
-
-	                 /* current attempt counter for retrying the failed request */
-					 "attempt smallint,"
-
-	                 /* update_time shows the time when request was updated in the table */
-					 "update_time timestamp with time zone DEFAULT now()"
-
-					 ")", GetIndexQueueName(), CoreSchemaName);
-
-	ExtensionExecuteQueryViaSPI(createStr->data, readOnly, SPI_OK_UTILITY,
-								&isNull);
-
-	resetStringInfo(createStr);
-	appendStringInfo(createStr,
-					 "CREATE INDEX IF NOT EXISTS %s_index_queue_indexid_cmdtype on %s (index_id, cmd_type)",
-					 ExtensionObjectPrefixV2, GetIndexQueueName());
-	ExtensionExecuteQueryViaSPI(createStr->data, readOnly, SPI_OK_UTILITY,
-								&isNull);
-
-	resetStringInfo(createStr);
-	appendStringInfo(createStr,
-					 "CREATE INDEX IF NOT EXISTS %s_index_queue_cmdtype_collectionid_cmdstatus on %s (cmd_type, collection_id, index_cmd_status)",
-					 ExtensionObjectPrefixV2, GetIndexQueueName());
-	ExtensionExecuteQueryViaSPI(createStr->data, readOnly, SPI_OK_UTILITY,
-								&isNull);
-
-	resetStringInfo(createStr);
-	appendStringInfo(createStr,
-					 "GRANT SELECT ON TABLE %s TO public", GetIndexQueueName());
-	ExtensionExecuteQueryViaSPI(createStr->data, readOnly, SPI_OK_UTILITY,
-								&isNull);
-
-	resetStringInfo(createStr);
-	appendStringInfo(createStr,
-					 "GRANT ALL ON TABLE %s TO %s, %s",
-					 GetIndexQueueName(),
-					 ApiAdminRoleV2,
-					 ApiAdminRole);
-	ExtensionExecuteQueryViaSPI(createStr->data, readOnly, SPI_OK_UTILITY,
-								&isNull);
-}
-
-
 /*
  * Create index queue table, its indexes and grant permissions.
  */
 static void
-CreateIndexBuildsTable()
+CreateIndexBuildsTable(bool includeOptions, bool includeDropCommandType)
 {
-	/* Create index builds table if legacy compat */
-	if (CreateIndexBuildQueueTable)
-	{
-		CreateIndexBuildQueueCore();
-	}
-
 	bool readOnly = false;
 	bool isNull = false;
-	StringInfo createStr = makeStringInfo();
-	appendStringInfo(createStr,
+	StringInfo queryStr = makeStringInfo();
+	const char *indexQueueTableName = GetIndexQueueName();
+	appendStringInfo(queryStr,
+					 "DROP TABLE IF EXISTS %s;", indexQueueTableName);
+	ExtensionExecuteQueryViaSPI(queryStr->data, readOnly, SPI_OK_UTILITY,
+								&isNull);
+
+	CreateIndexQueueIfNotExists(includeOptions, includeDropCommandType);
+
+	resetStringInfo(queryStr);
+	appendStringInfo(queryStr,
 					 "SELECT citus_add_local_table_to_metadata('%s')",
-					 GetIndexQueueName());
-	ExtensionExecuteQueryViaSPI(createStr->data, readOnly, SPI_OK_SELECT,
+					 indexQueueTableName);
+	ExtensionExecuteQueryViaSPI(queryStr->data, readOnly, SPI_OK_SELECT,
 								&isNull);
 }
 
@@ -784,39 +740,6 @@ DropLegacyChangeStream()
 
 
 /*
- * Add user_oid colum and its constraints to the index queue table.
- */
-void
-AddUserColumnsToIndexQueue()
-{
-	bool isNull = false;
-	bool readOnly = false;
-
-	StringInfo cmdStr = makeStringInfo();
-	appendStringInfo(cmdStr,
-					 "ALTER TABLE %s ADD COLUMN IF NOT EXISTS user_oid Oid;",
-					 GetIndexQueueName());
-	ExtensionExecuteQueryViaSPI(cmdStr->data, readOnly, SPI_OK_UTILITY,
-								&isNull);
-
-	/* We first drop the check constraint if it already exists. Some upgrade paths can create it before this function is executed. */
-	resetStringInfo(cmdStr);
-	appendStringInfo(cmdStr,
-					 "ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s_index_queue_user_oid_check;",
-					 GetIndexQueueName(), ExtensionObjectPrefixV2);
-	ExtensionExecuteQueryViaSPI(cmdStr->data, readOnly, SPI_OK_UTILITY,
-								&isNull);
-
-	resetStringInfo(cmdStr);
-	appendStringInfo(cmdStr,
-					 "ALTER TABLE %s ADD CONSTRAINT %s_index_queue_user_oid_check CHECK (user_oid IS NULL OR user_oid != '0'::oid);",
-					 GetIndexQueueName(), ExtensionObjectPrefixV2);
-	ExtensionExecuteQueryViaSPI(cmdStr->data, readOnly, SPI_OK_UTILITY,
-								&isNull);
-}
-
-
-/*
  * Invalidate the cluster version metadata cache for all active processes.
  */
 static void
@@ -946,6 +869,64 @@ SetPermissionsForReadOnlyRole()
 		ExtensionExecuteQueryViaSPI(cmdStr->data, readOnly, SPI_OK_UTILITY,
 									&isNull);
 	}
+}
+
+
+/*
+ * SetPermissionsForReadWriteRole - Set the right permissions for ApiReadWriteRole
+ */
+static void
+SetPermissionsForReadWriteRole()
+{
+	StringInfo cmdStr = makeStringInfo();
+	bool isNull = false;
+	appendStringInfo(cmdStr,
+					 "GRANT ALL ON TABLE %s TO %s",
+					 GetIndexQueueName(),
+					 ApiReadWriteRole);
+
+	ExtensionExecuteQueryViaSPI(cmdStr->data, false, SPI_OK_UTILITY,
+								&isNull);
+
+	resetStringInfo(cmdStr);
+	appendStringInfo(cmdStr,
+					 "GRANT SELECT, INSERT, DELETE, UPDATE ON TABLE  %s.collections TO %s",
+					 ApiCatalogSchemaName,
+					 ApiReadWriteRole);
+	ExtensionExecuteQueryViaSPI(cmdStr->data, false, SPI_OK_UTILITY,
+								&isNull);
+
+	resetStringInfo(cmdStr);
+	appendStringInfo(cmdStr,
+					 "GRANT SELECT, INSERT, DELETE, UPDATE ON TABLE %s.collection_indexes TO %s",
+					 ApiCatalogSchemaName,
+					 ApiReadWriteRole);
+	ExtensionExecuteQueryViaSPI(cmdStr->data, false, SPI_OK_UTILITY,
+								&isNull);
+
+	resetStringInfo(cmdStr);
+	appendStringInfo(cmdStr,
+					 "GRANT USAGE, SELECT, UPDATE ON TABLE %s.collections_collection_id_seq TO %s",
+					 ApiCatalogSchemaName,
+					 ApiReadWriteRole);
+	ExtensionExecuteQueryViaSPI(cmdStr->data, false, SPI_OK_UTILITY,
+								&isNull);
+	resetStringInfo(cmdStr);
+
+	appendStringInfo(cmdStr,
+					 "GRANT USAGE, SELECT, UPDATE ON TABLE %s.collection_indexes_index_id_seq TO %s",
+					 ApiCatalogSchemaName,
+					 ApiReadWriteRole);
+	ExtensionExecuteQueryViaSPI(cmdStr->data, false, SPI_OK_UTILITY,
+								&isNull);
+	resetStringInfo(cmdStr);
+
+	appendStringInfo(cmdStr,
+					 "GRANT SELECT ON TABLE %s.%s_cluster_data TO %s;",
+					 ApiDistributedSchemaName, ExtensionObjectPrefix, ApiReadWriteRole);
+	ExtensionExecuteQueryViaSPI(cmdStr->data, false, SPI_OK_UTILITY,
+								&isNull);
+	resetStringInfo(cmdStr);
 }
 
 

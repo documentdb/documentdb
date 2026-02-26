@@ -116,7 +116,7 @@ SELECT bson_expression_map('{"array": []}', 'array', '{ "": { "a" : "$a" }}', tr
 SELECT bson_expression_map('{"notarray": [{"a" : null}]}', 'array', '{ "": { "a" : "$a" }}', true);
 
 -- Document and array expressions with nested expressions that should be converted to a constant at the tree parse stage
-SET client_min_messages TO DEBUG3;
+SET client_min_messages TO DEBUG2;
 SELECT bson_expression_map('{"array": [{}]}', 'array', '{"result": {"a": [ { "$literal" : "foo" } ] }}');
 SELECT bson_expression_map('{"array": [{}]}', 'array', '{"result": [ { "$literal" : "foo" } ] }');
 SELECT bson_expression_map('{"array": [{}]}', 'array', '{"result": [ { "$undefined" : true } ] }');

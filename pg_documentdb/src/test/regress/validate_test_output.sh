@@ -7,17 +7,7 @@ source="${BASH_SOURCE[0]}"
 diff=/usr/bin/diff
 
 pg_version=$1
-
-while [[ -h $source ]]; do
-   scriptroot="$( cd -P "$( dirname "$source" )" && pwd )"
-   source="$(readlink "$source")"
-
-   # if $source was a relative symlink, we need to resolve it relative to the path where the
-   # symlink file was located
-   [[ $source != /* ]] && source="$scriptroot/$source"
-done
-
-scriptDir="$( cd -P "$( dirname "$source" )" && pwd )"
+check_directory=$2
 
 # Validate entry has tests's set next collection id.
 aggregateCollectionIdStr=""
@@ -26,7 +16,7 @@ maxCollectionIdStr=""
 validationExceptions="/sql/documentdb_test_helpers.sql /sql/public_api_schema.sql"
 
 echo "Validating test file output"
-for validationFile in $(ls $scriptDir/expected/*.out); do
+for validationFile in $(ls $check_directory/expected/*.out); do
     fileName=$(basename $validationFile);
     fileNameBase="${fileName%.out}";
     sqlFile="${fileName%.out}.sql";
@@ -73,7 +63,7 @@ for validationFile in $(ls $scriptDir/expected/*.out); do
 
     isSimpleIncludeTest=false
     if [[ "$sqlFile" =~ _pg[0-9]+.sql ]]; then
-        lineCount=$(cat $scriptDir/sql/$sqlFile | wc -l)
+        lineCount=$(cat $check_directory/sql/$sqlFile | wc -l)
         if [ $lineCount -eq 0 ]; then
             isSimpleIncludeTest="true"
         fi
@@ -92,6 +82,10 @@ for validationFile in $(ls $scriptDir/expected/*.out); do
     fi
 
     if ! [[ ":$collectionIdOutput:" =~ "00:" ]]; then
+        if [[ "$sqlFile" =~ "commands_shard_collection.sql" ]]; then
+            echo "Skipping collection ID multiple of 100 check for $sqlFile since it's a special case for testing the collection_id check"
+            continue;
+        fi
         echo "CollectionId used in '$sqlFile' must be a multiple of 100: " $collectionIdOutput;
         exit 1;
     fi
@@ -121,17 +115,18 @@ for validationFile in $(ls $scriptDir/expected/*.out); do
 done
 
 # Now validate for every sql file there's an .out file unless excluded
-for sqlFile in $(ls $scriptDir/sql/*.sql); do
+for sqlFile in $(ls $check_directory/sql/*.sql); do
     fileName=$(basename $sqlFile);
     fileNameBase="${fileName%.sql}";
-    outFile="$scriptDir/expected/$fileNameBase.out";
+    outFile="$check_directory/expected/$fileNameBase.out";
 
-    if [[ "$fileName" =~ "explain_core.sql" ]]; then
-        echo "Skipping explain_core.sql validation";
-        continue;
-    fi
-
+    includedInFiles=$(grep -l ${fileName} $check_directory/sql/*.sql || true)
     if [ ! -f "$outFile" ]; then
+        if [ "${includedInFiles:-}" != "" ]; then
+            echo "Skipping requirement for adding to schedule for $fileName since it's included in $includedInFiles"
+            continue;
+        fi
+
         echo "Test file '$sqlFile' does not have a corresponding expected output file '$outFile'. Please add to the schedule file and run tests.";
         exit 1;
     fi

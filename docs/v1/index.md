@@ -4,7 +4,6 @@
 
 It supports seamless CRUD operations on BSON data types, full-text search, geospatial queries, and vector embeddings — all within the robust PostgreSQL ecosystem.
 
-
 ## Getting Started with DocumentDB
 
 A curated collection of guides to help you understand what DocumentDB is, why it matters, and how to get up and running—from initial setup to advanced document operations.
@@ -18,10 +17,22 @@ A curated collection of guides to help you understand what DocumentDB is, why it
 - [Collection Management](v1/collection-management.md)
 - [Indexing](v1/indexing.md)
 - [Aggregation](v1/aggregation.md)
-- [Joins](v1/joins.md)
-- [Packaging](v1/packaging.md)
 - [Schema Validation](v1/schema_validation.md)
 - [JSON Schema (`$jsonSchema`)](v1/json_schema.md)
+- [Joins](v1/joins.md)
+- [Packaging](v1/packaging.md)
+- [Introduction](introduction.md)
+- [Why DocumentDB?](why-documentdb.md)
+- [DocumentDB Gateway](gateway.md)
+- [Prebuild Image](prebuild-image.md)
+- [Getting Started](get-started.md)
+- [Usage (CRUD)](usage.md)
+- [Collection Management](collection-management.md)
+- [Indexing](indexing.md)
+- [Aggregation](aggregation.md)
+- [Joins](joins.md)
+- [Packaging](packaging.md)
+- [Data Initialization](data-initialization.md)
 
 ---
 
@@ -44,10 +55,13 @@ A curated collection of guides to help you understand what DocumentDB is, why it
 ---
 
 ## 🐳 Quick Start with Docker
+
 ### Prebuild Image For DocumentDB
-There are prebuild images available for different platforms. You can find the list of prebuild images [here](v1/prebuild-image.md).
+
+There are prebuild images available for different platforms. You can find the list of [prebuild images here](prebuild-image.md).
 
 To run the prebuild image, use the following command:
+
 ```bash
 # example for Ubuntu 22.04, PostgreSQL 16, amd64
 # Choose the image tag according to your configuration
@@ -56,7 +70,9 @@ docker exec -it <container-id> bash
 ```
 
 ### Prebuild Image For DocumentDB with Gateway
+
 To run the prebuild image with the DocumentDB Gateway, use the following command:
+
 ```bash
 docker run -dt -p 10260:10260 -e USERNAME=<username> -e PASSWORD=<password> ghcr.io/microsoft/documentdb/documentdb-local:latest
 
@@ -67,6 +83,7 @@ mongosh localhost:10260 -u <username> -p <password> \
 ```
 
 ### Build DocumentDB from Source
+
 ```bash
 git clone https://github.com/microsoft/documentdb.git
 cd documentdb
@@ -95,7 +112,6 @@ To contribute, see these documents:
 Q1. While performing `make check` if you encounter error `FATAL:  "/home/documentdb/code/pg_documentdb_core/src/test/regress/tmp/data" has wrong ownership`?
 
 Please drop the `/home/documentdb/code/pg_documentdb_core/src/test/regress/tmp/` directory and rerun the `make check`.
-
 
 Contributors and users can join the [DocumentDB Discord channel in the Microsoft OSS server](https://aka.ms/documentdb_discord) for quick collaboration.
 

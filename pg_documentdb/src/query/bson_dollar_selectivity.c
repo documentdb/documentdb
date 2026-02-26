@@ -16,10 +16,11 @@
 #include <planner/mongo_query_operator.h>
 
 #include "query/bson_dollar_selectivity.h"
+#include "aggregation/bson_query_common.h"
 
 extern bool EnableNewOperatorSelectivityMode;
+extern bool EnableCompositeIndexPlanner;
 extern bool LowSelectivityForLookup;
-
 
 static double GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double
 									   defaultExprSelectivity);
@@ -72,7 +73,28 @@ GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 							 List *args, Oid collation, int varRelId,
 							 double defaultExprSelectivity)
 {
-	if (!EnableNewOperatorSelectivityMode)
+	/* Special case, check if it's a full scan */
+	DollarRangeParams params = { 0 };
+	if (selectivityOpExpr == BsonRangeMatchOperatorOid() &&
+		TryGetRangeParamsForRangeArgs(args, &params))
+	{
+		if (params.isFullScan)
+		{
+			return 1.0;
+		}
+
+		if (params.isElemMatch)
+		{
+			/* Since elemMatch runtime evaluation is not implemented yet, the generic_restriction_selectivity
+			 * yields a selectivity of 1.0 for small docs.
+			 * TODO: Once elemMatch runtime selectivity is enabled - remove this logic.
+			 */
+			return GetStatisticsNoStatsData(args, selectivityOpExpr,
+											defaultExprSelectivity);
+		}
+	}
+
+	if (!EnableNewOperatorSelectivityMode && !EnableCompositeIndexPlanner)
 	{
 		return GetDisableStatisticSelectivity(args, defaultExprSelectivity);
 	}
@@ -120,29 +142,40 @@ GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double defaultExprSe
 	}
 
 	Const *secondConst = (Const *) secondNode;
-	const MongoIndexOperatorInfo *indexOp;
+	BsonIndexStrategy indexStrategy = BSON_INDEX_STRATEGY_INVALID;
 	if (secondConst->consttype == BsonQueryTypeId())
 	{
 		Oid selectFuncId = get_opcode(selectivityOpExpr);
-		indexOp = GetMongoIndexOperatorInfoByPostgresFuncId(selectFuncId);
+		const MongoIndexOperatorInfo *indexOp = GetMongoIndexOperatorInfoByPostgresFuncId(
+			selectFuncId);
+		indexStrategy = indexOp->indexStrategy;
 	}
 	else
 	{
 		/* This is an index pushdown operator */
-		indexOp = GetMongoIndexOperatorByPostgresOperatorId(selectivityOpExpr);
+		const MongoIndexOperatorInfo *indexOp = GetMongoIndexOperatorByPostgresOperatorId(
+			selectivityOpExpr);
+		indexStrategy = indexOp->indexStrategy;
 	}
 
-	if (indexOp->indexStrategy == BSON_INDEX_STRATEGY_INVALID)
+	if (indexStrategy == BSON_INDEX_STRATEGY_INVALID)
 	{
-		/* Unknown - thunk to PG value */
-		return defaultExprSelectivity;
+		if (selectivityOpExpr == BsonRangeMatchOperatorOid())
+		{
+			indexStrategy = BSON_INDEX_STRATEGY_DOLLAR_RANGE;
+		}
+		else
+		{
+			/* Unknown - thunk to PG value */
+			return defaultExprSelectivity;
+		}
 	}
 
 	pgbsonelement dollarElement;
 	PgbsonToSinglePgbsonElement(
 		DatumGetPgBson(secondConst->constvalue), &dollarElement);
 
-	switch (indexOp->indexStrategy)
+	switch (indexStrategy)
 	{
 		case BSON_INDEX_STRATEGY_DOLLAR_EQUAL:
 		{
@@ -189,6 +222,13 @@ GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double defaultExprSe
 			/* Since $range does a $gt/$lt together, assume that it gives you
 			 * half the selectivity of each $gt/$lt.
 			 */
+			DollarRangeParams rangeParams = { 0 };
+			InitializeQueryDollarRange(&dollarElement.bsonValue, &rangeParams);
+			if (rangeParams.isFullScan)
+			{
+				return 1.0;
+			}
+
 			return defaultExprSelectivity / 2;
 		}
 

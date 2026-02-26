@@ -131,8 +131,6 @@ static void HoldPortal(Portal portal);
 static uint32 CursorHashEntryHashFunc(const void *obj, size_t objsize);
 static int CursorHashEntryCompareFunc(const void *obj1, const void *obj2,
 									  Size objsize);
-static pgbson * SerializeContinuationForWorker(HTAB *cursorMap, int32_t batchSize, bool
-											   isTailable);
 
 static void UpdateCursorInContinuationMap(pgbson *continuationValue, HTAB *cursorMap, bool
 										  isTailable);
@@ -766,7 +764,7 @@ BsonStoreDestReceiverShutdown(DestReceiver *destReceiver)
 	if (tupleDestReceiver->cursorFileState != NULL)
 	{
 		tupleDestReceiver->continuationState = CursorFileStateClose(
-			tupleDestReceiver->cursorFileState);
+			tupleDestReceiver->cursorFileState, tupleDestReceiver->writerContext);
 	}
 }
 
@@ -1245,22 +1243,25 @@ FetchTailableCursorAndWriteUntilPageOrSize(Portal portal, int32_t batchSize,
 
 			/*
 			 * For tailable cursors, if the cursor is terminated due to batch/size limit, just
-			 * return the continuation token, sicne the cursor is never fully drained for tailable
+			 * return the continuation token, since the cursor is never fully drained for tailable
 			 * cursors. we just stop here and return the last continuation token to the user
 			 * to resume the cursor at this point later.
 			 */
 			if (isCursorTerminated)
 			{
-				return continuationToken;
+				/* Return the last continuation token in the writer context. */
+				return CopyPgbsonIntoMemoryContext(continuationToken,
+												   writerContext);
 			}
 
 			/*
 			 * Process the "Continuation" attribute from the row fetched above.
 			 * For tailable cursors, we need to remember the last continuation token
-			 * and return it to the caller. Also, the continuation token is
-			 * processed even if the data is null.
+			 * and return it. The continuation token is processed even for null
+			 * data if we don't have one yet; otherwise, it's only updated with data.
 			 */
-			if (cursorMap != NULL && SPI_tuptable->tupdesc->natts >= 2)
+			if ((continuationToken == NULL || !isDataNull) && cursorMap != NULL &&
+				SPI_tuptable->tupdesc->natts >= 2)
 			{
 				continuationToken = ProcessCursorResultRowContinuationAttribute(cursorMap,
 																				writerContext,
@@ -1292,6 +1293,15 @@ ProcessCursorResultRowDataAttribute(TerminationReason *reason,
 	Datum resultDatum = SPI_getbinval(SPI_tuptable->vals[tupleNumber],
 									  SPI_tuptable->tupdesc, attrNumber,
 									  isDataNull);
+
+	/*
+	 * For change streams, the UDF controls batch termination. After processing
+	 * a batch of events, the UDF sends a final page with NULL data but a valid
+	 * continuation token. We must process this continuation token at least
+	 * once, even if the batch size is 0, so we cannot terminate here. The
+	 * calling loop will terminate when it finds no more rows to process, as
+	 * the UDF sends a finite number of rows to signal completion.
+	 */
 	if (*isDataNull)
 	{
 		return false;
@@ -1480,8 +1490,9 @@ UpdateCursorInContinuationMapCore(bson_iter_t *singleContinuationDoc, HTAB *curs
 		 */
 		hashEntry->tableName = pnstrdup(hashEntry->tableName, hashEntry->tableNameLength);
 	}
-	hashEntry->continuation =
-		*(ItemPointerData *) continuationBinaryValue.value.v_binary.data;
+
+	memcpy(&hashEntry->continuation, continuationBinaryValue.value.v_binary.data,
+		   sizeof(ItemPointerData));
 
 	if (EnablePrimaryKeyCursorScan &&
 		primaryKeyValue.value_type != BSON_TYPE_EOD)
@@ -1761,7 +1772,7 @@ SerializeTailableContinuationsToWriter(pgbson_writer *writer, HTAB *cursorMap)
  * Serializes continuation state from the map into a bson that can be sent to the
  * workers. This includes continuation state and page size hints for round trips.
  */
-static pgbson *
+pgbson *
 SerializeContinuationForWorker(HTAB *cursorMap, int32_t batchSize, bool isTailable)
 {
 	pgbson_writer finalWriter;
@@ -1775,15 +1786,15 @@ SerializeContinuationForWorker(HTAB *cursorMap, int32_t batchSize, bool isTailab
 	else
 	{
 		SerializeContinuationsToWriter(&finalWriter, cursorMap);
-	}
 
-	/* double the batch size. */
-	batchSize <<= 1;
+		/* Double batch size for non-tailable cursors to detect termination. */
+		batchSize <<= 1;
 
-	/* handle overflow */
-	if (batchSize < 0)
-	{
-		batchSize = INT_MAX;
+		/* handle overflow */
+		if (batchSize < 0)
+		{
+			batchSize = INT_MAX;
+		}
 	}
 
 	/* Write the batchCount and batchSize */

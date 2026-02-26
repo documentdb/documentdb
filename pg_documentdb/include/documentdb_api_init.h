@@ -17,4 +17,6 @@ void InitializeDocumentDBBackgroundWorker(char *libraryName, char *gucPrefix,
 										  char *extensionObjectPrefix);
 void InitializeSharedMemoryHooks(void);
 void InitializeBackgroundWorkerJobAllowedCommands(void);
+void RegisterDocumentDBBackgroundWorkerJobs(void);
+void DocumentDB_InstallBsonMemVTablesLocal(void);
 #endif

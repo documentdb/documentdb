@@ -127,7 +127,8 @@ static pgbson * BsonLookUpGetFilterExpression(pgbson *sourceDocument,
 											  char *collationString);
 
 static pgbson * BsonLookUpProject(pgbson *sourceDocument, int numMatchedDocuments,
-								  Datum *mathedArray, char *matchedDocsFieldName);
+								  Datum *mathedArray, bool *matchedNulls,
+								  char *matchedDocsFieldName);
 
 static void BuildBsonPathTreeForDollarProject(BsonProjectionQueryState *state,
 											  BsonProjectionContext *context);
@@ -192,6 +193,12 @@ PG_FUNCTION_INFO_V1(bson_dollar_project_geonear);
 Datum
 bson_dollar_project(PG_FUNCTION_ARGS)
 {
+	/* TODO: Remove after v0.110 when function has only STRICT forms */
+	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
+	{
+		PG_RETURN_NULL();
+	}
+
 	pgbson *document = PG_GETARG_PGBSON(0);
 	pgbson *pathSpec = PG_GETARG_PGBSON(1);
 	pgbson *variableSpec = NULL;
@@ -203,12 +210,14 @@ bson_dollar_project(PG_FUNCTION_ARGS)
 	if (PG_NARGS() > 2)
 	{
 		variableSpec = PG_GETARG_MAYBE_NULL_PGBSON(2);
+		variableSpec = IsPgbsonEmptyDocument(variableSpec) ? NULL : variableSpec;
 		numArgs = 2;
 	}
 
 	if (EnableCollation && PG_NARGS() == 4)
 	{
 		collationString = PG_ARGISNULL(3) ? NULL : text_to_cstring(PG_GETARG_TEXT_P(3));
+		collationString = IsCollationApplicable(collationString) ? collationString : NULL;
 		numArgs = 3;
 	}
 
@@ -384,8 +393,22 @@ bson_dollar_lookup_expression_eval_merge(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_project_find(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
-	pgbson *pathSpec = PG_GETARG_PGBSON(1);
+	/* Distributed query planning may substitute pruned shards with SELECT NULL ... WHERE false; that
+	 * surfaces here as a SQL NULL document, so bubble NULL back to the caller. */
+	pgbson *document = PG_GETARG_MAYBE_NULL_PGBSON(0);
+	if (document == NULL)
+	{
+		PG_RETURN_NULL();
+	}
+
+	pgbson *pathSpec = PG_GETARG_MAYBE_NULL_PGBSON(1);
+
+	/* Unlikely but sanity check */
+	if (pathSpec == NULL)
+	{
+		PG_RETURN_NULL();
+	}
+
 	pgbson *querySpec = NULL;
 	pgbson *variableSpec = NULL;
 	char *collationString = NULL;
@@ -415,6 +438,7 @@ bson_dollar_project_find(PG_FUNCTION_ARGS)
 	{
 		/* If a let spec is specified modify argPositions/numArgs */
 		variableSpec = PG_GETARG_MAYBE_NULL_PGBSON(3);
+		variableSpec = IsPgbsonEmptyDocument(variableSpec) ? NULL : variableSpec;
 		argPosition[1] = 3;
 		numArgs = 2;
 	}
@@ -422,7 +446,7 @@ bson_dollar_project_find(PG_FUNCTION_ARGS)
 	if (EnableCollation && PG_NARGS() > 4)
 	{
 		collationString = PG_ARGISNULL(4) ? NULL : text_to_cstring(PG_GETARG_TEXT_P(4));
-
+		collationString = IsCollationApplicable(collationString) ? collationString : NULL;
 		argPosition[2] = 4;
 		numArgs = 3;
 	}
@@ -525,6 +549,12 @@ GetProjectionStateForBsonProject(bson_iter_t *projectionSpecIter,
 Datum
 bson_dollar_add_fields(PG_FUNCTION_ARGS)
 {
+	/* TODO: Remove after v0.110 when function has only STRICT forms */
+	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
+	{
+		PG_RETURN_NULL();
+	}
+
 	pgbson *document = PG_GETARG_PGBSON(0);
 	pgbson *pathSpec = PG_GETARG_PGBSON(1);
 
@@ -752,6 +782,12 @@ bson_dollar_set(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_replace_root(PG_FUNCTION_ARGS)
 {
+	/* TODO: Remove after v0.110 when function has only STRICT forms */
+	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
+	{
+		PG_RETURN_NULL();
+	}
+
 	pgbson *document = PG_GETARG_PGBSON(0);
 	pgbson *pathSpec = PG_GETARG_PGBSON(1);
 	pgbson *variableSpec = NULL;
@@ -1096,14 +1132,11 @@ bson_dollar_lookup_project(PG_FUNCTION_ARGS)
 					  &val_datums, &val_is_null_marker, &val_count);
 
 	/*
-	 *  Datum array is not expected to have null, so we can free up the isnull marker array.
-	 *  We could  have used NULL as a param, but passing a real address is the recommended pattern.
-	 *  Implementation of deconstruct_array() can be found in postgres repo: src/backend/utils/adt/arrayfuncs.c
+	 *  The Datum array may contain NULL entries (e.g. from a LEFT JOIN with no match
+	 *  followed by a sub-pipeline stage). BsonLookUpProject handles NULLs by skipping them.
 	 */
-	pfree(val_is_null_marker);
-
 	PG_RETURN_POINTER(BsonLookUpProject(document, val_count, val_datums,
-										matchedDocsFieldName));
+										val_is_null_marker, matchedDocsFieldName));
 }
 
 
@@ -1200,6 +1233,12 @@ GetProjectionStateForBsonUnset(const bson_value_t *unsetValue, bool forceProject
 Datum
 bson_dollar_redact(PG_FUNCTION_ARGS)
 {
+	/* TODO: Remove after v0.110 when function has only STRICT forms */
+	if (PG_ARGISNULL(0) || PG_ARGISNULL(1) || PG_ARGISNULL(2))
+	{
+		PG_RETURN_NULL();
+	}
+
 	pgbson *document = PG_GETARG_PGBSON(0);
 	pgbson *redactSpec = PG_GETARG_PGBSON(1);
 	char *redactSpecText = text_to_cstring(PG_GETARG_TEXT_PP(2));
@@ -1690,7 +1729,8 @@ BuildBsonPathTreeForDollarProjectFind(BsonProjectionQueryState *state,
 									  BsonProjectionContext *projectionContext)
 {
 	BuildBsonPathTreeContext context = { 0 };
-	context.pathTreeState = GetPathTreeStateForFind(projectionContext->querySpec);
+	context.pathTreeState = GetPathTreeStateForFind(projectionContext->querySpec,
+													projectionContext->collationString);
 	context.allowInclusionExclusion = projectionContext->allowInclusionExclusion;
 
 	/* Set the necessary function hooks for find projection */
@@ -1949,7 +1989,7 @@ BsonLookUpGetFilterExpression(pgbson *sourceDocument,
  */
 static pgbson *
 BsonLookUpProject(pgbson *sourceDocument, int numMatched, Datum *matchedDocument,
-				  char *matchedDocsFieldName)
+				  bool *matchedNulls, char *matchedDocsFieldName)
 {
 	/*
 	 *  Creating an addField spec of the form
@@ -1970,17 +2010,26 @@ BsonLookUpProject(pgbson *sourceDocument, int numMatched, Datum *matchedDocument
 			BsonDefaultCreateIntermediateNode,
 			treatLeafDataAsConstant);
 
+	int matchedIndex = 0;
 	for (int i = 0; i < numMatched; i++)
 	{
+		/* Skip NULL elements that can arise from LEFT JOIN with no match */
+		if (matchedNulls[i])
+		{
+			continue;
+		}
+
 		bson_value_t documentBsonValue = ConvertPgbsonToBsonValue(
 			(pgbson *) matchedDocument[i]);
 
 		const char *relativePath = NULL;
-		AddValueNodeToLeafArrayWithField(matchedDocsNode, relativePath, i,
+		AddValueNodeToLeafArrayWithField(matchedDocsNode, relativePath,
+										 matchedIndex,
 										 &documentBsonValue,
 										 BsonDefaultCreateLeafNode,
 										 treatLeafDataAsConstant,
 										 &ignoreContext);
+		matchedIndex++;
 	}
 
 

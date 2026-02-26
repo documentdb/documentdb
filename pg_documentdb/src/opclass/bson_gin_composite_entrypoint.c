@@ -42,12 +42,65 @@
  #include "collation/collation.h"
  #include "opclass/bson_gin_composite_scan.h"
  #include "opclass/bson_gin_composite_private.h"
+ #include "opclass/bson_gin_composite.h"
+
+/* CodeSync: pg_documentdb_rum.h */
+#define RUM_SEARCH_MODE_ORDERED 4
+#define RUM_SEARCH_MODE_ORDERED_REVERSE 5
 
 typedef enum RumIndexTransformOperation
 {
 	RumIndexTransform_IndexGenerateSkipBound = 1
 } RumIndexTransformOperation;
 
+
+/*
+ * State that is used in generating terms for
+ * the composite indexes.
+ */
+typedef struct CompositeTermGenerateState
+{
+	/* The set of index paths for a composite index */
+	const char *indexPaths[INDEX_MAX_KEYS];
+
+	/* The sort orders for each of the paths above. */
+	int8_t sortOrders[INDEX_MAX_KEYS];
+
+	/* the path term metadata per path declared above. */
+	GinEntryPathData pathData[INDEX_MAX_KEYS];
+
+	/* The options on a per path basis for single path terms */
+	BsonGinSinglePathOptions *pathOptions[INDEX_MAX_KEYS];
+
+	/* The current status for index paths per path */
+	IndexTraverseOption matchStatus[INDEX_MAX_KEYS];
+
+	/* The total number of actual paths */
+	uint32_t pathCount;
+
+	List *correlatedTerms;
+} CompositeTermGenerateState;
+
+
+typedef struct
+{
+	Datum *terms[INDEX_MAX_KEYS];
+	int32_t numTerms[INDEX_MAX_KEYS];
+} MergedTermSet;
+
+#define MAX_STRATEGIES (8)
+PGDLLIMPORT typedef struct RumConfig
+{
+	Oid addInfoTypeOid;
+
+	struct
+	{
+		StrategyNumber strategy;
+		ScanDirection direction;
+	}       strategyInfo[MAX_STRATEGIES];
+
+	bool skipGenerateEmptyEntries;
+}   RumConfig;
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -60,15 +113,22 @@ PG_FUNCTION_INFO_V1(gin_bson_composite_path_options);
 PG_FUNCTION_INFO_V1(gin_bson_get_composite_path_generated_terms);
 PG_FUNCTION_INFO_V1(gin_bson_composite_ordering_transform);
 PG_FUNCTION_INFO_V1(gin_bson_composite_index_term_transform);
+PG_FUNCTION_INFO_V1(gin_bson_composite_rum_config);
 
 extern bool EnableCollation;
 extern bool RumHasMultiKeyPaths;
+extern bool RumUseNewCompositeTermGeneration;
+extern bool EnableCompositeWildcardIndex;
+extern int MaxWildcardIndexKeySize;
+extern bool EnableCompositeWildcardSkipEmptyEntries;
+extern int MaxNonOrderedTermScanThreshold;
 
 static void ValidateCompositePathSpec(const char *prefix);
 static Size FillCompositePathSpec(const char *prefix, void *buffer);
+static Size FillCompositePathSpecFromBson(pgbson *bson, void *buffer, bool isIndexSpec);
 static Datum * GenerateCompositeTermsCore(pgbson *doc,
 										  BsonGinCompositePathOptions *options,
-										  int32_t *nentries);
+										  int32_t *nentries, bool addMetadataTerms);
 static int32_t GetIndexPathsFromOptions(BsonGinCompositePathOptions *options,
 										const char **indexPaths,
 										int8_t *sortOrders);
@@ -78,19 +138,40 @@ static int32_t GetIndexPathsFromOptionsWithLength(BsonGinCompositePathOptions *o
 												  uint32_t *indexPathLengths,
 												  int8_t *sortOrders);
 static void ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const
-											char **indexPaths, int32_t numPaths,
+											char **indexPaths,
+											uint32_t *indexPathsLengths, int32_t numPaths,
+											int32_t
+											wildcardPathIndex,
 											VariableIndexBounds *variableBounds);
 static bytea * BuildTermForBounds(CompositeQueryRunData *runData,
 								  IndexTermCreateMetadata *singlePathMetadata,
 								  IndexTermCreateMetadata *compositeMetadata,
-								  bool *partialMatch, int8_t *sortOrders);
+								  bool *partialMatch, const char **indexPaths,
+								  uint32_t *indexPathLengths, int8_t *sortOrders);
 static void ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 									bool *isMultiKey, bool *isOrderedScan,
-									bool *isBackward);
+									bool *hasCorrelatedReducedTerms,
+									bool *isBackward, bool *supportsOrderedOperatorScans);
 static int32_t RunCompareOnBounds(CompositeIndexBounds *bounds,
 								  const BsonIndexTerm *compareValue,
-								  bool hasEqualityPrefix, bool isBackwardScan,
+								  bool hasEqualityPrefix, bool isBackwardScan, bool
+								  isWildcardMatch,
 								  bool *priorMatchesEquality, bool *hasUnspecifiedPrefix);
+static int AdvanceOrderedScanData(CompositeQueryRunData *runData,
+								  const BsonIndexTerm *currentTermsSet,
+								  bool isEqualityPrefix,
+								  int compareIndex, bool *hasNoScalarArrayBounds);
+static void OptimizeVariableBoundsForQuery(CompositeQueryRunData *runData,
+										   VariableIndexBounds *variableBounds,
+										   bool hasArrayPaths, bool isOrderedScan,
+										   bool isCorrelatedReducedScan,
+										   BsonGinCompositePathOptions *options);
+static void OptimizeVariableBoundsForOrderedScans(CompositeQueryRunData *runData,
+												  VariableIndexBounds *variableBounds,
+												  bool hasArrayPaths);
+static int RunCompareOnOrderedIndexSet(CompositeQueryRunData *runData,
+									   bytea *serializedTerms[INDEX_MAX_KEYS],
+									   BsonIndexTerm currentTermsSet[INDEX_MAX_KEYS]);
 static Datum * GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
 														BsonGinCompositePathOptions *
 														options,
@@ -98,7 +179,38 @@ static Datum * GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
 														bool **partialMatch,
 														Pointer **extra_data,
 														CompositeQueryRunData *runData);
-
+static Datum * ProcessStandardCompositeQueryEntries(int32_t totalPathTerms,
+													IndexTermCreateMetadata *
+													singlePathMetadata,
+													IndexTermCreateMetadata *
+													compositeMetadata,
+													PathScanTermMap *pathScanTermMap,
+													int32_t *nentries,
+													bool **partialmatch,
+													Pointer **extra_data,
+													CompositeQueryRunData *runData,
+													VariableIndexBounds *variableBounds,
+													const char **indexPaths,
+													uint32_t *indexPathLengths,
+													int8_t *sortOrders, bool
+													isOrderedScan);
+static Datum * ProcessOrderedCompositeQueryEntries(int32_t totalPathTerms,
+												   IndexTermCreateMetadata *
+												   singlePathMetadata,
+												   IndexTermCreateMetadata *
+												   compositeMetadata,
+												   int32_t *nentries, bool **partialmatch,
+												   Pointer **extra_data,
+												   CompositeQueryRunData *runData,
+												   VariableIndexBounds *variableBounds,
+												   const char **indexPaths,
+												   uint32_t *indexPathLengths,
+												   int8_t *sortOrders, bool hasArrayPaths,
+												   bool isOrderedScan,
+												   int32_t *searchMode);
+static int RunCompareOnStandardIndexSet(CompositeQueryRunData *runData,
+										bytea **serializedTerms,
+										BsonIndexTerm *currentTermsSet);
 
 inline static IndexTermCreateMetadata
 GetSinglePathTermCreateMetadata(void *options, int32_t numPaths)
@@ -138,7 +250,9 @@ gin_bson_composite_path_extract_value(PG_FUNCTION_ARGS)
 	BsonGinCompositePathOptions *options =
 		(BsonGinCompositePathOptions *) PG_GET_OPCLASS_OPTIONS();
 
-	Datum *indexEntries = GenerateCompositeTermsCore(bson, options, nentries);
+	bool addMetadataTerms = true;
+	Datum *indexEntries = GenerateCompositeTermsCore(bson, options, nentries,
+													 addMetadataTerms);
 	PG_RETURN_POINTER(indexEntries);
 }
 
@@ -192,31 +306,45 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	 * compare partial and consistent handle failures.
 	 */
 	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
+	uint32_t indexPathLengths[INDEX_MAX_KEYS] = { 0 };
 	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
-	int numPaths = GetIndexPathsFromOptions(
+	int numPaths = GetIndexPathsFromOptionsWithLength(
 		options,
 		indexPaths,
+		indexPathLengths,
 		sortOrders);
 	IndexTermCreateMetadata singlePathMetadata = GetSinglePathTermCreateMetadata(options,
 																				 numPaths);
 	IndexTermCreateMetadata compositeMetadata = GetCompositeIndexTermMetadata(options);
 
-	if (strategy == BSON_INDEX_STRATEGY_IS_MULTIKEY)
+	switch (strategy)
 	{
-		/* Consider only the root multi-key term */
-		*nentries = 1;
-		Datum *result = palloc(sizeof(Datum));
-		result[0] = GenerateRootMultiKeyTerm(&compositeMetadata);
-		PG_RETURN_POINTER(result);
-	}
+		case BSON_INDEX_STRATEGY_IS_MULTIKEY:
+		{
+			/* Consider only the root multi-key term */
+			*nentries = 1;
+			Datum *result = palloc(sizeof(Datum));
+			result[0] = GenerateRootMultiKeyTerm(&compositeMetadata);
+			PG_RETURN_POINTER(result);
+		}
 
-	if (strategy == BSON_INDEX_STRATEGY_HAS_TRUNCATED_TERMS)
-	{
-		/* Consider only the root truncated term */
-		*nentries = 1;
-		Datum *result = palloc(sizeof(Datum));
-		result[0] = GenerateRootTruncatedTerm(&compositeMetadata);
-		PG_RETURN_POINTER(result);
+		case BSON_INDEX_STRATEGY_HAS_TRUNCATED_TERMS:
+		{
+			/* Consider only the root truncated term */
+			*nentries = 1;
+			Datum *result = palloc(sizeof(Datum));
+			result[0] = GenerateRootTruncatedTerm(&compositeMetadata);
+			PG_RETURN_POINTER(result);
+		}
+
+		case BSON_INDEX_STRATEGY_HAS_CORRELATED_REDUCED_TERMS:
+		{
+			/* Consider only the root truncated term */
+			*nentries = 1;
+			Datum *result = palloc(sizeof(Datum));
+			result[0] = GenerateCorrelatedRootArrayTerm(&compositeMetadata);
+			PG_RETURN_POINTER(result);
+		}
 	}
 
 	VariableIndexBounds variableBounds = { 0 };
@@ -226,13 +354,17 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	CompositeQueryRunData *runData = CreateCompositeQueryRunData(numPaths);
 	runData->metaInfo = metaInfo;
 	metaInfo->numIndexPaths = numPaths;
+	metaInfo->wildcardPathIndex = EnableCompositeWildcardIndex ?
+								  options->wildcardPathIndex : -1;
 
 	/* Default to assuming array paths (we can do better if told otherwise) */
 	bool hasArrayPaths = true;
 
 	/* key that we're doing an ordered scan based off of search mode */
 	bool isOrderedScan = (*searchMode != GIN_SEARCH_MODE_DEFAULT);
-	metaInfo->isBackwardScan = false;
+	metaInfo->isBackwardScan = (*searchMode == RUM_SEARCH_MODE_ORDERED_REVERSE);
+	bool isCorrelatedReducedScan = false;
+	bool supportsOrderedOperatorScans = false;
 	if (isOrderedScan)
 	{
 		*searchMode = GIN_SEARCH_MODE_DEFAULT;
@@ -259,16 +391,19 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 		pgbsonelement singleElement;
 		PgbsonToSinglePgbsonElement(query, &singleElement);
 
-		ParseOperatorStrategy(indexPaths, numPaths, &singleElement, strategy,
+		ParseOperatorStrategy(indexPaths, indexPathLengths, numPaths,
+							  metaInfo->wildcardPathIndex, &singleElement, strategy,
 							  &variableBounds);
 	}
 	else
 	{
 		pgbsonelement singleElement;
 		ParseCompositeQuerySpec(query, &singleElement, &hasArrayPaths, &isOrderedScan,
-								&metaInfo->isBackwardScan);
-		ParseBoundsForCompositeOperator(&singleElement, indexPaths, numPaths,
-										&variableBounds);
+								&isCorrelatedReducedScan,
+								&metaInfo->isBackwardScan, &supportsOrderedOperatorScans);
+		ParseBoundsForCompositeOperator(&singleElement, indexPaths, indexPathLengths,
+										numPaths,
+										metaInfo->wildcardPathIndex, &variableBounds);
 	}
 
 
@@ -277,14 +412,8 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	 * If we don't have arrays, and there's exactly 1 boundary,
 	 * We can apply it to the global bounds, and skip this key
 	 */
-	if (!hasArrayPaths)
-	{
-		MergeSingleVariableBounds(&variableBounds, runData);
-	}
-	else if (isOrderedScan)
-	{
-		PickVariableBoundsForOrderedScan(&variableBounds, runData);
-	}
+	OptimizeVariableBoundsForQuery(runData, &variableBounds, hasArrayPaths, isOrderedScan,
+								   isCorrelatedReducedScan, options);
 
 	/* Tally up the total variable bound counts - this is the permutation of all variable terms
 	 * e.g. if we have { "a": { "$in": [ 1, 2, 3 ]}} && { "b": { "$in": [ 4, 5 ] } }
@@ -341,16 +470,70 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	}
 
 	runData->metaInfo->hasMultipleScanKeysPerPath = hasMultipleScanKeysPerPath;
+
+	/*
+	 * If the total number of path terms is too high, skip to an ordered scan with skipped
+	 * tree components. We simply return 1 entry with compare partial which will trigger
+	 * the index to do an ordered scan. If the top level index doesn't support ordered index
+	 * scans this will devolve to a single compare partial scan which will be inefficient but correct.
+	 * This is typically possible with scenarios that produce multiple entries per term (such as $in,
+	 * $bits operators, the not gt/lt operators etc). However, of all of them, only $in/$nin have the
+	 * probability of generating > 3 bounds which can cause large permutation cardinality.
+	 */
+	Datum *entries;
+	if (supportsOrderedOperatorScans &&
+		MaxNonOrderedTermScanThreshold > 0 &&
+		totalPathTerms > MaxNonOrderedTermScanThreshold)
+	{
+		entries = ProcessOrderedCompositeQueryEntries(totalPathTerms, &singlePathMetadata,
+													  &compositeMetadata, nentries,
+													  partialmatch, extra_data,
+													  runData, &variableBounds,
+													  indexPaths,
+													  indexPathLengths, sortOrders,
+													  hasArrayPaths, isOrderedScan,
+													  searchMode);
+	}
+	else
+	{
+		entries = ProcessStandardCompositeQueryEntries(totalPathTerms,
+													   &singlePathMetadata,
+													   &compositeMetadata,
+													   pathScanTermMap, nentries,
+													   partialmatch, extra_data,
+													   runData, &variableBounds,
+													   indexPaths,
+													   indexPathLengths, sortOrders,
+													   isOrderedScan);
+	}
+
+	PG_RETURN_POINTER(entries);
+}
+
+
+static Datum *
+ProcessStandardCompositeQueryEntries(int32_t totalPathTerms,
+									 IndexTermCreateMetadata *singlePathMetadata,
+									 IndexTermCreateMetadata *compositeMetadata,
+									 PathScanTermMap *pathScanTermMap,
+									 int32_t *nentries, bool **partialmatch,
+									 Pointer **extra_data,
+									 CompositeQueryRunData *runData,
+									 VariableIndexBounds *variableBounds,
+									 const char **indexPaths, uint32_t *indexPathLengths,
+									 int8_t *sortOrders, bool isOrderedScan)
+{
 	*nentries = totalPathTerms;
 	*partialmatch = (bool *) palloc0(sizeof(bool) * (totalPathTerms + 1));
 	*extra_data = palloc0(sizeof(Pointer) * (totalPathTerms + 1));
 	Pointer *extraDataArray = *extra_data;
 	Datum *entries = (Datum *) palloc(sizeof(Datum) * (totalPathTerms + 1));
 
-	if (variableBounds.variableBoundsList == NIL)
+	if (variableBounds->variableBoundsList == NIL)
 	{
-		bytea *term = BuildTermForBounds(runData, &singlePathMetadata, &compositeMetadata,
-										 &(*partialmatch)[0], sortOrders);
+		bytea *term = BuildTermForBounds(runData, singlePathMetadata, compositeMetadata,
+										 &(*partialmatch)[0], indexPaths,
+										 indexPathLengths, sortOrders);
 		extraDataArray[0] = (Pointer) runData;
 		entries[0] = PointerGetDatum(term);
 	}
@@ -362,14 +545,16 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 			int currentTerm = i;
 
 			/* First create a copy of rundata */
-			CompositeQueryRunData *runDataCopy = CreateCompositeQueryRunData(numPaths);
-			memcpy(runDataCopy, runData, GetCompositeQueryRunDataSize(numPaths));
-
-			UpdateRunDataForVariableBounds(runDataCopy, pathScanTermMap, &variableBounds,
+			CompositeQueryRunData *runDataCopy = CreateCompositeQueryRunData(
+				runData->metaInfo->numIndexPaths);
+			memcpy(runDataCopy, runData, GetCompositeQueryRunDataSize(
+					   runData->metaInfo->numIndexPaths));
+			UpdateRunDataForVariableBounds(runDataCopy, pathScanTermMap, variableBounds,
 										   currentTerm);
-			bytea *term = BuildTermForBounds(runDataCopy, &singlePathMetadata,
-											 &compositeMetadata,
-											 &(*partialmatch)[i], sortOrders);
+			bytea *term = BuildTermForBounds(runDataCopy, singlePathMetadata,
+											 compositeMetadata,
+											 &(*partialmatch)[i], indexPaths,
+											 indexPathLengths, sortOrders);
 
 			extraDataArray[i] = (Pointer) runDataCopy;
 			entries[i] = PointerGetDatum(term);
@@ -379,13 +564,269 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	if (runData->metaInfo->hasTruncation && !isOrderedScan)
 	{
 		*nentries = totalPathTerms + 1;
-		metaInfo->truncationTermIndex = totalPathTerms;
-		entries[totalPathTerms] = GenerateRootTruncatedTerm(&compositeMetadata);
+		runData->metaInfo->truncationTermIndex = totalPathTerms;
+		entries[totalPathTerms] = GenerateRootTruncatedTerm(compositeMetadata);
 		(*partialmatch)[totalPathTerms] = false;
 		extraDataArray[totalPathTerms] = NULL;  /* no extra data for the truncated term */
 	}
 
-	PG_RETURN_POINTER(entries);
+	return entries;
+}
+
+
+static int
+CompareCompositeIndexBoundsForOrderedScan(const void *a, const void *b,
+										  void *backwardScanVoid)
+{
+	CompositeIndexBounds *boundA = (CompositeIndexBounds *) a;
+	CompositeIndexBounds *boundB = (CompositeIndexBounds *) b;
+	bool isBackwardScan = *((bool *) backwardScanVoid);
+	bool isComparisonValidIgnore = false;
+	int cmp;
+	if (isBackwardScan)
+	{
+		/* For a backward scan, compare by upperbound first */
+		cmp = CompareBsonValueAndType(&boundA->upperBound.bound,
+									  &boundB->upperBound.bound,
+									  &isComparisonValidIgnore);
+		if (cmp != 0)
+		{
+			/* return upperBound by max first (descending order) */
+			return -cmp;
+		}
+
+		/* If upper bounds are equal then compare by lower bound */
+		cmp = CompareBsonValueAndType(&boundA->lowerBound.bound,
+									  &boundB->lowerBound.bound,
+									  &isComparisonValidIgnore);
+		return -cmp;
+	}
+	else
+	{
+		/* in forward scans sort by minBound ascending order */
+		cmp = CompareBsonValueAndType(&boundA->lowerBound.bound,
+									  &boundB->lowerBound.bound,
+									  &isComparisonValidIgnore);
+		if (cmp != 0)
+		{
+			return cmp;
+		}
+
+		/* If lower bounds are equal then compare by upper bound */
+		cmp = CompareBsonValueAndType(&boundA->upperBound.bound,
+									  &boundB->upperBound.bound,
+									  &isComparisonValidIgnore);
+		return cmp;
+	}
+}
+
+
+/*
+ * In an ordered composite scan, we return a single entry that has a partialMatch.
+ * This then leverages the index to do a single ordered walk of the tree in order using the skipscan
+ * infrastructure to skip over unsatisfiable branches. The extra data returned points to the runData which has the necessary
+ * information to evaluate the bounds and skip branches at each level of the tree. The comparePartial function
+ * revs the ordered path data to keep the keys moving forward.
+ */
+static Datum *
+ProcessOrderedCompositeQueryEntries(int32_t totalPathTerms,
+									IndexTermCreateMetadata *singlePathMetadata,
+									IndexTermCreateMetadata *compositeMetadata,
+									int32_t *nentries, bool **partialmatch,
+									Pointer **extra_data,
+									CompositeQueryRunData *runData,
+									VariableIndexBounds *variableBounds,
+									const char **indexPaths, uint32_t *indexPathLengths,
+									int8_t *sortOrders, bool hasArrayPaths, bool
+									isOrderedScan,
+									int32_t *searchMode)
+{
+	*nentries = 1;
+	*partialmatch = (bool *) palloc0(sizeof(bool) * 1);
+	*extra_data = palloc0(sizeof(Pointer) * 1);
+
+	Pointer *extraDataArray = *extra_data;
+	Datum *entries = (Datum *) palloc(sizeof(Datum) * 1);
+
+	if (variableBounds->variableBoundsList == NIL)
+	{
+		bytea *term = BuildTermForBounds(runData, singlePathMetadata, compositeMetadata,
+										 &(*partialmatch)[0], indexPaths,
+										 indexPathLengths, sortOrders);
+		extraDataArray[0] = (Pointer) runData;
+		entries[0] = PointerGetDatum(term);
+	}
+	else
+	{
+		/* We decided to do an ordered scan. If an orderedScan wasn't already
+		 * requested, we need to trim the bounds based on doing an ordered scan
+		 */
+		if (!isOrderedScan)
+		{
+			/* If we're not already doing an ordered scan, request one from the index */
+			*searchMode = RUM_SEARCH_MODE_ORDERED;
+			isOrderedScan = true;
+			OptimizeVariableBoundsForOrderedScans(runData, variableBounds, hasArrayPaths);
+		}
+
+		/* Next, we need to group variable bounds by path */
+		CompositeOrderedScanEntryData *data = palloc0(
+			sizeof(CompositeOrderedScanEntryData));
+		memcpy(data->indexPaths, indexPaths, sizeof(data->indexPaths));
+		memcpy(data->indexPathLengths, indexPathLengths, sizeof(data->indexPathLengths));
+		memcpy(data->sortOrders, sortOrders, sizeof(data->sortOrders));
+		data->basePathMetadata = *singlePathMetadata;
+		data->scanKeyMemoryContext = CurrentMemoryContext;
+
+		/* Compute the sort order per key */
+		for (int i = 0; i < runData->metaInfo->numIndexPaths; i++)
+		{
+			data->perPathEntries[i].isEntryScanBackwards = false;
+			if ((runData->metaInfo->isBackwardScan && data->sortOrders[i] > 0) ||
+				(!runData->metaInfo->isBackwardScan && data->sortOrders[i] < 0))
+			{
+				data->perPathEntries[i].isEntryScanBackwards = true;
+			}
+		}
+
+		IndexTermCreateMetadata metadata[INDEX_MAX_KEYS] = { 0 };
+		for (int i = 0; i < runData->metaInfo->numIndexPaths; i++)
+		{
+			PopulateTermMetadataForTruncation(&metadata[i], &data->basePathMetadata,
+											  runData, data->indexPaths[i],
+											  data->indexPathLengths[i],
+											  data->sortOrders[i]);
+		}
+
+		/* First snapshot the rundata rundata: This has all the bounds from the single bounds filters that can be
+		 * merged.
+		 */
+		memcpy(data->baseIndexBounds, runData->indexBounds,
+			   sizeof(CompositeIndexBounds) * runData->metaInfo->numIndexPaths);
+
+		/* duplicate the index recheck functions so that runData can be reset */
+		for (int i = 0; i < runData->metaInfo->numScanKeys; i++)
+		{
+			if (data->baseIndexBounds[i].indexRecheckFunctions != NIL)
+			{
+				data->baseIndexBounds[i].indexRecheckFunctions =
+					list_copy(runData->indexBounds[i].indexRecheckFunctions);
+			}
+		}
+
+		/* Now sort the bounds in ascending order of lower bound. We note that each of the bounds
+		 * are valid within any given key.
+		 */
+		ListCell *cell;
+		foreach(cell, variableBounds->variableBoundsList)
+		{
+			CompositeIndexBoundsSet *set =
+				(CompositeIndexBoundsSet *) lfirst(cell);
+
+			CompositeProcessedPerPathEntry *entry =
+				(CompositeProcessedPerPathEntry *) palloc0(
+					sizeof(CompositeProcessedPerPathEntry));
+			entry->boundsSet = set;
+			entry->currentOperatorIndex = 0;
+
+			qsort_arg(&set->bounds[0], set->numBounds, sizeof(CompositeIndexBounds),
+					  CompareCompositeIndexBoundsForOrderedScan,
+					  &data->perPathEntries[set->indexAttribute].isEntryScanBackwards);
+			data->perPathEntries[set->indexAttribute].entries =
+				lappend(data->perPathEntries[set->indexAttribute].entries, entry);
+
+			/* Build the terms for the bound up front. This way they're allocated in the
+			 * RumScanKeyContext. This ensures that they only survive for the current scan call.
+			 */
+			for (int i = 0; i < set->numBounds; i++)
+			{
+				CompositeIndexBounds *bound = &set->bounds[i];
+
+				/* If any of the bounds are unsatisfiable, then the whole query is unsatisfiable */
+				UpdateSingleBoundForTruncation(runData, set->indexAttribute, bound,
+											   &metadata[set->indexAttribute]);
+			}
+		}
+
+		/* Now data points to a per path set of variable bounds. each boundset is an equivalent of an SAOP
+		 * style operator. Now walk the rundata and populate the bounds as needed.
+		 */
+		int32_t unsatisfiableIndex = -1;
+		UpdateRunDataForOrderedBounds(runData, data, &unsatisfiableIndex);
+
+		bool partialMatchInnerIgnore = false;
+		bytea *term = BuildTermForBounds(runData, singlePathMetadata,
+										 compositeMetadata,
+										 &partialMatchInnerIgnore, indexPaths,
+										 indexPathLengths, sortOrders);
+
+		/* Set partialMatch */
+		(*partialmatch)[0] = true;
+		runData->metaInfo->orderedScanEntryData = data;
+		extraDataArray[0] = (Pointer) runData;
+		entries[0] = PointerGetDatum(term);
+	}
+
+	return entries;
+}
+
+
+static void
+OptimizeVariableBoundsForOrderedScans(CompositeQueryRunData *runData,
+									  VariableIndexBounds *variableBounds,
+									  bool hasArrayPaths)
+{
+	if (runData->metaInfo->wildcardPathIndex >= 0)
+	{
+		/* Even if there's no array paths, we have to redo the check for
+		* ordered scans since there may be keys for other index paths */
+		PickVariableBoundsForOrderedScan(variableBounds, runData);
+	}
+	else if (hasArrayPaths)
+	{
+		PickVariableBoundsForOrderedScan(variableBounds, runData);
+	}
+}
+
+
+static void
+OptimizeVariableBoundsForQuery(CompositeQueryRunData *runData,
+							   VariableIndexBounds *variableBounds,
+							   bool hasArrayPaths, bool isOrderedScan,
+							   bool isCorrelatedReducedScan,
+							   BsonGinCompositePathOptions *options)
+{
+	if (runData->metaInfo->wildcardPathIndex >= 0)
+	{
+		/* For wildcard indexes, we first try to merge if there's no array paths by path.
+		 */
+		if (!hasArrayPaths)
+		{
+			variableBounds->variableBoundsList =
+				MergeWildCardSingleVariableBounds(variableBounds->variableBoundsList);
+		}
+	}
+	else
+	{
+		if (isCorrelatedReducedScan && options->enableCompositeReducedCorrelatedTerms)
+		{
+			/* In a reduced scan, we can't filter on any paths that's not the first path */
+			TrimSecondaryVariableBounds(variableBounds, runData);
+		}
+
+		if (!hasArrayPaths)
+		{
+			variableBounds->variableBoundsList =
+				MergeSingleVariableBounds(variableBounds->variableBoundsList,
+										  &runData->wildcardPath,
+										  runData->indexBounds);
+		}
+	}
+
+	if (isOrderedScan)
+	{
+		OptimizeVariableBoundsForOrderedScans(runData, variableBounds, hasArrayPaths);
+	}
 }
 
 
@@ -443,6 +884,28 @@ gin_bson_composite_path_compare_partial(PG_FUNCTION_ARGS)
 			if (term.element.bsonValue.value_type == BSON_TYPE_ARRAY)
 			{
 				PG_RETURN_INT32(0);
+			}
+
+			PG_RETURN_INT32(-1);
+		}
+
+		case BSON_INDEX_STRATEGY_HAS_CORRELATED_REDUCED_TERMS:
+		{
+			if (!IsSerializedIndexTermMetadata(serializedTerms[0]))
+			{
+				PG_RETURN_INT32(1);
+			}
+
+			BsonIndexTerm term;
+			InitializeBsonIndexTerm(serializedTerms[0], &term);
+
+			if (term.element.bsonValue.value_type == BSON_TYPE_INT32)
+			{
+				if (term.element.bsonValue.value.v_int32 ==
+					RootMetadataKind_CorrelatedRootArray)
+				{
+					PG_RETURN_INT32(0);
+				}
 			}
 
 			PG_RETURN_INT32(-1);
@@ -511,69 +974,571 @@ gin_bson_composite_path_compare_partial(PG_FUNCTION_ARGS)
 							   numTerms, runData->metaInfo->numIndexPaths)));
 	}
 
-	bool priorMatchesEquality = true;
-	bool hasEqualityPrefix = true;
-	bool hasUnspecifiedPrefix = false;
-	for (int32_t compareIndex = 0; compareIndex < runData->metaInfo->numIndexPaths;
-		 compareIndex++)
+	BsonIndexTerm currentTermsSet[INDEX_MAX_KEYS] = { 0 };
+	int compareResult;
+	if (runData->metaInfo->orderedScanEntryData == NULL)
 	{
-		BsonIndexTerm currentTerm;
-		if (runData->indexBounds[compareIndex].lowerBound.bound.value_type ==
-			BSON_TYPE_EOD &&
-			runData->indexBounds[compareIndex].upperBound.bound.value_type ==
-			BSON_TYPE_EOD &&
-			runData->indexBounds[compareIndex].indexRecheckFunctions == NIL)
-		{
-			/* Skip deserializing and validating */
-			priorMatchesEquality = false;
-			hasUnspecifiedPrefix = true;
-			continue;
-		}
+		compareResult = RunCompareOnStandardIndexSet(runData, serializedTerms,
+													 currentTermsSet);
+	}
+	else
+	{
+		/* For ordered scan walks, we need to check if the current key satisfies the bounds.
+		 * If not, we need to advance the scan keys until we find a key that satisfies the bounds
+		 * or we exhaust the keys.
+		 */
+		compareResult = RunCompareOnOrderedIndexSet(runData, serializedTerms,
+													currentTermsSet);
+	}
 
-		InitializeBsonIndexTerm(serializedTerms[compareIndex], &currentTerm);
-		hasEqualityPrefix = hasEqualityPrefix && priorMatchesEquality;
-		int32_t compareInBounds = RunCompareOnBounds(
-			&runData->indexBounds[compareIndex],
-			&currentTerm,
-			hasEqualityPrefix,
-			runData->metaInfo->isBackwardScan,
-			&priorMatchesEquality, &hasUnspecifiedPrefix);
-		if (compareInBounds != 0)
-		{
-			PG_RETURN_INT32(compareInBounds);
-		}
+	PG_FREE_IF_COPY(compareValue, 1);
+	PG_RETURN_INT32(compareResult);
+}
 
-		if (runData->indexBounds[compareIndex].indexRecheckFunctions != NIL)
+
+static int
+RunCompareOnPathIndex(CompositeQueryRunData *runData,
+					  bytea *serializedTerms[INDEX_MAX_KEYS],
+					  BsonIndexTerm currentTermsSet[INDEX_MAX_KEYS],
+					  bool *priorMatchesEquality, bool *allowSkipScanBoundaries,
+					  bool *hasEqualityPrefix, int compareIndex)
+{
+	if (runData->indexBounds[compareIndex].lowerBound.bound.value_type == BSON_TYPE_EOD &&
+		runData->indexBounds[compareIndex].upperBound.bound.value_type == BSON_TYPE_EOD &&
+		runData->indexBounds[compareIndex].indexRecheckFunctions == NIL)
+	{
+		/* Skip deserializing and validating */
+		*priorMatchesEquality = false;
+		*allowSkipScanBoundaries = true;
+		return 0;
+	}
+
+	InitializeBsonIndexTerm(serializedTerms[compareIndex],
+							&currentTermsSet[compareIndex]);
+	*hasEqualityPrefix = *hasEqualityPrefix && *priorMatchesEquality;
+	int32_t compareInBounds = RunCompareOnBounds(
+		&runData->indexBounds[compareIndex],
+		&currentTermsSet[compareIndex],
+		*hasEqualityPrefix,
+		runData->metaInfo->isBackwardScan, runData->wildcardPath != NULL,
+		priorMatchesEquality, allowSkipScanBoundaries);
+	if (compareInBounds != 0)
+	{
+		return compareInBounds;
+	}
+
+	if (runData->indexBounds[compareIndex].indexRecheckFunctions != NIL)
+	{
+		ListCell *recheckFuncs;
+		foreach(recheckFuncs,
+				runData->indexBounds[compareIndex].indexRecheckFunctions)
 		{
-			ListCell *recheckFuncs;
-			foreach(recheckFuncs,
-					runData->indexBounds[compareIndex].indexRecheckFunctions)
+			IndexRecheckArgs *recheckStrategy = lfirst(recheckFuncs);
+			if (!IsValidRecheckForIndexValue(&currentTermsSet[compareIndex],
+											 recheckStrategy))
 			{
-				IndexRecheckArgs *recheckStrategy = lfirst(recheckFuncs);
-				if (!IsValidRecheckForIndexValue(&currentTerm, recheckStrategy))
-				{
-					PG_RETURN_INT32(-1);
-				}
+				return -1;
 			}
 		}
 	}
 
-	PG_RETURN_INT32(0);
+	return 0;
+}
+
+
+static int
+RunCompareOnStandardIndexSet(CompositeQueryRunData *runData,
+							 bytea **serializedTerms,
+							 BsonIndexTerm *currentTermsSet)
+{
+	bool priorMatchesEquality = true;
+	bool hasEqualityPrefix = true;
+	bool allowSkipScanBoundaries = false;
+	for (int32_t compareIndex = 0; compareIndex < runData->metaInfo->numIndexPaths;
+		 compareIndex++)
+	{
+		int cmp = RunCompareOnPathIndex(runData, serializedTerms,
+										currentTermsSet, &priorMatchesEquality,
+										&allowSkipScanBoundaries, &hasEqualityPrefix,
+										compareIndex);
+		if (cmp != 0)
+		{
+			return cmp;
+		}
+	}
+
+	return 0;
+}
+
+
+static void
+ResetUnsatisfiableBounds(CompositeQueryRunData *runData, int compareIndex)
+{
+	bool updatedBound = false;
+	CompositeOrderedScanEntryData *entryData = runData->metaInfo->orderedScanEntryData;
+	for (int i = compareIndex + 1; i < runData->metaInfo->numIndexPaths; i++)
+	{
+		if (!entryData->perPathEntries[i].hasUnsatisfiableBounds)
+		{
+			continue;
+		}
+
+		/* This is a previous unsatisfiable bound, reset the bounds */
+		List *perPathEntries = entryData->perPathEntries[i].entries;
+
+		ListCell *pathCell;
+		foreach(pathCell, perPathEntries)
+		{
+			CompositeProcessedPerPathEntry *entry =
+				(CompositeProcessedPerPathEntry *) lfirst(
+					pathCell);
+			if (entry->currentOperatorIndex >= entry->boundsSet->numBounds)
+			{
+				entry->currentOperatorIndex = 0;
+			}
+		}
+
+		entryData->perPathEntries[i].hasUnsatisfiableBounds = false;
+		updatedBound = true;
+	}
+
+	if (updatedBound)
+	{
+		int32_t unsatisfiableIndex = -1;
+		UpdateRunDataForOrderedBounds(runData, entryData, &unsatisfiableIndex);
+
+		/* Update bounds if they haven't been created yet */
+		MemoryContext context = MemoryContextSwitchTo(entryData->scanKeyMemoryContext);
+		TryUpdateBoundsForTruncation(
+			runData, &entryData->basePathMetadata, entryData->indexPaths,
+			entryData->indexPathLengths, entryData->sortOrders);
+		MemoryContextSwitchTo(context);
+	}
+}
+
+
+static void
+PinEqualityBoundForRange(CompositeQueryRunData *runData,
+						 BsonIndexTerm currentTermsSet[INDEX_MAX_KEYS],
+						 bytea *serializedTerms[INDEX_MAX_KEYS],
+						 int compareIndex)
+{
+	CompositeOrderedScanEntryData *entryData = runData->metaInfo->orderedScanEntryData;
+	if (currentTermsSet[compareIndex].element.bsonValue.value_type == BSON_TYPE_EOD)
+	{
+		/* Initialize if needed */
+		InitializeBsonIndexTerm(serializedTerms[compareIndex],
+								&currentTermsSet[compareIndex]);
+	}
+
+	CompositePerPathEntries *entries = &entryData->perPathEntries[compareIndex];
+	if (entries->currentPathEqualityTerm != NULL)
+	{
+		/* We have a current equality path in a range already.
+		 * If the current equality path is the same as the new equality path, we can keep it.
+		 * This can happen when we have multiple bounds on the same path and we advance the bounds but not the equality term.
+		 */
+		bool isCompareisonValid = false;
+		const char *collationString = NULL;
+		if (CompareBsonIndexTerm(&entries->currentPathEqualityTermValue,
+								 &currentTermsSet[compareIndex],
+								 &isCompareisonValid, collationString) == 0)
+		{
+			return;
+		}
+
+		/* Free the current equality term since we're replacing it with a new one */
+		pfree(entries->currentPathEqualityTerm);
+		entries->currentPathEqualityTerm = NULL;
+		memset(&entries->currentPathEqualityTermValue, 0, sizeof(BsonIndexTerm));
+	}
+
+	MemoryContext oldContext = MemoryContextSwitchTo(entryData->scanKeyMemoryContext);
+	entries->currentPathEqualityTerm = palloc(VARSIZE_ANY(serializedTerms[compareIndex]));
+	memcpy(entries->currentPathEqualityTerm, serializedTerms[compareIndex],
+		   VARSIZE_ANY(serializedTerms[compareIndex]));
+	MemoryContextSwitchTo(oldContext);
+
+	entries->baseRangeBounds = runData->indexBounds[compareIndex];
+	runData->indexBounds[compareIndex].lowerBound.serializedTerm =
+		entries->currentPathEqualityTerm;
+	InitializeBsonIndexTerm(entries->currentPathEqualityTerm,
+							&entries->currentPathEqualityTermValue);
+
+	runData->indexBounds[compareIndex].lowerBound.indexTermValue =
+		entries->currentPathEqualityTermValue;
+	runData->indexBounds[compareIndex].lowerBound.bound =
+		entries->currentPathEqualityTermValue.element.bsonValue;
+	runData->indexBounds[compareIndex].lowerBound.isBoundInclusive = true;
+	runData->indexBounds[compareIndex].upperBound.bound =
+		entries->currentPathEqualityTermValue.element.bsonValue;
+	runData->indexBounds[compareIndex].upperBound.isBoundInclusive = true;
+	runData->indexBounds[compareIndex].isEqualityBound = true;
+
+	/* Since we reset a new equality term, reset downstream bounds too */
+	/* Reset all subsequent bounds back to the start */
+	for (int i = compareIndex + 1; i < runData->metaInfo->numIndexPaths; i++)
+	{
+		List *perPathEntries = entryData->perPathEntries[i].entries;
+
+		ListCell *pathCell;
+		foreach(pathCell, perPathEntries)
+		{
+			CompositeProcessedPerPathEntry *entry =
+				(CompositeProcessedPerPathEntry *) lfirst(pathCell);
+			entry->currentOperatorIndex = 0;
+		}
+	}
+
+	int32_t unsatisfiableIndex = -1;
+	UpdateRunDataForOrderedBounds(runData, entryData,
+								  &unsatisfiableIndex);
+
+	oldContext = MemoryContextSwitchTo(entryData->scanKeyMemoryContext);
+	TryUpdateBoundsForTruncation(runData, &entryData->basePathMetadata,
+								 entryData->indexPaths, entryData->indexPathLengths,
+								 entryData->sortOrders);
+	MemoryContextSwitchTo(oldContext);
+}
+
+
+/*
+ * This is the core compare logic on a per index entry for an ordered scalar array walk.
+ * The contract is similar to a regular compare partial:
+ * - return 0 if the current key satisfies the bounds.
+ * - return -1 if the current key does not satisfy the bounds but we can continue scanning forward/backward
+ * - return -2 if the current key does not satisfy the bounds, but we can skip to the next scan boundary
+ * - return 1 if the current key does not satisfy the bounds and we need to stop
+ *
+ * The way this works is we walk the current index term against the current bound path by path.
+ * If the prefix matches, we move to suffix paths. If the prefix doesn't match, we try to advance the scan keys
+ * for the current path to the next boundary and check again. If we exhaust the scan keys for the current path,
+ * we return 1 to stop the scan if it's the first path. For subsequent paths, we move the scan to MinKey/MaxKey of that path
+ * and resume the scan to move to the next possible value of the prior path.
+ * If we can advance the scan keys, we return -2 to indicate that we can skip to the next boundary.
+ * If we can't advance the scan keys but can continue scanning, we return -1.
+ */
+static int
+RunCompareOnOrderedIndexSet(CompositeQueryRunData *runData,
+							bytea *serializedTerms[INDEX_MAX_KEYS],
+							BsonIndexTerm currentTermsSet[INDEX_MAX_KEYS])
+{
+	bool hasUnspecifiedPrefix = false;
+	bool hasSkipScanBoundary = false;
+	int compareResult = 0;
+	int compareIndex;
+
+	for (compareIndex = 0; compareIndex < runData->metaInfo->numIndexPaths;
+		 compareIndex++)
+	{
+		/* Run the compare on the path by itself */
+		bool hasOrderedEqualityPrefix = true;
+		bool priorMatchesEquality = true;
+		compareResult = RunCompareOnPathIndex(runData, serializedTerms, currentTermsSet,
+											  &priorMatchesEquality,
+											  &hasUnspecifiedPrefix,
+											  &hasOrderedEqualityPrefix, compareIndex);
+
+		/* If the compare Result was a mismatch, check whether it hit termination */
+		if (compareResult == 1)
+		{
+			/* We exhausted everything for the current bounds this path.
+			 * Try to advance this path forward to its next bounds */
+			hasOrderedEqualityPrefix = true;
+			bool hasNoScalarArrayBounds = false;
+			int advanceResult = AdvanceOrderedScanData(runData, currentTermsSet,
+													   hasOrderedEqualityPrefix,
+													   compareIndex,
+													   &hasNoScalarArrayBounds);
+			if (advanceResult == 1)
+			{
+				return 1;
+			}
+			else if (hasNoScalarArrayBounds)
+			{
+				compareResult = -1;
+				break;
+			}
+			else
+			{
+				/* We succcessfully advanced forward - recheck the current key in case it now matches the key */
+				hasSkipScanBoundary = advanceResult == -2;
+				compareIndex--;
+				continue;
+			}
+		}
+		else if (compareResult < 0)
+		{
+			compareResult = hasSkipScanBoundary ? -2 : -1;
+			break;
+		}
+		else
+		{
+			priorMatchesEquality = true;
+			hasSkipScanBoundary = false;
+			if (!runData->indexBounds[compareIndex].isEqualityBound &&
+				compareIndex < runData->metaInfo->numIndexPaths - 1)
+			{
+				/* if the current path is a range bound, given that our scan
+				 * only works for the current value, we would need to update the bound
+				 * to be only valid for the current value. This will make it so that if
+				 * the scan moves forward/backward, it will reset the bounds to just this.
+				 * (i.e., pin the indexBounds to be an equality bound of the form [x,x])
+				 */
+				PinEqualityBoundForRange(runData, currentTermsSet, serializedTerms,
+										 compareIndex);
+			}
+
+			ResetUnsatisfiableBounds(runData, compareIndex);
+		}
+	}
+
+	return compareResult;
+}
+
+
+static bool
+MoveUnsatisfiableBoundForward(CompositeQueryRunData *runData, int compareIndex)
+{
+	CompositeOrderedScanEntryData *entryData = runData->metaInfo->orderedScanEntryData;
+	List *perPathEntries = entryData->perPathEntries[compareIndex].entries;
+	ListCell *pathCell;
+
+	bool isBackwardScan = entryData->perPathEntries[compareIndex].isEntryScanBackwards;
+
+	/* The current mininum of the upper bound is in runData */
+	CompositeSingleBound currentMax = isBackwardScan ?
+									  runData->indexBounds[compareIndex].lowerBound :
+									  runData->indexBounds[compareIndex].upperBound;
+	foreach(pathCell, perPathEntries)
+	{
+		CompositeProcessedPerPathEntry *entry = (CompositeProcessedPerPathEntry *) lfirst(
+			pathCell);
+
+		/* Rev by equality on the most extreme bound */
+		if (BsonValueEquals(
+				&entry->boundsSet->bounds[entry->currentOperatorIndex].upperBound.bound,
+				&currentMax.bound) &&
+			entry->boundsSet->bounds[entry->currentOperatorIndex].upperBound.
+			isBoundInclusive == currentMax.isBoundInclusive)
+		{
+			entry->currentOperatorIndex++;
+			if (entry->currentOperatorIndex >= entry->boundsSet->numBounds)
+			{
+				/* All the values for this boundsSet are exhausted. Rev the prior entry. if all exhausted
+				 * We're done. */
+				return false;
+			}
+
+			return true;
+		}
+	}
+
+	/* We couldn't find any array bounds based on max to rev - check the global max and see if any mins are
+	 * greater than that
+	 */
+	currentMax = isBackwardScan ?
+				 runData->metaInfo->orderedScanEntryData->baseIndexBounds[compareIndex].
+				 lowerBound :
+				 runData->metaInfo->orderedScanEntryData->baseIndexBounds[compareIndex].
+				 upperBound;
+	foreach(pathCell, perPathEntries)
+	{
+		CompositeProcessedPerPathEntry *entry = (CompositeProcessedPerPathEntry *) lfirst(
+			pathCell);
+
+		if (isBackwardScan)
+		{
+			CompositeSingleBound *currentBound =
+				&entry->boundsSet->bounds[entry->currentOperatorIndex].upperBound;
+			bool isComparisonValidIgnore = false;
+			int cmp = CompareBsonValueAndType(&currentBound->bound,
+											  &currentMax.bound,
+											  &isComparisonValidIgnore);
+
+
+			if (cmp < 0 || (cmp == 0 && !currentBound->isBoundInclusive))
+			{
+				entry->currentOperatorIndex++;
+				if (entry->currentOperatorIndex >= entry->boundsSet->numBounds)
+				{
+					/* All the values for this boundsSet are exhausted. Rev the prior entry. if all exhausted
+					 * We're done. */
+					return false;
+				}
+
+				return true;
+			}
+		}
+		else
+		{
+			/* Rev any unsatisfiable lower bound */
+			CompositeSingleBound *currentBound =
+				&entry->boundsSet->bounds[entry->currentOperatorIndex].lowerBound;
+			bool isComparisonValidIgnore = false;
+			int cmp = CompareBsonValueAndType(&currentBound->bound,
+											  &currentMax.bound,
+											  &isComparisonValidIgnore);
+
+
+			if (cmp > 0 || (cmp == 0 && !currentBound->isBoundInclusive))
+			{
+				entry->currentOperatorIndex++;
+				if (entry->currentOperatorIndex >= entry->boundsSet->numBounds)
+				{
+					/* All the values for this boundsSet are exhausted. Rev the prior entry. if all exhausted
+					 * We're done. */
+					return false;
+				}
+
+				return true;
+			}
+		}
+	}
+
+	ereport(ERROR, (errmsg(
+						"Scan entry is unsatisfiable but could not find a valid entry to move forward."
+						" This is a bug.")));
+}
+
+
+static int
+AdvanceOrderedScanData(CompositeQueryRunData *runData,
+					   const BsonIndexTerm *currentTermsSet,
+					   bool isEqualityPrefix,
+					   int compareIndex,
+					   bool *hasNoScalarArrayBounds)
+{
+	/* We know compareIndex returned a mismatch with the term currentTerm
+	 * We rev that index forward and reset subsequent indexes down to 0.
+	 */
+	int finalResult;
+	List *perPathEntries;
+	ListCell *pathCell;
+	CompositeOrderedScanEntryData *entryData = runData->metaInfo->orderedScanEntryData;
+	IndexTermCreateMetadata metadata;
+	PopulateTermMetadataForTruncation(&metadata, &entryData->basePathMetadata,
+									  runData, entryData->indexPaths[compareIndex],
+									  entryData->indexPathLengths[compareIndex],
+									  entryData->sortOrders[compareIndex]);
+
+advance_ordered_scan_data_start:
+	finalResult = -2;
+	perPathEntries = entryData->perPathEntries[compareIndex].entries;
+
+	/* If we exhausted on the current equality, first retry without the equality */
+	if (entryData->perPathEntries[compareIndex].currentPathEqualityTerm != NULL)
+	{
+		pfree(entryData->perPathEntries[compareIndex].currentPathEqualityTerm);
+		entryData->perPathEntries[compareIndex].currentPathEqualityTerm = NULL;
+		memset(&entryData->perPathEntries[compareIndex].currentPathEqualityTermValue, 0,
+			   sizeof(BsonIndexTerm));
+		runData->indexBounds[compareIndex] = entryData->baseIndexBounds[compareIndex];
+	}
+	else if (list_length(perPathEntries) == 0)
+	{
+		*hasNoScalarArrayBounds = true;
+		return compareIndex == 0 ? 1 : -2;
+	}
+
+	foreach(pathCell, perPathEntries)
+	{
+		CompositeProcessedPerPathEntry *entry = (CompositeProcessedPerPathEntry *) lfirst(
+			pathCell);
+		bool priorMatchesEquality = isEqualityPrefix;
+		bool allowSkipScansOnBoundary = true;
+		if (entry->currentOperatorIndex >= entry->boundsSet->numBounds)
+		{
+			ereport(ERROR, (errmsg(
+								"Scan entry operator index is out of bounds. This is a bug.")));
+		}
+
+		int compareResult = RunCompareOnBounds(
+			&entry->boundsSet->bounds[entry->currentOperatorIndex],
+			&currentTermsSet[compareIndex], isEqualityPrefix,
+			runData->metaInfo->isBackwardScan,
+			entry->boundsSet->wildcardPath != NULL, &priorMatchesEquality,
+			&allowSkipScansOnBoundary);
+		if (compareResult == 1)
+		{
+			/* This particular bound is exhausted - move to the next one */
+			entry->currentOperatorIndex++;
+
+			if (entry->currentOperatorIndex >= entry->boundsSet->numBounds)
+			{
+				/* All the values for this boundsSet are exhausted. Rev the prior entry. if all exhausted
+				 * We're done.
+				 */
+				if (compareIndex == 0)
+				{
+					return 1;
+				}
+			}
+		}
+		else if (compareResult == -2)
+		{
+			finalResult = -2;
+		}
+	}
+
+	/* Reset all subsequent bounds back to the start */
+	for (int i = compareIndex + 1; i < runData->metaInfo->numIndexPaths; i++)
+	{
+		perPathEntries =
+			runData->metaInfo->orderedScanEntryData->perPathEntries[i].entries;
+		foreach(pathCell, perPathEntries)
+		{
+			CompositeProcessedPerPathEntry *entry =
+				(CompositeProcessedPerPathEntry *) lfirst(pathCell);
+			entry->currentOperatorIndex = 0;
+		}
+	}
+
+	int32_t unsatisfiableIndex = -1;
+	UpdateRunDataForOrderedBounds(runData, entryData, &unsatisfiableIndex);
+
+	if (unsatisfiableIndex != -1)
+	{
+		/* One of the bounds can't be pushed forward, restart with that index */
+		compareIndex = unsatisfiableIndex;
+		if (!MoveUnsatisfiableBoundForward(runData, compareIndex))
+		{
+			if (compareIndex == 0)
+			{
+				return 1;
+			}
+
+			/* Move forward after moving the bounds to infinity */
+			UpdateRunDataForOrderedBounds(runData, entryData, &unsatisfiableIndex);
+		}
+		else
+		{
+			goto advance_ordered_scan_data_start;
+		}
+	}
+
+	MemoryContext context = MemoryContextSwitchTo(entryData->scanKeyMemoryContext);
+	TryUpdateBoundsForTruncation(
+		runData, &entryData->basePathMetadata, entryData->indexPaths,
+		entryData->indexPathLengths, entryData->sortOrders);
+	MemoryContextSwitchTo(context);
+
+	return finalResult;
 }
 
 
 inline static int
 SetBoundaryStoppingValueLessThan(bool hasEqualityPrefix, const BsonIndexTerm *compareTerm,
-								 bool isBackwardScan, bool hasUnspecifiedPrefix)
+								 bool isBackwardScan, bool allowSkipScanBoundaries)
 {
 	int cmp;
 	if (!IsIndexTermValueDescending(compareTerm))
 	{
-		cmp = (hasUnspecifiedPrefix && !isBackwardScan) ? -3 : -1;
+		cmp = (allowSkipScanBoundaries && !isBackwardScan) ? -3 : -1;
 	}
 	else
 	{
-		cmp = hasEqualityPrefix ? 1 : ((hasUnspecifiedPrefix && !isBackwardScan) ? -2 :
+		cmp = hasEqualityPrefix ? 1 : ((allowSkipScanBoundaries && !isBackwardScan) ? -2 :
 									   -1);
 	}
 
@@ -584,16 +1549,16 @@ SetBoundaryStoppingValueLessThan(bool hasEqualityPrefix, const BsonIndexTerm *co
 inline static int
 SetBoundaryStoppingValueGreaterThan(bool hasEqualityPrefix, const
 									BsonIndexTerm *compareTerm, bool isBackwardScan,
-									bool hasUnspecifiedPrefix)
+									bool allowSkipScanBoundaries)
 {
 	int cmp;
 	if (IsIndexTermValueDescending(compareTerm))
 	{
-		cmp = (hasUnspecifiedPrefix && !isBackwardScan) ? -3 : -1;
+		cmp = (allowSkipScanBoundaries && !isBackwardScan) ? -3 : -1;
 	}
 	else
 	{
-		cmp = hasEqualityPrefix ? 1 : ((hasUnspecifiedPrefix && !isBackwardScan) ? -2 :
+		cmp = hasEqualityPrefix ? 1 : ((allowSkipScanBoundaries && !isBackwardScan) ? -2 :
 									   -1);
 	}
 
@@ -619,8 +1584,8 @@ SetBoundaryStoppingValueGreaterThan(bool hasEqualityPrefix, const
  */
 static int32_t
 RunCompareOnBounds(CompositeIndexBounds *bounds, const BsonIndexTerm *compareTerm,
-				   bool hasEqualityPrefix, bool isBackwardScan,
-				   bool *priorMatchesEquality, bool *hasUnspecifiedPrefix)
+				   bool hasEqualityPrefix, bool isBackwardScan, bool isWildCardMatch,
+				   bool *priorMatchesEquality, bool *allowSkipScanBoundaries)
 {
 	if (bounds->isEqualityBound)
 	{
@@ -638,14 +1603,23 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, const BsonIndexTerm *compareTer
 		{
 			return SetBoundaryStoppingValueLessThan(hasEqualityPrefix, compareTerm,
 													isBackwardScan,
-													*hasUnspecifiedPrefix);
+													*allowSkipScanBoundaries);
 		}
 		else if (compareBounds > 0)
 		{
 			/* Stop the search if ascending */
 			return SetBoundaryStoppingValueGreaterThan(hasEqualityPrefix, compareTerm,
 													   isBackwardScan,
-													   *hasUnspecifiedPrefix);
+													   *allowSkipScanBoundaries);
+		}
+
+		if (isWildCardMatch)
+		{
+			/* For equality scenarios, ensure that the paths match too */
+			return strcmp(compareTerm->element.path,
+						  bounds->lowerBound.indexTermValue.element.path) == 0 &&
+				   compareTerm->element.pathLength ==
+				   bounds->lowerBound.indexTermValue.element.pathLength;
 		}
 
 		return 0;
@@ -679,7 +1653,40 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, const BsonIndexTerm *compareTer
 			 */
 			return SetBoundaryStoppingValueLessThan(hasEqualityPrefix, compareTerm,
 													isBackwardScan,
-													*hasUnspecifiedPrefix);
+													*allowSkipScanBoundaries);
+		}
+
+
+		if (isWildCardMatch)
+		{
+			bool isPathMatch = false;
+			if (bounds->lowerBound.indexTermValue.element.bsonValue.value_type ==
+				BSON_TYPE_MINKEY)
+			{
+				/* For exists checks we do subpath checks */
+				isPathMatch =
+					IsCompositePathWildcardMatchNoArrayCheck(
+						compareTerm->element.path,
+						bounds->lowerBound.indexTermValue.element.path,
+						bounds->lowerBound.indexTermValue.element.pathLength);
+			}
+			else
+			{
+				/* Otherwise, we use strict path matches */
+				isPathMatch =
+					strcmp(compareTerm->element.path,
+						   bounds->lowerBound.indexTermValue.element.path) == 0 &&
+					compareTerm->element.pathLength ==
+					bounds->lowerBound.indexTermValue.element.pathLength;
+			}
+
+			if (!isPathMatch)
+			{
+				/* For inequality matches, we consider subpaths of the path as valid - just not other paths */
+				return SetBoundaryStoppingValueLessThan(hasEqualityPrefix, compareTerm,
+														isBackwardScan,
+														*allowSkipScanBoundaries);
+			}
 		}
 	}
 
@@ -708,14 +1715,46 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, const BsonIndexTerm *compareTer
 			/* Can stop searching for ascending search */
 			return SetBoundaryStoppingValueGreaterThan(hasEqualityPrefix, compareTerm,
 													   isBackwardScan,
-													   *hasUnspecifiedPrefix);
+													   *allowSkipScanBoundaries);
+		}
+
+		if (isWildCardMatch)
+		{
+			bool isPathMatch = false;
+			if (bounds->upperBound.indexTermValue.element.bsonValue.value_type ==
+				BSON_TYPE_MAXKEY)
+			{
+				/* For exists checks we do subpath checks */
+				isPathMatch =
+					IsCompositePathWildcardMatchNoArrayCheck(
+						compareTerm->element.path,
+						bounds->upperBound.indexTermValue.element.path,
+						bounds->upperBound.indexTermValue.element.pathLength);
+			}
+			else
+			{
+				/* Otherwise, we use strict path matches */
+				isPathMatch =
+					strcmp(compareTerm->element.path,
+						   bounds->upperBound.indexTermValue.element.path) == 0 &&
+					compareTerm->element.pathLength ==
+					bounds->upperBound.indexTermValue.element.pathLength;
+			}
+
+			/* For inequality matches, we consider subpaths of the path as valid - just not other paths */
+			if (!isPathMatch)
+			{
+				return SetBoundaryStoppingValueGreaterThan(hasEqualityPrefix, compareTerm,
+														   isBackwardScan,
+														   *allowSkipScanBoundaries);
+			}
 		}
 	}
 
 	if (bounds->lowerBound.bound.value_type == BSON_TYPE_EOD &&
 		bounds->upperBound.bound.value_type == BSON_TYPE_EOD)
 	{
-		*hasUnspecifiedPrefix = true;
+		*allowSkipScanBoundaries = true;
 	}
 
 	return 0;
@@ -743,6 +1782,7 @@ gin_bson_composite_path_consistent(PG_FUNCTION_ARGS)
 	/* Datum *queryKeys = (Datum *) PG_GETARG_POINTER(6); */
 
 	if (strategy == BSON_INDEX_STRATEGY_IS_MULTIKEY ||
+		strategy == BSON_INDEX_STRATEGY_HAS_CORRELATED_REDUCED_TERMS ||
 		strategy == BSON_INDEX_STRATEGY_HAS_TRUNCATED_TERMS)
 	{
 		*recheck = false;
@@ -776,6 +1816,14 @@ gin_bson_composite_path_consistent(PG_FUNCTION_ARGS)
 
 	/* If operators specifically required runtime recheck honor it */
 	*recheck = runData->metaInfo->requiresRuntimeRecheck;
+
+	if (runData->metaInfo->orderedScanEntryData != NULL)
+	{
+		/* For ordered scans, we can also return early since the scan keys
+		 * are already guaranteed to be in order and satisfy the query
+		 */
+		PG_RETURN_BOOL(true);
+	}
 
 	if (runData->metaInfo->hasTruncation &&
 		check[runData->metaInfo->truncationTermIndex])
@@ -832,6 +1880,36 @@ gin_bson_composite_path_consistent(PG_FUNCTION_ARGS)
 }
 
 
+Datum *
+GenerateCompositeTermsFromIndexSpec(pgbson *document, pgbson *keySpec, uint32_t *numTerms)
+{
+	bool isIndexSpec = true;
+	Size fieldSize = FillCompositePathSpecFromBson(keySpec, NULL, isIndexSpec);
+	BsonGinCompositePathOptions *options = palloc0(
+		sizeof(BsonGinCompositePathOptions) + fieldSize);
+	options->base.indexTermTruncateLimit = INT32_MAX;
+	options->base.wildcardIndexTruncatedPathLimit = MaxWildcardIndexKeySize;
+	options->base.type = IndexOptionsType_Composite;
+	options->base.version = IndexOptionsVersion_V0;
+	options->compositePathSpec = sizeof(BsonGinCompositePathOptions);
+	options->wildcardPathIndex = -1;
+	options->enableCompositeReducedCorrelatedTerms = true;
+
+	FillCompositePathSpecFromBson(keySpec,
+								  ((char *) options) +
+								  sizeof(BsonGinCompositePathOptions), isIndexSpec);
+
+	GinEntryPathData pathData = { 0 };
+	bool addMetadataTerms = false;
+	pathData.terms.entries = GenerateCompositeTermsCore(document, options,
+														&pathData.terms.index,
+														addMetadataTerms);
+	*numTerms = pathData.terms.index;
+	pfree(options);
+	return pathData.terms.entries;
+}
+
+
 /*
  * gin_bson_get_composite_path_generated_terms is an internal utility function that allows to retrieve
  * the set of terms that *would* be inserted in the index for a given document for a single
@@ -842,14 +1920,16 @@ gin_bson_composite_path_consistent(PG_FUNCTION_ARGS)
  * gin_bson_get_composite_path_generated_terms(
  *      document bson,
  *      pathSpec text,
- *      termLength int)
+ *      termLength int,
+ *      addMetadata bool,
+ *      wildcardPathIndex int)
  *
  */
 Datum
 gin_bson_get_composite_path_generated_terms(PG_FUNCTION_ARGS)
 {
 	FuncCallContext *functionContext;
-	GenerateTermsContext *context;
+	GinEntryPathData *pathData;
 
 	bool addMetadata = PG_GETARG_BOOL(3);
 	if (SRF_IS_FIRSTCALL())
@@ -858,6 +1938,9 @@ gin_bson_get_composite_path_generated_terms(PG_FUNCTION_ARGS)
 		pgbson *document = PG_GETARG_PGBSON(0);
 		char *pathSpec = text_to_cstring(PG_GETARG_TEXT_P(1));
 		int32_t truncationLimit = PG_GETARG_INT32(2);
+		int32_t wildcardPathIndex = PG_GETARG_INT32(4);
+		bool enableCompositeReducedCorrelatedTerms = PG_NARGS() > 5 ? PG_GETARG_BOOL(5) :
+													 false;
 
 		functionContext = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(functionContext->multi_call_memory_ctx);
@@ -866,28 +1949,36 @@ gin_bson_get_composite_path_generated_terms(PG_FUNCTION_ARGS)
 		BsonGinCompositePathOptions *options = palloc0(
 			sizeof(BsonGinCompositePathOptions) + fieldSize);
 		options->base.indexTermTruncateLimit = truncationLimit;
+		options->base.wildcardIndexTruncatedPathLimit = MaxWildcardIndexKeySize;
 		options->base.type = IndexOptionsType_Composite;
 		options->base.version = IndexOptionsVersion_V0;
 		options->compositePathSpec = sizeof(BsonGinCompositePathOptions);
+		options->wildcardPathIndex = wildcardPathIndex;
+		options->enableCompositeReducedCorrelatedTerms =
+			enableCompositeReducedCorrelatedTerms;
 
 		FillCompositePathSpec(
 			pathSpec,
 			((char *) options) + sizeof(BsonGinCompositePathOptions));
 
-		context = (GenerateTermsContext *) palloc0(sizeof(GenerateTermsContext));
-		context->terms.entries = GenerateCompositeTermsCore(document, options,
-															&context->totalTermCount);
-		context->index = 0;
+		pathData = palloc0(sizeof(GinEntryPathData));
+		bool addMetadataTerms = true;
+		pathData->terms.entries = GenerateCompositeTermsCore(document, options,
+															 &pathData->
+															 terms.index,
+															 addMetadataTerms);
+		pathData->terms.entryCapacity = pathData->terms.index;
+		pathData->terms.index = 0;
 		MemoryContextSwitchTo(oldcontext);
-		functionContext->user_fctx = (void *) context;
+		functionContext->user_fctx = (void *) pathData;
 	}
 
 	functionContext = SRF_PERCALL_SETUP();
-	context = (GenerateTermsContext *) functionContext->user_fctx;
+	pathData = (GinEntryPathData *) functionContext->user_fctx;
 
-	if (context->index < context->totalTermCount)
+	if (pathData->terms.index < pathData->terms.entryCapacity)
 	{
-		Datum next = context->terms.entries[context->index++];
+		Datum next = pathData->terms.entries[pathData->terms.index++];
 		BsonIndexTerm term[INDEX_MAX_KEYS] = { 0 };
 		bytea *serializedTerm = DatumGetByteaPP(next);
 		int32_t numKeys = InitializeCompositeIndexTerm(serializedTerm, term);
@@ -981,7 +2072,7 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 
 	bool priorMatchesEquality = true;
 	bool hasEqualityPrefix = true;
-	bool hasUnspecifiedPrefix = false;
+	bool allowSkipScansOnBoundary = false;
 	bool foundSkipPath = false;
 	bool isMinBound = false;
 	int32_t compareIndex = 0;
@@ -993,8 +2084,8 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 			&runData->indexBounds[compareIndex],
 			&compareTerm[compareIndex],
 			hasEqualityPrefix,
-			runData->metaInfo->isBackwardScan,
-			&priorMatchesEquality, &hasUnspecifiedPrefix);
+			runData->metaInfo->isBackwardScan, runData->wildcardPath != NULL,
+			&priorMatchesEquality, &allowSkipScansOnBoundary);
 		if (compareInBounds < -1)
 		{
 			foundSkipPath = true;
@@ -1005,8 +2096,33 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 
 	if (!foundSkipPath)
 	{
+		Datum usedKey = (Datum) 0;
+		if (runData->metaInfo->orderedScanEntryData != NULL)
+		{
+			BsonGinCompositePathOptions *options =
+				(BsonGinCompositePathOptions *) PG_GET_OPCLASS_OPTIONS();
+			IndexTermCreateMetadata compositeMetadata = GetCompositeIndexTermMetadata(
+				options);
+
+			bool hasInequalityMatch = false;
+			bytea *lowerBoundTerm = BuildLowerBoundTermFromIndexBounds(runData,
+																	   &compositeMetadata,
+																	   &hasInequalityMatch,
+																	   runData->metaInfo->
+																	   orderedScanEntryData
+																	   ->indexPaths,
+																	   runData->metaInfo->
+																	   orderedScanEntryData
+																	   ->indexPathLengths,
+																	   runData->metaInfo->
+																	   orderedScanEntryData
+																	   ->sortOrders);
+			usedKey = PointerGetDatum(lowerBoundTerm);
+		}
+
 		/* Continue using current path */
-		PG_RETURN_DATUM(0);
+		PG_FREE_IF_COPY(compareKeyValue, 0);
+		PG_RETURN_DATUM(usedKey);
 	}
 
 	BsonGinCompositePathOptions *options =
@@ -1043,8 +2159,17 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 													&singlePathMetadata).indexTermVal;
 			}
 		}
+		else if (i > compareIndex)
+		{
+			/* Pick the smallest value for all the remaining terms */
+			compareTerm[i].element.bsonValue.value_type =
+				singlePathMetadata.isDescending ? BSON_TYPE_MAXKEY : BSON_TYPE_MINKEY;
+			serialized = SerializeBsonIndexTerm(&compareTerm[i].element,
+												&singlePathMetadata).indexTermVal;
+		}
 		else
 		{
+			/* Use the current prefix */
 			serialized = SerializeBsonIndexTerm(&compareTerm[i].element,
 												&singlePathMetadata).indexTermVal;
 		}
@@ -1055,7 +2180,21 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 	BsonIndexTermSerialized serialized = SerializeCompositeBsonIndexTerm(indexTermDatums,
 																		 runData->metaInfo
 																		 ->numIndexPaths);
+	PG_FREE_IF_COPY(compareKeyValue, 0);
 	PG_RETURN_POINTER(serialized.indexTermVal);
+}
+
+
+Datum
+gin_bson_composite_rum_config(PG_FUNCTION_ARGS)
+{
+	if (EnableCompositeWildcardSkipEmptyEntries)
+	{
+		RumConfig *config = (RumConfig *) PG_GETARG_POINTER(0);
+		config->skipGenerateEmptyEntries = true;
+	}
+
+	PG_RETURN_VOID();
 }
 
 
@@ -1243,6 +2382,25 @@ gin_bson_composite_path_options(PG_FUNCTION_ARGS)
 							INT32_MAX,  /* max */
 							offsetof(BsonGinCompositePathOptions,
 									 base.indexTermTruncateLimit));
+	add_local_int_reloption(relopts, "wki",
+							"The ordinal index path containing the wildcarded key (or -1 if none).",
+							-1,  /* default value */
+							-1,  /* min */
+							INDEX_MAX_KEYS,  /* max */
+							offsetof(BsonGinCompositePathOptions,
+									 wildcardPathIndex));
+	add_local_int_reloption(relopts, "wkl",
+							"The key size limit for wildcard index truncation.",
+							INT32_MAX, /* default value */
+							0, /* min */
+							INT32_MAX, /* max */
+							offsetof(BsonGinCompositePathOptions,
+									 base.wildcardIndexTruncatedPathLimit));
+	add_local_bool_reloption(relopts, "rct",
+							 "Whether or not to enable the reduced correlated term generation.",
+							 false, /* default value */
+							 offsetof(BsonGinCompositePathOptions,
+									  enableCompositeReducedCorrelatedTerms));
 	add_local_int_reloption(relopts, "v",
 							"The version of the options struct.",
 							IndexOptionsVersion_V0,          /* default value */
@@ -1251,6 +2409,50 @@ gin_bson_composite_path_options(PG_FUNCTION_ARGS)
 							offsetof(BsonGinCompositePathOptions, base.version));
 
 	PG_RETURN_VOID();
+}
+
+
+static bool
+IsBsonDollarArrayInvalidForWildcard(const bson_value_t *bsonValue)
+{
+	bson_iter_t iter;
+	BsonValueInitIterator(bsonValue, &iter);
+	if (bson_iter_next(&iter))
+	{
+		/* If the first entry is a document or null, it can't be pushed */
+		if (BSON_ITER_HOLDS_DOCUMENT(&iter) || BSON_ITER_HOLDS_NULL(&iter))
+		{
+			return true;
+		}
+
+		return false;
+	}
+
+	return false;
+}
+
+
+static bool
+IsBsonInContainsInvalidEntriesForWildcard(const bson_value_t *bsonValue)
+{
+	bson_iter_t iter;
+	BsonValueInitIterator(bsonValue, &iter);
+	while (bson_iter_next(&iter))
+	{
+		if (BSON_ITER_HOLDS_DOCUMENT(&iter) || BSON_ITER_HOLDS_NULL(&iter))
+		{
+			/* If we have a document, we cannot push down the $nin/$in */
+			return true;
+		}
+
+		if (BSON_ITER_HOLDS_ARRAY(&iter) &&
+			IsBsonDollarArrayInvalidForWildcard(bson_iter_value(&iter)))
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 
@@ -1307,14 +2509,25 @@ GetCompositeOpClassColumnNumber(const char *currentPath, void *contextOptions,
 		(BsonGinCompositePathOptions *) contextOptions;
 
 	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
+	uint32_t indexPathsLengths[INDEX_MAX_KEYS] = { 0 };
 	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
 
-	int numPaths = GetIndexPathsFromOptions(
+	int numPaths = GetIndexPathsFromOptionsWithLength(
 		options,
-		indexPaths, sortOrders);
+		indexPaths, indexPathsLengths, sortOrders);
 	for (int32_t i = 0; i < numPaths; i++)
 	{
-		if (strcmp(currentPath, indexPaths[i]) == 0)
+		if (EnableCompositeWildcardIndex && (i == options->wildcardPathIndex))
+		{
+			if (IsCompositePathWildcardMatch(currentPath, indexPaths[i],
+											 indexPathsLengths[i]))
+			{
+				/* Matches the wildcard path, and has a next step */
+				*sortDirection = sortOrders[i];
+				return i;
+			}
+		}
+		else if (strcmp(currentPath, indexPaths[i]) == 0)
 		{
 			*sortDirection = sortOrders[i];
 			return i;
@@ -1322,6 +2535,157 @@ GetCompositeOpClassColumnNumber(const char *currentPath, void *contextOptions,
 	}
 
 	return -1;
+}
+
+
+static IndexTraverseOption
+GetCompositeTraverseOptionSinglePath(BsonGinCompositePathOptions *options,
+									 BsonIndexStrategy strategy,
+									 const char *currentPath,
+									 uint32_t currentPathLength,
+									 int32_t *compositeIndexCol)
+{
+	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
+	uint32_t indexPathsLengths[INDEX_MAX_KEYS] = { 0 };
+	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
+
+	int numPaths = GetIndexPathsFromOptionsWithLength(
+		options, indexPaths, indexPathsLengths, sortOrders);
+	for (int32_t i = 0; i < numPaths; i++)
+	{
+		if (indexPathsLengths[i] == currentPathLength &&
+			strncmp(currentPath, indexPaths[i], currentPathLength) == 0)
+		{
+			if (options->enableCompositeReducedCorrelatedTerms &&
+				(strategy == BSON_INDEX_STRATEGY_DOLLAR_ORDERBY ||
+				 strategy == BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE) &&
+				i > 0)
+			{
+				/*
+				 * Can't push down order by on secondary columns yet
+				 * TODO: Requires orderby to match reduced index term in the runtime
+				 */
+				return IndexTraverse_Invalid;
+			}
+
+			*compositeIndexCol = i;
+			return IndexTraverse_Match;
+		}
+	}
+
+	return IndexTraverse_Invalid;
+}
+
+
+static IndexTraverseOption
+GetCompositeTraverseOptionWildCard(BsonGinCompositePathOptions *options, BsonIndexStrategy
+								   strategy,
+								   const char *currentPath, uint32_t currentPathLength,
+								   const bson_value_t *bsonValue,
+								   int32_t *compositeIndexCol)
+{
+	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
+	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
+	uint32_t indexPathLengths[INDEX_MAX_KEYS] = { 0 };
+
+	/* TODO: Handle things like $elemMatch, $type */
+	if (strategy == BSON_INDEX_STRATEGY_DOLLAR_TYPE ||
+		strategy == BSON_INDEX_STRATEGY_DOLLAR_SIZE ||
+		strategy == BSON_INDEX_STRATEGY_DOLLAR_ELEMMATCH)
+	{
+		return IndexTraverse_Invalid;
+	}
+
+	if (bsonValue->value_type == BSON_TYPE_ARRAY)
+	{
+		/* for arrays, we can't push if the first element is a document */
+		if (IsBsonDollarArrayInvalidForWildcard(bsonValue))
+		{
+			return IndexTraverse_Invalid;
+		}
+
+		/* For >= array elements, we don't index documents, so for scenarios where
+		 * we have { "a": { "$gt": [ 1, 2, 3 ]}} which hits a: [ { "b": 1 } ], we don't get
+		 * valid matches - consequently, we don't support range scans on arrays.
+		 * TODO: See if we can relax this restriction.
+		 */
+		if (strategy != BSON_INDEX_STRATEGY_DOLLAR_IN &&
+			strategy != BSON_INDEX_STRATEGY_DOLLAR_EQUAL)
+		{
+			return IndexTraverse_Invalid;
+		}
+	}
+
+	/* Basics - filters on documents do not work */
+	if (strategy == BSON_INDEX_STRATEGY_DOLLAR_IN)
+	{
+		if (IsBsonInContainsInvalidEntriesForWildcard(bsonValue))
+		{
+			return IndexTraverse_Invalid;
+		}
+	}
+	else if (bsonValue->value_type == BSON_TYPE_DOCUMENT)
+	{
+		return IndexTraverse_Invalid;
+	}
+
+	if (IsNegationStrategy(strategy))
+	{
+		/*
+		 * Negation strategies cannot be pushed down with wildcard indexes
+		 * because we cannot detect missing paths in the index (wildcard is sparse).
+		 */
+		return IndexTraverse_Invalid;
+	}
+
+	/* Exists false cannot be pushed (sparse index ) */
+	if (strategy == BSON_INDEX_STRATEGY_DOLLAR_EXISTS &&
+		BsonValueAsInt32(bsonValue) != 1)
+	{
+		return IndexTraverse_Invalid;
+	}
+
+	if (strategy >= BSON_INDEX_STRATEGY_DOLLAR_EQUAL &&
+		strategy <= BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL &&
+		bsonValue->value_type == BSON_TYPE_NULL)
+	{
+		/* Equals null cannot be pushed (sparse index) */
+		return IndexTraverse_Invalid;
+	}
+
+	if (strategy == BSON_INDEX_STRATEGY_DOLLAR_ORDERBY ||
+		strategy == BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE)
+	{
+		/* For now we don't push down orderby. This can be relaxed
+		 * later if we're matching on a single filter path range
+		 */
+		return IndexTraverse_Invalid;
+	}
+
+	int numPaths = GetIndexPathsFromOptionsWithLength(
+		options,
+		indexPaths, indexPathLengths, sortOrders);
+	for (int32_t i = 0; i < numPaths; i++)
+	{
+		if (EnableCompositeWildcardIndex && (i == options->wildcardPathIndex))
+		{
+			if (IsCompositePathWildcardMatch(currentPath, indexPaths[i],
+											 indexPathLengths[i]))
+			{
+				/* Matches the wildcard path, and has a next step */
+				*compositeIndexCol = i;
+				return IndexTraverse_MatchAndRecurse;
+			}
+		}
+		else if (indexPathLengths[i] == currentPathLength &&
+				 strncmp(currentPath, indexPaths[i], currentPathLength) == 0)
+		{
+			*compositeIndexCol = i;
+			return IndexTraverse_Match;
+		}
+	}
+
+	return IndexTraverse_Invalid;
 }
 
 
@@ -1359,22 +2723,24 @@ GetCompositePathIndexTraverseOption(BsonIndexStrategy strategy, void *contextOpt
 	BsonGinCompositePathOptions *options =
 		(BsonGinCompositePathOptions *) contextOptions;
 
-	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
-	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
-
-	int numPaths = GetIndexPathsFromOptions(
-		options,
-		indexPaths, sortOrders);
-	for (int32_t i = 0; i < numPaths; i++)
+	if (options->wildcardPathIndex < 0)
 	{
-		if (strcmp(currentPath, indexPaths[i]) == 0)
-		{
-			*compositeIndexCol = i;
-			return IndexTraverse_Match;
-		}
+		return GetCompositeTraverseOptionSinglePath(options,
+													strategy, currentPath,
+													currentPathLength,
+													compositeIndexCol);
 	}
+	else
+	{
+		if (!EnableCompositeWildcardIndex)
+		{
+			return IndexTraverse_Invalid;
+		}
 
-	return IndexTraverse_Invalid;
+		return GetCompositeTraverseOptionWildCard(options, strategy, currentPath,
+												  currentPathLength, bsonValue,
+												  compositeIndexCol);
+	}
 }
 
 
@@ -1463,7 +2829,7 @@ GetEqualityRangePredicatesForIndexPath(IndexPath *indexPath, void *options,
 				{
 					/* This could be a full scan with $range, check on that */
 					DollarRangeParams rangeParams = { 0 };
-					InitializeQueryDollarRange(&queryElement, &rangeParams);
+					InitializeQueryDollarRange(&queryElement.bsonValue, &rangeParams);
 					if (rangeParams.isFullScan)
 					{
 						/* This is neither equality nor inequality */
@@ -1496,7 +2862,7 @@ GetEqualityRangePredicatesForIndexPath(IndexPath *indexPath, void *options,
 					case BSON_INDEX_STRATEGY_DOLLAR_RANGE:
 					{
 						DollarRangeParams rangeParams = { 0 };
-						InitializeQueryDollarRange(&queryElement, &rangeParams);
+						InitializeQueryDollarRange(&queryElement.bsonValue, &rangeParams);
 						if (!rangeParams.isFullScan)
 						{
 							nonEqualityPrefixes[filterColumn] = true;
@@ -1524,7 +2890,102 @@ GetEqualityRangePredicatesForIndexPath(IndexPath *indexPath, void *options,
 
 
 char *
-SerializeBoundsStringForExplain(bytea *entry, void *extraData, PG_FUNCTION_ARGS)
+SerializeCompositeIndexKeyForExplain(bytea *entry)
+{
+	BsonGinCompositePathOptions *pathOptions = (BsonGinCompositePathOptions *) entry;
+	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
+	uint32_t indexPathsLengths[INDEX_MAX_KEYS] = { 0 };
+	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
+
+	int numPaths = GetIndexPathsFromOptionsWithLength(
+		pathOptions,
+		indexPaths, indexPathsLengths, sortOrders);
+	StringInfoData keyData;
+	initStringInfo(&keyData);
+	appendStringInfo(&keyData, "{");
+
+	const char *separator = "";
+	for (int i = 0; i < numPaths; i++)
+	{
+		const char *indexPath = indexPaths[i];
+		const char *pathSuffix = "";
+		if (i == pathOptions->wildcardPathIndex)
+		{
+			/* add the wildcard suffix if needed */
+			pathSuffix = indexPathsLengths[i] == 0 ? "$**" : ".$**";
+		}
+
+		appendStringInfo(&keyData, "%s\"%s%s\": %d", separator, indexPath, pathSuffix,
+						 sortOrders[i]);
+		separator = ",";
+	}
+
+	appendStringInfo(&keyData, "}");
+	return keyData.data;
+}
+
+
+static void
+SerializeOneBound(StringInfo s, const char *indexPath,
+				  int8_t sortOrder, CompositeIndexBounds *bound,
+				  const char *wildcardPath, bool appendPath)
+{
+	if (appendPath)
+	{
+		appendStringInfo(s, "\"%s\":", wildcardPath ? wildcardPath : indexPath);
+	}
+
+	appendStringInfo(s, " %s%s",
+					 sortOrder < 0 ? "DESC" : "",
+					 bound->lowerBound.isBoundInclusive ? "[" : "(");
+
+	if (wildcardPath)
+	{
+		appendStringInfo(s, " { \"%s\": ",
+						 bound->lowerBound.indexTermValue.element.
+						 path);
+	}
+
+	if (bound->lowerBound.bound.value_type == BSON_TYPE_EOD ||
+		bound->lowerBound.bound.value_type == BSON_TYPE_MINKEY)
+	{
+		appendStringInfoString(s, "MinKey");
+	}
+	else
+	{
+		appendStringInfo(s, "%s", BsonValueToJsonForLogging(
+							 &bound->lowerBound.bound));
+	}
+
+	appendStringInfo(s, "%s, ", wildcardPath ? " } " : "");
+
+	if (wildcardPath)
+	{
+		appendStringInfo(s, " { \"%s\": ",
+						 bound->upperBound.indexTermValue.element.
+						 path);
+	}
+
+	if (bound->upperBound.bound.value_type == BSON_TYPE_EOD ||
+		bound->upperBound.bound.value_type == BSON_TYPE_MAXKEY)
+	{
+		appendStringInfoString(s, "MaxKey");
+	}
+	else
+	{
+		appendStringInfo(s, "%s", BsonValueToJsonForLogging(
+							 &bound->upperBound.bound));
+	}
+
+	appendStringInfo(s, "%s%s",
+					 wildcardPath ? " } " : "",
+					 bound->upperBound.isBoundInclusive ? "]" : ")");
+}
+
+
+char *
+SerializeBoundsStringForExplain(bytea *entry, void *extraData, PG_FUNCTION_ARGS,
+								List **rawBounds)
 {
 	CompositeQueryRunData *runData = (CompositeQueryRunData *) extraData;
 
@@ -1551,38 +3012,76 @@ SerializeBoundsStringForExplain(bytea *entry, void *extraData, PG_FUNCTION_ARGS)
 			appendStringInfoString(s, ", ");
 		}
 
-		appendStringInfo(s, "\"%s\": %s%s",
-						 indexPaths[i],
-						 sortOrders[i] < 0 ? "DESC" : "",
-						 runData->indexBounds[i].lowerBound.isBoundInclusive ? "[" : "(");
-		if (runData->indexBounds[i].lowerBound.bound.value_type == BSON_TYPE_EOD ||
-			runData->indexBounds[i].lowerBound.bound.value_type == BSON_TYPE_MINKEY)
-		{
-			appendStringInfoString(s, "MinKey");
-		}
-		else
-		{
-			appendStringInfo(s, "%s", BsonValueToJsonForLogging(
-								 &runData->indexBounds[i].lowerBound.bound));
-		}
-
-		appendStringInfo(s, ", ");
-
-		if (runData->indexBounds[i].upperBound.bound.value_type == BSON_TYPE_EOD ||
-			runData->indexBounds[i].upperBound.bound.value_type == BSON_TYPE_MAXKEY)
-		{
-			appendStringInfoString(s, "MaxKey");
-		}
-		else
-		{
-			appendStringInfo(s, "%s", BsonValueToJsonForLogging(
-								 &runData->indexBounds[i].upperBound.bound));
-		}
-
-		appendStringInfo(s, "%s",
-						 runData->indexBounds[i].upperBound.isBoundInclusive ? "]" : ")");
+		bool appendPath = true;
+		SerializeOneBound(s, indexPaths[i], sortOrders[i],
+						  &runData->indexBounds[i],
+						  options->wildcardPathIndex >= 0 ?
+						  runData->wildcardPath : NULL,
+						  appendPath);
 	}
+
 	appendStringInfoString(s, "]");
+
+	if (runData->metaInfo->orderedScanEntryData != NULL)
+	{
+		/* If we have order by data, add that to the explain as well */
+		CompositeOrderedScanEntryData *orderedScanData =
+			runData->metaInfo->orderedScanEntryData;
+
+		StringInfo scandata = makeStringInfo();
+		for (int i = 0; i < runData->metaInfo->numIndexPaths; i++)
+		{
+			List *pathList = orderedScanData->perPathEntries[i].entries;
+
+			if (orderedScanData->baseIndexBounds[i].lowerBound.bound.value_type !=
+				BSON_TYPE_EOD ||
+				orderedScanData->baseIndexBounds[i].upperBound.bound.value_type !=
+				BSON_TYPE_EOD)
+			{
+				/* If we have base bounds, add it to the set */
+				Assert(pathList != NIL);
+				resetStringInfo(scandata);
+				appendStringInfo(scandata, "[");
+				bool appendPath = true;
+				SerializeOneBound(scandata, indexPaths[i], sortOrders[i],
+								  &orderedScanData->baseIndexBounds[i],
+								  options->wildcardPathIndex >= 0 ?
+								  indexPaths[options->wildcardPathIndex] : NULL,
+								  appendPath);
+				appendStringInfo(scandata, "]");
+				*rawBounds = lappend(*rawBounds, pstrdup(scandata->data));
+			}
+
+			ListCell *cell;
+			foreach(cell, pathList)
+			{
+				CompositeProcessedPerPathEntry *entry =
+					(CompositeProcessedPerPathEntry *) lfirst(cell);
+
+				/* Eacn bounds set is an independent clause - represent it as such. */
+				resetStringInfo(scandata);
+				appendStringInfo(scandata, "[");
+
+				for (int j = 0; j < entry->boundsSet->numBounds; j++)
+				{
+					if (j > 0)
+					{
+						appendStringInfoString(scandata, ",");
+					}
+
+					bool appendPath = j == 0;
+					SerializeOneBound(scandata, indexPaths[i], sortOrders[i],
+									  &entry->boundsSet->bounds[j],
+									  options->wildcardPathIndex >= 0 ?
+									  indexPaths[options->wildcardPathIndex] : NULL,
+									  appendPath);
+				}
+
+				appendStringInfo(scandata, "]");
+				*rawBounds = lappend(*rawBounds, pstrdup(scandata->data));
+			}
+		}
+	}
 
 	return s->data;
 }
@@ -1627,6 +3126,88 @@ DetermineCompositeScanDirection(bytea *compositeScanOptions,
 }
 
 
+Datum
+FormCompositeDatumFromQuals(List *indexQuals, List *indexOrderBy, bool isMultiKey, bool
+							hasCorrelatedReducedTerm, bool supportsOperatorOrderedScans)
+{
+	ScanKeyData *scanKeys = palloc0(sizeof(ScanKeyData) * list_length(indexQuals));
+	ScanKeyData targetScanKey = { 0 };
+
+	ListCell *cell;
+	int i = 0;
+	foreach(cell, indexQuals)
+	{
+		Expr *expr = lfirst(cell);
+		if (!IsA(expr, OpExpr))
+		{
+			return (Datum) 0;
+		}
+
+		OpExpr *clauseExpr = (OpExpr *) expr;
+		BsonIndexStrategy strategy = GetMongoIndexOperatorByPostgresOperatorId(
+			clauseExpr->opno)->indexStrategy;
+		if (list_length(clauseExpr->args) != 2)
+		{
+			return (Datum) 0;
+		}
+
+		if (strategy == BSON_INDEX_STRATEGY_INVALID)
+		{
+			if (clauseExpr->opno == BsonRangeMatchOperatorOid())
+			{
+				strategy = BSON_INDEX_STRATEGY_DOLLAR_RANGE;
+			}
+			else
+			{
+				return (Datum) 0;
+			}
+		}
+
+		Expr *leftop = (Expr *) linitial(clauseExpr->args);
+
+		if (leftop && IsA(leftop, RelabelType))
+		{
+			leftop = ((RelabelType *) leftop)->arg;
+		}
+
+		Assert(leftop != NULL);
+
+		if (!(IsA(leftop, Var) &&
+			  ((Var *) leftop)->varno == INDEX_VAR))
+		{
+			return (Datum) 0;
+		}
+
+		AttrNumber varattno = ((Var *) leftop)->varattno;
+
+		Expr *secondArg = lsecond(clauseExpr->args);
+		if (!IsA(secondArg, Const))
+		{
+			return (Datum) 0;
+		}
+
+		Const *secondConst = (Const *) secondArg;
+
+		scanKeys[i].sk_attno = varattno;
+		scanKeys[i].sk_strategy = strategy;
+		scanKeys[i].sk_argument = secondConst->constvalue;
+		i++;
+	}
+
+	/* TODO: Extract order by scan direction from index orderby */
+	if (!ModifyScanKeysForCompositeScan(scanKeys, list_length(indexQuals), &targetScanKey,
+										isMultiKey, hasCorrelatedReducedTerm,
+										list_length(indexOrderBy) > 0,
+										ForwardScanDirection,
+										supportsOperatorOrderedScans))
+	{
+		return (Datum) 0;
+	}
+
+	return targetScanKey.sk_argument;
+}
+
+
 /*
  * in a given scan, provided some scan keys, walks the scan keys and generates a single
  * query spec with the strategy BSON_INDEX_STRATEGY_COMPOSITE_QUERY that is an aggregate
@@ -1639,8 +3220,9 @@ DetermineCompositeScanDirection(bytea *compositeScanOptions,
  */
 bool
 ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetScanKey,
-							   bool hasArrayKeys, bool hasOrderBys,
-							   ScanDirection scanDirection)
+							   bool hasArrayKeys, bool hasCorrelatedReducedTerms,
+							   bool hasOrderBys, ScanDirection scanDirection,
+							   bool supportsOrderedOperatorScans)
 {
 	pgbson_writer querySpecWriter;
 	PgbsonWriterInit(&querySpecWriter);
@@ -1674,6 +3256,15 @@ ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetSca
 	PgbsonWriterAppendBool(&querySpecWriter, "or", 2, hasOrderBys);
 	PgbsonWriterAppendBool(&querySpecWriter, "db", 2, ScanDirectionIsBackward(
 							   scanDirection));
+	if (hasCorrelatedReducedTerms)
+	{
+		PgbsonWriterAppendBool(&querySpecWriter, "cr", 2, hasCorrelatedReducedTerms);
+	}
+
+	if (supportsOrderedOperatorScans)
+	{
+		PgbsonWriterAppendBool(&querySpecWriter, "oo", 2, true);
+	}
 
 	Datum finalDatum = PointerGetDatum(
 		PgbsonWriterGetPgbson(&querySpecWriter));
@@ -1697,7 +3288,9 @@ ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetSca
 
 static void
 ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
-						bool *isMultiKey, bool *isOrderBy, bool *isBackward)
+						bool *isMultiKey, bool *isOrderBy,
+						bool *hasCorrelatedReducedTerms,
+						bool *isBackward, bool *supportsOrderedOperatorScans)
 {
 	bson_iter_t queryIter;
 	PgbsonInitIterator(querySpec, &queryIter);
@@ -1720,6 +3313,16 @@ ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 		else if (strcmp(key, "or") == 0)
 		{
 			*isOrderBy = *isOrderBy || bson_iter_bool(&queryIter);
+		}
+		else if (strcmp(key, "cr") == 0)
+		{
+			*hasCorrelatedReducedTerms = *hasCorrelatedReducedTerms || bson_iter_bool(
+				&queryIter);
+		}
+		else if (strcmp(key, "oo") == 0)
+		{
+			*supportsOrderedOperatorScans = *supportsOrderedOperatorScans ||
+											bson_iter_bool(&queryIter);
 		}
 		else if (strcmp(key, "db") == 0)
 		{
@@ -1782,6 +3385,14 @@ FillCompositePathSpec(const char *prefix, void *buffer)
 	}
 
 	pgbson *bson = PgbsonInitFromJson(prefix);
+	bool isIndexSpec = false;
+	return FillCompositePathSpecFromBson(bson, buffer, isIndexSpec);
+}
+
+
+static Size
+FillCompositePathSpecFromBson(pgbson *bson, void *buffer, bool isIndexSpec)
+{
 	uint32_t pathCount = 0;
 	bson_iter_t bsonIterator;
 
@@ -1791,26 +3402,27 @@ FillCompositePathSpec(const char *prefix, void *buffer)
 	while (bson_iter_next(&bsonIterator))
 	{
 		uint32_t pathLength;
-		if (BSON_ITER_HOLDS_UTF8(&bsonIterator))
+		if (isIndexSpec)
 		{
-			bson_iter_utf8(&bsonIterator, &pathLength);
-		}
-		else if (BSON_ITER_HOLDS_DOCUMENT(&bsonIterator))
-		{
-			pgbsonelement pathElement;
-			BsonValueToPgbsonElement(bson_iter_value(&bsonIterator), &pathElement);
-			pathLength = pathElement.pathLength;
+			pathLength = bson_iter_key_len(&bsonIterator);
 		}
 		else
 		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-								"filter must have a valid string path")));
-		}
-
-		if (pathLength == 0)
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-								"filter must have a valid path")));
+			if (BSON_ITER_HOLDS_UTF8(&bsonIterator))
+			{
+				bson_iter_utf8(&bsonIterator, &pathLength);
+			}
+			else if (BSON_ITER_HOLDS_DOCUMENT(&bsonIterator))
+			{
+				pgbsonelement pathElement;
+				BsonValueToPgbsonElement(bson_iter_value(&bsonIterator), &pathElement);
+				pathLength = pathElement.pathLength;
+			}
+			else
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+									"index options must have a valid string path")));
+			}
 		}
 
 		pathCount++;
@@ -1828,11 +3440,20 @@ FillCompositePathSpec(const char *prefix, void *buffer)
 		totalSize += 1;
 	}
 
+	if (pathCount > INDEX_MAX_KEYS)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION13103),
+						errmsg("Exceeded index max number of keys %d. Found %d",
+							   INDEX_MAX_KEYS, pathCount)));
+	}
+
 	if (buffer != NULL)
 	{
 		PgbsonInitIterator(bson, &bsonIterator);
 		char *bufferPtr = (char *) buffer;
-		*((uint32_t *) bufferPtr) = pathCount;
+
+		/* Use memcpy to avoid misaligned memory access - buffer may not be 4-byte aligned */
+		memcpy(bufferPtr, &pathCount, sizeof(uint32_t));
 		bufferPtr += sizeof(uint32_t);
 
 		while (bson_iter_next(&bsonIterator))
@@ -1840,28 +3461,39 @@ FillCompositePathSpec(const char *prefix, void *buffer)
 			uint32_t pathLength = 0;
 			const char *path;
 			int8_t sortOrder = 1;
-			if (BSON_ITER_HOLDS_UTF8(&bsonIterator))
+			if (isIndexSpec)
 			{
-				path = bson_iter_utf8(&bsonIterator, &pathLength);
-				sortOrder = 1;
-			}
-			else if (BSON_ITER_HOLDS_DOCUMENT(&bsonIterator))
-			{
-				pgbsonelement pathElement;
-				BsonValueToPgbsonElement(bson_iter_value(&bsonIterator), &pathElement);
-				pathLength = pathElement.pathLength;
-				path = pathElement.path;
-				sortOrder = (int8_t) BsonValueAsInt32(&pathElement.bsonValue);
+				path = bson_iter_key(&bsonIterator);
+				pathLength = bson_iter_key_len(&bsonIterator);
+				sortOrder = BsonValueAsInt32(bson_iter_value(&bsonIterator)) > 0 ? 1 : -1;
 			}
 			else
 			{
-				path = NULL;
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR), errmsg(
-									"filter must have a valid string path")));
+				if (BSON_ITER_HOLDS_UTF8(&bsonIterator))
+				{
+					path = bson_iter_utf8(&bsonIterator, &pathLength);
+					sortOrder = 1;
+				}
+				else if (BSON_ITER_HOLDS_DOCUMENT(&bsonIterator))
+				{
+					pgbsonelement pathElement;
+					BsonValueToPgbsonElement(bson_iter_value(&bsonIterator),
+											 &pathElement);
+					pathLength = pathElement.pathLength;
+					path = pathElement.path;
+					sortOrder = (int8_t) BsonValueAsInt32(&pathElement.bsonValue);
+				}
+				else
+				{
+					path = NULL;
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR), errmsg(
+										"index options must have a valid string path")));
+				}
 			}
 
 			/* add the prefixed path length */
-			*((uint32_t *) bufferPtr) = pathLength;
+			/* Use memcpy to avoid misaligned memory access - buffer may not be 4-byte aligned */
+			memcpy(bufferPtr, &pathLength, sizeof(uint32_t));
 			bufferPtr += sizeof(uint32_t);
 
 			/* add the serialized string */
@@ -1880,57 +3512,271 @@ FillCompositePathSpec(const char *prefix, void *buffer)
 }
 
 
+static GinEntryPathData *
+GetCompositePathDataState(void *state, int i)
+{
+	CompositeTermGenerateState *genState = (CompositeTermGenerateState *) state;
+	return &genState->pathData[i];
+}
+
+
+static bool
+IsCompositeRecursivePathMatch(void *state, int i)
+{
+	CompositeTermGenerateState *genState = (CompositeTermGenerateState *) state;
+	return genState->matchStatus[i] == IndexTraverse_Recurse ||
+		   genState->matchStatus[i] == IndexTraverse_MatchAndRecurse;
+}
+
+
+static int
+CompositeGetCurrentRecursivePaths(void *state)
+{
+	CompositeTermGenerateState *genState = (CompositeTermGenerateState *) state;
+	return list_length(genState->correlatedTerms);
+}
+
+
+static void
+UpdateCorrelatedTermPaths(void *state, int32_t *previousTermCounts, bool *termMatchStatus)
+{
+	CompositeTermGenerateState *genState = (CompositeTermGenerateState *) state;
+	MergedTermSet *termSet = palloc0(sizeof(MergedTermSet));
+	bool hasTerms = false;
+	for (int i = 0; i < (int) genState->pathCount; i++)
+	{
+		termSet->terms[i] = NULL;
+		if (!termMatchStatus[i])
+		{
+			termSet->numTerms[i] = -1;
+			continue;
+		}
+
+		hasTerms = true;
+		termSet->numTerms[i] = genState->pathData[i].terms.index - previousTermCounts[i];
+		if (termSet->numTerms[i] > 0)
+		{
+			termSet->terms[i] = palloc(sizeof(Datum) * termSet->numTerms[i]);
+			memcpy(termSet->terms[i],
+				   &genState->pathData[i].terms.entries[previousTermCounts[i]],
+				   termSet->numTerms[i] * sizeof(Datum));
+		}
+	}
+
+	if (hasTerms)
+	{
+		genState->correlatedTerms = lappend(genState->correlatedTerms, termSet);
+	}
+	else
+	{
+		pfree(termSet);
+	}
+}
+
+
+static IndexTraverseOption
+GetCompositePathGenerateTraverseOption(void *contextOptions,
+									   const char *currentPath, uint32_t
+									   currentPathLength,
+									   bson_type_t valueType, int32_t *pathIndex)
+{
+	CompositeTermGenerateState *state = (CompositeTermGenerateState *) contextOptions;
+
+	IndexTraverseOption overallMatchStatus = IndexTraverse_Invalid;
+	for (uint32 i = 0; i < state->pathCount; i++)
+	{
+		int32_t pathIndexInnerIgnore = 0;
+		state->matchStatus[i] = GetSinglePathIndexTraverseOption(
+			state->pathOptions[i], currentPath, currentPathLength, valueType,
+			&pathIndexInnerIgnore);
+		if (state->matchStatus[i] >= IndexTraverse_Match)
+		{
+			/* TODO: Revisit this with wildcard term generation */
+			*pathIndex = i;
+		}
+
+		/* Bitwise OR here: This ensures if path A says recurse, and path B
+		 * is match, this becomes matchAndRecurse
+		 */
+		overallMatchStatus = overallMatchStatus | state->matchStatus[i];
+	}
+
+	return overallMatchStatus;
+}
+
+
+static BsonGinSinglePathOptions *
+CreateSinglePathOptions(const char *indexPath, int32_t pathIndex, int32_t pathCount,
+						BsonGinCompositePathOptions *compositeOptions,
+						bool *allowValueOnly)
+{
+	Size requiredSize = FillSinglePathSpec(indexPath, NULL);
+	BsonGinSinglePathOptions *singlePathOptions = palloc(
+		sizeof(BsonGinSinglePathOptions) + requiredSize + 1);
+	singlePathOptions->base.type = IndexOptionsType_SinglePath;
+	singlePathOptions->base.version = IndexOptionsVersion_V0;
+
+	/* The truncation limit will be divided by the numPaths */
+	IndexTermCreateMetadata subMetadata =
+		GetSinglePathTermCreateMetadata(compositeOptions, (int32_t) pathCount);
+
+	singlePathOptions->base.indexTermTruncateLimit = subMetadata.indexTermSizeLimit;
+	singlePathOptions->isWildcard = EnableCompositeWildcardIndex &&
+									pathIndex == compositeOptions->wildcardPathIndex;
+	singlePathOptions->useReducedWildcardTerms = singlePathOptions->isWildcard;
+	singlePathOptions->generateNotFoundTerm = true;
+	singlePathOptions->base.wildcardIndexTruncatedPathLimit =
+		compositeOptions->base.wildcardIndexTruncatedPathLimit;
+	singlePathOptions->path = sizeof(BsonGinSinglePathOptions);
+
+	/* TODO: pass down collation from composite options */
+	singlePathOptions->collation = 0;
+
+	FillSinglePathSpec(indexPath, ((char *) singlePathOptions) +
+					   sizeof(BsonGinSinglePathOptions));
+
+	*allowValueOnly = subMetadata.allowValueOnly;
+	return singlePathOptions;
+}
+
+
+static void
+SetGenerateTermsContextFlags(GenerateTermsContext *context)
+{
+	context->generateNotFoundTerm = false;
+
+	/* Composite always skips generating top level array */
+	context->skipGenerateTopLevelArrayTerm = true;
+
+	/* We don't treat literal null as undefined for composite */
+	context->skipGeneratedPathUndefinedTermOnLiteralNull = true;
+}
+
+
+static void
+UpdateCompositePathData(GinEntryPathData *pathData,
+						BsonGinSinglePathOptions *singlePathOptions,
+						bool allowValueOnly, int8_t sortOrder)
+{
+	pathData->termMetadata = GetIndexTermMetadata(singlePathOptions);
+	pathData->termMetadata.isDescending = sortOrder < 0;
+	pathData->termMetadata.allowValueOnly = allowValueOnly;
+
+	/* Non wildcard indexes generate path based undefined terms */
+	pathData->generatePathBasedUndefinedTerms = !singlePathOptions->isWildcard;
+
+	/* Wildcard indexes don't generate top level documents */
+	pathData->skipGenerateTopLevelDocumentTerm = singlePathOptions->isWildcard;
+
+	/* Toggle reduced wildcard terms (don't generate array index paths) for wildcard */
+	pathData->useReducedWildcardTerms = singlePathOptions->isWildcard;
+}
+
+
+static uint32_t
+BuildSinglePathTermsForCompositeTermsNew(pgbson *bson,
+										 BsonGinCompositePathOptions *options,
+										 GinEntrySet *entries,
+										 CompositeTermGenerateState *termState,
+										 bool *entryHasMultiKey, bool *entryHasTruncation,
+										 uint32_t *pathCountOut,
+										 List **correlatedTerms)
+{
+	termState->pathCount = (uint32_t) GetIndexPathsFromOptions(options,
+															   termState->indexPaths,
+															   termState->sortOrders);
+	*pathCountOut = termState->pathCount;
+
+	termState->correlatedTerms = NIL;
+	for (uint32_t i = 0; i < termState->pathCount; i++)
+	{
+		bool allowValueOnly = false;
+		termState->pathOptions[i] = CreateSinglePathOptions(
+			termState->indexPaths[i], i, termState->pathCount, options, &allowValueOnly);
+		UpdateCompositePathData(&termState->pathData[i], termState->pathOptions[i],
+								allowValueOnly, termState->sortOrders[i]);
+	}
+
+	GenerateTermsContext context = { 0 };
+	context.pathDataState = (void *) termState;
+	context.maxPaths = termState->pathCount;
+	context.getPathDataFunc = GetCompositePathDataState;
+	context.isRecursivePathMatch = IsCompositeRecursivePathMatch;
+	context.currentRecursivePathIndex = CompositeGetCurrentRecursivePaths;
+
+	if (options->enableCompositeReducedCorrelatedTerms)
+	{
+		context.enableCompositeReducedCorrelatedTerms = true;
+		context.updateCorrelatedTermPaths = UpdateCorrelatedTermPaths;
+	}
+
+	context.options = (void *) termState;
+	context.traverseOptionsFunc = &GetCompositePathGenerateTraverseOption;
+	SetGenerateTermsContextFlags(&context);
+	GenerateTermsForPath(bson, &context);
+
+	/* We will have at least 1 term */
+	uint32_t totalTermCount = 1;
+	for (uint32_t i = 0; i < termState->pathCount; i++)
+	{
+		entries[i].entries = termState->pathData[i].terms.entries;
+		entries[i].index = termState->pathData[i].terms.index;
+		entries[i].entryCapacity = termState->pathData[i].terms.entryCapacity;
+
+		*entryHasMultiKey = *entryHasMultiKey || termState->pathData[i].hasArrayValues;
+		*entryHasTruncation = *entryHasTruncation ||
+							  termState->pathData[i].hasTruncatedTerms;
+
+		totalTermCount = totalTermCount * termState->pathData[i].terms.index;
+		pfree(termState->pathOptions[i]);
+		termState->pathOptions[i] = NULL;
+	}
+
+	*correlatedTerms = termState->correlatedTerms;
+	return totalTermCount;
+}
+
+
 static uint32_t
 BuildSinglePathTermsForCompositeTerms(pgbson *bson, BsonGinCompositePathOptions *options,
-									  Datum **entries, int32_t *entryCounts,
-									  bool *entryHasMultiKey)
+									  GinEntrySet *entries,
+									  bool *entryHasMultiKey, bool *entryHasTruncation,
+									  uint32_t *pathCountOut)
 {
 	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
 	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
 
 	uint32_t pathCount = (uint32_t) GetIndexPathsFromOptions(options,
 															 indexPaths, sortOrders);
+	*pathCountOut = pathCount;
 	uint32_t totalTermCount = 1;
 	for (uint32_t i = 0; i < pathCount; i++)
 	{
-		Size requiredSize = FillSinglePathSpec(indexPaths[i], NULL);
-
 		GenerateTermsContext context = { 0 };
-		BsonGinSinglePathOptions *singlePathOptions = palloc(
-			sizeof(BsonGinSinglePathOptions) + requiredSize + 1);
-		singlePathOptions->base.type = IndexOptionsType_SinglePath;
-		singlePathOptions->base.version = IndexOptionsVersion_V0;
+		GinEntryPathData pathData = { 0 };
 
-		/* The truncation limit will be divided by the numPaths */
-		context.termMetadata = GetSinglePathTermCreateMetadata(options,
-															   (int32_t) pathCount);
-		singlePathOptions->base.indexTermTruncateLimit =
-			context.termMetadata.indexTermSizeLimit;
-		singlePathOptions->isWildcard = false;
-		singlePathOptions->generateNotFoundTerm = true;
-		singlePathOptions->path = sizeof(BsonGinSinglePathOptions);
-
-		FillSinglePathSpec(indexPaths[i], ((char *) singlePathOptions) +
-						   sizeof(BsonGinSinglePathOptions));
+		bool allowValueOnly = false;
+		BsonGinSinglePathOptions *singlePathOptions = CreateSinglePathOptions(
+			indexPaths[i], i, pathCount, options, &allowValueOnly);
 
 		context.options = (void *) singlePathOptions;
 		context.traverseOptionsFunc = &GetSinglePathIndexTraverseOption;
-		context.generatePathBasedUndefinedTerms = true;
-		context.skipGeneratedPathUndefinedTermOnLiteralNull = true;
-		context.termMetadata = GetIndexTermMetadata(singlePathOptions);
-		context.skipGenerateTopLevelArrayTerm = true;
-		context.termMetadata.isDescending = sortOrders[i] < 0;
+		UpdateCompositePathData(&pathData, singlePathOptions, allowValueOnly,
+								sortOrders[i]);
+		SetGenerateTermsContextFlags(&context);
 
 		bool addRootTerm = false;
-		GenerateTerms(bson, &context, addRootTerm);
+		GenerateTerms(bson, &context, &pathData, addRootTerm);
 
-		entries[i] = context.terms.entries;
-		entryCounts[i] = context.totalTermCount;
+		entries[i].entries = pathData.terms.entries;
+		entries[i].index = pathData.terms.index;
+		entries[i].entryCapacity = pathData.terms.entryCapacity;
 
-		*entryHasMultiKey = *entryHasMultiKey || context.hasArrayValues;
+		*entryHasMultiKey = *entryHasMultiKey || pathData.hasArrayValues;
+		*entryHasTruncation = *entryHasTruncation || pathData.hasTruncatedTerms;
 
 		/* We will have at least 1 term */
-		totalTermCount = totalTermCount * context.totalTermCount;
+		totalTermCount = totalTermCount * pathData.terms.index;
 		pfree(singlePathOptions);
 	}
 
@@ -1939,74 +3785,40 @@ BuildSinglePathTermsForCompositeTerms(pgbson *bson, BsonGinCompositePathOptions 
 
 
 static Datum *
-GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
-						   int32_t *nentries)
+AddTruncationOrMultiKeyTerms(Datum *indexEntries, uint32_t totalTermCount,
+							 int32_t indexEntryCapacity, bool considerMultiTermAsMultiKey,
+							 bool entryHasMultiKey, bool hasTruncation,
+							 int32_t *nentries, bool addMetadataTerms,
+							 IndexTermCreateMetadata *overallMetadata)
 {
-	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
-	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
-
-	uint32_t pathCount = (uint32_t) GetIndexPathsFromOptions(options,
-															 indexPaths, sortOrders);
-
-	Datum **entries = palloc(sizeof(Datum *) * pathCount);
-	int32_t *entryCounts = palloc0(sizeof(int32_t) * pathCount);
-	bool entryHasMultiKey = false;
-	uint32_t totalTermCount = BuildSinglePathTermsForCompositeTerms(bson, options,
-																	entries, entryCounts,
-																	&entryHasMultiKey);
-
-	/* Now that we have the per term counts, generate the overall terms */
-	/* Add an additional one in case we need a truncated term */
-	Datum *indexEntries = palloc0(sizeof(Datum) * (totalTermCount + 3));
-
-	bool hasTruncation = false;
-	IndexTermCreateMetadata overallMetadata = GetCompositeIndexTermMetadata(options);
-
-	bytea *compositeDatums[INDEX_MAX_KEYS] = { 0 };
-	for (uint32_t i = 0; i < totalTermCount; i++)
+	if (!addMetadataTerms)
 	{
-		int termIndex = i;
-		for (uint32_t j = 0; j < pathCount; j++)
-		{
-			int32_t currentIndex = termIndex % entryCounts[j];
-			termIndex = termIndex / entryCounts[j];
-			Datum term = entries[j][currentIndex];
-
-			BsonIndexTerm indexTerm;
-			InitializeBsonIndexTerm(DatumGetByteaPP(term), &indexTerm);
-
-			if (IsIndexTermTruncated(&indexTerm))
-			{
-				hasTruncation = true;
-			}
-
-			compositeDatums[j] = DatumGetByteaPP(term);
-		}
-
-		BsonCompressableIndexTermSerialized serializedTerm =
-			SerializeCompositeBsonIndexTermWithCompression(compositeDatums, pathCount);
-		if (serializedTerm.isIndexTermTruncated)
-		{
-			hasTruncation = true;
-		}
-
-		indexEntries[i] = serializedTerm.indexTermDatum;
+		*nentries = totalTermCount;
+		return indexEntries;
 	}
 
-	if (totalTermCount > 1 || entryHasMultiKey)
+	bool hasExtra = (totalTermCount > 1 || entryHasMultiKey) || hasTruncation;
+
+	uint32_t requiredSize = hasExtra ? (totalTermCount + 2) : totalTermCount;
+	if (hasExtra && (uint32_t) indexEntryCapacity < requiredSize)
+	{
+		indexEntries = repalloc(indexEntries, sizeof(Datum) * requiredSize);
+	}
+
+	if ((considerMultiTermAsMultiKey && totalTermCount > 1) || entryHasMultiKey)
 	{
 		/*
 		 * TODO: This term is only needed in the case of parallel build
 		 * See if we can eliminate this.
 		 */
 		RumHasMultiKeyPaths = true;
-		indexEntries[totalTermCount] = GenerateRootMultiKeyTerm(&overallMetadata);
+		indexEntries[totalTermCount] = GenerateRootMultiKeyTerm(overallMetadata);
 		totalTermCount++;
 	}
 
 	if (hasTruncation)
 	{
-		indexEntries[totalTermCount] = GenerateRootTruncatedTerm(&overallMetadata);
+		indexEntries[totalTermCount] = GenerateRootTruncatedTerm(overallMetadata);
 		totalTermCount++;
 	}
 
@@ -2015,32 +3827,214 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 }
 
 
-static Datum *
-GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
-										 BsonGinCompositePathOptions *options,
-										 int32_t *nentries, bool **partialMatch,
-										 Pointer **extra_data,
-										 CompositeQueryRunData *runData)
+static void
+GenerateCompositedTerms(GinEntrySet *entrySet,
+						Datum *indexEntries, uint32_t totalTermCount, uint32_t pathCount,
+						bool *hasTruncation)
 {
-	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
-	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
+	bytea *compositeDatums[INDEX_MAX_KEYS] = { 0 };
+	for (uint32_t i = 0; i < totalTermCount; i++)
+	{
+		int termIndex = i;
+		for (uint32_t j = 0; j < pathCount; j++)
+		{
+			int32_t currentIndex = termIndex % entrySet[j].index;
+			termIndex = termIndex / entrySet[j].index;
+			Datum term = entrySet[j].entries[currentIndex];
 
-	uint32_t pathCount = (uint32_t) GetIndexPathsFromOptions(options,
-															 indexPaths, sortOrders);
+			bytea *termPointer = DatumGetByteaPP(term);
+			if (IsSerializedIndexTermTruncated(termPointer))
+			{
+				*hasTruncation = true;
+			}
 
-	Datum **entries = palloc(sizeof(Datum *) * pathCount);
-	int32_t *entryCounts = palloc0(sizeof(int32_t) * pathCount);
-	bool hasArrayPaths = false;
-	uint32_t totalTermCount = BuildSinglePathTermsForCompositeTerms(bson, options,
-																	entries, entryCounts,
-																	&hasArrayPaths);
+			compositeDatums[j] = termPointer;
+		}
 
-	/* Now that we have the per term counts, generate the overall terms */
-	/* Add an additional one in case we need a truncated term */
-	Datum *indexEntries = palloc0(sizeof(Datum) * totalTermCount);
-	*partialMatch = palloc0(sizeof(bool) * totalTermCount);
-	*extra_data = palloc0(sizeof(Pointer) * totalTermCount);
+		BsonCompressableIndexTermSerialized serializedTerm =
+			SerializeCompositeBsonIndexTermWithCompression(compositeDatums, pathCount);
+		if (serializedTerm.isIndexTermTruncated)
+		{
+			*hasTruncation = true;
+		}
 
+		indexEntries[i] = serializedTerm.indexTermDatum;
+	}
+}
+
+
+static uint32_t
+PreprocessMergedTermSet(MergedTermSet *mergedSet, GinEntrySet *entrySet,
+						uint32_t pathCount, GinEntryPathData *pathData)
+{
+	uint32_t currentTotalTermCount = 1;
+	for (int i = 0; i < (int) pathCount; i++)
+	{
+		if (mergedSet->numTerms[i] < 0)
+		{
+			/* Current path was a mismatch for recursive correlation - use global set */
+			mergedSet->numTerms[i] = entrySet[i].index;
+			mergedSet->terms[i] = entrySet[i].entries;
+		}
+		else if (mergedSet->numTerms[i] == 0)
+		{
+			/* Current path matched but generated no terms - generate path not exists term */
+			mergedSet->terms[i] = palloc(sizeof(Datum));
+			mergedSet->numTerms[i] = 1;
+			mergedSet->terms[i][0] = GenerateValueUndefinedTerm(
+				&pathData[i].termMetadata);
+		}
+
+		currentTotalTermCount = currentTotalTermCount * mergedSet->numTerms[i];
+	}
+
+	return currentTotalTermCount;
+}
+
+
+static uint32_t
+BuildCurrentEntrySetFromMergedSet(MergedTermSet *mergedSet, GinEntrySet *currentEntrySet,
+								  uint32_t pathCount, GinEntryPathData *pathData)
+{
+	uint32_t currentTotalTermCount = 1;
+	for (int i = 0; i < (int) pathCount; i++)
+	{
+		if (mergedSet->numTerms[i] <= 0)
+		{
+			/* Current path was a mismatch for recursive correlation - use global set */
+			ereport(ERROR, (errmsg(
+								"Unexpected - mergedSet for reduced terms should not have 0 terms")));
+		}
+
+		/* Current path matched and had terms - use that instead */
+		currentEntrySet[i].entries = mergedSet->terms[i];
+		currentEntrySet[i].index = mergedSet->numTerms[i];
+		currentEntrySet[i].entryCapacity = mergedSet->numTerms[i];
+		currentTotalTermCount = currentTotalTermCount * currentEntrySet[i].index;
+	}
+
+	return currentTotalTermCount;
+}
+
+
+static Datum *
+GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
+						   int32_t *nentries, bool addMetadataTerms)
+{
+	CompositeTermGenerateState termState = { 0 };
+	GinEntrySet entrySet[INDEX_MAX_KEYS] = { 0 };
+	bool entryHasMultiKey = false;
+	bool entryHasTruncation = false;
+	bool considerMultiTermAsMultiKey = options->wildcardPathIndex < 0 ||
+									   !EnableCompositeWildcardIndex;
+	IndexTermCreateMetadata overallMetadata = GetCompositeIndexTermMetadata(options);
+	uint32_t totalTermCount;
+	uint32_t pathCount;
+	List *correlatedTerms = NIL;
+	if (RumUseNewCompositeTermGeneration)
+	{
+		totalTermCount = BuildSinglePathTermsForCompositeTermsNew(bson, options,
+																  entrySet,
+																  &termState,
+																  &entryHasMultiKey,
+																  &entryHasTruncation,
+																  &pathCount,
+																  &correlatedTerms);
+	}
+	else
+	{
+		totalTermCount = BuildSinglePathTermsForCompositeTerms(bson, options,
+															   entrySet,
+															   &entryHasMultiKey,
+															   &entryHasTruncation,
+															   &pathCount);
+	}
+
+	if (pathCount == 1)
+	{
+		return AddTruncationOrMultiKeyTerms(
+			entrySet[0].entries, totalTermCount, entrySet[0].entryCapacity,
+			considerMultiTermAsMultiKey, entryHasMultiKey,
+			entryHasTruncation, nentries, addMetadataTerms, &overallMetadata);
+	}
+
+	bool hasTruncation = false;
+	int32_t finalEntryCapacity;
+	Datum *indexEntries;
+
+	if (RumUseNewCompositeTermGeneration &&
+		options->enableCompositeReducedCorrelatedTerms &&
+		list_length(correlatedTerms) > 0)
+	{
+		ListCell *cell;
+
+		/* First pass, calculate num terms */
+		uint32_t computedTermCount = 0;
+		foreach(cell, correlatedTerms)
+		{
+			MergedTermSet *mergedSet = (MergedTermSet *) lfirst(cell);
+			uint32_t termCount = PreprocessMergedTermSet(mergedSet, entrySet, pathCount,
+														 termState.pathData);
+			computedTermCount += termCount;
+		}
+
+		/* Buffer the term count by 4 to account for the truncated or multi-key status terms added
+		 * below.
+		 */
+		uint32_t capacityBuffer = 4;
+		finalEntryCapacity = computedTermCount + capacityBuffer;
+		indexEntries = palloc(sizeof(Datum) * finalEntryCapacity);
+
+		totalTermCount = 0;
+		foreach(cell, correlatedTerms)
+		{
+			GinEntrySet currentEntrySet[INDEX_MAX_KEYS] = { 0 };
+			MergedTermSet *mergedSet = (MergedTermSet *) lfirst(cell);
+
+			uint32_t currentTotalTermCount =
+				BuildCurrentEntrySetFromMergedSet(mergedSet, currentEntrySet,
+												  pathCount, termState.pathData);
+
+			if (totalTermCount + currentTotalTermCount > computedTermCount)
+			{
+				ereport(ERROR, (errmsg(
+									"Generating more terms than computed capacity - this is a bug. totalTermCount %u, current %u, capacity %u",
+									totalTermCount, currentTotalTermCount,
+									finalEntryCapacity)));
+			}
+
+			GenerateCompositedTerms(currentEntrySet, &indexEntries[totalTermCount],
+									currentTotalTermCount, pathCount, &hasTruncation);
+			totalTermCount += currentTotalTermCount;
+		}
+
+		/* Emit a term that tracks that this is a reduced correlated term set */
+		indexEntries[totalTermCount] = GenerateCorrelatedRootArrayTerm(&overallMetadata);
+		totalTermCount++;
+	}
+	else
+	{
+		/* Now that we have the per term counts, generate the overall terms */
+		/* Add an additional one in case we need a truncated term */
+		finalEntryCapacity = (totalTermCount + 3);
+		indexEntries = palloc0(sizeof(Datum) * finalEntryCapacity);
+		GenerateCompositedTerms(entrySet, indexEntries, totalTermCount, pathCount,
+								&hasTruncation);
+	}
+
+	return AddTruncationOrMultiKeyTerms(
+		indexEntries, totalTermCount, finalEntryCapacity, considerMultiTermAsMultiKey,
+		entryHasMultiKey, hasTruncation, nentries, addMetadataTerms, &overallMetadata);
+}
+
+
+static void
+GenerateCompositedUniqueEqualQueryValues(Datum *indexEntries, bool *partialMatch,
+										 Pointer *extra_data, uint32_t totalTermCount,
+										 GinEntrySet *entrySet, uint32_t pathCount,
+										 CompositeQueryRunData *runData,
+										 BsonGinCompositePathOptions *options)
+{
 	bytea *compositeDatums[INDEX_MAX_KEYS] = { 0 };
 	for (uint32_t i = 0; i < totalTermCount; i++)
 	{
@@ -2048,11 +4042,12 @@ GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
 		bool hasTruncationInEntry = false;
 		bool hasNullsInEntry = false;
 		CompositeQueryRunData *runDataForEntry = runData;
+		partialMatch[i] = false;
 		for (uint32_t j = 0; j < pathCount; j++)
 		{
-			int32_t currentIndex = termIndex % entryCounts[j];
-			termIndex = termIndex / entryCounts[j];
-			Datum term = entries[j][currentIndex];
+			int32_t currentIndex = termIndex % entrySet[j].index;
+			termIndex = termIndex / entrySet[j].index;
+			Datum term = entrySet[j].entries[currentIndex];
 
 			BsonIndexTerm indexTerm;
 			InitializeBsonIndexTerm(DatumGetByteaPP(term), &indexTerm);
@@ -2066,7 +4061,7 @@ GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
 				indexTerm.element.bsonValue.value_type == BSON_TYPE_NULL)
 			{
 				/* Set partial match info */
-				(*partialMatch)[i] = true;
+				partialMatch[i] = true;
 				hasNullsInEntry = true;
 
 				/* Clone runData if not done already */
@@ -2122,7 +4117,106 @@ GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
 		BsonIndexTermSerialized serializedTerm = SerializeCompositeBsonIndexTerm(
 			compositeDatums, pathCount);
 		indexEntries[i] = PointerGetDatum(serializedTerm.indexTermVal);
-		(*extra_data)[i] = (Pointer) runDataForEntry;
+		extra_data[i] = (Pointer) runDataForEntry;
+	}
+}
+
+
+static Datum *
+GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
+										 BsonGinCompositePathOptions *options,
+										 int32_t *nentries, bool **partialMatch,
+										 Pointer **extra_data,
+										 CompositeQueryRunData *runData)
+{
+	uint32_t pathCount;
+	CompositeTermGenerateState termState = { 0 };
+	GinEntrySet entrySet[INDEX_MAX_KEYS] = { 0 };
+	bool hasArrayPaths = false;
+	bool hasTruncation = false;
+	uint32_t totalTermCount;
+	List *correlatedTerms = NIL;
+	if (RumUseNewCompositeTermGeneration)
+	{
+		totalTermCount = BuildSinglePathTermsForCompositeTermsNew(bson, options,
+																  entrySet,
+																  &termState,
+																  &hasArrayPaths,
+																  &hasTruncation,
+																  &pathCount,
+																  &correlatedTerms);
+	}
+	else
+	{
+		totalTermCount = BuildSinglePathTermsForCompositeTerms(bson, options,
+															   entrySet,
+															   &hasArrayPaths,
+															   &hasTruncation,
+															   &pathCount);
+	}
+
+	/* Now that we have the per term counts, generate the overall terms */
+	/* Add an additional one in case we need a truncated term */
+	Datum *indexEntries;
+	if (options->enableCompositeReducedCorrelatedTerms &&
+		list_length(correlatedTerms) > 0)
+	{
+		ListCell *cell;
+		bool *partialMatchInner = palloc(sizeof(bool) * 1);
+		indexEntries = palloc(sizeof(Datum) * 1);
+		Pointer *extraDataInner = palloc(sizeof(Pointer) * 1);
+
+		/* First pass, calculate num terms */
+		uint32_t finalEntryCapacity = 0;
+		foreach(cell, correlatedTerms)
+		{
+			MergedTermSet *mergedSet = (MergedTermSet *) lfirst(cell);
+			uint32_t termCount = PreprocessMergedTermSet(mergedSet, entrySet, pathCount,
+														 termState.pathData);
+			finalEntryCapacity += termCount;
+		}
+
+		indexEntries = repalloc(indexEntries, sizeof(Datum) * finalEntryCapacity);
+		partialMatchInner = repalloc(partialMatchInner, sizeof(bool) *
+									 finalEntryCapacity);
+		extraDataInner = repalloc(extraDataInner, sizeof(Pointer) *
+								  finalEntryCapacity);
+		totalTermCount = 0;
+		foreach(cell, correlatedTerms)
+		{
+			GinEntrySet currentEntrySet[INDEX_MAX_KEYS] = { 0 };
+			MergedTermSet *mergedSet = (MergedTermSet *) lfirst(cell);
+
+			uint32_t currentTotalTermCount =
+				BuildCurrentEntrySetFromMergedSet(mergedSet, currentEntrySet,
+												  pathCount, termState.pathData);
+
+			if (totalTermCount + currentTotalTermCount > (uint32_t) finalEntryCapacity)
+			{
+				ereport(ERROR, (errmsg(
+									"Generating more terms than computed capacity - this is a bug. totalTermCount %u, current %u, capacity %u",
+									totalTermCount, currentTotalTermCount,
+									finalEntryCapacity)));
+			}
+
+			GenerateCompositedUniqueEqualQueryValues(
+				&indexEntries[totalTermCount], &partialMatchInner[totalTermCount],
+				&extraDataInner[totalTermCount],
+				currentTotalTermCount, currentEntrySet, pathCount, runData, options);
+			totalTermCount += currentTotalTermCount;
+		}
+
+		*partialMatch = partialMatchInner;
+		*extra_data = extraDataInner;
+	}
+	else
+	{
+		indexEntries = palloc0(sizeof(Datum) * totalTermCount);
+		*partialMatch = palloc0(sizeof(bool) * totalTermCount);
+		*extra_data = palloc0(sizeof(Pointer) * totalTermCount);
+		GenerateCompositedUniqueEqualQueryValues(
+			indexEntries, *partialMatch, *extra_data, totalTermCount, entrySet,
+			pathCount, runData, options);
 	}
 
 
@@ -2142,7 +4236,9 @@ GetIndexPathsFromOptions(BsonGinCompositePathOptions *options,
 
 	for (uint32_t i = 0; i < pathCount; i++)
 	{
-		uint32_t indexPathLength = *(uint32_t *) pathSpecBytes;
+		/* Use memcpy to avoid misaligned memory access - buffer may not be 4-byte aligned */
+		uint32_t indexPathLength;
+		memcpy(&indexPathLength, pathSpecBytes, sizeof(uint32_t));
 		const char *indexPath = pathSpecBytes + sizeof(uint32_t);
 		pathSpecBytes += indexPathLength + sizeof(uint32_t) + 1;
 		sortOrders[i] = *(int8_t *) pathSpecBytes;
@@ -2167,7 +4263,9 @@ GetIndexPathsFromOptionsWithLength(BsonGinCompositePathOptions *options,
 
 	for (uint32_t i = 0; i < pathCount; i++)
 	{
-		uint32_t indexPathLength = *(uint32_t *) pathSpecBytes;
+		/* Use memcpy to avoid misaligned memory access - buffer may not be 4-byte aligned */
+		uint32_t indexPathLength;
+		memcpy(&indexPathLength, pathSpecBytes, sizeof(uint32_t));
 		const char *indexPath = pathSpecBytes + sizeof(uint32_t);
 		pathSpecBytes += indexPathLength + sizeof(uint32_t) + 1;
 		sortOrders[i] = *(int8_t *) pathSpecBytes;
@@ -2183,7 +4281,8 @@ GetIndexPathsFromOptionsWithLength(BsonGinCompositePathOptions *options,
 
 static void
 ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **indexPaths,
-								int32_t numPaths, VariableIndexBounds *variableBounds)
+								uint32_t *indexPathsLengths, int32_t numPaths, int32_t
+								wildcardPathIndex, VariableIndexBounds *variableBounds)
 {
 	if (singleElement->bsonValue.value_type != BSON_TYPE_ARRAY)
 	{
@@ -2233,7 +4332,8 @@ ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **index
 								queryStrategy, BsonValueToJsonForLogging(value))));
 		}
 
-		ParseOperatorStrategy(indexPaths, numPaths, &queryElement, queryStrategy,
+		ParseOperatorStrategy(indexPaths, indexPathsLengths, numPaths, wildcardPathIndex,
+							  &queryElement, queryStrategy,
 							  variableBounds);
 	}
 }
@@ -2243,12 +4343,12 @@ static bytea *
 BuildTermForBounds(CompositeQueryRunData *runData,
 				   IndexTermCreateMetadata *singlePathMetadata,
 				   IndexTermCreateMetadata *compositeMetadata,
-				   bool *partialMatch, int8_t *sortOrders)
+				   bool *partialMatch, const char **indexPaths,
+				   uint32_t *indexPathLengths, int8_t *sortOrders)
 {
 	/* For the next phase, process each term and handle truncation */
 	bool hasTruncation = UpdateBoundsForTruncation(
-		runData->indexBounds, runData->metaInfo->numIndexPaths,
-		singlePathMetadata, sortOrders);
+		runData, singlePathMetadata, indexPaths, indexPathLengths, sortOrders);
 	runData->metaInfo->hasTruncation = runData->metaInfo->hasTruncation ||
 									   hasTruncation;
 
@@ -2256,6 +4356,8 @@ BuildTermForBounds(CompositeQueryRunData *runData,
 	bytea *lowerBoundTerm = BuildLowerBoundTermFromIndexBounds(runData,
 															   compositeMetadata,
 															   &hasInequalityMatch,
+															   indexPaths,
+															   indexPathLengths,
 															   sortOrders);
 	*partialMatch = hasInequalityMatch;
 	return lowerBoundTerm;

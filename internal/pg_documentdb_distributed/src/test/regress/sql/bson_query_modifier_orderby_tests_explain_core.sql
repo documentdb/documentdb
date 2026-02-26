@@ -8,28 +8,23 @@ SELECT documentdb_api.insert_one('db','bsoexplainnorderby', '{"_id": 11, "a" : [
 SELECT documentdb_api.insert_one('db','bsoexplainnorderby', '{"_id": 12, "a" : [ { "b": [-1, 1, 2] }, { "b": [0, 1, 2] }, { "b": [0, 1, 7] }] }', NULL);
 SELECT documentdb_api.insert_one('db','bsoexplainnorderby', '{"_id": 13, "a" : [ { "b": [[-1, 1, 2]] }, { "b": [[0, 1, 2]] }, { "b": [[0, 1, 7]] }] }', NULL);
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b": 1 }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b": 1 }') $cmd$);
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b": -1 }') DESC;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b": -1 }') DESC $cmd$);
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b.0": -1 }') DESC;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b.0": -1 }') DESC $cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b.1": 1 }') $cmd$);
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b.1": 1 }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.0": 1 }') $cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.0": -1 }') DESC $cmd$);
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.0": 1 }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b": { "$gt": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }') $cmd$);
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.0": -1 }') DESC;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b.0": { "$gte": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }') $cmd$);
 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b.0": { "$gte": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.0": 1 }') $cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b.0": { "$gte": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.1": 1 }') $cmd$);
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b": { "$gt": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b": { "$gte": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.1": 1 }') $cmd$);
 
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b.0": { "$gte": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }');
-
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b.0": { "$gte": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.0": 1 }');
-
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b.0": { "$gte": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.1": 1 }');
-
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a.b": { "$gte": 0 } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }'), bson_orderby(document, '{ "a.b.1": 1 }');
-
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a": { "$gte": { "b": 0 } } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }');
-
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'bsoexplainnorderby') WHERE document @@ '{ "a": { "$gte": { "b": 0 } } }' ORDER BY bson_orderby(document, '{ "a.b": 1 }') $cmd$);

@@ -448,6 +448,29 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeli
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": false } }, { "$limit": 1 }, {"$count": "count"} ], "cursor": {} }');
 
+-- turn off using new count aggregates
+set documentdb.enableNewCountAggregates to off;
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": 1 } }, {"$count": "count"} ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$unwind": "$a.b" }, { "$count": "d" }, { "$addFields": { "e": "$d" } }], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$count": "d" }], "cursor": {} }');
+
+EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$unwind": "$a.b" }, { "$count": "d" }, { "$addFields": { "e": "$d" } }], "cursor": {} }');
+EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$count": "d" }], "cursor": {} }');
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": null, "count": { "$sum": 1 } } }], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": null, "count": { "$sum": {} } } }], "cursor": {} }');
+
+
+EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": null, "count": { "$sum": 1 } } }], "cursor": {} }');
+EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": null, "count": { "$sum": {} } } }], "cursor": {} }');
+
+EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": "$a", "count": { "$sum": 1 } } }], "cursor": {} }');
+EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": "$a", "count": { "$sum": 5 } } }], "cursor": {} }');
+
+set documentdb.enableNewCountAggregates to on;
+
+
 -- Pipeline directly push to shards if all stages refer to same collection and that is not sharded and is present on the same node as coordinator.
 
 SELECT documentdb_api.insert_one('pipelineDB','agg_pipeline_optimizations','{ "_id": 1, "a": "RANDOM_A", "b": {"c": ["SAMPLE1", "SAMPLE2"], "d": [[1,2], [3, 4]]} }', NULL);
@@ -545,3 +568,79 @@ SELECT documentdb_api.insert_one('db','lookup_movies','{ "_id": 3, "title": "Cel
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "lookup_movies", "pipeline": [ { "$lookup": { "from": "lookup_directors", "localField": "director", "foreignField": "name", "as": "director_info" } }, { "$unwind": { "path": "$director_info", "preserveNullAndEmptyArrays": true } }, { "$match": { "title": "Celestial Rift" } } ], "cursor": {} }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "lookup_movies", "pipeline": [ { "$lookup": { "from": "lookup_directors", "localField": "director", "foreignField": "name", "as": "director_info" } }, { "$unwind": { "path": "$director_info", "preserveNullAndEmptyArrays": true } }, { "$match": { "title": "Celestial Rift" } } ], "cursor": {} }');
+
+-- $in: [] with bson_dollar_project_find
+SELECT documentdb_api.insert_one('db', 'collTestEmptyIn', '{"_id": 1, "name": "sheep", "sound": "baa"}');
+SELECT documentdb_api.insert_one('db', 'collTestEmptyIn', '{"_id": 2, "name": "duck", "sound": "quack"}');
+SELECT documentdb_api.insert_one('db', 'collTestEmptyIn', '{"_id": 3, "sound": "quack"}');
+
+-- unsharded
+SELECT document FROM bson_aggregation_find('db', '{
+  "find": "collTestEmptyIn",
+  "filter": {
+    "_id": { "$in": [] }
+  },                     
+  "projection": { "name": true }
+}');
+
+SELECT document FROM bson_aggregation_find('db', '{
+  "find": "collTestEmptyIn",
+  "filter": {
+    "_id": { "$in": [] },
+    "name": "sheep"
+  },                     
+  "projection": { "name": true }
+}');
+
+SELECT document FROM bson_aggregation_find('db', '{
+  "find": "collTestEmptyIn",
+  "filter": {
+    "_id": 2,
+    "name": {"$in": [] }
+  },                     
+  "projection": { "sound": true }
+}');
+
+-- sharded
+SELECT documentdb_api.shard_collection('db', 'collTestEmptyIn', '{"name": "hashed"}', false);
+
+SELECT document FROM bson_aggregation_find('db', '{
+  "find": "collTestEmptyIn",
+  "filter": {
+    "_id": { "$in": [] }
+  },                     
+  "projection": { "name": true }
+}');
+
+SELECT document FROM bson_aggregation_find('db', '{
+  "find": "collTestEmptyIn",
+  "filter": {
+    "_id": { "$in": [] },
+    "name": "sheep"
+  },                     
+  "projection": { "name": true }
+}');
+
+SELECT document FROM bson_aggregation_find('db', '{
+  "find": "collTestEmptyIn",
+  "filter": {
+    "_id": 2,
+    "name": {"$in": [] }
+  },                     
+  "projection": { "sound": true }
+}');
+
+-- drop collection
+SELECT documentdb_api.drop_collection('db', 'collTestEmptyIn');
+
+
+/* primary Index pushdown test for select*/
+SELECT documentdb_api.insert_one('db','indexPushDownTest','{ "_id": 1, "name": "Alex Veridian" }', NULL);
+select collection_id  from documentdb_api_catalog.collections where collection_name = 'indexPushDownTest';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : 1}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$eq" : 1}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$gt" : 1}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$lt" : 1}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$lte" : 1}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$gte" : 1}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$in" : [1,2,3,4,5]}}';

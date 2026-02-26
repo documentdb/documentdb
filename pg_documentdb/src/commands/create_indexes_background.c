@@ -45,6 +45,7 @@
 #include "utils/documentdb_errors.h"
 #include "commands/parse_error.h"
 #include "geospatial/bson_geospatial_common.h"
+#include "infrastructure/job_management.h"
 #include "metadata/collection.h"
 #include "metadata/metadata_cache.h"
 #include "metadata/index.h"
@@ -107,9 +108,10 @@ typedef enum BackgroundIndexRunStatus
 	RunStatus_IndexBuildDone = 4,
 } BackgroundIndexRunStatus;
 
+bool ShouldSetupIndexQueueInUdf = true;
 extern int MaxIndexBuildAttempts;
 extern int IndexQueueEvictionIntervalInSec;
-extern bool EnableMultipleIndexBuildsPerRun;
+extern bool EnableDropInvalidIndexesOnReadOnly;
 
 /* Do not retry the index build if error code belongs to following list. */
 static const SkippableError SkippableErrors[] = {
@@ -138,6 +140,7 @@ PG_FUNCTION_INFO_V1(command_check_build_index_status);
 PG_FUNCTION_INFO_V1(command_check_build_index_status_internal);
 PG_FUNCTION_INFO_V1(schedule_background_index_build_jobs);
 PG_FUNCTION_INFO_V1(command_build_index_background);
+PG_FUNCTION_INFO_V1(setup_index_queue_table);
 
 static pgbson * RunIndexCommandOnMetadataCoordinator(const char *query, int
 													 expectedSpiOk);
@@ -164,9 +167,11 @@ static Datum ComposeBuildIndexResponse(FunctionCallInfo fcinfo, pgbson *buildInd
 static Datum ComposeCheckIndexStatusResponse(FunctionCallInfo fcinfo, pgbson *bson, bool
 											 ok, bool finish);
 static void TryDropCollectionIndex(int indexId);
-static bool PruneSkippableIndexes(void);
+static bool PruneSkippableIndexes(MemoryContext mcxt);
 static BackgroundIndexRunStatus build_index_concurrently_from_indexqueue_core(
 	MemoryContext stableContext);
+static Datum build_index_background_core(PG_FUNCTION_ARGS);
+
 
 /*
  * command_build_index_concurrently is the implementation of the internal logic
@@ -174,6 +179,31 @@ static BackgroundIndexRunStatus build_index_concurrently_from_indexqueue_core(
  */
 Datum
 command_build_index_concurrently(PG_FUNCTION_ARGS)
+{
+	return build_index_background_core(fcinfo);
+}
+
+
+/*
+ * Drop-in replacement for build_index_concurrently. This will be called periodically by the
+ * background worker framework and will coexist with the previous UDF until it reaches
+ * stability.
+ */
+Datum
+command_build_index_background(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_VOID();
+}
+
+
+/*
+ * Core logic for building indexes in background.
+ * Called by a job that is scheduled via either:
+ *  a) pg_cron
+ *  b) background worker
+ */
+static Datum
+build_index_background_core(PG_FUNCTION_ARGS)
 {
 	if (!IsMetadataCoordinator())
 	{
@@ -191,39 +221,22 @@ command_build_index_concurrently(PG_FUNCTION_ARGS)
 		PG_RETURN_VOID();
 	}
 
-	if (EnableMultipleIndexBuildsPerRun)
-	{
-		BackgroundIndexRunStatus runStatus = RunStatus_NoValidIndexFound;
-		MemoryContext createContext = AllocSetContextCreate(fcinfo->flinfo->fn_mcxt,
-															"Create Index Child context",
-															ALLOCSET_DEFAULT_SIZES);
-		do {
-			runStatus = build_index_concurrently_from_indexqueue_core(createContext);
+	BackgroundIndexRunStatus runStatus = RunStatus_NoValidIndexFound;
+	MemoryContext createContext = AllocSetContextCreate(fcinfo->flinfo->fn_mcxt,
+														"Create Index Child context",
+														ALLOCSET_DEFAULT_SIZES);
+	do {
+		runStatus = build_index_concurrently_from_indexqueue_core(createContext);
 
-			/* Commit and start before doing another round */
-			PopAllActiveSnapshots();
-			CommitTransactionCommand();
-			StartTransactionCommand();
-			MemoryContextReset(createContext);
-		} while (runStatus == RunStatus_IndexBuildDone);
-	}
-	else
-	{
-		build_index_concurrently_from_indexqueue_core(fcinfo->flinfo->fn_mcxt);
-	}
+		/* Commit and start before doing another round */
+		PopAllActiveSnapshots();
+		CommitTransactionCommand();
+		StartTransactionCommand();
+		MemoryContextReset(createContext);
+	} while (runStatus == RunStatus_IndexBuildDone);
 
-	PG_RETURN_VOID();
-}
-
-
-/*
- * Drop-in replacement for build_index_concurrently. This will be called periodically by the
- * background worker framework and will coexist with the previous UDF until it reaches
- * stability.
- */
-Datum
-command_build_index_background(PG_FUNCTION_ARGS)
-{
+	/* Clean up the memory context. */
+	MemoryContextDelete(createContext);
 	PG_RETURN_VOID();
 }
 
@@ -232,7 +245,7 @@ static BackgroundIndexRunStatus
 build_index_concurrently_from_indexqueue_core(MemoryContext stableContext)
 {
 	/* Prioritize pruning the index queue for old indexes */
-	if (PruneSkippableIndexes())
+	if (PruneSkippableIndexes(stableContext))
 	{
 		ereport(LOG, (errmsg(
 						  "Pruned skippable indexes. Retrying index checks in another round.")));
@@ -1086,6 +1099,53 @@ schedule_background_index_build_jobs(PG_FUNCTION_ARGS)
 
 
 /*
+ * Setup the index queue table based on the installation script version that called it.
+ * If the flag ShouldSetupIndexQueueInUdf is false, we skip this function.
+ * This flag allows extensions that depend on documentdb to skip the creation of the index queue table and have them
+ * manage it themselves, e.g. for distributed scenarios where the queue might not be needed on all nodes.
+ */
+Datum
+setup_index_queue_table(PG_FUNCTION_ARGS)
+{
+	if (!ShouldSetupIndexQueueInUdf)
+	{
+		PG_RETURN_VOID();
+	}
+
+	int majorVersion = PG_GETARG_INT32(0);
+	int minorVersion = PG_GETARG_INT32(1);
+	int patchVersion = PG_GETARG_INT32(2);
+
+	/* Create the index queue table when we are called for 0.109.0 */
+	if (majorVersion == DocDB_V0 &&
+		minorVersion == 109 &&
+		patchVersion == 0)
+	{
+		bool includeOptions = true;
+		bool includeDropCommandType = true;
+		CreateIndexQueueIfNotExists(includeOptions, includeDropCommandType);
+	}
+
+	if (majorVersion == DocDB_V0 &&
+		minorVersion == 110 &&
+		patchVersion == 0)
+	{
+		/* Grant access to index_queue to ApiReadWriteRole */
+		StringInfo grantStr = makeStringInfo();
+		bool isNull = false;
+		appendStringInfo(grantStr,
+						 "GRANT ALL ON TABLE %s TO %s",
+						 GetIndexQueueName(),
+						 ApiReadWriteRole);
+		ExtensionExecuteQueryViaSPI(grantStr->data, false, SPI_OK_UTILITY,
+									&isNull);
+	}
+
+	PG_RETURN_VOID();
+}
+
+
+/*
  * SubmitCreateIndexesRequest is the function that submits the create index request to local table
  * and submits indexes into metadata as invalid.
  */
@@ -1093,8 +1153,10 @@ static CreateIndexesResult
 SubmitCreateIndexesRequest(Datum dbNameDatum,
 						   pgbson *createIndexesMessage, bool *volatile snapshotSet)
 {
+	bool buildAsUniqueForPrepareUnique = false;
 	CreateIndexesArg createIndexesArg = ParseCreateIndexesArg(dbNameDatum,
-															  createIndexesMessage);
+															  createIndexesMessage,
+															  buildAsUniqueForPrepareUnique);
 
 	char *collectionName = createIndexesArg.collectionName;
 	Datum collectionNameDatum = CStringGetTextDatum(collectionName);
@@ -1753,9 +1815,10 @@ TryDropCollectionIndex(int indexId)
 			/* we might or might not have created the pg index .. */
 			bool missingOk = true;
 			bool concurrently = true;
+			bool forceReadWrite = EnableDropInvalidIndexesOnReadOnly;
 			DropPostgresIndex(indexDetails->collectionId, indexId,
 							  indexDetails->indexSpec.indexUnique,
-							  concurrently, missingOk);
+							  concurrently, forceReadWrite, missingOk);
 		}
 	}
 	PG_CATCH();
@@ -1837,15 +1900,31 @@ RunIndexCommandOnMetadataCoordinator(const char *query, int expectedSpiOk)
 
 
 static bool
-PruneSkippableIndexes(void)
+PruneSkippableIndexes(MemoryContext mcxt)
 {
 	bool prunedIndexes = false;
 	List *excludeCollectionIds = NIL;
 	IndexCmdRequest *volatile request = GetSkippableRequestFromIndexQueue(
-		IndexQueueEvictionIntervalInSec, excludeCollectionIds);
+		IndexQueueEvictionIntervalInSec, excludeCollectionIds, mcxt);
 
 	while (request != NULL)
 	{
+		CHECK_FOR_INTERRUPTS();
+		if (EnableDropInvalidIndexesOnReadOnly)
+		{
+			if (XactReadOnly)
+			{
+				/* This happens if default_transaction_readonly gets set to true
+				 * in this case, start a new transaction with read-write semantics
+				 * so that the drop index below can succeed.
+				 */
+				PopAllActiveSnapshots();
+				CommitTransactionCommand();
+				StartTransactionCommand();
+				SetGUCLocally("transaction_read_only", "false");
+			}
+		}
+
 		/* Acquire the lock to drop the index */
 		if (AcquireAdvisoryExclusiveSessionLockForCreateIndexBackground(
 				request->collectionId) != LOCKACQUIRE_NOT_AVAIL)
@@ -1888,15 +1967,22 @@ PruneSkippableIndexes(void)
 			 */
 			ReleaseAdvisoryExclusiveSessionLockForCreateIndexBackground(
 				request->collectionId);
+			MemoryContext oldContext = MemoryContextSwitchTo(mcxt);
 			uint64_t *collectionid = palloc0(sizeof(uint64_t));
 			*collectionid = request->collectionId;
 			excludeCollectionIds = lappend(excludeCollectionIds, collectionid);
+			MemoryContextSwitchTo(oldContext);
 		}
 
+		pfree(request);
+
 		/* Check for more prunable requests */
-		request = GetSkippableRequestFromIndexQueue(IndexQueueEvictionIntervalInSec,
-													excludeCollectionIds);
+		request = GetSkippableRequestFromIndexQueue(
+			IndexQueueEvictionIntervalInSec, excludeCollectionIds, mcxt);
 	}
+
+	list_free_deep(excludeCollectionIds);
+	excludeCollectionIds = NIL;
 
 	return prunedIndexes;
 }

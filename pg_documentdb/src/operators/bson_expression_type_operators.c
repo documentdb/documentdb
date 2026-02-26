@@ -540,7 +540,6 @@ ParseDollarConvert(const bson_value_t *argument, AggregationExpressionData *data
 
 	/* onError and onNull expressions are evaluated first,
 	 * regardless of if they are going to be needed or not. */
-	AggregationExpressionData *onErrorData = NULL;
 	if (onErrorExpression.value_type != BSON_TYPE_EOD)
 	{
 		arguments->onErrorData = palloc0(sizeof(AggregationExpressionData));
@@ -652,11 +651,11 @@ ParseDollarConvert(const bson_value_t *argument, AggregationExpressionData *data
 			else if (isFormatUndefinedOrConstant)
 			{
 				bson_value_t onErrorValue = { 0 };
-				if (onErrorExpression.value_type != BSON_TYPE_EOD)
+				if (onErrorExpression.value_type != BSON_TYPE_EOD &&
+					arguments->onErrorData != NULL)
 				{
 					onErrorValue = arguments->onErrorData->value;
 				}
-
 				bool hasError = false;
 				List *argumentsList = list_make4(&inputValue, &toType, &toSubtype,
 												 &formatValue);
@@ -673,7 +672,7 @@ ParseDollarConvert(const bson_value_t *argument, AggregationExpressionData *data
 
 					if (IsAggregationExpressionConstant(arguments->onErrorData))
 					{
-						data->value = onErrorData->value;
+						data->value = arguments->onErrorData->value;
 						data->kind = AggregationExpressionKind_Constant;
 						evaluatedOnConstants = true;
 					}
@@ -846,6 +845,40 @@ ParseDollarMakeArray(const bson_value_t *inputDocument, AggregationExpressionDat
 		sizeof(AggregationExpressionData));
 
 	ParseAggregationExpressionData(argumentData, inputDocument, context);
+
+	if (IsAggregationExpressionConstant(argumentData))
+	{
+		if (IsExpressionResultNullOrUndefined(&argumentData->value))
+		{
+			/* If the argument is undefined, return an empty array. */
+			InitBsonValueAsEmptyArray(&data->value);
+			data->kind = AggregationExpressionKind_Constant;
+			pfree(argumentData);
+			return;
+		}
+
+		/* If the argument is an array, return it as-is. */
+		if (argumentData->value.value_type == BSON_TYPE_ARRAY)
+		{
+			data->value = argumentData->value;
+			data->kind = AggregationExpressionKind_Constant;
+			pfree(argumentData);
+			return;
+		}
+
+		/* Otherwise, wrap the argument in an array. */
+		pgbson_writer writer;
+		PgbsonWriterInit(&writer);
+		pgbson_array_writer arrayWriter;
+		PgbsonWriterStartArray(&writer, "", 0, &arrayWriter);
+		PgbsonArrayWriterWriteValue(&arrayWriter, &argumentData->value);
+		PgbsonWriterEndArray(&writer, &arrayWriter);
+		PgbsonArrayWriterCopyDataToBsonValue(&arrayWriter, &data->value);
+		PgbsonWriterFree(&writer);
+		data->kind = AggregationExpressionKind_Constant;
+		pfree(argumentData);
+		return;
+	}
 
 	data->operator.arguments = argumentData;
 	data->operator.argumentsKind = AggregationExpressionArgumentsKind_Palloc;
@@ -1051,8 +1084,7 @@ ProcessDollarType(const bson_value_t *currentValue, bson_value_t *result)
 
 	/* We need to cover the case where the expression is a field path and it doesn't exist, for compatibility, the expected behavior is to return 'missing'.
 	 * However, 'missing' is not a valid type name for other ops, so we cover here rather than in the common BsonTypeName method. */
-	char *name = type == BSON_TYPE_EOD ?
-				 MISSING_TYPE_NAME : BsonTypeName(type);
+	char *name = BsonTypeNameExtended(type);
 
 	result->value_type = BSON_TYPE_UTF8;
 	result->value.v_utf8.str = name;
@@ -2193,12 +2225,11 @@ pg_attribute_noreturn()
 ThrowInvalidConversionError(bson_type_t sourceType, bson_type_t targetType)
 {
 	/* Only target type name can be "missing". */
-	const char *targetTypeName = targetType == BSON_TYPE_EOD ?
-								 MISSING_TYPE_NAME : BsonTypeName(targetType);
+	const char *targetTypeName = BsonTypeNameExtended(targetType);
 
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CONVERSIONFAILURE), errmsg(
 						"Unsupported conversion from %s to %s in $convert with no onError value",
-						BsonTypeName(sourceType), targetTypeName)));
+						BsonTypeNameExtended(sourceType), targetTypeName)));
 }
 
 

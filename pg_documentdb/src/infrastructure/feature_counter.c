@@ -201,8 +201,69 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_AGG_OPERATOR_YEAR] = "agg_operator_year",
 	[FEATURE_AGG_OPERATOR_ZIP] = "agg_operator_zip",
 
+	/* Feature counter region - $group operators */
+	[FEATURE_AGGREGATE_GROUP_ADD_TO_SET] = "group_add_to_set",
+	[FEATURE_AGGREGATE_GROUP_AVG] = "group_avg",
+	[FEATURE_AGGREGATE_GROUP_BOTTOM] = "group_bottom",
+	[FEATURE_AGGREGATE_GROUP_BOTTOM_N] = "group_bottom_n",
+	[FEATURE_AGGREGATE_GROUP_CONCAT_ARRAYS] = "group_concat_arrays",
+	[FEATURE_AGGREGATE_GROUP_COUNT] = "group_count",
+	[FEATURE_AGGREGATE_GROUP_FIRST] = "group_first",
+	[FEATURE_AGGREGATE_GROUP_FIRST_N] = "group_first_n",
+	[FEATURE_AGGREGATE_GROUP_LAST] = "group_last",
+	[FEATURE_AGGREGATE_GROUP_LAST_N] = "group_last_n",
+	[FEATURE_AGGREGATE_GROUP_MAX] = "group_max",
+	[FEATURE_AGGREGATE_GROUP_MAX_N] = "group_max_n",
+	[FEATURE_AGGREGATE_GROUP_MEDIAN] = "group_median",
+	[FEATURE_AGGREGATE_GROUP_MERGE_OBJECTS] = "group_merge_objects",
+	[FEATURE_AGGREGATE_GROUP_MIN] = "group_min",
+	[FEATURE_AGGREGATE_GROUP_MIN_N] = "group_min_n",
+	[FEATURE_AGGREGATE_GROUP_PERCENTILE] = "group_percentile",
+	[FEATURE_AGGREGATE_GROUP_PUSH] = "group_push",
+	[FEATURE_AGGREGATE_GROUP_STDDEV_POP] = "group_stddev_pop",
+	[FEATURE_AGGREGATE_GROUP_STDDEV_SAMP] = "group_stddev_samp",
+	[FEATURE_AGGREGATE_GROUP_SUM] = "group_sum",
+	[FEATURE_AGGREGATE_GROUP_TOP] = "group_top",
+	[FEATURE_AGGREGATE_GROUP_TOP_N] = "group_top_n",
+
+	/* Feature counter region - $setWindowFields operators */
+	[FEATURE_AGGREGATE_WINDOW_ADD_TO_SET] = "window_add_to_set",
+	[FEATURE_AGGREGATE_WINDOW_AVG] = "window_avg",
+	[FEATURE_AGGREGATE_WINDOW_BOTTOM] = "window_bottom",
+	[FEATURE_AGGREGATE_WINDOW_BOTTOM_N] = "window_bottom_n",
+	[FEATURE_AGGREGATE_WINDOW_CONCAT_ARRAYS] = "window_concat_arrays",
+	[FEATURE_AGGREGATE_WINDOW_COUNT] = "window_count",
+	[FEATURE_AGGREGATE_WINDOW_COVARIANCE_POP] = "window_covariance_pop",
+	[FEATURE_AGGREGATE_WINDOW_COVARIANCE_SAMP] = "window_covariance_samp",
+	[FEATURE_AGGREGATE_WINDOW_DENSE_RANK] = "window_dense_rank",
+	[FEATURE_AGGREGATE_WINDOW_DERIVATIVE] = "window_derivative",
+	[FEATURE_AGGREGATE_WINDOW_DOCUMENT_NUMBER] = "window_document_number",
+	[FEATURE_AGGREGATE_WINDOW_EXP_MOVING_AVG] = "window_exp_moving_avg",
+	[FEATURE_AGGREGATE_WINDOW_FIRST] = "window_first",
+	[FEATURE_AGGREGATE_WINDOW_FIRST_N] = "window_first_n",
+	[FEATURE_AGGREGATE_WINDOW_INTEGRAL] = "window_integral",
+	[FEATURE_AGGREGATE_WINDOW_LAST] = "window_last",
+	[FEATURE_AGGREGATE_WINDOW_LAST_N] = "window_last_n",
+	[FEATURE_AGGREGATE_WINDOW_LINEAR_FILL] = "window_linear_fill",
+	[FEATURE_AGGREGATE_WINDOW_LOCF] = "window_locf",
+	[FEATURE_AGGREGATE_WINDOW_MAX] = "window_max",
+	[FEATURE_AGGREGATE_WINDOW_MAX_N] = "window_max_n",
+	[FEATURE_AGGREGATE_WINDOW_MEDIAN] = "window_median",
+	[FEATURE_AGGREGATE_WINDOW_MIN] = "window_min",
+	[FEATURE_AGGREGATE_WINDOW_MIN_N] = "window_min_n",
+	[FEATURE_AGGREGATE_WINDOW_PERCENTILE] = "window_percentile",
+	[FEATURE_AGGREGATE_WINDOW_PUSH] = "window_push",
+	[FEATURE_AGGREGATE_WINDOW_RANK] = "window_rank",
+	[FEATURE_AGGREGATE_WINDOW_SHIFT] = "window_shift",
+	[FEATURE_AGGREGATE_WINDOW_STDDEV_POP] = "window_stddev_pop",
+	[FEATURE_AGGREGATE_WINDOW_STDDEV_SAMP] = "window_stddev_samp",
+	[FEATURE_AGGREGATE_WINDOW_SUM] = "window_sum",
+	[FEATURE_AGGREGATE_WINDOW_TOP] = "window_top",
+	[FEATURE_AGGREGATE_WINDOW_TOP_N] = "window_top_n",
+
 	/* Find/Aggregate using collation */
 	[FEATURE_COLLATION] = "collation",
+	[FEATURE_COLLATION_CREATE_INDEX] = "collation_with_indexes",
 
 	/* Feature Mapping region - Commands */
 	[FEATURE_COMMAND_AGG_CURSOR_FIRST_PAGE] = "command_agg_cursor_first_page",
@@ -229,6 +290,8 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_COMMAND_INSERT_BULK] = "command_insert_bulk",
 	[FEATURE_COMMAND_LIST_COLLECTIONS_CURSOR_FIRST_PAGE] =
 		"command_list_collections_cursor_first_page",
+	[FEATURE_COMMAND_LIST_DATABASES] =
+		"command_list_databases",
 	[FEATURE_COMMAND_LIST_INDEXES_CURSOR_FIRST_PAGE] =
 		"command_list_indexes_cursor_first_page",
 	[FEATURE_COMMAND_SHARD_COLLECTION] = "command_shard_collection",
@@ -248,6 +311,8 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_COMMAND_COLLMOD_VALIDATION] = "collMod_validation",
 	[FEATURE_COMMAND_COLLMOD_TTL_UPDATE] = "collMod_ttl_update",
 	[FEATURE_COMMAND_COLLMOD_INDEX_HIDDEN] = "collMod_index_hidden",
+	[FEATURE_COMMAND_COLLMOD_INDEX_PREPARE_UNIQUE] = "collMod_index_prepare_unique",
+	[FEATURE_COMMAND_COLLMOD_UNIQUE] = "collMod_index_unique",
 
 	/* Feature Connection Status */
 	[FEATURE_CONNECTION_STATUS] = "connection_status",
@@ -261,6 +326,7 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_CREATE_INDEX_TEXT] = "create_index_text",
 	[FEATURE_CREATE_INDEX_TTL] = "create_index_ttl",
 	[FEATURE_CREATE_INDEX_UNIQUE] = "create_index_unique",
+	[FEATURE_CREATE_INDEX_BUILD_AS_UNIQUE] = "create_index_build_as_unique",
 	[FEATURE_CREATE_INDEX_VECTOR] = "create_index_vector",
 	[FEATURE_CREATE_INDEX_VECTOR_COS] = "create_index_vector_cos",
 	[FEATURE_CREATE_INDEX_VECTOR_COMPRESSION_HALF] =
@@ -280,6 +346,8 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_CURSOR_TYPE_SINGLE_BATCH] = "cursor_type_single_batch",
 	[FEATURE_CURSOR_TYPE_STREAMING] = "cursor_type_streaming",
 	[FEATURE_CURSOR_TYPE_TAILABLE] = "cursor_type_tailable",
+	[FEATURE_CURSOR_CAN_USE_PRIMARY_KEY_SCAN] = "cursor_can_use_primary_key_scan",
+	[FEATURE_CURSOR_CAN_USE_FAST_BITMAP] = "cursor_can_use_fast_bitmap",
 
 	/* Feature mapping region - ExternalIdentityProvider */
 	[FEATURE_EXTERNAL_IDENTITY_USER_CREATE] = "external_identity_user_create",
@@ -348,14 +416,8 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_STAGE_GEONEAR] = "geo_near",
 	[FEATURE_STAGE_GRAPH_LOOKUP] = "graphLookup",
 	[FEATURE_STAGE_GROUP] = "group",
-	[FEATURE_STAGE_GROUP_ACC_BOTTOMN] = "bottomN",
-	[FEATURE_STAGE_GROUP_ACC_FIRSTN] = "firstN_acc",
 	[FEATURE_STAGE_GROUP_ACC_FIRSTN_GT10] = "firstN_acc_GT10",
-	[FEATURE_STAGE_GROUP_ACC_LASTN] = "lastN_acc",
 	[FEATURE_STAGE_GROUP_ACC_LASTN_GT10] = "lastN_acc_GT10",
-	[FEATURE_STAGE_GROUP_ACC_MEDIAN] = "median_acc",
-	[FEATURE_STAGE_GROUP_ACC_PERCENTILE] = "percentile_acc",
-	[FEATURE_STAGE_GROUP_ACC_TOPN] = "topN",
 	[FEATURE_STAGE_INDEXSTATS] = "indexStats",
 	[FEATURE_STAGE_INTERNAL_INHIBIT_OPTIMIZATION] = "_internalInhibitOptimization",
 	[FEATURE_STAGE_INVERSEMATCH] = "inverseMatch",
@@ -396,11 +458,27 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_STAGE_VECTOR_SEARCH_NATIVE] = "vector_search_native",
 
 	/* Feature Mapping region - Update operators */
+	[FEATURE_UPDATE_OPERATOR_ADDTOSET] = "update_operator_addtoset",
+	[FEATURE_UPDATE_OPERATOR_BIT] = "update_operator_bit",
+	[FEATURE_UPDATE_OPERATOR_CURRENTDATE] = "update_operator_currentdate",
 	[FEATURE_UPDATE_OPERATOR_GEN_EMBEDDINGS] = "update_operator_vector_gen_embeddings",
+	[FEATURE_UPDATE_OPERATOR_INC] = "update_operator_inc",
+	[FEATURE_UPDATE_OPERATOR_MAX] = "update_operator_max",
+	[FEATURE_UPDATE_OPERATOR_MIN] = "update_operator_min",
+	[FEATURE_UPDATE_OPERATOR_MUL] = "update_operator_mul",
+	[FEATURE_UPDATE_OPERATOR_POP] = "update_operator_pop",
+	[FEATURE_UPDATE_OPERATOR_PULL] = "update_operator_pull",
+	[FEATURE_UPDATE_OPERATOR_PULLALL] = "update_operator_pullall",
+	[FEATURE_UPDATE_OPERATOR_PUSH] = "update_operator_push",
+	[FEATURE_UPDATE_OPERATOR_RENAME] = "update_operator_rename",
+	[FEATURE_UPDATE_OPERATOR_SET] = "update_operator_set",
+	[FEATURE_UPDATE_OPERATOR_SET_ON_INSERT] = "update_operator_set_on_insert",
+	[FEATURE_UPDATE_OPERATOR_UNSET] = "update_operator_unset",
 
 	/* Feature usage stats */
 	[FEATURE_USAGE_TTL_PURGER_CALLS] = "ttl_purger_calls",
-	[FEATURE_USAGE_INDEX_SCAN_WITH_LIMIT] = "index_scan_with_limit",
+	[FEATURE_USAGE_TTL_SATURATED_BATCHES] = "ttl_saturated_batches",
+	[FEATURE_USAGE_TTL_SLOW_BATCHES] = "ttl_slow_batches",
 
 	/* Feature mapping region - User CRUD*/
 	[FEATURE_USER_CREATE] = "user_create",

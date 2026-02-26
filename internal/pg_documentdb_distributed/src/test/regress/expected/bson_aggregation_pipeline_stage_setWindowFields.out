@@ -348,7 +348,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 74_1
+   ->  Distributed Subplan 78_1
          ->  WindowAgg
                Output: remote_scan.document, bsonsum(documentdb_api_internal.bson_expression_get(remote_scan.total, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)) OVER (?), remote_scan."?partitionBy?"
                ->  Sort
@@ -366,11 +366,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('total'::text, total), false) AS document FROM (SELECT intermediate_result.document, intermediate_result.total FROM read_intermediate_result('74_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, total documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('total'::text, total), false) AS document FROM (SELECT intermediate_result.document, intermediate_result.total FROM read_intermediate_result('78_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, total documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_api_internal.bson_dollar_merge_documents(intermediate_result.document, documentdb_core.bson_repath_and_build('total'::text, intermediate_result.total), false)
-               Function Call: read_intermediate_result('74_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('78_1'::text, 'binary'::citus_copy_format)
 (25 rows)
 
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
@@ -441,7 +441,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 93_1
+   ->  Distributed Subplan 97_1
          ->  WindowAgg
                Output: remote_scan.document, bsonsum(documentdb_api_internal.bson_expression_get(remote_scan.total, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)) OVER (?), remote_scan."?partitionBy?"
                ->  Sort
@@ -459,11 +459,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('total'::text, total), false) AS document FROM (SELECT intermediate_result.document, intermediate_result.total FROM read_intermediate_result('93_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, total documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('total'::text, total), false) AS document FROM (SELECT intermediate_result.document, intermediate_result.total FROM read_intermediate_result('97_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, total documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_api_internal.bson_dollar_merge_documents(intermediate_result.document, documentdb_core.bson_repath_and_build('total'::text, intermediate_result.total), false)
-               Function Call: read_intermediate_result('93_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('97_1'::text, 'binary'::citus_copy_format)
 (25 rows)
 
 ---------------------------------------------------------------------
@@ -1854,6 +1854,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
 ---------------------------------------------------------------------
 -- Document window
 ---------------------------------------------------------------------
+SET documentdb.enableAddToSetAggregationRewrite to off;
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"addedSet": { "$addToSet": "$quantity", "window": {"documents": [-1, 1]}}}}}]}');
                                                                                                                                        document                                                                                                                                       
@@ -1949,9 +1950,106 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
  { "_id" : { "$numberInt" : "9" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "509" }, "date" : { "$date" : { "$numberLong" : "1718841700000" } }, "addedSet" : [ [ "Hello", "World" ] ] }
 (13 rows)
 
+SET documentdb.enableAddToSetAggregationRewrite to on;
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
+    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"addedSet": { "$addToSet": "$quantity", "window": {"documents": [-1, 1]}}}}}]}');
+                                                                                                                                       document                                                                                                                                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "13" }, "a" : "abc", "cost" : { "$numberInt" : "80" }, "quantity" : { "$numberInt" : "515" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "515" }, { "$numberInt" : "504" } ] }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "504" }, "date" : { "$date" : { "$numberLong" : "1718841615000" } }, "addedSet" : [ { "$numberInt" : "515" }, { "$numberInt" : "504" }, { "$numberInt" : "507" } ] }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "507" }, "date" : { "$date" : { "$numberLong" : "1718841640000" } }, "addedSet" : [ { "$numberInt" : "504" }, { "$numberInt" : "507" }, { "$numberInt" : "510" } ] }
+ { "_id" : { "$numberInt" : "10" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "510" }, "date" : { "$date" : { "$numberLong" : "1718841800000" } }, "addedSet" : [ { "$numberInt" : "507" }, { "$numberInt" : "510" }, { "$numberInt" : "501" } ] }
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "501" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "510" }, { "$numberInt" : "501" } ] }
+ { "_id" : { "$numberInt" : "5" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "505" }, "date" : { "$date" : { "$numberLong" : "1718841620000" } }, "addedSet" : [ { "$numberInt" : "505" }, { "$numberInt" : "511" } ] }
+ { "_id" : { "$numberInt" : "11" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "511" }, "date" : { "$date" : { "$numberLong" : "1718841900000" } }, "addedSet" : [ { "$numberInt" : "505" }, { "$numberInt" : "511" }, { "$numberInt" : "508" } ] }
+ { "_id" : { "$numberInt" : "8" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "508" }, "date" : { "$date" : { "$numberLong" : "1718841680000" } }, "addedSet" : [ { "$numberInt" : "511" }, { "$numberInt" : "508" }, { "$numberInt" : "502" } ] }
+ { "_id" : { "$numberInt" : "2" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "502" }, "date" : { "$date" : { "$numberLong" : "1718841605000" } }, "addedSet" : [ { "$numberInt" : "508" }, { "$numberInt" : "502" } ] }
+ { "_id" : { "$numberInt" : "6" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "506" }, "date" : { "$date" : { "$numberLong" : "1718841630000" } }, "addedSet" : [ { "$numberInt" : "506" }, { "$numberInt" : "503" } ] }
+ { "_id" : { "$numberInt" : "3" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "503" }, "date" : { "$date" : { "$numberLong" : "1718841610000" } }, "addedSet" : [ { "$numberInt" : "506" }, { "$numberInt" : "503" }, { "$numberInt" : "512" } ] }
+ { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "addedSet" : [ { "$numberInt" : "503" }, { "$numberInt" : "512" }, { "$numberInt" : "509" } ] }
+ { "_id" : { "$numberInt" : "9" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "509" }, "date" : { "$date" : { "$numberLong" : "1718841700000" } }, "addedSet" : [ { "$numberInt" : "512" }, { "$numberInt" : "509" } ] }
+(13 rows)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
+    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"addedSet": { "$addToSet": "$quantity", "window": {"documents": ["current", "current"]}}}}}]}');
+                                                                                                             document                                                                                                             
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "13" }, "a" : "abc", "cost" : { "$numberInt" : "80" }, "quantity" : { "$numberInt" : "515" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "515" } ] }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "504" }, "date" : { "$date" : { "$numberLong" : "1718841615000" } }, "addedSet" : [ { "$numberInt" : "504" } ] }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "507" }, "date" : { "$date" : { "$numberLong" : "1718841640000" } }, "addedSet" : [ { "$numberInt" : "507" } ] }
+ { "_id" : { "$numberInt" : "10" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "510" }, "date" : { "$date" : { "$numberLong" : "1718841800000" } }, "addedSet" : [ { "$numberInt" : "510" } ] }
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "501" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "501" } ] }
+ { "_id" : { "$numberInt" : "5" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "505" }, "date" : { "$date" : { "$numberLong" : "1718841620000" } }, "addedSet" : [ { "$numberInt" : "505" } ] }
+ { "_id" : { "$numberInt" : "11" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "511" }, "date" : { "$date" : { "$numberLong" : "1718841900000" } }, "addedSet" : [ { "$numberInt" : "511" } ] }
+ { "_id" : { "$numberInt" : "8" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "508" }, "date" : { "$date" : { "$numberLong" : "1718841680000" } }, "addedSet" : [ { "$numberInt" : "508" } ] }
+ { "_id" : { "$numberInt" : "2" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "502" }, "date" : { "$date" : { "$numberLong" : "1718841605000" } }, "addedSet" : [ { "$numberInt" : "502" } ] }
+ { "_id" : { "$numberInt" : "6" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "506" }, "date" : { "$date" : { "$numberLong" : "1718841630000" } }, "addedSet" : [ { "$numberInt" : "506" } ] }
+ { "_id" : { "$numberInt" : "3" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "503" }, "date" : { "$date" : { "$numberLong" : "1718841610000" } }, "addedSet" : [ { "$numberInt" : "503" } ] }
+ { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "addedSet" : [ { "$numberInt" : "512" } ] }
+ { "_id" : { "$numberInt" : "9" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "509" }, "date" : { "$date" : { "$numberLong" : "1718841700000" } }, "addedSet" : [ { "$numberInt" : "509" } ] }
+(13 rows)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
+    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"addedSet": { "$addToSet": "$quantity", "window": {"documents": ["unbounded", "unbounded"]}}}}}]}');
+                                                                                                                                                                 document                                                                                                                                                                 
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "13" }, "a" : "abc", "cost" : { "$numberInt" : "80" }, "quantity" : { "$numberInt" : "515" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "515" }, { "$numberInt" : "504" }, { "$numberInt" : "507" }, { "$numberInt" : "510" }, { "$numberInt" : "501" } ] }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "504" }, "date" : { "$date" : { "$numberLong" : "1718841615000" } }, "addedSet" : [ { "$numberInt" : "515" }, { "$numberInt" : "504" }, { "$numberInt" : "507" }, { "$numberInt" : "510" }, { "$numberInt" : "501" } ] }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "507" }, "date" : { "$date" : { "$numberLong" : "1718841640000" } }, "addedSet" : [ { "$numberInt" : "515" }, { "$numberInt" : "504" }, { "$numberInt" : "507" }, { "$numberInt" : "510" }, { "$numberInt" : "501" } ] }
+ { "_id" : { "$numberInt" : "10" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "510" }, "date" : { "$date" : { "$numberLong" : "1718841800000" } }, "addedSet" : [ { "$numberInt" : "515" }, { "$numberInt" : "504" }, { "$numberInt" : "507" }, { "$numberInt" : "510" }, { "$numberInt" : "501" } ] }
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "501" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "515" }, { "$numberInt" : "504" }, { "$numberInt" : "507" }, { "$numberInt" : "510" }, { "$numberInt" : "501" } ] }
+ { "_id" : { "$numberInt" : "5" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "505" }, "date" : { "$date" : { "$numberLong" : "1718841620000" } }, "addedSet" : [ { "$numberInt" : "505" }, { "$numberInt" : "511" }, { "$numberInt" : "508" }, { "$numberInt" : "502" } ] }
+ { "_id" : { "$numberInt" : "11" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "511" }, "date" : { "$date" : { "$numberLong" : "1718841900000" } }, "addedSet" : [ { "$numberInt" : "505" }, { "$numberInt" : "511" }, { "$numberInt" : "508" }, { "$numberInt" : "502" } ] }
+ { "_id" : { "$numberInt" : "8" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "508" }, "date" : { "$date" : { "$numberLong" : "1718841680000" } }, "addedSet" : [ { "$numberInt" : "505" }, { "$numberInt" : "511" }, { "$numberInt" : "508" }, { "$numberInt" : "502" } ] }
+ { "_id" : { "$numberInt" : "2" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "502" }, "date" : { "$date" : { "$numberLong" : "1718841605000" } }, "addedSet" : [ { "$numberInt" : "505" }, { "$numberInt" : "511" }, { "$numberInt" : "508" }, { "$numberInt" : "502" } ] }
+ { "_id" : { "$numberInt" : "6" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "506" }, "date" : { "$date" : { "$numberLong" : "1718841630000" } }, "addedSet" : [ { "$numberInt" : "506" }, { "$numberInt" : "503" }, { "$numberInt" : "512" }, { "$numberInt" : "509" } ] }
+ { "_id" : { "$numberInt" : "3" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "503" }, "date" : { "$date" : { "$numberLong" : "1718841610000" } }, "addedSet" : [ { "$numberInt" : "506" }, { "$numberInt" : "503" }, { "$numberInt" : "512" }, { "$numberInt" : "509" } ] }
+ { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "addedSet" : [ { "$numberInt" : "506" }, { "$numberInt" : "503" }, { "$numberInt" : "512" }, { "$numberInt" : "509" } ] }
+ { "_id" : { "$numberInt" : "9" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "509" }, "date" : { "$date" : { "$numberLong" : "1718841700000" } }, "addedSet" : [ { "$numberInt" : "506" }, { "$numberInt" : "503" }, { "$numberInt" : "512" }, { "$numberInt" : "509" } ] }
+(13 rows)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
+    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"addedSet": { "$addToSet": "$quantity", "window": {"documents": ["unbounded", -1]}}}}}]}');
+                                                                                                                                                   document                                                                                                                                                    
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "13" }, "a" : "abc", "cost" : { "$numberInt" : "80" }, "quantity" : { "$numberInt" : "515" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [  ] }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "504" }, "date" : { "$date" : { "$numberLong" : "1718841615000" } }, "addedSet" : [ { "$numberInt" : "515" } ] }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "507" }, "date" : { "$date" : { "$numberLong" : "1718841640000" } }, "addedSet" : [ { "$numberInt" : "515" }, { "$numberInt" : "504" } ] }
+ { "_id" : { "$numberInt" : "10" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "510" }, "date" : { "$date" : { "$numberLong" : "1718841800000" } }, "addedSet" : [ { "$numberInt" : "515" }, { "$numberInt" : "504" }, { "$numberInt" : "507" } ] }
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "501" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "515" }, { "$numberInt" : "504" }, { "$numberInt" : "507" }, { "$numberInt" : "510" } ] }
+ { "_id" : { "$numberInt" : "5" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "505" }, "date" : { "$date" : { "$numberLong" : "1718841620000" } }, "addedSet" : [  ] }
+ { "_id" : { "$numberInt" : "11" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "511" }, "date" : { "$date" : { "$numberLong" : "1718841900000" } }, "addedSet" : [ { "$numberInt" : "505" } ] }
+ { "_id" : { "$numberInt" : "8" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "508" }, "date" : { "$date" : { "$numberLong" : "1718841680000" } }, "addedSet" : [ { "$numberInt" : "505" }, { "$numberInt" : "511" } ] }
+ { "_id" : { "$numberInt" : "2" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "502" }, "date" : { "$date" : { "$numberLong" : "1718841605000" } }, "addedSet" : [ { "$numberInt" : "505" }, { "$numberInt" : "511" }, { "$numberInt" : "508" } ] }
+ { "_id" : { "$numberInt" : "6" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "506" }, "date" : { "$date" : { "$numberLong" : "1718841630000" } }, "addedSet" : [  ] }
+ { "_id" : { "$numberInt" : "3" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "503" }, "date" : { "$date" : { "$numberLong" : "1718841610000" } }, "addedSet" : [ { "$numberInt" : "506" } ] }
+ { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "addedSet" : [ { "$numberInt" : "506" }, { "$numberInt" : "503" } ] }
+ { "_id" : { "$numberInt" : "9" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "509" }, "date" : { "$date" : { "$numberLong" : "1718841700000" } }, "addedSet" : [ { "$numberInt" : "506" }, { "$numberInt" : "503" }, { "$numberInt" : "512" } ] }
+(13 rows)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
+    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"a": 1}, "output": {"addedSet": { "$addToSet": ["$$varRef1", "$$varRef2"], "window": {"documents": ["unbounded", "unbounded"]}}}}}], "let": {"varRef1": "Hello", "varRef2": "World"}}');
+                                                                                                           document                                                                                                           
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "13" }, "a" : "abc", "cost" : { "$numberInt" : "80" }, "quantity" : { "$numberInt" : "515" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ [ "Hello", "World" ] ] }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "504" }, "date" : { "$date" : { "$numberLong" : "1718841615000" } }, "addedSet" : [ [ "Hello", "World" ] ] }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "507" }, "date" : { "$date" : { "$numberLong" : "1718841640000" } }, "addedSet" : [ [ "Hello", "World" ] ] }
+ { "_id" : { "$numberInt" : "10" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "510" }, "date" : { "$date" : { "$numberLong" : "1718841800000" } }, "addedSet" : [ [ "Hello", "World" ] ] }
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "501" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ [ "Hello", "World" ] ] }
+ { "_id" : { "$numberInt" : "5" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "505" }, "date" : { "$date" : { "$numberLong" : "1718841620000" } }, "addedSet" : [ [ "Hello", "World" ] ] }
+ { "_id" : { "$numberInt" : "11" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "511" }, "date" : { "$date" : { "$numberLong" : "1718841900000" } }, "addedSet" : [ [ "Hello", "World" ] ] }
+ { "_id" : { "$numberInt" : "8" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "508" }, "date" : { "$date" : { "$numberLong" : "1718841680000" } }, "addedSet" : [ [ "Hello", "World" ] ] }
+ { "_id" : { "$numberInt" : "2" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "502" }, "date" : { "$date" : { "$numberLong" : "1718841605000" } }, "addedSet" : [ [ "Hello", "World" ] ] }
+ { "_id" : { "$numberInt" : "6" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "506" }, "date" : { "$date" : { "$numberLong" : "1718841630000" } }, "addedSet" : [ [ "Hello", "World" ] ] }
+ { "_id" : { "$numberInt" : "3" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "503" }, "date" : { "$date" : { "$numberLong" : "1718841610000" } }, "addedSet" : [ [ "Hello", "World" ] ] }
+ { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "addedSet" : [ [ "Hello", "World" ] ] }
+ { "_id" : { "$numberInt" : "9" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "509" }, "date" : { "$date" : { "$numberLong" : "1718841700000" } }, "addedSet" : [ [ "Hello", "World" ] ] }
+(13 rows)
+
 ---------------------------------------------------------------------
 -- Document window with sort
 ---------------------------------------------------------------------
+SET documentdb.enableAddToSetAggregationRewrite to off;
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"_id": -1}, "output": {"addedSet": { "$addToSet": "$quantity"}}} }]}');
                                                                                                                                                                  document                                                                                                                                                                 
@@ -2009,9 +2107,68 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
  { "_id" : { "$numberInt" : "3" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "503" }, "date" : { "$date" : { "$numberLong" : "1718841610000" } }, "addedSet" : [ { "$numberInt" : "503" }, { "$numberInt" : "506" } ] }
 (13 rows)
 
+SET documentdb.enableAddToSetAggregationRewrite to on;
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
+    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"_id": -1}, "output": {"addedSet": { "$addToSet": "$quantity"}}} }]}');
+                                                                                                                                                                 document                                                                                                                                                                 
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "13" }, "a" : "abc", "cost" : { "$numberInt" : "80" }, "quantity" : { "$numberInt" : "515" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "515" }, { "$numberInt" : "510" }, { "$numberInt" : "507" }, { "$numberInt" : "504" }, { "$numberInt" : "501" } ] }
+ { "_id" : { "$numberInt" : "10" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "510" }, "date" : { "$date" : { "$numberLong" : "1718841800000" } }, "addedSet" : [ { "$numberInt" : "515" }, { "$numberInt" : "510" }, { "$numberInt" : "507" }, { "$numberInt" : "504" }, { "$numberInt" : "501" } ] }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "507" }, "date" : { "$date" : { "$numberLong" : "1718841640000" } }, "addedSet" : [ { "$numberInt" : "515" }, { "$numberInt" : "510" }, { "$numberInt" : "507" }, { "$numberInt" : "504" }, { "$numberInt" : "501" } ] }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "504" }, "date" : { "$date" : { "$numberLong" : "1718841615000" } }, "addedSet" : [ { "$numberInt" : "515" }, { "$numberInt" : "510" }, { "$numberInt" : "507" }, { "$numberInt" : "504" }, { "$numberInt" : "501" } ] }
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "501" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "515" }, { "$numberInt" : "510" }, { "$numberInt" : "507" }, { "$numberInt" : "504" }, { "$numberInt" : "501" } ] }
+ { "_id" : { "$numberInt" : "11" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "511" }, "date" : { "$date" : { "$numberLong" : "1718841900000" } }, "addedSet" : [ { "$numberInt" : "511" }, { "$numberInt" : "508" }, { "$numberInt" : "505" }, { "$numberInt" : "502" } ] }
+ { "_id" : { "$numberInt" : "8" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "508" }, "date" : { "$date" : { "$numberLong" : "1718841680000" } }, "addedSet" : [ { "$numberInt" : "511" }, { "$numberInt" : "508" }, { "$numberInt" : "505" }, { "$numberInt" : "502" } ] }
+ { "_id" : { "$numberInt" : "5" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "505" }, "date" : { "$date" : { "$numberLong" : "1718841620000" } }, "addedSet" : [ { "$numberInt" : "511" }, { "$numberInt" : "508" }, { "$numberInt" : "505" }, { "$numberInt" : "502" } ] }
+ { "_id" : { "$numberInt" : "2" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "502" }, "date" : { "$date" : { "$numberLong" : "1718841605000" } }, "addedSet" : [ { "$numberInt" : "511" }, { "$numberInt" : "508" }, { "$numberInt" : "505" }, { "$numberInt" : "502" } ] }
+ { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "addedSet" : [ { "$numberInt" : "512" }, { "$numberInt" : "509" }, { "$numberInt" : "506" }, { "$numberInt" : "503" } ] }
+ { "_id" : { "$numberInt" : "9" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "509" }, "date" : { "$date" : { "$numberLong" : "1718841700000" } }, "addedSet" : [ { "$numberInt" : "512" }, { "$numberInt" : "509" }, { "$numberInt" : "506" }, { "$numberInt" : "503" } ] }
+ { "_id" : { "$numberInt" : "6" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "506" }, "date" : { "$date" : { "$numberLong" : "1718841630000" } }, "addedSet" : [ { "$numberInt" : "512" }, { "$numberInt" : "509" }, { "$numberInt" : "506" }, { "$numberInt" : "503" } ] }
+ { "_id" : { "$numberInt" : "3" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "503" }, "date" : { "$date" : { "$numberLong" : "1718841610000" } }, "addedSet" : [ { "$numberInt" : "512" }, { "$numberInt" : "509" }, { "$numberInt" : "506" }, { "$numberInt" : "503" } ] }
+(13 rows)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
+    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"quantity": 1}, "output": {"addedSet": { "$addToSet": "$quantity", "window": {"documents": ["unbounded", "current"]}}}} }]}');
+                                                                                                                                                                 document                                                                                                                                                                 
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "501" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "501" } ] }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "504" }, "date" : { "$date" : { "$numberLong" : "1718841615000" } }, "addedSet" : [ { "$numberInt" : "501" }, { "$numberInt" : "504" } ] }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "507" }, "date" : { "$date" : { "$numberLong" : "1718841640000" } }, "addedSet" : [ { "$numberInt" : "501" }, { "$numberInt" : "504" }, { "$numberInt" : "507" } ] }
+ { "_id" : { "$numberInt" : "10" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "510" }, "date" : { "$date" : { "$numberLong" : "1718841800000" } }, "addedSet" : [ { "$numberInt" : "501" }, { "$numberInt" : "504" }, { "$numberInt" : "507" }, { "$numberInt" : "510" } ] }
+ { "_id" : { "$numberInt" : "13" }, "a" : "abc", "cost" : { "$numberInt" : "80" }, "quantity" : { "$numberInt" : "515" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "501" }, { "$numberInt" : "504" }, { "$numberInt" : "507" }, { "$numberInt" : "510" }, { "$numberInt" : "515" } ] }
+ { "_id" : { "$numberInt" : "2" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "502" }, "date" : { "$date" : { "$numberLong" : "1718841605000" } }, "addedSet" : [ { "$numberInt" : "502" } ] }
+ { "_id" : { "$numberInt" : "5" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "505" }, "date" : { "$date" : { "$numberLong" : "1718841620000" } }, "addedSet" : [ { "$numberInt" : "502" }, { "$numberInt" : "505" } ] }
+ { "_id" : { "$numberInt" : "8" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "508" }, "date" : { "$date" : { "$numberLong" : "1718841680000" } }, "addedSet" : [ { "$numberInt" : "502" }, { "$numberInt" : "505" }, { "$numberInt" : "508" } ] }
+ { "_id" : { "$numberInt" : "11" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "511" }, "date" : { "$date" : { "$numberLong" : "1718841900000" } }, "addedSet" : [ { "$numberInt" : "502" }, { "$numberInt" : "505" }, { "$numberInt" : "508" }, { "$numberInt" : "511" } ] }
+ { "_id" : { "$numberInt" : "3" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "503" }, "date" : { "$date" : { "$numberLong" : "1718841610000" } }, "addedSet" : [ { "$numberInt" : "503" } ] }
+ { "_id" : { "$numberInt" : "6" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "506" }, "date" : { "$date" : { "$numberLong" : "1718841630000" } }, "addedSet" : [ { "$numberInt" : "503" }, { "$numberInt" : "506" } ] }
+ { "_id" : { "$numberInt" : "9" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "509" }, "date" : { "$date" : { "$numberLong" : "1718841700000" } }, "addedSet" : [ { "$numberInt" : "503" }, { "$numberInt" : "506" }, { "$numberInt" : "509" } ] }
+ { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "addedSet" : [ { "$numberInt" : "503" }, { "$numberInt" : "506" }, { "$numberInt" : "509" }, { "$numberInt" : "512" } ] }
+(13 rows)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
+    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": {"date": -1}, "output": {"addedSet": { "$addToSet": "$quantity", "window": {"documents": [-1, 1]}}}} }]}');
+                                                                                                                                       document                                                                                                                                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "10" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "510" }, "date" : { "$date" : { "$numberLong" : "1718841800000" } }, "addedSet" : [ { "$numberInt" : "510" }, { "$numberInt" : "507" } ] }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "507" }, "date" : { "$date" : { "$numberLong" : "1718841640000" } }, "addedSet" : [ { "$numberInt" : "510" }, { "$numberInt" : "507" }, { "$numberInt" : "504" } ] }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "504" }, "date" : { "$date" : { "$numberLong" : "1718841615000" } }, "addedSet" : [ { "$numberInt" : "507" }, { "$numberInt" : "504" }, { "$numberInt" : "515" } ] }
+ { "_id" : { "$numberInt" : "13" }, "a" : "abc", "cost" : { "$numberInt" : "80" }, "quantity" : { "$numberInt" : "515" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "504" }, { "$numberInt" : "515" }, { "$numberInt" : "501" } ] }
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "501" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "515" }, { "$numberInt" : "501" } ] }
+ { "_id" : { "$numberInt" : "11" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "511" }, "date" : { "$date" : { "$numberLong" : "1718841900000" } }, "addedSet" : [ { "$numberInt" : "511" }, { "$numberInt" : "508" } ] }
+ { "_id" : { "$numberInt" : "8" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "508" }, "date" : { "$date" : { "$numberLong" : "1718841680000" } }, "addedSet" : [ { "$numberInt" : "511" }, { "$numberInt" : "508" }, { "$numberInt" : "505" } ] }
+ { "_id" : { "$numberInt" : "5" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "505" }, "date" : { "$date" : { "$numberLong" : "1718841620000" } }, "addedSet" : [ { "$numberInt" : "508" }, { "$numberInt" : "505" }, { "$numberInt" : "502" } ] }
+ { "_id" : { "$numberInt" : "2" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "502" }, "date" : { "$date" : { "$numberLong" : "1718841605000" } }, "addedSet" : [ { "$numberInt" : "505" }, { "$numberInt" : "502" } ] }
+ { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "addedSet" : [ { "$numberInt" : "512" }, { "$numberInt" : "509" } ] }
+ { "_id" : { "$numberInt" : "9" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "509" }, "date" : { "$date" : { "$numberLong" : "1718841700000" } }, "addedSet" : [ { "$numberInt" : "512" }, { "$numberInt" : "509" }, { "$numberInt" : "506" } ] }
+ { "_id" : { "$numberInt" : "6" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "506" }, "date" : { "$date" : { "$numberLong" : "1718841630000" } }, "addedSet" : [ { "$numberInt" : "509" }, { "$numberInt" : "506" }, { "$numberInt" : "503" } ] }
+ { "_id" : { "$numberInt" : "3" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "503" }, "date" : { "$date" : { "$numberLong" : "1718841610000" } }, "addedSet" : [ { "$numberInt" : "506" }, { "$numberInt" : "503" } ] }
+(13 rows)
+
 ---------------------------------------------------------------------
 -- Range window
 ---------------------------------------------------------------------
+SET documentdb.enableAddToSetAggregationRewrite to off;
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields", "pipeline":  [{"$match": {"quantity": {"$type": "number"}}}, {"$setWindowFields": {"partitionBy": "$a", "sortBy": { "quantity": 1 }, "output": {"totalInGroup": { "$addToSet": "$quantity", "window": {"range": [-3, 3]}}}}}]}');
                                                                                                                                         document                                                                                                                                         
@@ -2047,6 +2204,45 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
  { "_id" : { "$numberInt" : "3" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "503" }, "date" : { "$date" : { "$numberLong" : "1718841610000" } }, "totalInGroup" : [ { "$numberInt" : "503" }, { "$numberInt" : "509" }, { "$numberInt" : "506" } ] }
  { "_id" : { "$numberInt" : "6" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "506" }, "date" : { "$date" : { "$numberLong" : "1718841630000" } }, "totalInGroup" : [ { "$numberInt" : "503" }, { "$numberInt" : "509" }, { "$numberInt" : "506" } ] }
  { "_id" : { "$numberInt" : "9" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "509" }, "date" : { "$date" : { "$numberLong" : "1718841700000" } }, "totalInGroup" : [ { "$numberInt" : "503" }, { "$numberInt" : "509" }, { "$numberInt" : "506" } ] }
+ { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "totalInGroup" : [ { "$numberInt" : "512" } ] }
+(13 rows)
+
+SET documentdb.enableAddToSetAggregationRewrite to on;
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
+    '{ "aggregate": "setWindowFields", "pipeline":  [{"$match": {"quantity": {"$type": "number"}}}, {"$setWindowFields": {"partitionBy": "$a", "sortBy": { "quantity": 1 }, "output": {"totalInGroup": { "$addToSet": "$quantity", "window": {"range": [-3, 3]}}}}}]}');
+                                                                                                                                        document                                                                                                                                         
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "501" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "totalInGroup" : [ { "$numberInt" : "501" }, { "$numberInt" : "504" } ] }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "504" }, "date" : { "$date" : { "$numberLong" : "1718841615000" } }, "totalInGroup" : [ { "$numberInt" : "501" }, { "$numberInt" : "504" }, { "$numberInt" : "507" } ] }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "507" }, "date" : { "$date" : { "$numberLong" : "1718841640000" } }, "totalInGroup" : [ { "$numberInt" : "504" }, { "$numberInt" : "507" }, { "$numberInt" : "510" } ] }
+ { "_id" : { "$numberInt" : "10" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "510" }, "date" : { "$date" : { "$numberLong" : "1718841800000" } }, "totalInGroup" : [ { "$numberInt" : "507" }, { "$numberInt" : "510" } ] }
+ { "_id" : { "$numberInt" : "13" }, "a" : "abc", "cost" : { "$numberInt" : "80" }, "quantity" : { "$numberInt" : "515" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "totalInGroup" : [ { "$numberInt" : "515" } ] }
+ { "_id" : { "$numberInt" : "2" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "502" }, "date" : { "$date" : { "$numberLong" : "1718841605000" } }, "totalInGroup" : [ { "$numberInt" : "502" }, { "$numberInt" : "505" } ] }
+ { "_id" : { "$numberInt" : "5" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "505" }, "date" : { "$date" : { "$numberLong" : "1718841620000" } }, "totalInGroup" : [ { "$numberInt" : "502" }, { "$numberInt" : "505" }, { "$numberInt" : "508" } ] }
+ { "_id" : { "$numberInt" : "8" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "508" }, "date" : { "$date" : { "$numberLong" : "1718841680000" } }, "totalInGroup" : [ { "$numberInt" : "505" }, { "$numberInt" : "508" }, { "$numberInt" : "511" } ] }
+ { "_id" : { "$numberInt" : "11" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "511" }, "date" : { "$date" : { "$numberLong" : "1718841900000" } }, "totalInGroup" : [ { "$numberInt" : "508" }, { "$numberInt" : "511" } ] }
+ { "_id" : { "$numberInt" : "3" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "503" }, "date" : { "$date" : { "$numberLong" : "1718841610000" } }, "totalInGroup" : [ { "$numberInt" : "503" }, { "$numberInt" : "506" } ] }
+ { "_id" : { "$numberInt" : "6" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "506" }, "date" : { "$date" : { "$numberLong" : "1718841630000" } }, "totalInGroup" : [ { "$numberInt" : "503" }, { "$numberInt" : "506" }, { "$numberInt" : "509" } ] }
+ { "_id" : { "$numberInt" : "9" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "509" }, "date" : { "$date" : { "$numberLong" : "1718841700000" } }, "totalInGroup" : [ { "$numberInt" : "506" }, { "$numberInt" : "509" }, { "$numberInt" : "512" } ] }
+ { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "totalInGroup" : [ { "$numberInt" : "509" }, { "$numberInt" : "512" } ] }
+(13 rows)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
+    '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$addToSet": "$quantity", "window": {"range": [-5, 5], "unit": "minute"}}}}}]}');
+                                                                                                                                                                   document                                                                                                                                                                   
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "501" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "totalInGroup" : [ { "$numberInt" : "501" }, { "$numberInt" : "515" }, { "$numberInt" : "504" }, { "$numberInt" : "507" }, { "$numberInt" : "510" } ] }
+ { "_id" : { "$numberInt" : "13" }, "a" : "abc", "cost" : { "$numberInt" : "80" }, "quantity" : { "$numberInt" : "515" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "totalInGroup" : [ { "$numberInt" : "501" }, { "$numberInt" : "515" }, { "$numberInt" : "504" }, { "$numberInt" : "507" }, { "$numberInt" : "510" } ] }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "504" }, "date" : { "$date" : { "$numberLong" : "1718841615000" } }, "totalInGroup" : [ { "$numberInt" : "501" }, { "$numberInt" : "515" }, { "$numberInt" : "504" }, { "$numberInt" : "507" }, { "$numberInt" : "510" } ] }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "507" }, "date" : { "$date" : { "$numberLong" : "1718841640000" } }, "totalInGroup" : [ { "$numberInt" : "501" }, { "$numberInt" : "515" }, { "$numberInt" : "504" }, { "$numberInt" : "507" }, { "$numberInt" : "510" } ] }
+ { "_id" : { "$numberInt" : "10" }, "a" : "abc", "cost" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "510" }, "date" : { "$date" : { "$numberLong" : "1718841800000" } }, "totalInGroup" : [ { "$numberInt" : "501" }, { "$numberInt" : "515" }, { "$numberInt" : "504" }, { "$numberInt" : "507" }, { "$numberInt" : "510" } ] }
+ { "_id" : { "$numberInt" : "2" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "502" }, "date" : { "$date" : { "$numberLong" : "1718841605000" } }, "totalInGroup" : [ { "$numberInt" : "502" }, { "$numberInt" : "505" }, { "$numberInt" : "508" }, { "$numberInt" : "511" } ] }
+ { "_id" : { "$numberInt" : "5" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "505" }, "date" : { "$date" : { "$numberLong" : "1718841620000" } }, "totalInGroup" : [ { "$numberInt" : "502" }, { "$numberInt" : "505" }, { "$numberInt" : "508" }, { "$numberInt" : "511" } ] }
+ { "_id" : { "$numberInt" : "8" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "508" }, "date" : { "$date" : { "$numberLong" : "1718841680000" } }, "totalInGroup" : [ { "$numberInt" : "502" }, { "$numberInt" : "505" }, { "$numberInt" : "508" }, { "$numberInt" : "511" } ] }
+ { "_id" : { "$numberInt" : "11" }, "a" : "def", "cost" : { "$numberInt" : "8" }, "quantity" : { "$numberInt" : "511" }, "date" : { "$date" : { "$numberLong" : "1718841900000" } }, "totalInGroup" : [ { "$numberInt" : "502" }, { "$numberInt" : "505" }, { "$numberInt" : "508" }, { "$numberInt" : "511" } ] }
+ { "_id" : { "$numberInt" : "3" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "503" }, "date" : { "$date" : { "$numberLong" : "1718841610000" } }, "totalInGroup" : [ { "$numberInt" : "503" }, { "$numberInt" : "506" }, { "$numberInt" : "509" } ] }
+ { "_id" : { "$numberInt" : "6" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "506" }, "date" : { "$date" : { "$numberLong" : "1718841630000" } }, "totalInGroup" : [ { "$numberInt" : "503" }, { "$numberInt" : "506" }, { "$numberInt" : "509" } ] }
+ { "_id" : { "$numberInt" : "9" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "509" }, "date" : { "$date" : { "$numberLong" : "1718841700000" } }, "totalInGroup" : [ { "$numberInt" : "503" }, { "$numberInt" : "506" }, { "$numberInt" : "509" } ] }
  { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "totalInGroup" : [ { "$numberInt" : "512" } ] }
 (13 rows)
 
@@ -2095,36 +2291,36 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields_addToSet_missingFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "output": {"addedSet": { "$addToSet": "$quantity", "window": {"documents": ["unbounded", "unbounded"]}}}}}]}');
                                                                                                    document                                                                                                    
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "a" : "abc", "quantity" : { "$numberInt" : "30" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ null, [  ], {  }, { "$numberInt" : "30" } ] }
- { "_id" : { "$numberInt" : "2" }, "a" : "abc", "quantity" : [  ], "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ null, [  ], {  }, { "$numberInt" : "30" } ] }
- { "_id" : { "$numberInt" : "3" }, "a" : "abc", "quantity" : {  }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ null, [  ], {  }, { "$numberInt" : "30" } ] }
- { "_id" : { "$numberInt" : "4" }, "a" : "abc", "quantity" : null, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ null, [  ], {  }, { "$numberInt" : "30" } ] }
- { "_id" : { "$numberInt" : "5" }, "a" : "abc", "quantity" : { "$undefined" : true }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ null, [  ], {  }, { "$numberInt" : "30" } ] }
- { "_id" : { "$numberInt" : "6" }, "a" : "abc", "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ null, [  ], {  }, { "$numberInt" : "30" } ] }
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "quantity" : { "$numberInt" : "30" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "30" }, [  ], {  }, null ] }
+ { "_id" : { "$numberInt" : "2" }, "a" : "abc", "quantity" : [  ], "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "30" }, [  ], {  }, null ] }
+ { "_id" : { "$numberInt" : "3" }, "a" : "abc", "quantity" : {  }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "30" }, [  ], {  }, null ] }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "quantity" : null, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "30" }, [  ], {  }, null ] }
+ { "_id" : { "$numberInt" : "5" }, "a" : "abc", "quantity" : { "$undefined" : true }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "30" }, [  ], {  }, null ] }
+ { "_id" : { "$numberInt" : "6" }, "a" : "abc", "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "$numberInt" : "30" }, [  ], {  }, null ] }
 (6 rows)
 
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields_addToSet_missingFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "output": {"addedSet": { "$addToSet": { "qty": "$quantity" }, "window": {"documents": ["unbounded", "unbounded"]}}}}}]}');
                                                                                                                                               document                                                                                                                                              
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "a" : "abc", "quantity" : { "$numberInt" : "30" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "qty" : null }, { "qty" : {  } }, { "qty" : [  ] }, { "qty" : { "$undefined" : true } }, { "qty" : { "$numberInt" : "30" } } ] }
- { "_id" : { "$numberInt" : "2" }, "a" : "abc", "quantity" : [  ], "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "qty" : null }, { "qty" : {  } }, { "qty" : [  ] }, { "qty" : { "$undefined" : true } }, { "qty" : { "$numberInt" : "30" } } ] }
- { "_id" : { "$numberInt" : "3" }, "a" : "abc", "quantity" : {  }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "qty" : null }, { "qty" : {  } }, { "qty" : [  ] }, { "qty" : { "$undefined" : true } }, { "qty" : { "$numberInt" : "30" } } ] }
- { "_id" : { "$numberInt" : "4" }, "a" : "abc", "quantity" : null, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "qty" : null }, { "qty" : {  } }, { "qty" : [  ] }, { "qty" : { "$undefined" : true } }, { "qty" : { "$numberInt" : "30" } } ] }
- { "_id" : { "$numberInt" : "5" }, "a" : "abc", "quantity" : { "$undefined" : true }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "qty" : null }, { "qty" : {  } }, { "qty" : [  ] }, { "qty" : { "$undefined" : true } }, { "qty" : { "$numberInt" : "30" } } ] }
- { "_id" : { "$numberInt" : "6" }, "a" : "abc", "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "qty" : null }, { "qty" : {  } }, { "qty" : [  ] }, { "qty" : { "$undefined" : true } }, { "qty" : { "$numberInt" : "30" } } ] }
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "quantity" : { "$numberInt" : "30" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "qty" : { "$numberInt" : "30" } }, { "qty" : [  ] }, { "qty" : {  } }, { "qty" : null }, { "qty" : { "$undefined" : true } } ] }
+ { "_id" : { "$numberInt" : "2" }, "a" : "abc", "quantity" : [  ], "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "qty" : { "$numberInt" : "30" } }, { "qty" : [  ] }, { "qty" : {  } }, { "qty" : null }, { "qty" : { "$undefined" : true } } ] }
+ { "_id" : { "$numberInt" : "3" }, "a" : "abc", "quantity" : {  }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "qty" : { "$numberInt" : "30" } }, { "qty" : [  ] }, { "qty" : {  } }, { "qty" : null }, { "qty" : { "$undefined" : true } } ] }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "quantity" : null, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "qty" : { "$numberInt" : "30" } }, { "qty" : [  ] }, { "qty" : {  } }, { "qty" : null }, { "qty" : { "$undefined" : true } } ] }
+ { "_id" : { "$numberInt" : "5" }, "a" : "abc", "quantity" : { "$undefined" : true }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "qty" : { "$numberInt" : "30" } }, { "qty" : [  ] }, { "qty" : {  } }, { "qty" : null }, { "qty" : { "$undefined" : true } } ] }
+ { "_id" : { "$numberInt" : "6" }, "a" : "abc", "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ { "qty" : { "$numberInt" : "30" } }, { "qty" : [  ] }, { "qty" : {  } }, { "qty" : null }, { "qty" : { "$undefined" : true } } ] }
 (6 rows)
 
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields_addToSet_missingFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "output": {"addedSet": { "$addToSet": [ "$quantity" ], "window": {"documents": ["unbounded", "unbounded"]}}}}}]}');
                                                                                                            document                                                                                                            
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "a" : "abc", "quantity" : { "$numberInt" : "30" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ [ { "$numberInt" : "30" } ], [ {  } ], [ [  ] ], [ null ] ] }
- { "_id" : { "$numberInt" : "2" }, "a" : "abc", "quantity" : [  ], "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ [ { "$numberInt" : "30" } ], [ {  } ], [ [  ] ], [ null ] ] }
- { "_id" : { "$numberInt" : "3" }, "a" : "abc", "quantity" : {  }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ [ { "$numberInt" : "30" } ], [ {  } ], [ [  ] ], [ null ] ] }
- { "_id" : { "$numberInt" : "4" }, "a" : "abc", "quantity" : null, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ [ { "$numberInt" : "30" } ], [ {  } ], [ [  ] ], [ null ] ] }
- { "_id" : { "$numberInt" : "5" }, "a" : "abc", "quantity" : { "$undefined" : true }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ [ { "$numberInt" : "30" } ], [ {  } ], [ [  ] ], [ null ] ] }
- { "_id" : { "$numberInt" : "6" }, "a" : "abc", "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ [ { "$numberInt" : "30" } ], [ {  } ], [ [  ] ], [ null ] ] }
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "quantity" : { "$numberInt" : "30" }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ [ { "$numberInt" : "30" } ], [ [  ] ], [ {  } ], [ null ] ] }
+ { "_id" : { "$numberInt" : "2" }, "a" : "abc", "quantity" : [  ], "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ [ { "$numberInt" : "30" } ], [ [  ] ], [ {  } ], [ null ] ] }
+ { "_id" : { "$numberInt" : "3" }, "a" : "abc", "quantity" : {  }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ [ { "$numberInt" : "30" } ], [ [  ] ], [ {  } ], [ null ] ] }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "quantity" : null, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ [ { "$numberInt" : "30" } ], [ [  ] ], [ {  } ], [ null ] ] }
+ { "_id" : { "$numberInt" : "5" }, "a" : "abc", "quantity" : { "$undefined" : true }, "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ [ { "$numberInt" : "30" } ], [ [  ] ], [ {  } ], [ null ] ] }
+ { "_id" : { "$numberInt" : "6" }, "a" : "abc", "date" : { "$date" : { "$numberLong" : "1718841600000" } }, "addedSet" : [ [ { "$numberInt" : "30" } ], [ [  ] ], [ {  } ], [ null ] ] }
 (6 rows)
 
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',

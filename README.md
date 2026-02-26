@@ -12,7 +12,6 @@ The project comprises of three components, which work together to support docume
 - **pg_documentdb :** The public API surface for DocumentDB providing CRUD functionality on documents in the store.
 - **pg_documentdb_gw :** The gateway protocol translation layer that converts the user's MongoDB APIs into PostgreSQL queries.
 
-
 ## Why DocumentDB ?
 
 At DocumentDB, we believe in the power of open-source to drive innovation and collaboration. Our commitment to being a fully open-source MongoDB compatible document database means that we are dedicated to transparency, community involvement, and continuous improvement. We are open-sourced under the most permissive [MIT](https://opensource.org/license/mit) license, where developers and organizations alike have no restrictions incorporating the project into new and existing solutions of their own. DocumentDB introduces the BSON data type to PostgreSQL and provides APIs for seamless operation within native PostgreSQL, enhancing efficiency and aligning with operational advantages.
@@ -30,6 +29,8 @@ We chose PostgreSQL as our platform for several reasons:
 5. **Compliance and Security**: PostgreSQL's robust security features and compliance with various standards makes it an ideal choice for organizations with stringent security and regulatory requirements.
 
 ## Get Started
+
+[Building From Source](/docs/v1/building.md)
 
 ### Prerequisites
 - Python 3.7+
@@ -58,18 +59,17 @@ Step 3. Setup DocumentDB using Docker
 ```bash
 
    # Pull the latest DocumentDB Docker image
-   docker pull ghcr.io/microsoft/documentdb/documentdb-local:latest
+   docker pull ghcr.io/documentdb/documentdb/documentdb-local:latest
 
    # Tag the image for convenience
-   docker tag ghcr.io/microsoft/documentdb/documentdb-local:latest documentdb
+   docker tag ghcr.io/documentdb/documentdb/documentdb-local:latest documentdb
 
    # Run the container with your chosen username and password
    docker run -dt -p 10260:10260 --name documentdb-container documentdb --username <YOUR_USERNAME> --password <YOUR_PASSWORD>
-   docker image rm -f ghcr.io/microsoft/documentdb/documentdb-local:latest || echo "No existing documentdb image to remove"
+   docker image rm -f ghcr.io/documentdb/documentdb/documentdb-local:latest || echo "No existing documentdb image to remove"
 
 ```
 
-> **Note:** During the transition to the Linux Foundation, Docker images may still be hosted on Microsoft's container registry. These will be migrated to the new DocumentDB organization as the transition completes.
    > **Note:** Replace `<YOUR_USERNAME>` and `<YOUR_PASSWORD>` with your desired credentials. You must set these when creating the container for authentication to work.
    > 
    > **Port Note:** Port `10260` is used by default in these instructions to avoid conflicts with other local database services. You can use port `27017` (the standard MongoDB port) or any other available port if you prefer. If you do, be sure to update the port number in both your `docker run` command and your connection string accordingly.

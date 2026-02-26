@@ -25,7 +25,8 @@ void DeleteCursorFile(const char *cursorName);
 CursorFileState * CreateCursorFile(const char *cursorName);
 void WriteToCursorFile(CursorFileState *cursorFileState, pgbson *bson);
 pgbson * ReadFromCursorFile(CursorFileState *cursorFileState);
-bytea * CursorFileStateClose(CursorFileState *cursorFileState);
+bytea * CursorFileStateClose(CursorFileState *cursorFileState, MemoryContext
+							 writerContext);
 
 CursorFileState * DeserializeFileState(bytea *cursorFileState);
 

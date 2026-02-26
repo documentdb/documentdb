@@ -101,26 +101,24 @@ SELECT documentdb_api.insert_one('hint_db', 'query_index_hints', '{ "_id": 1, "a
 
 -- query index hints by name - every index works except text index
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": "a_1" }');
-                                    QUERY PLAN                                    
+                                 QUERY PLAN                                 
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
-   ->  Bitmap Heap Scan on documents_69501_695002 collection
-         Recheck Cond: (document @<> '{ "a" : { "fullScan" : true } }'::bson)
+   indexName: a_1
+   ->  Index Scan using a_1 on documents_69501_695002 collection
+         Index Cond: (document @<> '{ "a" : { "fullScan" : true } }'::bson)
          Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on a_1
-               Index Cond: (document @<> '{ "a" : { "fullScan" : true } }'::bson)
-(6 rows)
+(5 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": "b_1_c_1" }');
-                                    QUERY PLAN                                    
+                                 QUERY PLAN                                 
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
-   ->  Bitmap Heap Scan on documents_69501_695002 collection
-         Recheck Cond: (document @<> '{ "b" : { "fullScan" : true } }'::bson)
+   indexName: b_1_c_1
+   ->  Index Scan using b_1_c_1 on documents_69501_695002 collection
+         Index Cond: (document @<> '{ "b" : { "fullScan" : true } }'::bson)
          Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on b_1_c_1
-               Index Cond: (document @<> '{ "b" : { "fullScan" : true } }'::bson)
-(6 rows)
+(5 rows)
 
 -- this pushes to a seqscan because the index is hashed
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": "d_hashed" }');
@@ -135,75 +133,69 @@ EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregati
 ERROR:  index specified by index hint is not found or invalid for the filters
 -- pushes as an exists true query since the index is sparse
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": "f_1" }');
-                                  QUERY PLAN                                  
+                               QUERY PLAN                               
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
-   ->  Bitmap Heap Scan on documents_69501_695002 collection
-         Recheck Cond: (document @>= '{ "f" : { "$minKey" : 1 } }'::bson)
+   indexName: f_1
+   ->  Index Scan using f_1 on documents_69501_695002 collection
+         Index Cond: (document @>= '{ "f" : { "$minKey" : 1 } }'::bson)
          Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on f_1
-               Index Cond: (document @>= '{ "f" : { "$minKey" : 1 } }'::bson)
-(6 rows)
+(5 rows)
 
 -- cannot push to wildcard index since it is a wildcard index
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": "g_1" }');
 ERROR:  index specified by index hint is not found or invalid for the filters
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": "i_1_j_1" }');
-                                    QUERY PLAN                                    
+                                 QUERY PLAN                                 
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
-   ->  Bitmap Heap Scan on documents_69501_695002 collection
-         Recheck Cond: (document @<> '{ "i" : { "fullScan" : true } }'::bson)
+   indexName: i_1_j_1
+   ->  Index Scan using i_1_j_1 on documents_69501_695002 collection
+         Index Cond: (document @<> '{ "i" : { "fullScan" : true } }'::bson)
          Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on i_1_j_1
-               Index Cond: (document @<> '{ "i" : { "fullScan" : true } }'::bson)
-(6 rows)
+(5 rows)
 
 -- pushes as an exists true query since the index is sparse
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": "h_1" }');
-                                  QUERY PLAN                                  
+                               QUERY PLAN                               
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
-   ->  Bitmap Heap Scan on documents_69501_695002 collection
-         Recheck Cond: (document @>= '{ "h" : { "$minKey" : 1 } }'::bson)
+   indexName: h_1
+   ->  Index Scan using h_1 on documents_69501_695002 collection
+         Index Cond: (document @>= '{ "h" : { "$minKey" : 1 } }'::bson)
          Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on h_1
-               Index Cond: (document @>= '{ "h" : { "$minKey" : 1 } }'::bson)
-(6 rows)
+(5 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": "k_1_l_1" }');
-                                  QUERY PLAN                                  
+                               QUERY PLAN                               
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
-   ->  Bitmap Heap Scan on documents_69501_695002 collection
-         Recheck Cond: (document @>= '{ "k" : { "$minKey" : 1 } }'::bson)
+   indexName: k_1_l_1
+   ->  Index Scan using k_1_l_1 on documents_69501_695002 collection
+         Index Cond: (document @>= '{ "k" : { "$minKey" : 1 } }'::bson)
          Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on k_1_l_1
-               Index Cond: (document @>= '{ "k" : { "$minKey" : 1 } }'::bson)
-(6 rows)
+(5 rows)
 
 -- query index hint by key - works the same as name
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": { "a": 1 } }');
-                                    QUERY PLAN                                    
+                                 QUERY PLAN                                 
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
-   ->  Bitmap Heap Scan on documents_69501_695002 collection
-         Recheck Cond: (document @<> '{ "a" : { "fullScan" : true } }'::bson)
+   indexName: a_1
+   ->  Index Scan using a_1 on documents_69501_695002 collection
+         Index Cond: (document @<> '{ "a" : { "fullScan" : true } }'::bson)
          Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on a_1
-               Index Cond: (document @<> '{ "a" : { "fullScan" : true } }'::bson)
-(6 rows)
+(5 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": { "b": 1, "c": 1 } }');
-                                    QUERY PLAN                                    
+                                 QUERY PLAN                                 
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
-   ->  Bitmap Heap Scan on documents_69501_695002 collection
-         Recheck Cond: (document @<> '{ "b" : { "fullScan" : true } }'::bson)
+   indexName: b_1_c_1
+   ->  Index Scan using b_1_c_1 on documents_69501_695002 collection
+         Index Cond: (document @<> '{ "b" : { "fullScan" : true } }'::bson)
          Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on b_1_c_1
-               Index Cond: (document @<> '{ "b" : { "fullScan" : true } }'::bson)
-(6 rows)
+(5 rows)
 
 -- this pushes to a seqscan because the index is hashed
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": { "d": "hashed" } }');
@@ -218,52 +210,48 @@ EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregati
 ERROR:  index specified by index hint is not found or invalid for the filters
 -- pushes as an exists true query since the index is sparse
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": { "f": 1 } }');
-                                  QUERY PLAN                                  
+                               QUERY PLAN                               
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
-   ->  Bitmap Heap Scan on documents_69501_695002 collection
-         Recheck Cond: (document @>= '{ "f" : { "$minKey" : 1 } }'::bson)
+   indexName: f_1
+   ->  Index Scan using f_1 on documents_69501_695002 collection
+         Index Cond: (document @>= '{ "f" : { "$minKey" : 1 } }'::bson)
          Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on f_1
-               Index Cond: (document @>= '{ "f" : { "$minKey" : 1 } }'::bson)
-(6 rows)
+(5 rows)
 
 -- cannot push to wildcard index since it is a wildcard index
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": { "g.$**": 1 } }');
 ERROR:  index specified by index hint is not found or invalid for the filters
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": { "i": 1, "j": 1 } }');
-                                    QUERY PLAN                                    
+                                 QUERY PLAN                                 
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
-   ->  Bitmap Heap Scan on documents_69501_695002 collection
-         Recheck Cond: (document @<> '{ "i" : { "fullScan" : true } }'::bson)
+   indexName: i_1_j_1
+   ->  Index Scan using i_1_j_1 on documents_69501_695002 collection
+         Index Cond: (document @<> '{ "i" : { "fullScan" : true } }'::bson)
          Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on i_1_j_1
-               Index Cond: (document @<> '{ "i" : { "fullScan" : true } }'::bson)
-(6 rows)
+(5 rows)
 
 -- pushes as an exists true query since the index is sparse
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": { "h": 1 } }');
-                                  QUERY PLAN                                  
+                               QUERY PLAN                               
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
-   ->  Bitmap Heap Scan on documents_69501_695002 collection
-         Recheck Cond: (document @>= '{ "h" : { "$minKey" : 1 } }'::bson)
+   indexName: h_1
+   ->  Index Scan using h_1 on documents_69501_695002 collection
+         Index Cond: (document @>= '{ "h" : { "$minKey" : 1 } }'::bson)
          Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on h_1
-               Index Cond: (document @>= '{ "h" : { "$minKey" : 1 } }'::bson)
-(6 rows)
+(5 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": { "k": 1, "l": 1 } }');
-                                  QUERY PLAN                                  
+                               QUERY PLAN                               
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
-   ->  Bitmap Heap Scan on documents_69501_695002 collection
-         Recheck Cond: (document @>= '{ "k" : { "$minKey" : 1 } }'::bson)
+   indexName: k_1_l_1
+   ->  Index Scan using k_1_l_1 on documents_69501_695002 collection
+         Index Cond: (document @>= '{ "k" : { "$minKey" : 1 } }'::bson)
          Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on k_1_l_1
-               Index Cond: (document @>= '{ "k" : { "$minKey" : 1 } }'::bson)
-(6 rows)
+(5 rows)
 
 -- hints when no index exists
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": "nonexistent" }');
@@ -302,26 +290,24 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('hint_db', '{ "cr
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": { "a": 1 } }');
 ERROR:  index specified by index hint is ambiguous. please specify hint by name
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": "a_2" }');
-                                  QUERY PLAN                                  
+                               QUERY PLAN                               
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
-   ->  Bitmap Heap Scan on documents_69501_695002 collection
-         Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+   indexName: a_2
+   ->  Index Scan using a_2 on documents_69501_695002 collection
+         Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
          Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on a_2
-               Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(6 rows)
+(5 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": "a_1" }');
-                                    QUERY PLAN                                    
+                                 QUERY PLAN                                 
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
-   ->  Bitmap Heap Scan on documents_69501_695002 collection
-         Recheck Cond: (document @<> '{ "a" : { "fullScan" : true } }'::bson)
+   indexName: a_1
+   ->  Index Scan using a_1 on documents_69501_695002 collection
+         Index Cond: (document @<> '{ "a" : { "fullScan" : true } }'::bson)
          Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on a_1
-               Index Cond: (document @<> '{ "a" : { "fullScan" : true } }'::bson)
-(6 rows)
+(5 rows)
 
 -- try with composite indexes.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('hint_db', '{ "createIndexes": "query_index_hints", "indexes": [ { "key": { "a": 1 }, "enableCompositeTerm": true, "name": "a_3" }] }', true);
@@ -337,26 +323,30 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('hint_db', '{ "cr
 (1 row)
 
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": "a_3" }');
-                                    QUERY PLAN                                    
+                                 QUERY PLAN                                 
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
-   ->  Bitmap Heap Scan on documents_69501_695002 collection
-         Recheck Cond: (document @<> '{ "a" : { "fullScan" : true } }'::bson)
+   indexName: a_3
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": (MinKey, MaxKey)]
+   ->  Index Scan using a_3 on documents_69501_695002 collection
+         Index Cond: (document @<> '{ "a" : { "fullScan" : true } }'::bson)
          Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on a_3
-               Index Cond: (document @<> '{ "a" : { "fullScan" : true } }'::bson)
-(6 rows)
+(8 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": "k_1_l_1-2" }');
-                                    QUERY PLAN                                    
+                                 QUERY PLAN                                 
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
-   ->  Bitmap Heap Scan on documents_69501_695002 collection
-         Recheck Cond: (document @<> '{ "k" : { "fullScan" : true } }'::bson)
+   indexName: k_1_l_1-2
+   indexKey: {"k": 1,"l": 1}
+   isMultiKey: false
+   indexBounds: ["k": (MinKey, MaxKey), "l": (MinKey, MaxKey)]
+   ->  Index Scan using "k_1_l_1-2" on documents_69501_695002 collection
+         Index Cond: (document @<> '{ "k" : { "fullScan" : true } }'::bson)
          Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on "k_1_l_1-2"
-               Index Cond: (document @<> '{ "k" : { "fullScan" : true } }'::bson)
-(6 rows)
+(8 rows)
 
 -- try natural and id hint with no filters on sharded collections.
 SELECT documentdb_api.shard_collection('hint_db', 'query_index_hints', '{"_id": "hashed"}', FALSE);

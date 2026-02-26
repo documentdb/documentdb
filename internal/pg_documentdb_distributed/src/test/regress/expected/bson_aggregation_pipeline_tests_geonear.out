@@ -198,13 +198,11 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson
          ->  Sort
                Output: (documentdb_api_internal.bson_dollar_add_fields(documentdb_api_catalog.bson_dollar_project_geonear(document, '{ "near" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ], "distanceField" : "dist.calculated", "key" : "a.b", "query" : { "a.b" : { "$gte" : { "$numberInt" : "4" } } } }'::documentdb_core.bson), '{ "dist.calculated" : { "$round" : [ { "$multiply" : [ "$dist.calculated", { "$numberInt" : "100000" } ] } ] } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), ((documentdb_api_catalog.bson_validate_geometry(document, 'a.b'::text) OPERATOR(documentdb_api_catalog.<|-|>) '{ "near" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ], "distanceField" : "dist.calculated", "key" : "a.b", "query" : { "a.b" : { "$gte" : { "$numberInt" : "4" } } } }'::documentdb_core.bson))
                Sort Key: ((documentdb_api_catalog.bson_validate_geometry(collection.document, 'a.b'::text) OPERATOR(documentdb_api_catalog.<|-|>) '{ "near" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ], "distanceField" : "dist.calculated", "key" : "a.b", "query" : { "a.b" : { "$gte" : { "$numberInt" : "4" } } } }'::documentdb_core.bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_49800_498003 collection
+               ->  Index Scan using ab_idx on documentdb_data.documents_49800_498003 collection
                      Output: documentdb_api_internal.bson_dollar_add_fields(documentdb_api_catalog.bson_dollar_project_geonear(document, '{ "near" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ], "distanceField" : "dist.calculated", "key" : "a.b", "query" : { "a.b" : { "$gte" : { "$numberInt" : "4" } } } }'::documentdb_core.bson), '{ "dist.calculated" : { "$round" : [ { "$multiply" : [ "$dist.calculated", { "$numberInt" : "100000" } ] } ] } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), (documentdb_api_catalog.bson_validate_geometry(document, 'a.b'::text) OPERATOR(documentdb_api_catalog.<|-|>) '{ "near" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ], "distanceField" : "dist.calculated", "key" : "a.b", "query" : { "a.b" : { "$gte" : { "$numberInt" : "4" } } } }'::documentdb_core.bson)
-                     Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a.b" : { "$numberInt" : "4" } }'::documentdb_core.bson)
+                     Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a.b" : { "$numberInt" : "4" } }'::documentdb_core.bson)
                      Filter: (documentdb_api_catalog.bson_validate_geometry(collection.document, 'a.b'::text) IS NOT NULL)
-                     ->  Bitmap Index Scan on ab_idx
-                           Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a.b" : { "$numberInt" : "4" } }'::documentdb_core.bson)
-(16 rows)
+(14 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "agg_geonear", "pipeline": [ { "$geoNear": { "near": { "type": "Point", "coordinates": [5, 6] }, "distanceField": "dist.calculated", "key": "a.geo", "query": { "a.geo.type": "MultiPoint" } } }, { "$addFields": { "dist.calculated": {"$round":[ { "$multiply": ["$dist.calculated", 100000] }] } } }] }');
@@ -220,13 +218,11 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson
          ->  Sort
                Output: (documentdb_api_internal.bson_dollar_add_fields(documentdb_api_catalog.bson_dollar_project_geonear(document, '{ "near" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ] }, "distanceField" : "dist.calculated", "key" : "a.geo", "query" : { "a.geo.type" : "MultiPoint" } }'::documentdb_core.bson), '{ "dist.calculated" : { "$round" : [ { "$multiply" : [ "$dist.calculated", { "$numberInt" : "100000" } ] } ] } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), ((documentdb_api_catalog.bson_validate_geography(document, 'a.geo'::text) OPERATOR(documentdb_api_catalog.<|-|>) '{ "near" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ] }, "distanceField" : "dist.calculated", "key" : "a.geo", "query" : { "a.geo.type" : "MultiPoint" } }'::documentdb_core.bson))
                Sort Key: ((documentdb_api_catalog.bson_validate_geography(collection.document, 'a.geo'::text) OPERATOR(documentdb_api_catalog.<|-|>) '{ "near" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ] }, "distanceField" : "dist.calculated", "key" : "a.geo", "query" : { "a.geo.type" : "MultiPoint" } }'::documentdb_core.bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_49800_498003 collection
+               ->  Index Scan using a_geo_type_idx on documentdb_data.documents_49800_498003 collection
                      Output: documentdb_api_internal.bson_dollar_add_fields(documentdb_api_catalog.bson_dollar_project_geonear(document, '{ "near" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ] }, "distanceField" : "dist.calculated", "key" : "a.geo", "query" : { "a.geo.type" : "MultiPoint" } }'::documentdb_core.bson), '{ "dist.calculated" : { "$round" : [ { "$multiply" : [ "$dist.calculated", { "$numberInt" : "100000" } ] } ] } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), (documentdb_api_catalog.bson_validate_geography(document, 'a.geo'::text) OPERATOR(documentdb_api_catalog.<|-|>) '{ "near" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ] }, "distanceField" : "dist.calculated", "key" : "a.geo", "query" : { "a.geo.type" : "MultiPoint" } }'::documentdb_core.bson)
-                     Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a.geo.type" : "MultiPoint" }'::documentdb_core.bson)
+                     Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a.geo.type" : "MultiPoint" }'::documentdb_core.bson)
                      Filter: (documentdb_api_catalog.bson_validate_geography(collection.document, 'a.geo'::text) IS NOT NULL)
-                     ->  Bitmap Index Scan on a_geo_type_idx
-                           Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a.geo.type" : "MultiPoint" }'::documentdb_core.bson)
-(16 rows)
+(14 rows)
 
 ROLLBACK;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "agg_geonear", "indexes": [{"key": {"a.b": "2d"}, "name": "my_2d_ab_idx" }, {"key": {"a.b": "2dsphere"}, "name": "my_2ds_ab_idx" }, {"key": {"a.geo": "2dsphere"}, "name": "my_2ds_ageo_idx" }, {"key": {"a.c": "2d"}, "name": "my_2d_ac_idx" }]}', true);
@@ -275,13 +271,11 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson
          ->  Sort
                Output: (documentdb_api_internal.bson_dollar_add_fields(documentdb_api_catalog.bson_dollar_project_geonear(document, '{ "near" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ], "distanceField" : "dist.calculated", "key" : "a.b", "query" : { "a.b" : { "$gte" : { "$numberInt" : "4" } } } }'::documentdb_core.bson), '{ "dist.calculated" : { "$round" : [ { "$multiply" : [ "$dist.calculated", { "$numberInt" : "100000" } ] } ] } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), ((documentdb_api_catalog.bson_validate_geometry(document, 'a.b'::text) OPERATOR(documentdb_api_catalog.<|-|>) '{ "near" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ], "distanceField" : "dist.calculated", "key" : "a.b", "query" : { "a.b" : { "$gte" : { "$numberInt" : "4" } } } }'::documentdb_core.bson))
                Sort Key: ((documentdb_api_catalog.bson_validate_geometry(collection.document, 'a.b'::text) OPERATOR(documentdb_api_catalog.<|-|>) '{ "near" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ], "distanceField" : "dist.calculated", "key" : "a.b", "query" : { "a.b" : { "$gte" : { "$numberInt" : "4" } } } }'::documentdb_core.bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_49800_498003 collection
+               ->  Index Scan using ab_idx on documentdb_data.documents_49800_498003 collection
                      Output: documentdb_api_internal.bson_dollar_add_fields(documentdb_api_catalog.bson_dollar_project_geonear(document, '{ "near" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ], "distanceField" : "dist.calculated", "key" : "a.b", "query" : { "a.b" : { "$gte" : { "$numberInt" : "4" } } } }'::documentdb_core.bson), '{ "dist.calculated" : { "$round" : [ { "$multiply" : [ "$dist.calculated", { "$numberInt" : "100000" } ] } ] } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), (documentdb_api_catalog.bson_validate_geometry(document, 'a.b'::text) OPERATOR(documentdb_api_catalog.<|-|>) '{ "near" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ], "distanceField" : "dist.calculated", "key" : "a.b", "query" : { "a.b" : { "$gte" : { "$numberInt" : "4" } } } }'::documentdb_core.bson)
-                     Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a.b" : { "$numberInt" : "4" } }'::documentdb_core.bson)
+                     Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a.b" : { "$numberInt" : "4" } }'::documentdb_core.bson)
                      Filter: (documentdb_api_catalog.bson_validate_geometry(collection.document, 'a.b'::text) IS NOT NULL)
-                     ->  Bitmap Index Scan on ab_idx
-                           Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a.b" : { "$numberInt" : "4" } }'::documentdb_core.bson)
-(16 rows)
+(14 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "agg_geonear", "pipeline": [ { "$geoNear": { "near": { "type": "Point", "coordinates": [5, 6] }, "distanceField": "dist.calculated", "key": "a.geo", "query": { "a.geo.type": "MultiPoint" } } }, { "$addFields": { "dist.calculated": {"$round":[ { "$multiply": ["$dist.calculated", 100000] }] } } }] }');
@@ -297,13 +291,11 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson
          ->  Sort
                Output: (documentdb_api_internal.bson_dollar_add_fields(documentdb_api_catalog.bson_dollar_project_geonear(document, '{ "near" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ] }, "distanceField" : "dist.calculated", "key" : "a.geo", "query" : { "a.geo.type" : "MultiPoint" } }'::documentdb_core.bson), '{ "dist.calculated" : { "$round" : [ { "$multiply" : [ "$dist.calculated", { "$numberInt" : "100000" } ] } ] } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), ((documentdb_api_catalog.bson_validate_geography(document, 'a.geo'::text) OPERATOR(documentdb_api_catalog.<|-|>) '{ "near" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ] }, "distanceField" : "dist.calculated", "key" : "a.geo", "query" : { "a.geo.type" : "MultiPoint" } }'::documentdb_core.bson))
                Sort Key: ((documentdb_api_catalog.bson_validate_geography(collection.document, 'a.geo'::text) OPERATOR(documentdb_api_catalog.<|-|>) '{ "near" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ] }, "distanceField" : "dist.calculated", "key" : "a.geo", "query" : { "a.geo.type" : "MultiPoint" } }'::documentdb_core.bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_49800_498003 collection
+               ->  Index Scan using a_geo_type_idx on documentdb_data.documents_49800_498003 collection
                      Output: documentdb_api_internal.bson_dollar_add_fields(documentdb_api_catalog.bson_dollar_project_geonear(document, '{ "near" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ] }, "distanceField" : "dist.calculated", "key" : "a.geo", "query" : { "a.geo.type" : "MultiPoint" } }'::documentdb_core.bson), '{ "dist.calculated" : { "$round" : [ { "$multiply" : [ "$dist.calculated", { "$numberInt" : "100000" } ] } ] } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), (documentdb_api_catalog.bson_validate_geography(document, 'a.geo'::text) OPERATOR(documentdb_api_catalog.<|-|>) '{ "near" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ] }, "distanceField" : "dist.calculated", "key" : "a.geo", "query" : { "a.geo.type" : "MultiPoint" } }'::documentdb_core.bson)
-                     Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a.geo.type" : "MultiPoint" }'::documentdb_core.bson)
+                     Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a.geo.type" : "MultiPoint" }'::documentdb_core.bson)
                      Filter: (documentdb_api_catalog.bson_validate_geography(collection.document, 'a.geo'::text) IS NOT NULL)
-                     ->  Bitmap Index Scan on a_geo_type_idx
-                           Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a.geo.type" : "MultiPoint" }'::documentdb_core.bson)
-(16 rows)
+(14 rows)
 
 ROLLBACK;
 SELECT documentdb_distributed_test_helpers.drop_primary_key('db','agg_geonear');

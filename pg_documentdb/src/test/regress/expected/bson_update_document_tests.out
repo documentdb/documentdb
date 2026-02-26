@@ -1,6 +1,7 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 2000;
 SET documentdb.next_collection_index_id TO 2000;
+SET documentdb.enableupdatebsondocument TO false;
 -- replace document scenarios
 SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{ "_id": 1, "a": 1}', '{ "": { "_id": 1, "b": 2 } }', '{}');
                        bson_update_document                       
@@ -2741,3 +2742,4 @@ SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_upd
  { "_id" : { "$numberInt" : "2" }, "x" : {  }, "newName" : { "$numberInt" : "2" }, "z" : { "$numberInt" : "1" }, "k" : { "$numberInt" : "2" } }
 (1 row)
 
+SET documentdb.enableupdatebsondocument TO true;

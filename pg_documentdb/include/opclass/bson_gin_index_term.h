@@ -18,9 +18,6 @@
 /* Struct used in manipulating bson index terms */
 typedef struct BsonIndexTerm
 {
-	/* Whether or not it's a metadata term */
-	bool isIndexTermMetadata;
-
 	/* The metadata for the term */
 	uint8_t termMetadata;
 
@@ -34,9 +31,6 @@ typedef struct BsonIndexTermSerialized
 	/* Whether or not the term is truncated */
 	bool isIndexTermTruncated;
 
-	/* Whether or not it's a root metadata term (exists/not exists) */
-	bool isRootMetadataTerm;
-
 	/* The serialized index term value */
 	bytea *indexTermVal;
 } BsonIndexTermSerialized;
@@ -46,9 +40,6 @@ typedef struct BsonCompressableIndexTermSerialized
 {
 	/* Whether or not the term is truncated */
 	bool isIndexTermTruncated;
-
-	/* Whether or not it's a root metadata term (exists/not exists) */
-	bool isRootMetadataTerm;
 
 	/* The serialized index term value */
 	Datum indexTermDatum;
@@ -79,7 +70,12 @@ typedef struct IndexTermCreateMetadata
 
 	/* Whether or not the term is for a descending index */
 	bool isDescending;
+
+	/* Whether the index supports value only terms */
+	bool allowValueOnly;
 } IndexTermCreateMetadata;
+
+bool IsIndexTermMetadata(const BsonIndexTerm *indexTerm);
 
 
 bool IsIndexTermTruncated(const BsonIndexTerm *indexTerm);
@@ -106,6 +102,7 @@ bool IsIndexTermValueDescending(const BsonIndexTerm *indexTerm);
 bool IsSerializedIndexTermComposite(bytea *indexTermSerialized);
 bool IsSerializedIndexTermTruncated(bytea *indexTermSerialized);
 bool IsSerializedIndexTermMetadata(bytea *indexTermSerialized);
+
 void InitializeBsonIndexTerm(bytea *indexTermSerialized, BsonIndexTerm *indexTerm);
 
 int32_t InitializeCompositeIndexTerm(bytea *indexTermSerialized, BsonIndexTerm
@@ -128,19 +125,29 @@ BsonIndexTermSerialized SerializeCompositeBsonIndexTerm(bytea **individualTerms,
 BsonCompressableIndexTermSerialized SerializeCompositeBsonIndexTermWithCompression(
 	bytea **individualTerms, int32_t numTerms);
 
+typedef enum RootMetadataKind
+{
+	RootMetadataKind_CorrelatedRootArray = 1
+} RootMetadataKind;
+
 Datum GenerateRootTerm(const IndexTermCreateMetadata *);
 Datum GenerateRootExistsTerm(const IndexTermCreateMetadata *);
 Datum GenerateRootNonExistsTerm(const IndexTermCreateMetadata *);
 Datum GenerateRootTruncatedTerm(const IndexTermCreateMetadata *);
 Datum GenerateRootMultiKeyTerm(const IndexTermCreateMetadata *);
+Datum GenerateCorrelatedRootArrayTerm(const IndexTermCreateMetadata *);
 Datum GenerateValueUndefinedTerm(const IndexTermCreateMetadata *termData);
 Datum GenerateValueMaybeUndefinedTerm(const IndexTermCreateMetadata *termData);
 int32_t CompareBsonIndexTerm(const BsonIndexTerm *left, const BsonIndexTerm *right,
-							 bool *isComparisonValid);
+							 bool *isComparisonValid, const char *collation);
+int32_t CompareSerializedBsonIndexTermWithCollation(Datum a, Datum b, const
+													char *collation);
+bytea * FormCollatedIndexTerm(bytea *sourceTerm, const char *collation, uint32_t
+							  collationLength);
 
 /* Check if the term is a root truncation term */
 inline static bool
-IsRootTruncationTerm(BsonIndexTerm *term)
+IsRootTruncationTerm(const BsonIndexTerm *term)
 {
 	return IsIndexTermTruncated(term) &&
 		   term->element.pathLength == 0 &&

@@ -121,7 +121,7 @@ bson_expression_get('{}', '{ "": { "a" : "$a" }}', true),
 bson_expression_get('{"a" : null}', '{ "": { "a" : "$a" }}', true);
 
 -- Document and array expressions with nested expressions that should be converted to a constant at the tree parse stage
-SET client_min_messages TO DEBUG3;
+SET client_min_messages TO DEBUG2;
 SELECT bson_expression_get('{}', '{"result": {"a": [ { "$literal" : "foo" } ] }}');
 SELECT bson_expression_get('{}', '{"result": [ { "$literal" : "foo" } ] }');
 SELECT bson_expression_get('{}', '{"result": [ { "$undefined" : true } ] }');

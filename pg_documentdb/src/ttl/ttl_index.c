@@ -37,9 +37,14 @@ extern char *ApiGucPrefix;
 extern int SingleTTLTaskTimeBudget;
 extern int TTLTaskMaxRunTimeInMS;
 extern bool EnableTtlJobsOnReadOnly;
-extern bool ForceIndexScanForTTLTask;
 extern bool UseIndexHintsForTTLTask;
 extern bool EnableTTLDescSort;
+extern bool EnableIndexOrderbyPushdown;
+extern double TTLDeleteSaturationThreshold;
+extern int TTLSlowBatchDeleteThresholdInMS;
+extern bool EnableSelectiveTTLLogging;
+extern bool EnableTTLBatchObservability;
+extern bool TTLSkipCaughtUpIndexes;
 
 bool UseV2TTLIndexPurger = true;
 
@@ -55,6 +60,9 @@ typedef struct TtlIndexEntry
 {
 	/* ID of the collection */
 	uint64 collectionId;
+
+	/* The shardid being pruned */
+	uint64 shardId;
 
 	/* The TTL index id */
 	uint64 indexId;
@@ -83,7 +91,9 @@ typedef struct TtlIndexEntry
 /* --------------------------------------------------------- */
 
 static uint64 DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry,
-											int64 currentTime, int32 batchSize);
+											int64 currentTime, int32 batchSize, instr_time
+											startTime, int budget,
+											bool *IsTaskTimeBudgetExceeded);
 static bool IsTaskTimeBudgetExceeded(instr_time startTime, double *elapsedTime, int
 									 budget);
 
@@ -148,14 +158,20 @@ delete_expired_rows_for_index(PG_FUNCTION_ARGS)
 
 	TtlIndexEntry indexEntry = {
 		.collectionId = collectionId,
+		.shardId = shardId,
 		.indexId = indexId,
 		.indexKeyDatum = indexKeyDatum,
 		.indexPfeDatum = partialFilterDatum,
 		.indexExpireAfterSeconds = indexExpiry
 	};
 
+	instr_time startTime;
+	INSTR_TIME_SET_CURRENT(startTime);
+	bool isTimeBudgetExceeded = false;
 	uint64 rowsCount = DeleteExpiredRowsForIndexCore(tableName, &indexEntry, currentTime,
-													 ttlDeleteBatchSize);
+													 ttlDeleteBatchSize, startTime,
+													 SingleTTLTaskTimeBudget,
+													 &isTimeBudgetExceeded);
 
 	PG_RETURN_INT64((int64) rowsCount);
 }
@@ -325,9 +341,8 @@ delete_expired_rows(PG_FUNCTION_ARGS)
 											SPI_tuptable->tupdesc, 8,
 											&isNull);
 
-				ttlIndexEntry->indexName = pstrdup(TextDatumGetCString(resultDatum));
-
 				oldContext = MemoryContextSwitchTo(priorMemoryContext);
+				ttlIndexEntry->indexName = pstrdup(TextDatumGetCString(resultDatum));
 				ttlIndexEntries = lappend(ttlIndexEntries, ttlIndexEntry);
 				MemoryContextSwitchTo(oldContext);
 			}
@@ -359,8 +374,12 @@ delete_expired_rows(PG_FUNCTION_ARGS)
 	ListCell *ttlEntryCell = NULL;
 	bool shouldCleanupCollection = false;
 	uint64 rowsDeletedInCurrentLoop = 0;
+	uint64 rowsDeletedForCurrentIndex = 0;
 
-	while (!IsTaskTimeBudgetExceeded(startTime, NULL, TTLTaskMaxRunTimeInMS))
+	int timeBudget = RepeatPurgeIndexesForTTLTask ? TTLTaskMaxRunTimeInMS :
+					 SingleTTLTaskTimeBudget;
+
+	while (!IsTaskTimeBudgetExceeded(startTime, NULL, timeBudget))
 	{
 		rowsDeletedInCurrentLoop = 0;
 		if (RepeatPurgeIndexesForTTLTask)
@@ -371,6 +390,8 @@ delete_expired_rows(PG_FUNCTION_ARGS)
 		{
 			TtlIndexEntry *ttlIndexEntry = (TtlIndexEntry *) lfirst(ttlEntryCell);
 			uint64 collectionId = ttlIndexEntry->collectionId;
+			rowsDeletedForCurrentIndex = 0;
+
 
 			/* We're cleaning up a new collection, let's get the shards and relation information. */
 			if (currentCollection.collectionId != collectionId)
@@ -480,22 +501,15 @@ delete_expired_rows(PG_FUNCTION_ARGS)
 
 				PG_TRY();
 				{
-					uint64 deletedRows = DeleteExpiredRowsForIndexCore(tableName,
-																	   ttlIndexEntry,
-																	   epochMilliseconds,
-																	   batchSize);
-					double elapsedTime = 0.0;
-					if (IsTaskTimeBudgetExceeded(startTime, &elapsedTime,
-												 SingleTTLTaskTimeBudget))
+					bool isTimeBudgetExceeded = false;
+					uint64 deletedRows =
+						DeleteExpiredRowsForIndexCore(
+							tableName, ttlIndexEntry, epochMilliseconds,
+							batchSize, startTime, timeBudget, &isTimeBudgetExceeded);
+					if (isTimeBudgetExceeded)
 					{
 						/* If exceeded time, mark as should stop but still commit this deletion. */
 						shouldStop = true;
-					}
-
-					if (LogTTLProgressActivity)
-					{
-						ereport(LOG, errmsg("TTL job elapsed time: %fms, limit: %dms",
-											elapsedTime, SingleTTLTaskTimeBudget));
 					}
 
 					/* Commit the deletion. */
@@ -504,13 +518,22 @@ delete_expired_rows(PG_FUNCTION_ARGS)
 					StartTransactionCommand();
 
 					rowsDeletedInCurrentLoop += deletedRows;
+					rowsDeletedForCurrentIndex += deletedRows;
 				}
 				PG_CATCH();
 				{
+					oldContext = MemoryContextSwitchTo(priorMemoryContext);
 					ErrorData *edata = CopyErrorDataAndFlush();
+					MemoryContextSwitchTo(oldContext);
+
 					ereport(WARNING, errmsg(
 								"TTL job failed when processing collection_id=%lu and index_id=%lu with error: %s",
 								collectionId, ttlIndexEntry->indexId, edata->message));
+
+					if (IsOperatorInterventionError(edata))
+					{
+						ReThrowError(edata);
+					}
 
 					shouldStop = true;
 
@@ -533,9 +556,29 @@ delete_expired_rows(PG_FUNCTION_ARGS)
 				}
 			}
 
-			if (IsTaskTimeBudgetExceeded(startTime, NULL, SingleTTLTaskTimeBudget))
+			if (IsTaskTimeBudgetExceeded(startTime, NULL, timeBudget))
 			{
 				goto end;
+			}
+
+			/*
+			 *  If anytime during the 60 seconds TTL task invocation cycle, a index is caught
+			 *  up (i.e., deleted 0 rows) we don't consider that index during the current iteration.
+			 *  This helps us with cases where there are many ttl indexes but only a few have
+			 *  expired rows. Even if large number of documents start expiring for that index within
+			 *  that minute, in the worst case we delay processing by 60 seconds.
+			 */
+			if (TTLSkipCaughtUpIndexes && rowsDeletedForCurrentIndex == 0)
+			{
+				ttlIndexEntries = foreach_delete_current(ttlIndexEntries, ttlEntryCell);
+				if (LogTTLProgressActivity)
+				{
+					ereport(LOG, errmsg(
+								"TTL job skipping index_id=%lu for collection_id=%lu as it is caught up.",
+								ttlIndexEntry->indexId,
+								ttlIndexEntry->collectionId));
+				}
+				continue;
 			}
 		}
 
@@ -611,7 +654,8 @@ IsTaskTimeBudgetExceeded(instr_time startTime, double *elapsedTime, int budget)
  * It deletes the number of items specified on the batchSize that have expired based on the index entry expiry value. */
 static uint64
 DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
-							  currentTime, int32 batchSize)
+							  currentTime, int32 batchSize, instr_time startTime, int
+							  budget, bool *isTaskTimeBudgetExceeded)
 {
 	int32 ttlDeleteBatchSize = (batchSize != -1) ? batchSize :
 							   MaxTTLDeleteBatchSize;
@@ -653,28 +697,13 @@ DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
 	int argCount = 1;
 
 	/*
-	 *  So far, we had force an IndexScan for queries that select and delete TTL-eligible documents by locally disabling
-	 *  sequential scans and bitmap index scans. The GUC documentdb_rum.preferOrderedIndexScan is set to true by default,
-	 *  which causes the IndexScan to be planned as an ordered index scan. Ordered index scans are significantly more
-	 *  efficient than bitmap index scans or sequential scans when there are many documents to delete. Moreover,
-	 *  repeated bitmap index scans—which may need to traverse all index pages to create a bitmap—can put pressure on disk I/O usage.
+	 * In the SQL query above, we provide the corresponding TTL index as a hint for the TTL task query.
+	 * Even though it's called a hint, by design it forces the use of the specified index.
 	 *
-	 *  We are now transitioning away from the above method, as we currently support index hints. In the SQL query above, we provide the
-	 *  corresponding TTL index as a hint for the TTL task query. Even though it's called a hint, by design it forces the use
-	 *  of the specified index. We intend to roll back these GUC overrides after the 1.106 schema release, which is expected to
-	 *  include support for index hints.
-	 *
-	 *  TODO: Finally, when we have support for IndexOnly scan in RUM index, we would move from IndexScan to IndexOnlyScan, since,
-	 *  for TTL deletes, we just fetch the ctids of the eligible rows and delete them. We don't need to fetch the corresponding tuples
-	 *  from the Index pages.
+	 *  As an additional note IndexOnly scans are not allowed for retrieving ctids.
 	 */
 
-	bool disableSeqAndBitmapScan = !IsClusterVersionAtleast(DocDB_V0, 106, 0) &&
-								   ForceIndexScanForTTLTask &&
-								   indexEntry->indexIsOrdered;
-
-	bool useIndexHintsForTTLQuery = IsClusterVersionAtleast(DocDB_V0, 106, 0) &&
-									UseIndexHintsForTTLTask &&
+	bool useIndexHintsForTTLQuery = UseIndexHintsForTTLTask &&
 									indexEntry->indexIsOrdered;
 	if (useIndexHintsForTTLQuery)
 	{
@@ -700,12 +729,18 @@ DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
 		argCount++;
 	}
 
-	/* Fetch the entries to be deleted in descending order if the index is orderd */
-	if (EnableTTLDescSort && indexEntry->indexIsOrdered)
+	bool useDescendingSort = EnableTTLDescSort &&
+							 EnableIndexOrderbyPushdown &&
+							 indexEntry->indexIsOrdered;
+
+	/* Fetch the entries to be deleted in descending order if the index is ordered */
+	if (useDescendingSort)
 	{
 		appendStringInfo(cmdStrDeleteRows,
-						 " ORDER BY document OPERATOR(%s.<>-|) '{ \"%s\": -1 }'::%s",
-						 ApiInternalSchemaNameV2, indexKey, FullBsonTypeName);
+						 " AND %s.bson_dollar_fullscan(document, '{ \"%s\": -1 }'::%s)"
+						 " ORDER BY %s.bson_orderby(document, '{ \"%s\": -1 }'::%s)",
+						 ApiInternalSchemaNameV2, indexKey, FullBsonTypeName,
+						 ApiCatalogSchemaName, indexKey, FullBsonTypeName);
 	}
 
 	appendStringInfo(cmdStrDeleteRows, " LIMIT %d FOR UPDATE SKIP LOCKED) ",
@@ -755,12 +790,6 @@ DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
 
 	SetGUCLocally(psprintf("%s.forceUseIndexIfAvailable", ApiGucPrefix), "true");
 
-	if (disableSeqAndBitmapScan)
-	{
-		SetGUCLocally("enable_seqscan", "false");
-		SetGUCLocally("enable_bitmapscan", "false");
-	}
-
 	uint64 rowsCount = ExtensionExecuteCappedStatementWithArgsViaSPI(
 		cmdStrDeleteRows->data,
 		argCount,
@@ -770,18 +799,92 @@ DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
 		SPI_OK_DELETE,
 		TTLPurgerStatementTimeout, TTLPurgerLockTimeout);
 
-	if (true)
+
+	double saturationRatio = 0.0;
+	double batchDeleteElapsedTime = 0.0;
+
+	/* selectiveLogging determines if also emit a log entry in addition to feature counters */
+	bool logFeatureCounterEvent = false;
+
+	if (IsTaskTimeBudgetExceeded(startTime, &batchDeleteElapsedTime, budget))
 	{
-		ereport(LOG,
-				errmsg(
-					"Number of rows deleted: %ld, table = %s, index_id=%lu, batch_size=%d, expiry_cutoff=%ld, has_pfe=%s, statement_timeout=%d, lock_timeout=%d used_hints=%d disabled_seq_scan=%d index_is_ordered=%d",
-					(int64) rowsCount, tableName, indexEntry->indexId,
-					ttlDeleteBatchSize,
-					currentTime - indexExpiryMilliseconds, (argCount == 2) ? "true" :
-					"false",
-					TTLPurgerStatementTimeout, TTLPurgerLockTimeout,
-					useIndexHintsForTTLQuery, disableSeqAndBitmapScan,
-					indexEntry->indexIsOrdered));
+		*isTaskTimeBudgetExceeded = true;
+
+		/* If a delete query has timed out we assume a saturation ratio of 1.0.
+		 * `ttl_slow_batches` will cover this scenario, but we count this as a fully
+		 * saturated batch for future profing the metric and more than one way to
+		 * catch issues*/
+		saturationRatio = 1.0;
+	}
+
+	if (EnableTTLBatchObservability)
+	{
+		/*
+		 *  Saturation ratio for a single batch delete query
+		 *      "DELETE from <SHARD> where ctid in (<ctid of the expired rows>)
+		 *      LIMIT <batchsize> FOR UPDATE SKIP LOCKED"
+		 *
+		 *  is defined as  (rows deleted / batch size).
+		 */
+		saturationRatio = (ttlDeleteBatchSize > 0) ?
+						  (double) rowsCount / ttlDeleteBatchSize : 0;
+
+
+		/*
+		 *  We emit a `ttl_saturated_batches` feature counter if the saturation ratio is
+		 *  > 0.9 (default threshold).
+		 */
+		if (saturationRatio >= TTLDeleteSaturationThreshold)
+		{
+			ReportFeatureUsage(FEATURE_USAGE_TTL_SATURATED_BATCHES);
+			logFeatureCounterEvent = EnableSelectiveTTLLogging;
+		}
+
+		/*
+		 *  We emit a `ttl_slow_batches` feature counter if the a TTL delete query on a shard
+		 *  has timed out or taken more than 10 seconds (default threshold).
+		 */
+		if (*isTaskTimeBudgetExceeded ||
+			batchDeleteElapsedTime >= TTLSlowBatchDeleteThresholdInMS)
+		{
+			ReportFeatureUsage(FEATURE_USAGE_TTL_SLOW_BATCHES);
+			logFeatureCounterEvent = EnableSelectiveTTLLogging;
+		}
+	}
+
+	if (*isTaskTimeBudgetExceeded || logFeatureCounterEvent || LogTTLProgressActivity)
+	{
+		uint64 shardId = indexEntry->shardId;
+		if (shardId == 0 && strncmp(tableName, "documents_", 10) == 0)
+		{
+			/* Compute the shardId from the table if applicable */
+			char *numEndPointer = NULL;
+			uint64 parsedCollectionId = strtoull(&tableName[10], &numEndPointer, 10);
+			if (parsedCollectionId == indexEntry->collectionId &&
+				numEndPointer != NULL && numEndPointer[0] == '_' &&
+				numEndPointer[1] != '\0')
+			{
+				shardId = strtoull(&numEndPointer[1], &numEndPointer, 10);
+			}
+		}
+
+		elog_unredacted(
+			"Number of rows deleted: %ld, collectionId = %lu, shardId=%lu, index_id=%lu, "
+			"batch_size=%d, expiry_cutoff=%ld, "
+			"LogTTLProgressActivity=%d,TTLSlowBatchDeleteThresholdInMS=%d, TTLDeleteSaturationThreshold=%.2f, "
+			"has_pfe=%d, isTaskTimeBudgetExceeded=%d, logFeatureCounterEvent=%d, "
+			"duration= %.2f, saturation_ratio=%.2f, "
+			"statement_timeout=%d, lock_timeout=%d, used_hints=%d, "
+			"index_is_ordered=%d, use_desc_sort=%d",
+			(int64) rowsCount, indexEntry->collectionId,
+			shardId, indexEntry->indexId, ttlDeleteBatchSize,
+			currentTime - indexExpiryMilliseconds, LogTTLProgressActivity,
+			TTLSlowBatchDeleteThresholdInMS, TTLDeleteSaturationThreshold,
+			indexPfe != NULL, *isTaskTimeBudgetExceeded, logFeatureCounterEvent,
+			batchDeleteElapsedTime, saturationRatio,
+			TTLPurgerStatementTimeout, TTLPurgerLockTimeout,
+			useIndexHintsForTTLQuery,
+			indexEntry->indexIsOrdered, useDescendingSort);
 	}
 
 	if (rowsCount > 0)

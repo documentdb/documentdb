@@ -38,7 +38,8 @@ static char * ExtensionExecuteQueryWithArgsViaLibPQ(char *query, char *connStr, 
 													char **parameterValues);
 static void PGConnFinishIO(PGconn *conn);
 static char * PGConnReturnFirstField(PGconn *conn);
-static char * GetLocalhostConnStr(const Oid userOid, bool useSerialExecution);
+static char * GetLocalhostConnStr(const Oid userOid, bool useSerialExecution, bool
+								  forceReadWriteMode);
 
 /*
  * ExtensionExecuteQueryViaSPI executes given query via SPI and returns first
@@ -60,7 +61,8 @@ ExtensionExecuteQueryViaSPI(const char *query, bool readOnly, int expectedSPIOK,
 		ereport(ERROR, (errmsg("could not connect to SPI manager")));
 	}
 
-	ereport(DEBUG1, (errmsg("executing \"%s\" via SPI", query)));
+	ereport(DEBUG1, (errmsg("executing \"%s\" via SPI", query), errhidestmt(true),
+					 errhidecontext(true)));
 
 	int tupleCountLimit = 1;
 	int spiErrorCode = SPI_execute(query, readOnly, tupleCountLimit);
@@ -346,8 +348,21 @@ char *
 ExtensionExecuteQueryOnLocalhostViaLibPQ(char *query)
 {
 	bool useSerialExecution = false;
+	bool forceReadWriteMode = false;
 	return ExtensionExecuteQueryViaLibPQ(query, GetLocalhostConnStr(InvalidOid,
-																	useSerialExecution));
+																	useSerialExecution,
+																	forceReadWriteMode));
+}
+
+
+char *
+ExtensionExecuteForcedReadWriteQueryOnLocalhostViaLibPQ(char *query)
+{
+	bool useSerialExecution = false;
+	bool forceReadWriteMode = true;
+	return ExtensionExecuteQueryViaLibPQ(query, GetLocalhostConnStr(InvalidOid,
+																	useSerialExecution,
+																	forceReadWriteMode));
 }
 
 
@@ -358,8 +373,10 @@ char *
 ExtensionExecuteQueryAsUserOnLocalhostViaLibPQ(char *query, const Oid userOid, bool
 											   useSerialExecution)
 {
+	bool forceReadWriteMode = false;
 	return ExtensionExecuteQueryViaLibPQ(query, GetLocalhostConnStr(userOid,
-																	useSerialExecution));
+																	useSerialExecution,
+																	forceReadWriteMode));
 }
 
 
@@ -370,8 +387,10 @@ ExtensionExecuteQueryWithArgsAsUserOnLocalhostViaLibPQ(char *query, const Oid us
 													   char **parameterValues)
 {
 	bool useSerialExecution = false;
+	bool forceReadWriteMode = false;
 	return ExtensionExecuteQueryWithArgsViaLibPQ(query, GetLocalhostConnStr(userOid,
-																			useSerialExecution),
+																			useSerialExecution,
+																			forceReadWriteMode),
 												 nParams, paramTypes, parameterValues);
 }
 
@@ -794,7 +813,7 @@ PGConnReportError(PGconn *conn, PGresult *result, int elevel)
  * If userOid is InvalidOid, falls back to authenticated userId.
  */
 static char *
-GetLocalhostConnStr(const Oid userOid, bool useSerialExecution)
+GetLocalhostConnStr(const Oid userOid, bool useSerialExecution, bool forceReadWriteMode)
 {
 	const char *user_name;
 	const bool no_err = false;
@@ -822,9 +841,24 @@ GetLocalhostConnStr(const Oid userOid, bool useSerialExecution)
 					 get_database_name(MyDatabaseId),
 					 applicationName);
 
-	if (useSerialExecution && SerialExecutionFlags != NULL)
+	bool hasOptions = (useSerialExecution && SerialExecutionFlags != NULL) ||
+					  forceReadWriteMode;
+
+	if (hasOptions)
 	{
-		appendStringInfoString(localhostConnStr, SerialExecutionFlags);
+		appendStringInfoString(localhostConnStr, "options='");
+		if (useSerialExecution && SerialExecutionFlags != NULL)
+		{
+			appendStringInfoString(localhostConnStr, SerialExecutionFlags);
+		}
+
+		if (forceReadWriteMode)
+		{
+			appendStringInfoString(localhostConnStr,
+								   " -c default_transaction_read_only=false");
+		}
+
+		appendStringInfoString(localhostConnStr, "'");
 	}
 
 	return localhostConnStr->data;

@@ -33,7 +33,7 @@ extern bool EnableCollation;
 /* --------------------------------------------------------- */
 
 static bool FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len,
-									pgbsonelement *element);
+									pgbsonelement *element, bool skipLengthOffset);
 
 /* --------------------------------------------------------- */
 /* pgbsonelement functions */
@@ -92,7 +92,7 @@ PgbsonToSinglePgbsonElement(const pgbson *bson, pgbsonelement *element)
 
 /*
  * Converts a pgbson that has one or two entries into a pgbson element,
- * and optionally sets the collationString if the second entry has key: "collation".
+ * and optionally returns the collationString if the second entry has key: "collation".
  * Throws error in all other cases.
  */
 const char *
@@ -100,7 +100,6 @@ PgbsonToSinglePgbsonElementWithCollation(const pgbson *filter, pgbsonelement *el
 {
 	bson_iter_t iter;
 	PgbsonInitIterator(filter, &iter);
-	const char *collationString = NULL;
 
 	if (!bson_iter_next(&iter))
 	{
@@ -110,7 +109,8 @@ PgbsonToSinglePgbsonElementWithCollation(const pgbson *filter, pgbsonelement *el
 
 	BsonIterToPgbsonElement(&iter, element);
 
-	if (bson_iter_next(&iter))
+	const char *collationString = NULL;
+	if (EnableCollation && bson_iter_next(&iter))
 	{
 		if (strcmp(bson_iter_key(&iter), "collation") == 0)
 		{
@@ -184,8 +184,10 @@ BsonValueToPgbsonElementUnsafe(const bson_value_t *bsonValue,
 						errmsg("invalid input BSON: Should be a document")));
 	}
 
+	bool skipLengthOffset = false;
 	if (!FillPgbsonElementUnsafe(bsonValue->value.v_doc.data,
-								 bsonValue->value.v_doc.data_len, element))
+								 bsonValue->value.v_doc.data_len, element,
+								 skipLengthOffset))
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 						errmsg("invalid input BSON: Invalid single value document.")));
@@ -197,7 +199,18 @@ void
 BsonDocumentBytesToPgbsonElementUnsafe(const uint8_t *bytes, uint32_t bytesLen,
 									   pgbsonelement *element)
 {
-	if (!FillPgbsonElementUnsafe((uint8_t *) bytes, bytesLen, element))
+	bool skipLengthOffset = false;
+	BsonDocumentBytesToPgbsonElementWithOptionsUnsafe(bytes, bytesLen, element,
+													  skipLengthOffset);
+}
+
+
+void
+BsonDocumentBytesToPgbsonElementWithOptionsUnsafe(const uint8_t *bytes, int32_t bytesLen,
+												  pgbsonelement *element, bool
+												  skipLengthOffset)
+{
+	if (!FillPgbsonElementUnsafe((uint8_t *) bytes, bytesLen, element, skipLengthOffset))
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 						errmsg("invalid input BSON: Invalid single value document.")));
@@ -281,9 +294,12 @@ PgbsonElementToPgbson(pgbsonelement *element)
 /* --------------------------------------------------------- */
 
 static bool
-FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element)
+FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element, bool
+						skipLengthOffset)
 {
 #if BSON_BYTE_ORDER == BSON_BIG_ENDIAN
+	bson_iter_t iterator;
+
 	if (!bson_iter_init_from_data(&iterator,
 								  data,
 								  data_len))
@@ -300,24 +316,37 @@ FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element
 	BsonIterToPgbsonElement(&iterator, element);
 	return true;
 #else
-	if (data == NULL || data_len < 5)
+	uint32_t minLength = 5;
+	uint32_t typeOffset = 4;
+	if (skipLengthOffset)
+	{
+		typeOffset = 0;
+		minLength = 1;
+	}
+
+	if (data == NULL || data_len < minLength)
 	{
 		ereport(ERROR, errmsg("invalid input BSON: Should not be empty document"));
 	}
 
 	/* First 4 bytes are the length */
-	uint32_t length = *((int32_t *) data);
+	uint32_t length = data_len;
+
+	if (!skipLengthOffset)
+	{
+		memcpy(&length, data, sizeof(uint32_t));
+	}
 
 	/* Fifth byte is the value */
-	element->bsonValue.value_type = (bson_type_t) data[4];
-	data += 5;
+	element->bsonValue.value_type = (bson_type_t) data[typeOffset];
+	data += minLength;
 
 	/* Then the path that is null terminated */
 	element->path = (char *) data;
 	element->pathLength = strlen(element->path);
 	data += element->pathLength + 1;
 
-	int lengthLeft = length - element->pathLength - 5;
+	int lengthLeft = length - element->pathLength - 1 - typeOffset;
 	switch (element->bsonValue.value_type)
 	{
 		case BSON_TYPE_DATE_TIME:
@@ -327,7 +356,7 @@ FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element
 				return false;
 			}
 
-			element->bsonValue.value.v_datetime = *((int64_t *) data);
+			memcpy(&element->bsonValue.value.v_datetime, data, sizeof(int64_t));
 			return true;
 		}
 
@@ -338,7 +367,7 @@ FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element
 				return false;
 			}
 
-			element->bsonValue.value.v_double = *((double *) data);
+			memcpy(&element->bsonValue.value.v_double, data, sizeof(double));
 			return true;
 		}
 
@@ -349,7 +378,7 @@ FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element
 				return false;
 			}
 
-			element->bsonValue.value.v_int64 = *((int64_t *) data);
+			memcpy(&element->bsonValue.value.v_int64, data, sizeof(int64_t));
 			return true;
 		}
 
@@ -360,9 +389,11 @@ FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element
 				return false;
 			}
 
-			element->bsonValue.value.v_timestamp.timestamp = *((uint32_t *) data);
+			memcpy(&element->bsonValue.value.v_timestamp.timestamp, data,
+				   sizeof(uint32_t));
 			data += 4;
-			element->bsonValue.value.v_timestamp.increment = *((uint32_t *) data);
+			memcpy(&element->bsonValue.value.v_timestamp.increment, data,
+				   sizeof(uint32_t));
 			return true;
 		}
 
@@ -373,7 +404,8 @@ FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element
 				return false;
 			}
 
-			int32_t codeLength = *((int32_t *) data);
+			int32_t codeLength;
+			memcpy(&codeLength, data, sizeof(int32_t));
 			data += 4;
 
 			if (lengthLeft < codeLength + 4)
@@ -393,7 +425,8 @@ FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element
 				return false;
 			}
 
-			int32_t symbolLength = *((int32_t *) data);
+			int32_t symbolLength;
+			memcpy(&symbolLength, data, sizeof(int32_t));
 			data += 4;
 			if (lengthLeft < symbolLength + 4)
 			{
@@ -412,7 +445,8 @@ FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element
 				return false;
 			}
 
-			int32_t utf8Length = *((int32_t *) data);
+			int32_t utf8Length;
+			memcpy(&utf8Length, data, sizeof(int32_t));
 			data += 4;
 			if (lengthLeft < utf8Length + 4)
 			{
@@ -431,7 +465,8 @@ FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element
 				return false;
 			}
 
-			int32_t binaryLength = *((int32_t *) data);
+			int32_t binaryLength;
+			memcpy(&binaryLength, data, sizeof(int32_t));
 			data += 4;
 			if (lengthLeft < 4 + binaryLength + 1)
 			{
@@ -461,7 +496,8 @@ FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element
 				return false;
 			}
 
-			int32_t docLength = *((int32_t *) data);
+			int32_t docLength;
+			memcpy(&docLength, data, sizeof(int32_t));
 
 			if (lengthLeft < docLength)
 			{
@@ -522,7 +558,8 @@ FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element
 				return false;
 			}
 
-			int32_t utf8Length = *((int32_t *) data);
+			int32_t utf8Length;
+			memcpy(&utf8Length, data, sizeof(int32_t));
 			data += 4;
 			if (lengthLeft < utf8Length + 4)
 			{
@@ -549,7 +586,8 @@ FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element
 				return false;
 			}
 
-			int32_t totalcodeLength = *((int32_t *) data);
+			int32_t totalcodeLength;
+			memcpy(&totalcodeLength, data, sizeof(int32_t));
 			data += 4;
 			if (lengthLeft < totalcodeLength)
 			{
@@ -589,7 +627,7 @@ FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element
 				return false;
 			}
 
-			element->bsonValue.value.v_int32 = *((int32_t *) data);
+			memcpy(&element->bsonValue.value.v_int32, data, sizeof(int32_t));
 			return true;
 		}
 

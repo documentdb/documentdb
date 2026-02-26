@@ -14,6 +14,9 @@
 #include <nodes/extensible.h>
 #include <nodes/makefuncs.h>
 #include <nodes/nodeFuncs.h>
+#include <nodes/tidbitmap.h>
+#include <access/htup_details.h>
+#include <access/heapam.h>
 #include <optimizer/pathnode.h>
 #include <optimizer/optimizer.h>
 #include <parser/parse_relation.h>
@@ -22,6 +25,7 @@
 #include <miscadmin.h>
 #include <catalog/pg_operator.h>
 #include <optimizer/restrictinfo.h>
+#include <optimizer/paths.h>
 
 #if PG_VERSION_NUM >= 180000
 #include <commands/explain_format.h>
@@ -175,8 +179,8 @@ const StringView PrimaryKeyShardKey =
 	.string = "pk"
 };
 
-extern bool EnableRumIndexScan;
 extern bool EnablePrimaryKeyCursorScan;
+extern bool EnableContinuationFastBitmapLookup;
 
 #define InputContinuationNodeName "ExtensionScanInputContinuation"
 
@@ -198,8 +202,8 @@ static void ExtensionScanReScanCustomScan(CustomScanState *node);
 static void ExtensionScanExplainCustomScan(CustomScanState *node, List *ancestors,
 										   ExplainState *es);
 
-static List * BuildPrimaryKeyIndexClauses(PlannerInfo *root, RelOptInfo *rel,
-										  ExtensionScanState *state);
+static RestrictInfo * BuildPrimaryKeyRowRestrictInfo(PlannerInfo *root, RelOptInfo *rel,
+													 const ExtensionScanState *state);
 static void ParseContinuationState(ExtensionScanState *scanState,
 								   InputContinuation *continuation);
 static TupleTableSlot * ExtensionScanNext(CustomScanState *node);
@@ -360,19 +364,7 @@ UpdatePathsToForceRumIndexScanToBitmapHeapScan(PlannerInfo *root, RelOptInfo *re
 			 * Let postgres deal with whether a Bitmap path or index path is better
 			 * for high limits.
 			 */
-			if (EnableRumIndexScan)
-			{
-				allowIndexScans = true;
-			}
-			else
-			{
-				/*
-				 * Queries that has limit and planned with index scan, but are being
-				 * forced to use bitmap heap scan. These queries can benefit from using
-				 * Index scan via EnableRumIndexScan.
-				 */
-				ReportFeatureUsage(FEATURE_USAGE_INDEX_SCAN_WITH_LIMIT);
-			}
+			allowIndexScans = true;
 		}
 
 		if (!allowIndexScans)
@@ -503,6 +495,191 @@ IsValidScanPath(Path *path)
 }
 
 
+static CustomPath *
+CreateCustomScanPathForContinuation(PlannerInfo *root, RelOptInfo *rel, Path *inputPath,
+									InputContinuation *inputContinuation,
+									PathTarget *baseRelPathTarget)
+{
+	/* wrap the path in a custom path */
+	CustomPath *customPath = makeNode(CustomPath);
+	customPath->methods = &ExtensionScanPathMethods;
+
+	Path *path = &customPath->path;
+	path->pathtype = T_CustomScan;
+
+	/* copy the parameters from the inner path */
+	Assert(inputPath->parent == rel);
+	path->parent = rel;
+
+	/* we don't support lateral joins here so required outer is 0 */
+	Relids requiredOuter = 0;
+	path->param_info = get_baserel_parampathinfo(root, rel, requiredOuter);
+
+	/* Copy scalar values in from the inner path */
+	path->rows = rel->rows;
+	path->startup_cost = inputPath->startup_cost;
+	path->total_cost = inputPath->total_cost;
+
+	/* For now the custom path is not parallel safe */
+	path->parallel_safe = false;
+
+	/* move the 'projection' from the path to the custom path. */
+
+	/* Point the nested scan's projection to the base table's projection */
+	path->pathtarget = inputPath->pathtarget;
+	inputPath->pathtarget = baseRelPathTarget;
+
+
+	customPath->custom_paths = list_make1(inputPath);
+
+#if (PG_VERSION_NUM >= 150000)
+
+	/* necessary to avoid extra Result node in PG15 */
+	customPath->flags = CUSTOMPATH_SUPPORT_PROJECTION;
+#endif
+
+	/* Store the input continuation to be used later, as well as the inner projection
+	 * target List
+	 * NOTE: Anything added here must be of type ExtensibleNode and must be registered
+	 * with the RegisterNodes method below.
+	 */
+	InputContinuation *inputContinuationCopy = palloc(sizeof(InputContinuation));
+	memcpy(inputContinuationCopy, inputContinuation, sizeof(InputContinuation));
+	customPath->custom_private = list_make1(inputContinuationCopy);
+
+	return customPath;
+}
+
+
+static IndexPath *
+GetPrimaryKeyContinuationIndexPath(PlannerInfo *root, RelOptInfo *rel,
+								   const ExtensionScanState *scanState)
+{
+	IndexOptInfo *info = GetPrimaryKeyIndexOpt(rel);
+	if (info == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Expecting a primary key to resume the query but found none")));
+	}
+
+	RestrictInfo *rowCompareRestrictInfo = BuildPrimaryKeyRowRestrictInfo(root, rel,
+																		  scanState);
+
+	List *oldIndexList = rel->indexlist;
+	List *oldPathList = rel->pathlist;
+	List *oldPartialPathList = rel->partial_pathlist;
+
+	rel->pathlist = NIL;
+	rel->partial_pathlist = NIL;
+
+	/* include only the primary key index. */
+	IndexOptInfo *indexInfoCopy = palloc(sizeof(IndexOptInfo));
+	memcpy(indexInfoCopy, info, sizeof(IndexOptInfo));
+	indexInfoCopy->indrestrictinfo = list_copy(info->indrestrictinfo);
+	indexInfoCopy->indrestrictinfo = lappend(indexInfoCopy->indrestrictinfo,
+											 rowCompareRestrictInfo);
+	List *newIndexList = list_make1(indexInfoCopy);
+
+
+	Assert(list_length(newIndexList) == 1);
+
+	rel->indexlist = newIndexList;
+
+	create_index_paths(root, rel);
+
+	Assert(rel->pathlist != NIL);
+
+	/* Now find the matching index scan. */
+	IndexPath *inputPath = NULL;
+	ListCell *cell;
+	foreach(cell, rel->pathlist)
+	{
+		Path *currentPath = lfirst(cell);
+		if (currentPath->pathtype == T_IndexScan)
+		{
+			inputPath = (IndexPath *) currentPath;
+
+			/* for cursors we prefer indexScan. */
+			break;
+		}
+
+		if (currentPath->pathtype == T_BitmapHeapScan)
+		{
+			BitmapHeapPath *bitmapHeapPath = (BitmapHeapPath *) currentPath;
+			if (bitmapHeapPath->bitmapqual->pathtype == T_IndexScan)
+			{
+				inputPath = (IndexPath *) bitmapHeapPath->bitmapqual;
+			}
+		}
+	}
+
+	Assert(inputPath != NULL);
+	Assert(list_length(inputPath->indexclauses) > 0);
+
+	/* Assert we have at least one index clause and it is the row compare clause */
+	IndexClause *firstClause = linitial_node(IndexClause,
+											 inputPath->indexclauses);
+	if (firstClause->rinfo != rowCompareRestrictInfo)
+	{
+		/* The first one can be shard_key_value = <value> */
+		IndexClause *secondClause = lsecond_node(IndexClause, inputPath->indexclauses);
+		if (secondClause->rinfo != rowCompareRestrictInfo)
+		{
+			ereport(ERROR, (errmsg(
+								"Unexpected index clause found when resuming primary key scan")));
+		}
+
+		/* Validate the first one is on the shard key explicitly: It must be a non rowCompareExpr
+		 * on the shard_key.
+		 */
+		if (firstClause->indexcol != 0 || firstClause->indexcols != NIL)
+		{
+			ereport(ERROR, (errmsg(
+								"Unexpected index clause on the first clause found when resuming primary key scan")));
+		}
+
+		if (IsA(firstClause->rinfo->clause, OpExpr))
+		{
+			/* Assert that we want an equality here */
+			OpExpr *clauseExpr = (OpExpr *) firstClause->rinfo->clause;
+			if (clauseExpr->opno != BigintEqualOperatorId())
+			{
+				ereport(ERROR, (errmsg(
+									"Unexpected index clause on the first clause Expecting an equality on shard key")));
+			}
+		}
+		else if (IsA(firstClause->rinfo->clause, ScalarArrayOpExpr))
+		{
+			/* Assert that we want an equality here */
+			ScalarArrayOpExpr *saop = (ScalarArrayOpExpr *) firstClause->rinfo->clause;
+			if (saop->opno != BigintEqualOperatorId())
+			{
+				ereport(ERROR, (errmsg(
+									"Unexpected index clause on the first clause Expecting an equality on shard key")));
+			}
+		}
+		else
+		{
+			ereport(ERROR, (errmsg(
+								"Unexpected index clause on the first clause Expecting an equality on shard key")));
+		}
+	}
+
+	/* Now trim restrict info clauses that are already satisfied by the index path. */
+	bool hasOtherClausesIgnore = false;
+	inputPath = TrimIndexRestrictInfoForBtreePath(root, inputPath,
+												  &hasOtherClausesIgnore);
+
+	/* Restore old lists */
+	rel->indexlist = oldIndexList;
+	rel->pathlist = oldPathList;
+	rel->partial_pathlist = oldPartialPathList;
+	list_free(newIndexList);
+
+	return inputPath;
+}
+
+
 /*
  * UpdatePathsWithExtensionStreamingCursorPlans walks the built paths for a given query
  * and extracts the continuation state for that path.
@@ -511,7 +688,8 @@ IsValidScanPath(Path *path)
  */
 bool
 UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
-											 RangeTblEntry *rte)
+											 RangeTblEntry *rte,
+											 ReplaceExtensionFunctionContext *context)
 {
 	/*
 	 *  Check if we have a non volatile sort key (aka order by random()).
@@ -551,11 +729,23 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 	/* first look for a continuation function in the base quals */
 	pgbson *continuation = NULL;
 	bool hasContinuation = false;
+	RestrictInfo *unshardedShardKeyRestrictInfo = NULL;
 	ListCell *cell;
 
 	foreach(cell, rel->baserestrictinfo)
 	{
 		RestrictInfo *rinfo = lfirst_node(RestrictInfo, cell);
+
+		/* Track the unsharded shard_key_value expr */
+		if (EnablePrimaryKeyCursorScan &&
+			context->inputData.isShardQuery &&
+			context->inputData.collectionId > 0 &&
+			IsOpExprShardKeyForUnshardedCollections(rinfo->clause,
+													context->inputData.collectionId))
+		{
+			unshardedShardKeyRestrictInfo = rinfo;
+		}
+
 		if (IsA(rinfo->clause, FuncExpr))
 		{
 			FuncExpr *expr = (FuncExpr *) rinfo->clause;
@@ -656,172 +846,171 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 		return false;
 	}
 
-	/* Walk the existing paths and wrap them in a custom scan */
+	/* Parse the continuation state */
+	InputContinuation inputContinuation = { 0 };
+	inputContinuation.extensible.type = T_ExtensibleNode;
+	inputContinuation.extensible.extnodename = InputContinuationNodeName;
+	inputContinuation.continuation = continuation;
+	inputContinuation.queryTableId = rte->relid;
+
+	/* Extract the base rel for the query */
+	Relation tableRel = RelationIdGetRelation(rte->relid);
+
+	/* Extract the table name (used to recognize continuation) */
+	const char *tableName = pstrdup(NameStr(tableRel->rd_rel->relname));
+	inputContinuation.queryTableName = tableName;
+
+	/* Point the nested scan's projection to the base table's projection */
+	PathTarget *baseRelPathTarget = BuildBaseRelPathTarget(tableRel, rel->relid);
+
+	/* Ensure you close the rel */
+	RelationClose(tableRel);
+
+	ExtensionScanState scanState;
+	memset(&scanState, 0, sizeof(ExtensionScanState));
+	ParseContinuationState(&scanState, &inputContinuation);
+
 	List *customPlanPaths = NIL;
-	foreach(cell, rel->pathlist)
+	if (EnablePrimaryKeyCursorScan && scanState.hasPrimaryKeyState)
 	{
-		Path *inputPath = lfirst(cell);
+		/* It's a continuation of the primary key index - force resume from PK */
+		inputContinuation.isPrimaryKeyScan = true;
 
-		if (inputPath->pathtype == T_IndexScan)
-		{
-			IndexPath *indexPath = (IndexPath *) inputPath;
-			bool isIndexPathCostZero = inputPath->total_cost == 0;
-			if (indexPath->indexinfo->amhasgetbitmap)
-			{
-				inputPath = (Path *) create_bitmap_heap_path(root, rel,
-															 inputPath,
-															 rel->lateral_relids, 1.0, 0);
-				if (isIndexPathCostZero)
-				{
-					/* Force the output path to also be cost 0
-					 * Since the base was cost 0 (see documentdb api's planner.c)
-					 */
-					inputPath->total_cost = 0;
-					inputPath->startup_cost = 0;
-				}
-			}
-		}
+		IndexPath *inputPath = GetPrimaryKeyContinuationIndexPath(root, rel, &scanState);
 
-		/* Save the continuation data into storage */
-		InputContinuation *inputContinuation = palloc0(sizeof(InputContinuation));
-		inputContinuation->extensible.type = T_ExtensibleNode;
-		inputContinuation->extensible.extnodename = InputContinuationNodeName;
-		inputContinuation->continuation = continuation;
-		inputContinuation->queryTableId = rte->relid;
-
-		/* Extract the base rel for the query */
-		Relation tableRel = RelationIdGetRelation(rte->relid);
-
-		/* Extract the table name (used to recognize continuation) */
-		const char *tableName = pstrdup(NameStr(tableRel->rd_rel->relname));
-		inputContinuation->queryTableName = tableName;
-
-		/* Point the nested scan's projection to the base table's projection */
-		PathTarget *baseRelPathTarget = BuildBaseRelPathTarget(tableRel, rel->relid);
-
-		/* Ensure you close the rel */
-		RelationClose(tableRel);
-
-		ExtensionScanState scanState;
-		memset(&scanState, 0, sizeof(ExtensionScanState));
-		ParseContinuationState(&scanState, inputContinuation);
-
-		if (EnablePrimaryKeyCursorScan && scanState.hasPrimaryKeyState)
-		{
-			/* It's a continuation of the primary key index - force resume from PK */
-			IndexOptInfo *info = GetPrimaryKeyIndexOpt(rel);
-			if (info == NULL)
-			{
-				ereport(ERROR, (errmsg(
-									"Expecting a primary key to resume the query but found none")));
-			}
-
-			List *primaryKeyIndexClauses = BuildPrimaryKeyIndexClauses(root, rel,
-																	   &scanState);
-
-			inputPath = (Path *) create_index_path(
-				root, info, primaryKeyIndexClauses, NIL, NIL, NIL, ForwardScanDirection,
-				false, rel->lateral_relids,
-				1, false);
-			inputContinuation->isPrimaryKeyScan = true;
-		}
-		else if (inputPath->pathtype == T_SeqScan)
-		{
-			/* See if we can convert to primary key scan */
-			IndexOptInfo *info = GetPrimaryKeyIndexOpt(rel);
-			if (EnablePrimaryKeyCursorScan && info != NULL)
-			{
-				inputPath = (Path *) create_index_path(
-					root, info, NIL, NIL, NIL, NIL, ForwardScanDirection, false,
-					rel->lateral_relids,
-					1, false);
-				inputContinuation->isPrimaryKeyScan = true;
-			}
-			else if ((rel->amflags & AMFLAG_HAS_TID_RANGE) != 0)
-			{
-				/* Convert a seqscan to a TidScan */
-				ItemPointer tidLowerPointPointer = palloc0(sizeof(ItemPointerData));
-				Const *tidLowerBoundConst = makeConst(TIDOID, -1, InvalidOid,
-													  sizeof(ItemPointerData),
-													  PointerGetDatum(
-														  tidLowerPointPointer), false,
-													  false);
-				if (scanState.hasUserContinuationState)
-				{
-					*tidLowerPointPointer = scanState.userContinuationState;
-					tidLowerBoundConst->constvalue = PointerGetDatum(
-						tidLowerPointPointer);
-				}
-				OpExpr *tidLowerBoundScan = (OpExpr *) make_opclause(
-					TIDGreaterEqOperator, BOOLOID, false,
-					(Expr *) makeVar(rel->relid, SelfItemPointerAttributeNumber, TIDOID,
-									 -1, InvalidOid, 0),
-					(Expr *) tidLowerBoundConst, InvalidOid, InvalidOid);
-				RestrictInfo *rinfo = make_simple_restrictinfo(root,
-															   (Expr *) tidLowerBoundScan);
-				inputPath = (Path *) create_tidrangescan_path(root, rel, list_make1(
-																  rinfo),
-															  rel->lateral_relids);
-			}
-		}
-
-		if (inputPath->pathtype != T_BitmapHeapScan &&
-			inputPath->pathtype != T_TidScan &&
-			inputPath->pathtype != T_TidRangeScan &&
-			!inputContinuation->isPrimaryKeyScan &&
-			!IsValidScanPath(inputPath))
-		{
-			/* For now just break if it's not a seq scan or bitmap scan */
-			elog(INFO, "Path type %d is unsupported in this flow. Skipping it.",
-				 inputPath->pathtype);
-			continue;
-		}
-
-		/* wrap the path in a custom path */
-		CustomPath *customPath = makeNode(CustomPath);
-		customPath->methods = &ExtensionScanPathMethods;
-
-		Path *path = &customPath->path;
-		path->pathtype = T_CustomScan;
-
-		/* copy the parameters from the inner path */
-		Assert(inputPath->parent == rel);
-		path->parent = rel;
-
-		/* we don't support lateral joins here so required outer is 0 */
-		Relids requiredOuter = 0;
-		path->param_info = get_baserel_parampathinfo(root, rel, requiredOuter);
-
-		/* Copy scalar values in from the inner path */
-		path->rows = rel->rows;
-		path->startup_cost = inputPath->startup_cost;
-		path->total_cost = inputPath->total_cost;
-
-		/* For now the custom path is not parallel safe */
-		path->parallel_safe = false;
-
-		/* move the 'projection' from the path to the custom path. */
-
-		/* Point the nested scan's projection to the base table's projection */
-		path->pathtarget = inputPath->pathtarget;
-		inputPath->pathtarget = baseRelPathTarget;
-
-
-		customPath->custom_paths = list_make1(inputPath);
-
-#if (PG_VERSION_NUM >= 150000)
-
-		/* necessary to avoid extra Result node in PG15 */
-		customPath->flags = CUSTOMPATH_SUPPORT_PROJECTION;
-#endif
-
-		/* Store the input continuation to be used later, as well as the inner projection
-		 * target List
-		 * NOTE: Anything added here must be of type ExtensibleNode and must be registered
-		 * with the RegisterNodes method below.
-		 */
-		customPath->custom_private = list_make1(inputContinuation);
+		CustomPath *customPath = CreateCustomScanPathForContinuation(
+			root, rel, (Path *) inputPath, &inputContinuation,
+			baseRelPathTarget);
 		customPlanPaths = lappend(customPlanPaths, customPath);
+	}
+	else
+	{
+		/* Walk the existing paths and wrap them in a custom scan */
+		foreach(cell, rel->pathlist)
+		{
+			Path *inputPath = lfirst(cell);
+
+			bool isPrimaryKeyPath = false;
+			if (inputPath->pathtype == T_IndexScan)
+			{
+				IndexPath *indexPath = (IndexPath *) inputPath;
+
+				bool isPrimaryKeyIndex = IsBtreePrimaryKeyIndex(
+					indexPath->indexinfo);
+				isPrimaryKeyPath = EnablePrimaryKeyCursorScan && isPrimaryKeyIndex;
+
+				if (isPrimaryKeyIndex && !isPrimaryKeyPath)
+				{
+					ReportFeatureUsage(FEATURE_CURSOR_CAN_USE_PRIMARY_KEY_SCAN);
+				}
+
+				bool isIndexPathCostZero = inputPath->total_cost == 0;
+				if (!isPrimaryKeyPath &&
+					indexPath->indexinfo->amhasgetbitmap)
+				{
+					inputPath = (Path *) create_bitmap_heap_path(root, rel,
+																 inputPath,
+																 rel->lateral_relids, 1.0,
+																 0);
+					if (isIndexPathCostZero)
+					{
+						/* Force the output path to also be cost 0
+						 * Since the base was cost 0 (see documentdb api's planner.c)
+						 */
+						inputPath->total_cost = 0;
+						inputPath->startup_cost = 0;
+					}
+				}
+			}
+			else if (inputPath->pathtype == T_BitmapHeapScan)
+			{
+				BitmapHeapPath *bitmapHeapPath = (BitmapHeapPath *) inputPath;
+				Path *bitmapQualPath = bitmapHeapPath->bitmapqual;
+
+				if (bitmapQualPath->pathtype == T_IndexScan)
+				{
+					IndexPath *indexPath = (IndexPath *) bitmapQualPath;
+
+					isPrimaryKeyPath = IsBtreePrimaryKeyIndex(indexPath->indexinfo);
+					if (isPrimaryKeyPath && EnablePrimaryKeyCursorScan)
+					{
+						inputPath = (Path *) indexPath;
+					}
+					else if (isPrimaryKeyPath)
+					{
+						ReportFeatureUsage(FEATURE_CURSOR_CAN_USE_PRIMARY_KEY_SCAN);
+					}
+				}
+			}
+
+			if (inputPath->pathtype == T_SeqScan)
+			{
+				/* See if we can convert to primary key scan */
+				IndexOptInfo *info = GetPrimaryKeyIndexOpt(rel);
+
+				if (info != NULL && !EnablePrimaryKeyCursorScan)
+				{
+					ReportFeatureUsage(FEATURE_CURSOR_CAN_USE_PRIMARY_KEY_SCAN);
+				}
+
+				if (EnablePrimaryKeyCursorScan && info != NULL)
+				{
+					isPrimaryKeyPath = true;
+					inputPath = (Path *) create_index_path(
+						root, info, NIL, NIL, NIL, NIL, ForwardScanDirection, false,
+						rel->lateral_relids,
+						1, false);
+				}
+				else if ((rel->amflags & AMFLAG_HAS_TID_RANGE) != 0)
+				{
+					/* Convert a seqscan to a TidScan */
+					ItemPointer tidLowerPointPointer = palloc0(sizeof(ItemPointerData));
+					Const *tidLowerBoundConst = makeConst(TIDOID, -1, InvalidOid,
+														  sizeof(ItemPointerData),
+														  PointerGetDatum(
+															  tidLowerPointPointer),
+														  false,
+														  false);
+					if (scanState.hasUserContinuationState)
+					{
+						*tidLowerPointPointer = scanState.userContinuationState;
+						tidLowerBoundConst->constvalue = PointerGetDatum(
+							tidLowerPointPointer);
+					}
+					OpExpr *tidLowerBoundScan = (OpExpr *) make_opclause(
+						TIDGreaterEqOperator, BOOLOID, false,
+						(Expr *) makeVar(rel->relid, SelfItemPointerAttributeNumber,
+										 TIDOID,
+										 -1, InvalidOid, 0),
+						(Expr *) tidLowerBoundConst, InvalidOid, InvalidOid);
+					RestrictInfo *rinfo = make_simple_restrictinfo(root,
+																   (Expr *)
+																   tidLowerBoundScan);
+					inputPath = (Path *) create_tidrangescan_path(root, rel, list_make1(
+																	  rinfo),
+																  rel->lateral_relids);
+				}
+			}
+
+			inputContinuation.isPrimaryKeyScan = isPrimaryKeyPath;
+
+			if (inputPath->pathtype != T_BitmapHeapScan &&
+				inputPath->pathtype != T_TidScan &&
+				inputPath->pathtype != T_TidRangeScan &&
+				!isPrimaryKeyPath &&
+				!IsValidScanPath(inputPath))
+			{
+				/* For now just break if it's not a seq scan or bitmap scan */
+				elog(INFO, "Path type %d is unsupported in this flow. Skipping it.",
+					 inputPath->pathtype);
+				continue;
+			}
+
+			CustomPath *customPath = CreateCustomScanPathForContinuation(
+				root, rel, inputPath, &inputContinuation,
+				baseRelPathTarget);
+			customPlanPaths = lappend(customPlanPaths, customPath);
+		}
 	}
 
 	if (customPlanPaths == NIL)
@@ -842,6 +1031,21 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 	 * tuples and we can't allow parallel scan to reorder tuples.
 	 */
 	rel->partial_pathlist = NIL;
+
+	/* We're responsible for trimming the shard_key_value expr here. */
+	if (EnablePrimaryKeyCursorScan && unshardedShardKeyRestrictInfo != NULL)
+	{
+		if (list_length(rel->baserestrictinfo) == 1)
+		{
+			rel->baserestrictinfo = NIL;
+		}
+		else
+		{
+			rel->baserestrictinfo = list_delete(rel->baserestrictinfo,
+												unshardedShardKeyRestrictInfo);
+		}
+	}
+
 	return true;
 }
 
@@ -1367,7 +1571,8 @@ ExtensionScanNext(CustomScanState *node)
 	ExtensionScanState *extensionScanState = (ExtensionScanState *) node;
 
 	TupleTableSlot *slot;
-	if (extensionScanState->hasUserContinuationState)
+	if (extensionScanState->hasUserContinuationState &&
+		!extensionScanState->hasPrimaryKeyState)
 	{
 		bool shouldContinue = false;
 		slot = SkipWithUserContinuation(extensionScanState, &shouldContinue);
@@ -1603,8 +1808,9 @@ ParseContinuationState(ExtensionScanState *extensionScanState,
 					extensionScanState->hasPrimaryKeyState = true;
 				}
 
-				extensionScanState->userContinuationState =
-					*(ItemPointerData *) continuationBinaryValue.value.v_binary.data;
+				memcpy(&extensionScanState->userContinuationState,
+					   continuationBinaryValue.value.v_binary.data,
+					   sizeof(ItemPointerData));
 				extensionScanState->rawUsercontinuation = *currentValue;
 				extensionScanState->hasUserContinuationState = true;
 			}
@@ -1618,6 +1824,259 @@ ParseContinuationState(ExtensionScanState *extensionScanState,
 }
 
 
+#if PG_VERSION_NUM >= 180000
+
+/*
+ * Skips the bitmap scan to the user continuation point.
+ * Returns true if the continuation point was found, false otherwise.
+ *
+ * We advance the underlying iterator to one block before the target block,
+ * so that the next fetch will land on the correct block. This optimizes to avoid loading heap pages unnecessarily because every time next is called, the heap scan state
+ * will load the next block and fetch the tuple, then we would compare against the continuation and discard if it was smaller, all that is wasted work.
+ */
+static bool
+SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
+							 ItemPointerData *userContinuation)
+{
+	TBMIterator tbmiterator = { 0 };
+
+	/* The bitmap scan state should never be initialized, however we add defensive check to not fail and also, this will be helpful for when we support paginated bitmaps. */
+	if (!bitmapScanState->initialized)
+	{
+		if (bitmapScanState->pstate)
+		{
+			ereport(ERROR, (errmsg(
+								"Parallel scan not supported for cursor continuation.")));
+		}
+
+		bitmapScanState->tbm = (TIDBitmap *) MultiExecProcNode(outerPlanState(
+																   bitmapScanState));
+
+		if (!bitmapScanState->tbm || !IsA(bitmapScanState->tbm, TIDBitmap))
+		{
+			elog(ERROR, "unrecognized result from subplan");
+		}
+
+		/* We don't support parallel scans in continuations so we just pass an InvalidDsaPointer. */
+		tbmiterator = tbm_begin_iterate(bitmapScanState->tbm,
+										bitmapScanState->ss.ps.state->es_query_dsa,
+										InvalidDsaPointer);
+
+		if (!bitmapScanState->ss.ss_currentScanDesc)
+		{
+			bitmapScanState->ss.ss_currentScanDesc =
+				table_beginscan_bm(bitmapScanState->ss.ss_currentRelation,
+								   bitmapScanState->ss.ps.state->es_snapshot,
+								   0,
+								   NULL);
+		}
+
+		bitmapScanState->ss.ss_currentScanDesc->st.rs_tbmiterator = tbmiterator;
+		bitmapScanState->initialized = true;
+	}
+	else
+	{
+		tbm_end_iterate(&bitmapScanState->ss.ss_currentScanDesc->st.rs_tbmiterator);
+		tbmiterator = tbm_begin_iterate(bitmapScanState->tbm,
+										bitmapScanState->ss.ps.state->es_query_dsa,
+										InvalidDsaPointer);
+		bitmapScanState->ss.ss_currentScanDesc->st.rs_tbmiterator = tbmiterator;
+	}
+
+	/* move forward to the current continuation block number. */
+	bool foundTargetTid = false;
+	BlockNumber target_blockno = ItemPointerGetBlockNumber(userContinuation);
+
+	Assert(target_blockno != InvalidBlockNumber);
+
+	/* ahead iterator to stop the real iterator one block behind, we need this approach in case there were deletion of blocks in between continuations. */
+	TBMIterator tmp_tbmiterator = { 0 };
+
+	if (target_blockno <= 1)
+	{
+		foundTargetTid = true;
+	}
+	else
+	{
+		tmp_tbmiterator = tbm_begin_iterate(bitmapScanState->tbm,
+											bitmapScanState->ss.ps.state->es_query_dsa,
+											InvalidDsaPointer);
+	}
+
+	TBMIterateResult tbmres = {
+		.blockno = InvalidBlockNumber,
+		.internal_page = NULL,
+	};
+
+
+	TBMIterateResult tbmres_tmp = {
+		.blockno = InvalidBlockNumber,
+		.internal_page = NULL,
+	};
+
+	while (!foundTargetTid && tbm_iterate(&tmp_tbmiterator, &tbmres_tmp))
+	{
+		CHECK_FOR_INTERRUPTS();
+
+		BlockNumber blockno = tbmres_tmp.blockno;
+		if (blockno < target_blockno)
+		{
+			tbm_iterate(&tbmiterator, &tbmres);
+			continue; /* Skip blocks before target */
+		}
+		else
+		{
+			/* We are either on the target block at the ahead iterator or we got to a larger block, we stop here. */
+			foundTargetTid = true;
+			tbm_end_iterate(&tmp_tbmiterator);
+		}
+	}
+
+	if (!foundTargetTid)
+	{
+		tbm_end_iterate(&tmp_tbmiterator);
+		tbm_end_iterate(&tbmiterator);
+		return false;
+	}
+	Assert(target_blockno <= 1 ||
+		   tbmres.blockno < target_blockno);
+
+	/* Since we are stopping one block earlier, we set the heap scan descriptor values to invalid so that fetch next skips this block and fetches the right tuple. */
+	HeapScanDesc hscan = (HeapScanDesc) bitmapScanState->ss.ss_currentScanDesc;
+	hscan->rs_cindex = MaxOffsetNumber + 1;
+	hscan->rs_ntuples = 0;
+
+	return true;
+}
+
+
+#else
+
+/*
+ * Skips the bitmap scan to the user continuation point.
+ * Returns true if the continuation point was found, false otherwise.
+ *
+ * We advance the underlying iterator to one block before the target block,
+ * so that the next fetch will land on the correct block. This optimizes to avoid loading heap pages unnecessarily because every time next is called, the heap scan state
+ * will load the next block and fetch the tuple, then we would compare against the continuation and discard if it was smaller, all that is wasted work.
+ */
+static bool
+SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
+							 ItemPointerData *userContinuation)
+{
+	TBMIterator *tbmiterator = NULL;
+
+	/* The bitmap scan state should never be initialized, however we add defensive check to not fail and also, this will be helpful for when we support paginated bitmaps. */
+	if (!bitmapScanState->initialized)
+	{
+		if (bitmapScanState->pstate)
+		{
+			ereport(ERROR, (errmsg(
+								"Parallel scan not supported for cursor continuation.")));
+		}
+
+		bitmapScanState->tbm = (TIDBitmap *) MultiExecProcNode(outerPlanState(
+																   bitmapScanState));
+
+		if (!bitmapScanState->tbm || !IsA(bitmapScanState->tbm, TIDBitmap))
+		{
+			elog(ERROR, "unrecognized result from subplan");
+		}
+
+		tbmiterator = tbm_begin_iterate(bitmapScanState->tbm);
+		bitmapScanState->tbmres = NULL;
+
+		if (!bitmapScanState->ss.ss_currentScanDesc)
+		{
+			bitmapScanState->ss.ss_currentScanDesc =
+				table_beginscan_bm(bitmapScanState->ss.ss_currentRelation,
+								   bitmapScanState->ss.ps.state->es_snapshot,
+								   0,
+	#if PG_VERSION_NUM >= 170000
+								   NULL,
+								   true);
+	#else
+								   NULL);
+	#endif
+		}
+
+		bitmapScanState->tbmiterator = tbmiterator;
+		bitmapScanState->initialized = true;
+	}
+	else
+	{
+		tbm_end_iterate(bitmapScanState->tbmiterator);
+		tbmiterator = tbm_begin_iterate(bitmapScanState->tbm);
+		bitmapScanState->tbmiterator = tbmiterator;
+	}
+
+	/* move forward to the current continuation block number. */
+	bool foundTargetTid = false;
+	BlockNumber target_blockno = ItemPointerGetBlockNumber(userContinuation);
+	Assert(target_blockno != InvalidBlockNumber);
+
+	/* We use an ahead iterator to stop the real iterator one block behind, we need this approach for fetch next to initialize the heap scan state properly and for that it needs to iterate again
+	 * that way we're guaranteed we always stop at the correct block, also this protects us from the case of a block being deleted in between continuations. */
+	TBMIterator *tmp_tbmiterator = NULL;
+	if (target_blockno <= 1)
+	{
+		foundTargetTid = true;
+	}
+	else
+	{
+		tmp_tbmiterator = tbm_begin_iterate(bitmapScanState->tbm);
+	}
+
+	TBMIterateResult *tbmres = NULL;
+	TBMIterateResult *tbmres_tmp = NULL;
+	while (!foundTargetTid)
+	{
+		CHECK_FOR_INTERRUPTS();
+
+		tbmres_tmp = tbm_iterate(tmp_tbmiterator);
+		if (!tbmres_tmp)
+		{
+			break;
+		}
+
+		BlockNumber blockno = tbmres_tmp->blockno;
+		if (blockno < target_blockno)
+		{
+			tbmres = tbm_iterate(tbmiterator);
+			continue;
+		}
+		else
+		{
+			/* We are either on the target block at the ahead iterator or we got to a larger block, we stop here. */
+			foundTargetTid = true;
+			tbm_end_iterate(tmp_tbmiterator);
+		}
+	}
+
+	if (!foundTargetTid)
+	{
+		tbm_end_iterate(tbmiterator);
+		tbm_end_iterate(tmp_tbmiterator);
+		return false;
+	}
+
+	/* if tbmres is NULL, we are on the first block number. */
+	Assert(tbmres == NULL || tbmres->blockno < target_blockno);
+
+	bitmapScanState->tbmres = tbmres;
+
+	/* Since we are stopping one block earlier, we set the heap scan descriptor values to invalid so that fetch next skips this block and fetches the right tuple. */
+	HeapScanDesc hscan = (HeapScanDesc) bitmapScanState->ss.ss_currentScanDesc;
+	hscan->rs_cindex = MaxOffsetNumber + 1;
+	hscan->rs_ntuples = 0;
+
+	return true;
+}
+
+
+#endif
+
+
 /*
  * Skips enumerating rows until the specified continuation is hit.
  * If the enumeration lands *after* the given continuation, returns the tuple
@@ -1628,6 +2087,24 @@ static TupleTableSlot *
 SkipWithUserContinuation(ExtensionScanState *state, bool *shouldContinue)
 {
 	*shouldContinue = false;
+
+	if (EnableContinuationFastBitmapLookup &&
+		state->innerScanState->ps.type == T_BitmapHeapScanState)
+	{
+		BitmapHeapScanState *bitmapScanState =
+			(BitmapHeapScanState *) &state->innerScanState->ps;
+		bool found = SkipBitmapToUserContinuation(bitmapScanState,
+												  &state->userContinuationState);
+		if (!found)
+		{
+			return NULL;
+		}
+	}
+	else if (state->innerScanState->ps.type == T_BitmapHeapScanState)
+	{
+		ReportFeatureUsage(FEATURE_CURSOR_CAN_USE_FAST_BITMAP);
+	}
+
 	while (true)
 	{
 		TupleTableSlot *slot = state->innerScanState->ps.ExecProcNode(
@@ -1688,6 +2165,7 @@ CopyNodeInputContinuation(struct ExtensibleNode *target_node, const struct
 	newNode->continuation = PgbsonCloneFromPgbson(from->continuation);
 	newNode->queryTableId = from->queryTableId;
 	newNode->queryTableName = pstrdup(from->queryTableName);
+	newNode->isPrimaryKeyScan = from->isPrimaryKeyScan;
 }
 
 
@@ -1703,6 +2181,7 @@ OutInputContinuation(StringInfo str, const struct ExtensibleNode *raw_node)
 	WRITE_STRING_FIELD_VALUE(continuation, string);
 	WRITE_OID_FIELD(queryTableId);
 	WRITE_STRING_FIELD(queryTableName);
+	WRITE_BOOL_FIELD(isPrimaryKeyScan);
 }
 
 
@@ -1722,6 +2201,7 @@ ReadCustomScanContinuationExtensionScanNode(struct ExtensibleNode *node)
 	READ_STRING_FIELD_VALUE(continuationStr);
 	READ_OID_FIELD(queryTableId);
 	READ_STRING_FIELD(queryTableName);
+	READ_BOOL_FIELD(isPrimaryKeyScan);
 	if (continuationStr != NULL)
 	{
 		local_node->continuation = PgbsonInitFromHexadecimalString(continuationStr);
@@ -1729,8 +2209,9 @@ ReadCustomScanContinuationExtensionScanNode(struct ExtensibleNode *node)
 }
 
 
-static List *
-BuildPrimaryKeyIndexClauses(PlannerInfo *root, RelOptInfo *rel, ExtensionScanState *state)
+static RestrictInfo *
+BuildPrimaryKeyRowRestrictInfo(PlannerInfo *root, RelOptInfo *rel, const
+							   ExtensionScanState *state)
 {
 	Var *shardKeyVar = makeVar(rel->relid,
 							   DOCUMENT_DATA_TABLE_SHARD_KEY_VALUE_VAR_ATTR_NUMBER,
@@ -1758,18 +2239,5 @@ BuildPrimaryKeyIndexClauses(PlannerInfo *root, RelOptInfo *rel, ExtensionScanSta
 
 	RestrictInfo *shardKeyRestrict = make_simple_restrictinfo(root, (Expr *) rcexpr);
 
-	IndexClause *shardKeyClause = makeNode(IndexClause);
-	shardKeyClause->rinfo = shardKeyRestrict;
-	shardKeyClause->indexquals = list_make1(shardKeyRestrict);
-
-	/* The row comparisons are not lossy */
-	shardKeyClause->lossy = false;
-
-	/*
-	 * This is the columns on the primary table (0 indexed)
-	 */
-	shardKeyClause->indexcols = list_make2_int(
-		shardKeyVar->varattno - 1, objectIdVar->varattno - 1);
-
-	return list_make1(shardKeyClause);
+	return shardKeyRestrict;
 }

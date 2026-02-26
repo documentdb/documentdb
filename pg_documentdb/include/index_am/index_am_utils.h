@@ -41,6 +41,7 @@ bool BsonIndexAmRequiresRangeOptimization(Oid indexAm, Oid opFamilyOid);
 bool IsCompositeOpClass(Relation indexRelation);
 
 bool IsCompositeOpFamilyOid(Oid relam, Oid opFamilyOid);
+bool IsCompositeOpFamilyOidWithParallelSupport(Oid relam, Oid opFamilyOid);
 
 /*
  * Whether the Oid of the oprator family points to a single path operator family.
@@ -59,12 +60,18 @@ bool IsHashedPathOpFamilyOid(Oid relam, Oid opFamilyOid);
 bool IsOrderBySupportedOnOpClass(Oid indexAm, Oid IndexPathOpFamilyAm);
 
 GetMultikeyStatusFunc GetMultiKeyStatusByRelAm(Oid relam);
-bool GetIndexSupportsBackwardsScan(Oid relam);
+bool GetIndexSupportsBackwardsScan(Oid relam, bool *indexCanOrder);
 
 bool GetIndexAmSupportsIndexOnlyScan(Oid indexAm, Oid opFamilyOid,
 									 GetMultikeyStatusFunc *getMultiKeyStatus,
 									 GetTruncationStatusFunc *getTruncationStatus);
 
 void TryExplainByIndexAm(struct IndexScanDescData *scan, struct ExplainState *es);
+
+
+bool GetCompositeOpClassWithProps(Relation indexRelation,
+								  bool *supportsOrderedOperatorScans,
+								  GetMultikeyStatusFunc *multiKeyStatusFunc,
+								  CanOrderInIndexScan *isIndexScanOrdered);
 
 #endif

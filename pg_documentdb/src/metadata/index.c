@@ -37,6 +37,8 @@
 #include "utils/version_utils.h"
 #include "metadata/metadata_cache.h"
 #include "utils/hashset_utils.h"
+#include "infrastructure/job_management.h"
+#include "utils/error_utils.h"
 
 extern int MaxNumActiveUsersIndexBuilds;
 extern int IndexBuildScheduleInSec;
@@ -72,6 +74,16 @@ static const MongoIndexSupport MongoIndexSupportedList[] =
 
 static const int NumberOfMongoIndexTypes = sizeof(MongoIndexSupportedList) /
 										   sizeof(MongoIndexSupport);
+
+/*
+ * Returns the GUC for the index build schedule.
+ */
+inline static int
+GetIndexBuildScheduleInSec(void)
+{
+	return IndexBuildScheduleInSec;
+}
+
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -378,6 +390,7 @@ IndexSpecOptionsAreEquivalent(const IndexSpec *leftIndexSpec,
 		return IndexOptionsEquivalency_NotEquivalent;
 	}
 
+	bool convertSupportedInToScalarArrayOp = true;
 	if (leftIndexSpec->indexPFEDocument == NULL &&
 		rightIndexSpec->indexPFEDocument == NULL)
 	{
@@ -390,7 +403,8 @@ IndexSpecOptionsAreEquivalent(const IndexSpec *leftIndexSpec,
 		return IndexOptionsEquivalency_NotEquivalent;
 	}
 	else if (!QueryDocumentsAreEquivalent(leftIndexSpec->indexPFEDocument,
-										  rightIndexSpec->indexPFEDocument))
+										  rightIndexSpec->indexPFEDocument,
+										  convertSupportedInToScalarArrayOp))
 	{
 		return IndexOptionsEquivalency_NotEquivalent;
 	}
@@ -1458,7 +1472,7 @@ AddRequestInIndexQueue(char *createIndexCmd, int indexId, uint64 collectionId, c
  */
 IndexCmdRequest *
 GetSkippableRequestFromIndexQueue(int expireTimeInSeconds,
-								  List *skipCollections)
+								  List *skipCollections, MemoryContext mcxt)
 {
 	StringInfo cmdStr = makeStringInfo();
 
@@ -1514,6 +1528,7 @@ GetSkippableRequestFromIndexQueue(int expireTimeInSeconds,
 		userOid = DatumGetObjectId(results[6]);
 	}
 
+	MemoryContext old = MemoryContextSwitchTo(mcxt);
 	IndexCmdRequest *request = palloc(sizeof(IndexCmdRequest));
 	request->indexId = indexId;
 	request->collectionId = collectionId;
@@ -1524,6 +1539,8 @@ GetSkippableRequestFromIndexQueue(int expireTimeInSeconds,
 	request->status = status;
 	request->userOid = userOid;
 	request->cmdType = cmdTypeData[0];
+	MemoryContextSwitchTo(old);
+
 	return request;
 }
 
@@ -2014,6 +2031,62 @@ ScheduleIndexBuildTasks(char *extensionPrefix)
 
 
 /*
+ * Register index build jobs with the background worker infrastructure.
+ */
+void
+RegisterIndexBuildBackgroundWorkerJobs(void)
+{
+	if (!EnableBackgroundWorker || !EnableBackgroundWorkerJobs)
+	{
+		return;
+	}
+
+	if (!process_shared_preload_libraries_in_progress)
+	{
+		ereport(ERROR, (errmsg(
+							"Registering a new background worker job must happen during shared_preload_libraries")));
+	}
+
+	BackgroundWorkerJob indexBuildJob1 = {
+		.jobId = DOCUMENTDB_INDEX_BUILD_JOB1_JOBID,
+		.jobName = "documentdb_index_build_background_job_1",
+		.command = {
+			.schema = ApiInternalSchemaName,
+			.name = "build_index_background"
+		},
+		.get_schedule_interval_in_seconds_hook = GetIndexBuildScheduleInSec,
+		.argument = {
+			.argType = INT4OID,
+			.argValue = "1",
+			.isNull = false
+		},
+		.timeoutInSeconds = 300,     /* 5 minutes timeout */
+		.toBeExecutedOnMetadataCoordinatorOnly = true
+	};
+
+	BackgroundWorkerJob indexBuildJob2 = {
+		.jobId = DOCUMENTDB_INDEX_BUILD_JOB2_JOBID,
+		.jobName = "documentdb_index_build_background_job_2",
+		.command = {
+			.schema = ApiInternalSchemaName,
+			.name = "build_index_background"
+		},
+		.get_schedule_interval_in_seconds_hook = GetIndexBuildScheduleInSec,
+		.argument = {
+			.argType = INT4OID,
+			.argValue = "2",
+			.isNull = false
+		},
+		.timeoutInSeconds = 300,     /* 5 minutes timeout */
+		.toBeExecutedOnMetadataCoordinatorOnly = true
+	};
+
+	RegisterBackgroundWorkerJob(indexBuildJob1);
+	RegisterBackgroundWorkerJob(indexBuildJob2);
+}
+
+
+/*
  * Returns the index queue name based on the cluster version.
  * The return value includes the schema name and the queue name.
  */
@@ -2021,6 +2094,86 @@ char *
 GetIndexQueueName(void)
 {
 	return psprintf("%s.%s_index_queue", ApiCatalogSchemaNameV2, ExtensionObjectPrefixV2);
+}
+
+
+void
+CreateIndexQueueIfNotExists(bool includeOptions, bool includeDropCommandType)
+{
+	bool readOnly = false;
+	bool isNull = false;
+
+	const char *indexQueueTableName = GetIndexQueueName();
+	const char *cmdTypeCheck = includeDropCommandType ? "'C', 'D', 'R'" : "'C', 'R'";
+	const char *optionsColumn = includeOptions ?
+								psprintf(",options %s.bson DEFAULT null",
+										 CoreSchemaName) : "";
+
+	StringInfo createStr = makeStringInfo();
+
+	appendStringInfo(createStr,
+					 "CREATE TABLE IF NOT EXISTS %s ("
+					 "index_cmd text not null,"
+
+					 "cmd_type char CHECK (cmd_type IN (%s)),"
+					 "index_id integer not null,"
+
+	                 /* index_cmd_status gets represented as enum IndexCmdStatus in index.h */
+					 "index_cmd_status integer default 1,"
+					 "global_pid bigint,"
+					 "start_time timestamp WITH TIME ZONE,"
+					 "collection_id bigint not null,"
+
+	                 /* Used to enter the error encounter during execution of index_cmd */
+					 "comment %s.bson,"
+
+	                 /* current attempt counter for retrying the failed request */
+					 "attempt smallint,"
+
+	                 /* update_time shows the time when request was updated in the table */
+					 "update_time timestamp with time zone DEFAULT now(),"
+
+					 "user_oid Oid CHECK (user_oid IS NULL OR user_oid != '0'::oid)"
+
+	                 /* options column */
+					 "%s"
+
+					 ")", indexQueueTableName,
+					 cmdTypeCheck,
+					 CoreSchemaName,
+					 optionsColumn);
+
+	ExtensionExecuteQueryViaSPI(createStr->data, readOnly, SPI_OK_UTILITY,
+								&isNull);
+
+	resetStringInfo(createStr);
+	appendStringInfo(createStr,
+					 "CREATE INDEX IF NOT EXISTS %s_index_queue_indexid_cmdtype on %s (index_id, cmd_type)",
+					 ExtensionObjectPrefixV2, indexQueueTableName);
+	ExtensionExecuteQueryViaSPI(createStr->data, readOnly, SPI_OK_UTILITY,
+								&isNull);
+
+	resetStringInfo(createStr);
+	appendStringInfo(createStr,
+					 "CREATE INDEX IF NOT EXISTS %s_index_queue_cmdtype_collectionid_cmdstatus on %s (cmd_type, collection_id, index_cmd_status)",
+					 ExtensionObjectPrefixV2, indexQueueTableName);
+	ExtensionExecuteQueryViaSPI(createStr->data, readOnly, SPI_OK_UTILITY,
+								&isNull);
+
+	resetStringInfo(createStr);
+	appendStringInfo(createStr,
+					 "GRANT SELECT ON TABLE %s TO public", indexQueueTableName);
+	ExtensionExecuteQueryViaSPI(createStr->data, readOnly, SPI_OK_UTILITY,
+								&isNull);
+
+	resetStringInfo(createStr);
+	appendStringInfo(createStr,
+					 "GRANT ALL ON TABLE %s TO %s, %s",
+					 indexQueueTableName,
+					 ApiAdminRoleV2,
+					 ApiAdminRole);
+	ExtensionExecuteQueryViaSPI(createStr->data, readOnly, SPI_OK_UTILITY,
+								&isNull);
 }
 
 
@@ -2398,11 +2551,15 @@ SerializeIndexSpec(const IndexSpec *indexSpec, bool isGetIndexes,
 		 * 1. { "a": "text" }
 		 * 2. { "_fts": "text", "_ftsx": 1 }, { "weights": { "a": 1 } }
 		 * For the latter case, the text paths are specified in the weights field.
+		 *
+		 * Also, any custom options we should write under storageEngine document.
 		 */
 		if (isGetIndexes)
 		{
+			pgbson_writer storageEngineOptionsWriter;
 			bson_iter_t optionsIter;
 			PgbsonInitIterator(indexSpec->indexOptions, &optionsIter);
+			PgbsonWriterInit(&storageEngineOptionsWriter);
 
 			while (bson_iter_next(&optionsIter))
 			{
@@ -2420,11 +2577,49 @@ SerializeIndexSpec(const IndexSpec *indexSpec, bool isGetIndexes,
 				{
 					languageOverride = bson_iter_utf8(&optionsIter, NULL);
 				}
+				else if (StringViewEqualsCString(&keyView, "enableLargeIndexKeys"))
+				{
+					bool value = BsonValueAsBool(bson_iter_value(&optionsIter));
+					PgbsonWriterAppendBool(&storageEngineOptionsWriter,
+										   "enableLargeIndexKeys", 20,
+										   value);
+				}
+				else if (StringViewEqualsCString(&keyView, "buildAsUnique"))
+				{
+					bool value = BsonValueAsBool(bson_iter_value(&optionsIter));
+					if (value)
+					{
+						PgbsonWriterAppendBool(&storageEngineOptionsWriter,
+											   "buildAsUnique", 13,
+											   true);
+					}
+				}
+				else if (IsOptionsKeyOrderedIndex(keyView.string))
+				{
+					/* TODO: We should just write this if the value is != ShouldUseCompositeOpClassByDefault
+					 * but we're leaving it here during the transition period of this being enabled by default in
+					 * some cases.*/
+					bool value = BsonValueAsBool(bson_iter_value(&optionsIter));
+					PgbsonWriterAppendBool(&storageEngineOptionsWriter,
+										   "enableOrderedIndex", 18,
+										   value);
+				}
 				else
 				{
 					PgbsonWriterAppendValue(&finalWriter, keyView.string, keyView.length,
 											bson_iter_value(&optionsIter));
 				}
+			}
+
+			if (!IsPgbsonWriterEmptyDocument(&storageEngineOptionsWriter))
+			{
+				PgbsonWriterAppendDocument(&finalWriter, "storageEngine", 13,
+										   PgbsonWriterGetPgbson(
+											   &storageEngineOptionsWriter));
+			}
+			else
+			{
+				PgbsonWriterFree(&storageEngineOptionsWriter);
 			}
 		}
 		else
@@ -2432,7 +2627,6 @@ SerializeIndexSpec(const IndexSpec *indexSpec, bool isGetIndexes,
 			PgbsonWriterConcat(&finalWriter, indexSpec->indexOptions);
 		}
 	}
-
 
 	if (textColumns != NIL)
 	{
@@ -2509,6 +2703,18 @@ AreIndexOptionsStillEquivalent(const char *path, const bson_value_t *left,
 			}
 
 			areEquivalent = buildAsUniqueLeft == buildAsUniqueRight;
+		}
+	}
+
+	if (areEquivalent && strcmp(path, "collation") == 0)
+	{
+		if (left == NULL || right == NULL)
+		{
+			areEquivalent = left == right;
+		}
+		else
+		{
+			areEquivalent = BsonValueEquals(left, right);
 		}
 	}
 

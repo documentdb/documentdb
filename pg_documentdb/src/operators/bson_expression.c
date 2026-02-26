@@ -577,6 +577,12 @@ PG_FUNCTION_INFO_V1(bson_expression_map);
 Datum
 bson_expression_get(PG_FUNCTION_ARGS)
 {
+	/* TODO: Remove after v0.110 when function has only STRICT forms */
+	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
+	{
+		PG_RETURN_NULL();
+	}
+
 	pgbson *document = PG_GETARG_PGBSON(0);
 	pgbson *expression = PG_GETARG_PGBSON(1);
 	bool isNullOnEmpty = PG_GETARG_BOOL(2);
@@ -593,7 +599,7 @@ bson_expression_get(PG_FUNCTION_ARGS)
 	char *collationString = NULL;
 	if (EnableCollation && PG_NARGS() > 4)
 	{
-		collationString = text_to_cstring(PG_GETARG_TEXT_P(4));
+		collationString = PG_ARGISNULL(4) ? NULL : text_to_cstring(PG_GETARG_TEXT_P(4));
 		numArgs = 3;
 		argPositions[2] = 4;
 	}
@@ -673,6 +679,12 @@ bson_expression_get(PG_FUNCTION_ARGS)
 Datum
 bson_expression_partition_get(PG_FUNCTION_ARGS)
 {
+	/* TODO: Remove after v0.110 when function has only STRICT forms */
+	if (PG_ARGISNULL(0) || PG_ARGISNULL(1) || PG_ARGISNULL(2))
+	{
+		PG_RETURN_NULL();
+	}
+
 	pgbson *document = PG_GETARG_PGBSON(0);
 	pgbson *expression = PG_GETARG_PGBSON(1);
 	bool isNullOnEmpty = PG_GETARG_BOOL(2);
@@ -1520,11 +1532,16 @@ ExpressionResultSetValue(ExpressionResult *expressionResult, const
 		expressionResult->value = *value;
 	}
 
-	if (!expressionResult->expressionResultPrivate.variableContext.hasSingleVariable)
+	/* Some variable context tables (eg: from $let) need to be preserved until */
+	/* every document is processed. */
+	ExpressionVariableContext variableContext =
+		expressionResult->expressionResultPrivate.variableContext;
+	bool destroyTable = !variableContext.preserveVariableTable &&
+						!variableContext.hasSingleVariable;
+	if (destroyTable)
 	{
-		hash_destroy(
-			expressionResult->expressionResultPrivate.variableContext.context.table);
-		expressionResult->expressionResultPrivate.variableContext.context.table = NULL;
+		hash_destroy(variableContext.context.table);
+		variableContext.context.table = NULL;
 	}
 }
 
@@ -1909,7 +1926,8 @@ ParseAggregationExpressionData(AggregationExpressionData *expressionData,
 	if (context != NULL &&
 		context->validateParsedExpressionFunc != NULL)
 	{
-		context->validateParsedExpressionFunc(expressionData);
+		context->validateParsedExpressionFunc(expressionData,
+											  context->operatorVariables);
 	}
 }
 
@@ -2538,7 +2556,7 @@ ParseDocumentAggregationExpressionData(const bson_value_t *value,
 	BsonValueInitIterator(value, &docIter);
 
 	BuildBsonPathTreeContext context = { 0 };
-	context.parseAggregationContext.collationString = parseContext->collationString;
+	context.parseAggregationContext = *parseContext;
 	context.buildPathTreeFuncs = &DefaultPathTreeFuncs;
 	BsonIntermediatePathNode *treeNode = BuildBsonPathTree(&docIter, &context,
 														   forceLeafExpression,
@@ -2552,7 +2570,7 @@ ParseDocumentAggregationExpressionData(const bson_value_t *value,
 	}
 	else
 	{
-		ereport(DEBUG3, (errmsg(
+		ereport(DEBUG2, (errmsg(
 							 "Converting document expression into a fixed constant.")));
 
 		/* We write the tree instead of just copying the input value for 2 reasons:
@@ -2657,7 +2675,7 @@ ParseArrayAggregationExpressionData(const bson_value_t *value,
 
 	if (isConstantArray)
 	{
-		ereport(DEBUG3, (errmsg("Transforming array expression into fixed constant.")));
+		ereport(DEBUG2, (errmsg("Transforming array expression into fixed constant.")));
 
 		/* If it is a constant array, it could've had nested operators that were transformed to a constant
 		 * as the result of evaluating that operator is always constant. So we need to write the value from the parsed tree
@@ -2844,6 +2862,9 @@ ParseDollarLet(const bson_value_t *argument, AggregationExpressionData *data,
 		return;
 	}
 
+	/* do not destroy the variables table after runtime evaluation on a document */
+	inputVariableContext->preserveVariableTable = true;
+
 	data->operator.arguments = list_make2(inData, inputVariableContext);
 	data->operator.argumentsKind = AggregationExpressionArgumentsKind_List;
 }
@@ -2869,9 +2890,11 @@ HandlePreParsedDollarLet(pgbson *doc, void *arguments,
 	 * instead do it inline. */
 	ExpressionResult childExpressionResult = ExpressionResultCreateWithTracker(
 		expressionResult->expressionResultPrivate.tracker);
-	childExpressionResult.expressionResultPrivate.variableContext = *inputVariableContext;
-	childExpressionResult.expressionResultPrivate.variableContext.parent =
-		&expressionResult->expressionResultPrivate.variableContext;
+	ExpressionVariableContext *childContext =
+		&childExpressionResult.expressionResultPrivate.variableContext;
+
+	*childContext = *inputVariableContext;
+	childContext->parent = &expressionResult->expressionResultPrivate.variableContext;
 
 	bool isNullOnEmpty = false;
 	EvaluateAggregationExpressionData(inExpression, doc, &childExpressionResult,
@@ -2933,7 +2956,8 @@ ParseVariableArgumentsForExpression(const bson_value_t *value, bool *isConstant,
 
 /* Call back function for top level command let parsing to disallow path expressions, CURRENT and ROOT for a top level variable spec. */
 static void
-DisallowExpressionsForTopLevelLet(AggregationExpressionData *parsedExpression)
+DisallowExpressionsForTopLevelLet(AggregationExpressionData *parsedExpression,
+								  HTAB *operatorVariables)
 {
 	/* Path expressions, CURRENT and ROOT are not allowed in command level let. */
 	if (parsedExpression->kind == AggregationExpressionKind_Path ||

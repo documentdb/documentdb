@@ -13,22 +13,26 @@ BUILD_SCRIPT_DIR = ../
 OSS_SRC_DIR = ../
 OSS_COMMON_SQL_HEADER = $(wildcard $(OSS_SRC_DIR)/common_header.sql)
 
-# Extension defines
-API_SCHEMA_NAME=documentdb_api
-API_SCHEMA_NAME_V2=documentdb_api
-API_SCHEMA_INTERNAL_NAME=documentdb_api_internal
-API_SCHEMA_INTERNAL_NAME_V2=documentdb_api_internal
-API_CATALOG_SCHEMA_NAME=documentdb_api_catalog
-API_CATALOG_SCHEMA_NAME_V2=documentdb_api_catalog
-CORE_SCHEMA_NAME=documentdb_core
-API_DATA_SCHEMA_NAME=documentdb_data
-API_ADMIN_ROLE=documentdb_admin_role
-API_READONLY_ROLE=documentdb_readonly_role
-API_BG_WORKER_ROLE=documentdb_bg_worker_role
-POSTGIS_SCHEMA_NAME=public
-EXTENSION_OBJECT_PREFIX=documentdb
+# Prefixes
 API_GUC_PREFIX=documentdb
 API_GUC_PREFIX_V2=documentdb
+EXTENSION_OBJECT_PREFIX=documentdb
+
+# Schema Names
+API_CATALOG_SCHEMA_NAME=documentdb_api_catalog
+API_CATALOG_SCHEMA_NAME_V2=documentdb_api_catalog
+API_DATA_SCHEMA_NAME=documentdb_data
+API_SCHEMA_INTERNAL_NAME=documentdb_api_internal
+API_SCHEMA_INTERNAL_NAME_V2=documentdb_api_internal
+API_SCHEMA_NAME=documentdb_api
+API_SCHEMA_NAME_V2=documentdb_api
+CORE_SCHEMA_NAME=documentdb_core
+POSTGIS_SCHEMA_NAME=public
+
+# Built-in roles
+API_ADMIN_ROLE=documentdb_admin_role
+API_BG_WORKER_ROLE=documentdb_bg_worker_role
+API_READONLY_ROLE=documentdb_readonly_role
 
 # TODO: Need to remove this with PG16 and expose only valid exports
 ALLOW_DEFAULT_VISIBILITY=yes
@@ -47,6 +51,8 @@ DEBUG ?= no
 ifeq ($(DEBUG),yes)
   PG_CPPFLAGS += -ggdb -O0 -g
   PG_CFLAGS += -ggdb -O0 -g
+  override CFLAGS += -O0
+  override CPPFLAGS += -O0
 endif
 
 SHLIB_LINK = $(libpq)
@@ -59,11 +65,32 @@ clean-sql:
 check:
 	$(MAKE) -C src/test all
 
-check-minimal:
-	$(MAKE) -C src/test/regress check-bson-minimal
+installcheck:
+	$(MAKE) -C src/test installcheck
 
-check-documentdb-minimal:
-	$(MAKE) -C src/test/regress check-bson-minimal
+check-extended-rum:
+	$(MAKE) -C src/test/extended_rum_tests all
+
+check-minimal:
+	$(MAKE) -C src/test/regress check-minimal
+
+check-documentdb-minimal: check-minimal
+
+check-docdb-rum-minimal:
+	$(MAKE) -C src/test/extended_rum_tests check-minimal
+
+check-valgrind:
+	mkdir -p $(CURDIR)/src/test/regress/log/
+	echo >$(CURDIR)/src/test/regress/log/pglog.log
+	$(OSS_SRC_DIR)/scripts/start_oss_server.sh -c -u "" -v -p 58070 -f $(CURDIR)/src/test/regress/regression_opts.conf -l $(CURDIR)/src/test/regress/log/pglog.log
+	$(MAKE) INSTALL_PG_PORT=58070 -C src/test installcheck
+	$(OSS_SRC_DIR)/scripts/start_oss_server.sh -s -v
+
+check-start-oss-server:
+	mkdir -p $(CURDIR)/src/test/regress/log/
+	echo >$(CURDIR)/src/test/regress/log/pglog.log
+	$(OSS_SRC_DIR)/scripts/start_oss_server.sh -c -u "" -p 58070 -f $(CURDIR)/src/test/regress/regression_opts.conf -l $(CURDIR)/src/test/regress/log/pglog.log
+	$(MAKE) INSTALL_PG_PORT=58070 -C src/test installcheck
 
 citus-indent:
 	citus_indent

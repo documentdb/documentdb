@@ -1772,3 +1772,67 @@ SELECT count(document) FROM documentdb_api.collection('documentdb','patient2');
      2
 (1 row)
 
+reset documentdb.enableNativeColocation;
+-- test merge index pushdown
+SELECT COUNT(documentdb_api.insert_one('mrgedb', 'merge_idx_src', FORMAT('{ "_id": %s, "a": %s, "b" : %s, "content": [ %s, %s, %s] }',
+                                                                              i + 10, i + 100, i + 100, i + 100, i + 200, i + 300)::bson)) FROM generate_series(1, 100) i;
+NOTICE:  creating collection
+ count 
+-------
+   100
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one('mrgedb', 'merge_idx_dest', FORMAT('{ "_id": %s, "a": %s, "b" : %s, "content": [ %s, %s, %s] }',
+                                                                              i + 10, i + 100, i + 100, i + 100, i + 200, i + 300)::bson)) FROM generate_series(1, 100) i;
+NOTICE:  creating collection
+ count 
+-------
+   100
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('mrgedb', '{ "createIndexes": "merge_idx_dest", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableOrderedIndex": true, "unique": true } ]}', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE documentdb_data.documents_780079;
+-- update seq cost for tiny tables.
+set seq_page_cost to 100;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('mrgedb', '{ "aggregate": "merge_idx_src", "pipeline": [ { "$merge": { "into": "merge_idx_dest" , "on": "a" } } ] }');
+                                                                                                              QUERY PLAN                                                                                                               
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Merge on documentdb_data.documents_780079
+   ->  Nested Loop Left Join
+         Output: documents_780079.ctid, collection.document, collection.ctid
+         ->  Index Scan using _id_ on documentdb_data.documents_780078 collection
+               Output: collection.document, collection.ctid
+               Index Cond: (collection.shard_key_value = '780078'::bigint)
+         ->  Index Scan using a_1 on documentdb_data.documents_780079
+               Output: documents_780079.ctid, documents_780079.document
+               Index Cond: (documents_780079.document @= bson_dollar_extract_merge_filter(collection.document, 'a'::text))
+               Filter: ((documents_780079.shard_key_value OPERATOR(pg_catalog.=) '780079'::bigint) AND bson_dollar_merge_join(documents_780079.document, bson_dollar_extract_merge_filter(collection.document, 'a'::text), 'a'::text))
+(10 rows)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('mrgedb', '{ "createIndexes": "merge_idx_dest", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": true, "unique": true } ]}', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE documentdb_data.documents_780079;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('mrgedb', '{ "aggregate": "merge_idx_src", "pipeline": [ { "$merge": { "into": "merge_idx_dest" , "on": [ "a", "b" ] } } ] }');
+                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Merge on documentdb_data.documents_780079
+   ->  Nested Loop Left Join
+         Output: documents_780079.ctid, collection.document, collection.ctid
+         ->  Index Scan using _id_ on documentdb_data.documents_780078 collection
+               Output: collection.document, collection.ctid
+               Index Cond: (collection.shard_key_value = '780078'::bigint)
+         ->  Index Scan using a_b_1 on documentdb_data.documents_780079
+               Output: documents_780079.ctid, documents_780079.document
+               Index Cond: ((documents_780079.document @= bson_dollar_extract_merge_filter(collection.document, 'a'::text)) AND (documents_780079.document @= bson_dollar_extract_merge_filter(collection.document, 'b'::text)))
+               Filter: ((documents_780079.shard_key_value OPERATOR(pg_catalog.=) '780079'::bigint) AND bson_dollar_merge_join(documents_780079.document, bson_dollar_extract_merge_filter(collection.document, 'a'::text), 'a'::text) AND bson_dollar_merge_join(documents_780079.document, bson_dollar_extract_merge_filter(collection.document, 'b'::text), 'b'::text))
+(10 rows)
+

@@ -28,8 +28,10 @@
 #include "configs/config_initialization.h"
 #include "index_am/documentdb_rum.h"
 #include "infrastructure/cursor_store.h"
+#include "infrastructure/job_management.h"
 #include "background_worker/background_worker_job.h"
 #include "index_am/roaring_bitmap_adapter.h"
+#include "utils/error_utils.h"
 
 /* --------------------------------------------------------- */
 /* Data Types & Enum values */
@@ -190,6 +192,16 @@ InitializeBackgroundWorkerJobAllowedCommands(void)
 		.name = "build_index_background", .schema = ApiInternalSchemaName
 	};
 	RegisterBackgroundWorkerJobAllowedCommand(buildIndexConcurrently);
+}
+
+
+/*
+ * Registers DocumentDB background worker jobs.
+ */
+void
+RegisterDocumentDBBackgroundWorkerJobs(void)
+{
+	RegisterIndexBuildBackgroundWorkerJobs();
 }
 
 

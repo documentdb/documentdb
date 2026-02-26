@@ -53,35 +53,28 @@ typedef enum RumLibraryLoadOptions
 	RumLibraryLoadOption_RequireDocumentDBRum = 2,
 } RumLibraryLoadOptions;
 
-
-/* Registers an extensibility that handles index array deduplication */
-void RegisterIndexArrayStateFuncs(const RumIndexArrayStateFuncs *funcs);
-typedef bool (*CanOrderInIndexScan)(IndexScanDesc scan);
-
 extern RumLibraryLoadOptions DocumentDBRumLibraryLoadOption;
 void LoadRumRoutine(void);
-IndexAmRoutine *GetRumIndexHandler(PG_FUNCTION_ARGS);
 
 IndexScanDesc extension_rumbeginscan_core(Relation rel, int nkeys, int norderbys,
 										  IndexAmRoutine *coreRoutine);
 void extension_rumendscan_core(IndexScanDesc scan, IndexAmRoutine *coreRoutine);
 void extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 							  ScanKey orderbys, int norderbys,
-							  IndexAmRoutine *coreRoutine,
-							  GetMultikeyStatusFunc multiKeyStatusFunc,
-							  CanOrderInIndexScan indexScanOrderedFunc);
+							  IndexAmRoutine *coreRoutine);
 int64 extension_rumgetbitmap_core(IndexScanDesc scan, TIDBitmap *tbm,
 								  IndexAmRoutine *coreRoutine);
 bool extension_rumgettuple_core(IndexScanDesc scan, ScanDirection direction,
 								IndexAmRoutine *coreRoutine);
 
 
-void extension_rumcostestimate(PlannerInfo *root, IndexPath *path, double
-							   loop_count,
-							   Cost *indexStartupCost, Cost *indexTotalCost,
-							   Selectivity *indexSelectivity,
-							   double *indexCorrelation,
-							   double *indexPages);
+void extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double
+									loop_count,
+									Cost *indexStartupCost, Cost *indexTotalCost,
+									Selectivity *indexSelectivity,
+									double *indexCorrelation,
+									double *indexPages, IndexAmRoutine *coreRoutine,
+									bool forceIndexPushdownCostToZero);
 
 IndexBuildResult * extension_rumbuild_core(Relation heapRelation, Relation indexRelation,
 										   struct IndexInfo *indexInfo,
@@ -100,12 +93,12 @@ bool extension_ruminsert_core(Relation indexRelation,
 							  IndexAmRoutine *coreRoutine,
 							  UpdateMultikeyStatusFunc updateMultikeyStatus);
 
-void RumUpdateMultiKeyStatus(Relation index);
-bool RumGetMultikeyStatus(Relation indexRelation);
 bool RumGetTruncationStatus(Relation indexRelation);
 
 struct ExplainState;
 void ExplainCompositeScan(IndexScanDesc scan, struct ExplainState *es);
+void ExplainRawCompositeScan(Relation index_rel, List *indexQuals, List *indexOrderBy,
+							 ScanDirection indexScanDir, struct ExplainState *es);
 
 void ExplainRegularIndexScan(IndexScanDesc scan, struct ExplainState *es);
 #endif

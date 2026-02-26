@@ -6,4 +6,6 @@ set -u
 set -e
 
 curl https://sh.rustup.rs -sSf | bash -s -- -y --no-modify-path --default-toolchain none
-. $HOME/.cargo/env && rustup show
+if [[ "${1:-}" == "--install-toolchain" ]]; then
+    . "$CARGO_HOME/env" && rustup show
+fi

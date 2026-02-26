@@ -33,6 +33,12 @@ SELECT document FROM r1 WHERE document @@ '{ "$text": { "$search": "cat" } }';
 -- no more than 1 $text:
 SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$and": [ { "$text": { "$search": "cat" } }, { "$text": { "$search": "dogs" } }] }';
 
+-- Test tsquery stack depth, max depth is 32
+-- 32 should work
+SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "--------------------------------cat" } }';
+-- one more should fail
+SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "---------------------------------cat" } }';
+
 CALL documentdb_api.drop_indexes('db', '{ "dropIndexes": "bson_dollar_ops_text_search", "index": "a_text" }');
 
 SELECT documentdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 11, "topic": "apple", "writer": "Carol", "score": 50, "location": "New York", "published": true }');

@@ -21,29 +21,33 @@ export PG_REGRESS_DIFF_OPTS = -dU10
 
 export PGISOLATIONTIMEOUT = 60
 
-.PHONY: check-bson-basic check-bson-minimal
+.PHONY: check-basic check-minimal
 
 define common_test
-	$(top_builddir)/src/test/regress/pg_regress --encoding=UTF8 --dlpath=$(BASEPATH) $(EXTENSIONLOAD) --temp-instance ./tmp --temp-config ./postgresql.conf --host localhost --port 58070 $(1) $(2) || (cat regression.diffs && false)
+	mkdir -p log && { $(top_builddir)/src/test/regress/pg_regress --encoding=UTF8 --dlpath=$(BASEPATH) $(EXTENSIONLOAD) --temp-instance ./tmp --temp-config ./postgresql.conf --host localhost --port 58070 $(1) $(2) 2>&1; echo $$? > log/.exitcode; } | tee log/summary.out; test $$(cat log/.exitcode) -eq 0 || (cat regression.diffs && false)
 endef
 
 define isolation_test
-	$(top_builddir)/src/test/isolation/pg_isolation_regress --encoding=UTF8 --dlpath=$(BASEPATH) $(EXTENSIONLOAD) --temp-instance ./tmp --temp-config ./isolation_postgresql.conf --host localhost --port 58071 $(1) $(2) || (cat regression.diffs && false)
+	mkdir -p log && { $(top_builddir)/src/test/isolation/pg_isolation_regress --encoding=UTF8 --dlpath=$(BASEPATH) $(EXTENSIONLOAD) --temp-instance ./tmp --temp-config ./isolation_postgresql.conf --host localhost --port 58071 $(1) $(2) 2>&1; echo $$? > log/.exitcode; } | tee log/summary.out; test $$(cat log/.exitcode) -eq 0 || (cat regression.diffs && false)
 endef
 
 check-basic: generate_version_schedule
 	$(call common_test,--schedule=./log/basic_schedule_$(pg_major_version))
 
-check-bson-minimal:
+check-minimal:
 	$(call common_test,--schedule=./minimal_schedule, $(EXTRA_TESTS))
 
 check-test-output:
-	./validate_test_output.sh $(pg_major_version)
+	./validate_test_output.sh $(pg_major_version) $(MAKEFILE_DIR)
 
 generate_version_schedule:
 	@mkdir -p log
 	@cp basic_schedule log/basic_schedule_$(pg_major_version)
 	@./mutate_schedule.sh log/basic_schedule_$(pg_major_version) $(pg_major_version)
 
+INSTALL_PG_PORT ?= 5432
+
+installcheck: generate_version_schedule
+	mkdir -p log && { $(top_builddir)/src/test/regress/pg_regress --encoding=UTF8 --port $(INSTALL_PG_PORT) --dlpath=$(BASEPATH) --use-existing --dbname=postgres --schedule=./log/basic_schedule_$(pg_major_version) 2>&1; echo $$? > log/.exitcode; } | tee log/summary.out; test $$(cat log/.exitcode) -eq 0 || (cat regression.diffs && false)
 
 all: check-basic check-test-output

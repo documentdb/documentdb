@@ -51,11 +51,71 @@ extern bool EnableUsersInfoPrivileges;
 /* GUC that controls whether native authentication is enabled*/
 extern bool IsNativeAuthEnabled;
 
+/* GUC that controls whether the DB admin check is enabled*/
+extern bool EnableUsersAdminDBCheck;
+
 PG_FUNCTION_INFO_V1(documentdb_extension_create_user);
 PG_FUNCTION_INFO_V1(documentdb_extension_drop_user);
 PG_FUNCTION_INFO_V1(documentdb_extension_update_user);
 PG_FUNCTION_INFO_V1(documentdb_extension_get_users);
 PG_FUNCTION_INFO_V1(command_connection_status);
+
+enum DocumentDB_BuiltInRoles
+{
+	DocumentDB_Role_Read_AnyDatabase = 0x1,
+	DocumentDB_Role_ReadWrite_AnyDatabase = 0x2,
+	DocumentDB_Role_Cluster_Admin = 0x4,
+};
+
+typedef struct
+{
+	/* "createUser" field */
+	const char *createUser;
+
+	/* "pwd" field */
+	const char *pwd;
+
+	/* "roles" field */
+	bson_value_t roles;
+
+	/* "identityProvider" field*/
+	bson_value_t identityProviderData;
+
+	/* pgRole the passed in role maps to */
+	char *pgRole;
+
+	/* principalType */
+	char *principalType;
+
+	/* has_identity_provider */
+	bool has_identity_provider;
+} CreateUserSpec;
+
+typedef struct
+{
+	/* "updateUser" field */
+	const char *updateUser;
+
+	/* "pwd" field */
+	const char *pwd;
+} UpdateUserSpec;
+
+typedef struct
+{
+	StringView user;
+	bool showAllUsers;
+	bool showPrivileges;
+} GetUserSpec;
+
+/*
+ * Hash entry structure for user roles.
+ */
+typedef struct UserRoleHashEntry
+{
+	char *user;
+	HTAB *roles;
+	bool isExternal;
+} UserRoleHashEntry;
 
 static void ParseCreateUserSpec(pgbson *createUserSpec, CreateUserSpec *spec);
 static void CreateNativeUser(const CreateUserSpec *createUserSpec);
@@ -250,10 +310,10 @@ ParseCreateUserSpec(pgbson *createSpec, CreateUserSpec *spec)
 	bson_iter_t createIter;
 	PgbsonInitIterator(createSpec, &createIter);
 
-	bool has_user = false;
-	bool has_pwd = false;
-	bool has_roles = false;
-
+	bool userFound = false;
+	bool passwordFound = false;
+	bool rolesFound = false;
+	bool dbFound = false;
 	while (bson_iter_next(&createIter))
 	{
 		const char *key = bson_iter_key(&createIter);
@@ -276,7 +336,7 @@ ParseCreateUserSpec(pgbson *createSpec, CreateUserSpec *spec)
 								errmsg("Invalid username, use a different username.")));
 			}
 
-			has_user = true;
+			userFound = true;
 		}
 		else if (strcmp(key, "pwd") == 0)
 		{
@@ -290,7 +350,7 @@ ParseCreateUserSpec(pgbson *createSpec, CreateUserSpec *spec)
 									"The password field must not be left empty.")));
 			}
 
-			has_pwd = true;
+			passwordFound = true;
 		}
 		else if (strcmp(key, "roles") == 0)
 		{
@@ -312,7 +372,21 @@ ParseCreateUserSpec(pgbson *createSpec, CreateUserSpec *spec)
 
 			/* Check if it's in the right format */
 			spec->pgRole = ValidateAndObtainUserRole(&spec->roles);
-			has_roles = true;
+			rolesFound = true;
+		}
+		else if (strcmp(key, "$db") == 0 && EnableUsersAdminDBCheck)
+		{
+			EnsureTopLevelFieldType(key, &createIter, BSON_TYPE_UTF8);
+			uint32_t strLength = 0;
+			const char *db_name = bson_iter_utf8(&createIter, &strLength);
+
+			dbFound = true;
+			if (strcmp(db_name, "admin") != 0)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"CreateUser must be called from 'admin' database.")));
+			}
 		}
 		else if (strcmp(key, "customData") == 0)
 		{
@@ -349,22 +423,32 @@ ParseCreateUserSpec(pgbson *createSpec, CreateUserSpec *spec)
 				}
 			}
 		}
-		else if (!IsCommonSpecIgnoredField(key))
+		else if (IsCommonSpecIgnoredField(key))
+		{
+			continue;
+		}
+		else
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 							errmsg("Unsupported field specified : '%s'.", key)));
 		}
 	}
 
+	if (!dbFound && EnableUsersAdminDBCheck)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("The required $db property is missing.")));
+	}
+
 	if (spec->has_identity_provider)
 	{
-		if (!has_user || !has_roles)
+		if (!userFound || !rolesFound)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
 								"'createUser' and 'roles' are required fields.")));
 		}
 
-		if (has_pwd)
+		if (passwordFound)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
 								"Password is not allowed when using an external identity provider.")));
@@ -372,7 +456,7 @@ ParseCreateUserSpec(pgbson *createSpec, CreateUserSpec *spec)
 	}
 	else
 	{
-		if (!has_user || !has_roles || !has_pwd)
+		if (!userFound || !rolesFound || !passwordFound)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
 								"'createUser', 'roles' and 'pwd' are required fields.")));
@@ -516,6 +600,7 @@ ParseDropUserSpec(pgbson *dropSpec)
 	PgbsonInitIterator(dropSpec, &dropIter);
 
 	char *dropUser = NULL;
+	bool dbFound = false;
 	while (bson_iter_next(&dropIter))
 	{
 		const char *key = bson_iter_key(&dropIter);
@@ -532,14 +617,27 @@ ParseDropUserSpec(pgbson *dropSpec)
 			}
 
 			if (ContainsReservedPgRoleNamePrefix(dropUser) ||
-				(EnableUsernamePasswordConstraints &&
-				 !IsUsernameValid(dropUser)))
+				IS_SYSTEM_LOGIN_ROLE(dropUser))
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg("Invalid username.")));
 			}
 		}
-		else if (strcmp(key, "lsid") == 0 || strcmp(key, "$db") == 0)
+		else if (strcmp(key, "$db") == 0 && EnableUsersAdminDBCheck)
+		{
+			EnsureTopLevelFieldType(key, &dropIter, BSON_TYPE_UTF8);
+			uint32_t strLength = 0;
+			const char *db_name = bson_iter_utf8(&dropIter, &strLength);
+
+			dbFound = true;
+			if (strcmp(db_name, "admin") != 0)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"DropUser must be called from 'admin' database.")));
+			}
+		}
+		else if (IsCommonSpecIgnoredField(key))
 		{
 			continue;
 		}
@@ -548,6 +646,12 @@ ParseDropUserSpec(pgbson *dropSpec)
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 							errmsg("The specified field '%s' is not supported.", key)));
 		}
+	}
+
+	if (!dbFound && EnableUsersAdminDBCheck)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("The required $db property is missing.")));
 	}
 
 	if (dropUser == NULL)
@@ -595,12 +699,8 @@ DropNativeUser(const char *dropUser)
 
 
 /*
- * documentdb_extension_update_user implements the core logic to update a user.
- * In Mongo community edition a user with userAdmin privileges or root privileges can change
- * other users passwords. In postgres a superuser can change any users password.
- * A user with CreateRole privileges can change pwds of roles they created. Given
- * that ApiAdminRole has neither create role nor superuser privileges in our case
- * a user can only change their own pwd and no one elses.
+ * documentdb_extension_update_user implements the
+ * core logic to update a user
  */
 Datum
 documentdb_extension_update_user(PG_FUNCTION_ARGS)
@@ -675,8 +775,8 @@ ParseUpdateUserSpec(pgbson *updateSpec, UpdateUserSpec *spec)
 	bson_iter_t updateIter;
 	PgbsonInitIterator(updateSpec, &updateIter);
 
-	bool has_user = false;
-
+	bool userFound = false;
+	bool dbFound = false;
 	while (bson_iter_next(&updateIter))
 	{
 		const char *key = bson_iter_key(&updateIter);
@@ -692,7 +792,7 @@ ParseUpdateUserSpec(pgbson *updateSpec, UpdateUserSpec *spec)
 									"'updateUser' is a required field.")));
 			}
 
-			has_user = true;
+			userFound = true;
 		}
 		else if (strcmp(key, "pwd") == 0)
 		{
@@ -700,7 +800,21 @@ ParseUpdateUserSpec(pgbson *updateSpec, UpdateUserSpec *spec)
 			uint32_t strLength = 0;
 			spec->pwd = bson_iter_utf8(&updateIter, &strLength);
 		}
-		else if (strcmp(key, "lsid") == 0 || strcmp(key, "$db") == 0)
+		else if (strcmp(key, "$db") == 0 && EnableUsersAdminDBCheck)
+		{
+			EnsureTopLevelFieldType(key, &updateIter, BSON_TYPE_UTF8);
+			uint32_t strLength = 0;
+			const char *db_name = bson_iter_utf8(&updateIter, &strLength);
+
+			dbFound = true;
+			if (strcmp(db_name, "admin") != 0)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"UpdateUser must be called from 'admin' database.")));
+			}
+		}
+		else if (IsCommonSpecIgnoredField(key))
 		{
 			continue;
 		}
@@ -716,7 +830,13 @@ ParseUpdateUserSpec(pgbson *updateSpec, UpdateUserSpec *spec)
 		}
 	}
 
-	if (!has_user)
+	if (!dbFound && EnableUsersAdminDBCheck)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("The required $db property is missing.")));
+	}
+
+	if (!userFound)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 						errmsg("'updateUser' is a required field.")));
@@ -798,16 +918,24 @@ documentdb_extension_get_users(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-						errmsg("'usersInfo' or 'forAllDBs' must be provided.")));
+						errmsg("'usersInfo' must be provided.")));
 	}
 
 	GetUserSpec userSpec = { 0 };
 	ParseGetUserSpec(PG_GETARG_PGBSON(0), &userSpec);
 	const char *userName = userSpec.user.length > 0 ? userSpec.user.string : NULL;
+	const bool showAllUsers = userSpec.showAllUsers;
 	const bool showPrivileges = userSpec.showPrivileges;
-	Datum userInfoDatum;
 
-	if (userName == NULL)
+	if (showAllUsers && showPrivileges)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg(
+							"The 'showPrivileges' option is not supported when 'usersInfo' is set to 1.")));
+	}
+
+	Datum userInfoDatum;
+	if (showAllUsers)
 	{
 		userInfoDatum = GetAllUsersInfo();
 	}
@@ -876,14 +1004,16 @@ ParseGetUserSpec(pgbson *getSpec, GetUserSpec *spec)
 	spec->user = (StringView) {
 		0
 	};
+	spec->showAllUsers = false;
 	spec->showPrivileges = false;
-	bool requiredFieldFound = false;
+	bool getUsersFieldFound = false;
+	bool dbFound = false;
 	while (bson_iter_next(&getIter))
 	{
 		const char *key = bson_iter_key(&getIter);
 		if (strcmp(key, "usersInfo") == 0)
 		{
-			requiredFieldFound = true;
+			getUsersFieldFound = true;
 			if (bson_iter_type(&getIter) == BSON_TYPE_INT32)
 			{
 				if (bson_iter_as_int64(&getIter) != 1)
@@ -892,6 +1022,8 @@ ParseGetUserSpec(pgbson *getSpec, GetUserSpec *spec)
 									errmsg(
 										"The 'usersInfo' field contains an unsupported value.")));
 				}
+
+				spec->showAllUsers = true;
 			}
 			else if (bson_iter_type(&getIter) == BSON_TYPE_UTF8)
 			{
@@ -913,27 +1045,9 @@ ParseGetUserSpec(pgbson *getSpec, GetUserSpec *spec)
 								errmsg("Unsupported value specified for 'usersInfo'.")));
 			}
 		}
-		else if (strcmp(key, "forAllDBs") == 0)
-		{
-			requiredFieldFound = true;
-			if (bson_iter_type(&getIter) == BSON_TYPE_BOOL)
-			{
-				if (bson_iter_as_bool(&getIter) != true)
-				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-									errmsg(
-										"Unsupported value specified for 'forAllDBs'.")));
-				}
-			}
-			else
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-								errmsg("Unsupported value specified for 'forAllDBs'")));
-			}
-		}
 		else if (strcmp(key, "getUser") == 0)
 		{
-			requiredFieldFound = true;
+			getUsersFieldFound = true;
 			EnsureTopLevelFieldType(key, &getIter, BSON_TYPE_UTF8);
 			uint32_t strLength = 0;
 			const char *userString = bson_iter_utf8(&getIter, &strLength);
@@ -955,7 +1069,21 @@ ParseGetUserSpec(pgbson *getSpec, GetUserSpec *spec)
 									"'showPrivileges' must be a boolean value")));
 			}
 		}
-		else if (strcmp(key, "lsid") == 0 || strcmp(key, "$db") == 0)
+		else if (strcmp(key, "$db") == 0 && EnableUsersAdminDBCheck)
+		{
+			EnsureTopLevelFieldType(key, &getIter, BSON_TYPE_UTF8);
+			uint32_t strLength = 0;
+			const char *db_name = bson_iter_utf8(&getIter, &strLength);
+
+			dbFound = true;
+			if (strcmp(db_name, "admin") != 0)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"UsersInfo must be called from 'admin' database.")));
+			}
+		}
+		else if (IsCommonSpecIgnoredField(key))
 		{
 			continue;
 		}
@@ -966,10 +1094,16 @@ ParseGetUserSpec(pgbson *getSpec, GetUserSpec *spec)
 		}
 	}
 
-	if (!requiredFieldFound)
+	if (!dbFound && EnableUsersAdminDBCheck)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("The required $db property is missing.")));
+	}
+
+	if (!getUsersFieldFound)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-							"'usersInfo' or 'forAllDBs' must be provided.")));
+							"'usersInfo' must be provided.")));
 	}
 }
 
@@ -994,6 +1128,13 @@ connection_status(pgbson *showPrivilegesSpec)
 
 	bool returnDocuments = false;
 	Datum userInfoDatum = GetSingleUserInfo(currentUser, returnDocuments);
+
+	if (userInfoDatum == (Datum) 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg(
+							"Cannot find logged-in user")));
+	}
 
 	const char *parentRole = text_to_cstring(DatumGetTextP(userInfoDatum));
 	if (parentRole == NULL)
@@ -1042,7 +1183,7 @@ connection_status(pgbson *showPrivilegesSpec)
 		pgbson_array_writer privilegesArrayWriter;
 		PgbsonWriterStartArray(&authInfoWriter, "authenticatedUserPrivileges", 27,
 							   &privilegesArrayWriter);
-		WriteSingleRolePrivileges(parentRole, &privilegesArrayWriter);
+		WritePrivileges(parentRole, &privilegesArrayWriter);
 		PgbsonWriterEndArray(&authInfoWriter, &privilegesArrayWriter);
 	}
 
@@ -1065,29 +1206,32 @@ ParseConnectionStatusSpec(pgbson *connectionStatusSpec)
 	PgbsonInitIterator(connectionStatusSpec, &connectionIter);
 
 	bool showPrivileges = false;
-	bool requiredFieldFound = false;
+	bool connectionStatusFound = false;
+	bool dbFound = false;
 	while (bson_iter_next(&connectionIter))
 	{
 		const char *key = bson_iter_key(&connectionIter);
 
 		if (strcmp(key, "connectionStatus") == 0)
 		{
-			requiredFieldFound = true;
-			if (bson_iter_type(&connectionIter) == BSON_TYPE_INT32)
+			if (bson_iter_type(&connectionIter) == BSON_TYPE_INT64)
 			{
 				if (bson_iter_as_int64(&connectionIter) != 1)
 				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-									errmsg(
-										"Unsupported value for 'connectionStatus' field.")));
+					elog(DEBUG1,
+						 "The 'connectionStatus' field contains an integer not equal to 1, got %ld",
+						 bson_iter_as_int64(&connectionIter));
 				}
 			}
 			else
 			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-								errmsg(
-									"'connectionStatus' must be an integer value")));
+				elog(DEBUG1,
+					 "The 'connectionStatus' field contains a non-integer value, got %s",
+					 BsonIterTypeName(&connectionIter));
 			}
+
+			/* We accept all values and types */
+			connectionStatusFound = true;
 		}
 		else if (strcmp(key, "showPrivileges") == 0)
 		{
@@ -1101,7 +1245,13 @@ ParseConnectionStatusSpec(pgbson *connectionStatusSpec)
 								errmsg("'showPrivileges' must be a boolean value")));
 			}
 		}
-		else if (strcmp(key, "lsid") == 0 || strcmp(key, "$db") == 0)
+		else if (strcmp(key, "$db") == 0 && EnableUsersAdminDBCheck)
+		{
+			EnsureTopLevelFieldType(key, &connectionIter, BSON_TYPE_UTF8);
+
+			dbFound = true;
+		}
+		else if (IsCommonSpecIgnoredField(key))
 		{
 			continue;
 		}
@@ -1112,7 +1262,13 @@ ParseConnectionStatusSpec(pgbson *connectionStatusSpec)
 		}
 	}
 
-	if (!requiredFieldFound)
+	if (!dbFound && EnableUsersAdminDBCheck)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("The required $db property is missing.")));
+	}
+
+	if (!connectionStatusFound)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
 							"'connectionStatus' must be provided.")));
@@ -1223,7 +1379,7 @@ WriteSingleUserDocument(UserRoleHashEntry *userEntry, bool showPrivileges,
 	if (EnableUsersInfoPrivileges && showPrivileges && userEntry->roles != NULL)
 	{
 		pgbson_array_writer privilegesArrayWriter;
-		PgbsonWriterStartArray(&userWriter, "privileges", 10,
+		PgbsonWriterStartArray(&userWriter, "inheritedPrivileges", 19,
 							   &privilegesArrayWriter);
 		WriteMultipleRolePrivileges(userEntry->roles, &privilegesArrayWriter);
 		PgbsonWriterEndArray(&userWriter, &privilegesArrayWriter);
@@ -1332,6 +1488,11 @@ ValidateAndObtainUserRole(const bson_value_t *rolesDocument)
 		return ApiAdminRoleV2;
 	}
 
+	if ((userRoles & DocumentDB_Role_ReadWrite_AnyDatabase) != 0)
+	{
+		return ApiReadWriteRole;
+	}
+
 	if ((userRoles & DocumentDB_Role_Read_AnyDatabase) != 0)
 	{
 		return ApiReadOnlyRole;
@@ -1355,11 +1516,28 @@ ParseUsersInfoDocument(const bson_value_t *usersInfoBson, GetUserSpec *spec)
 	bson_iter_t iter;
 	BsonValueInitIterator(usersInfoBson, &iter);
 
+	bool forAllDBsFound = false;
+	bool userFound = false;
+	bool dbFound = false;
 	while (bson_iter_next(&iter))
 	{
 		const char *bsonDocKey = bson_iter_key(&iter);
-		if (strcmp(bsonDocKey, "db") == 0 && BSON_ITER_HOLDS_UTF8(&iter))
+		if (strcmp(bsonDocKey, "forAllDBs") == 0)
 		{
+			if (!BSON_ITER_HOLDS_BOOL(&iter) || bson_iter_as_bool(&iter) != true)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"Unsupported value specified for 'forAllDBs'.")));
+			}
+
+			/* Because we only support users provisioned at admin database level, forAllDBs doesn't have any impact, so we only set spec->showAllUsers to true */
+			spec->showAllUsers = true;
+			forAllDBsFound = true;
+		}
+		else if (strcmp(bsonDocKey, "db") == 0 && BSON_ITER_HOLDS_UTF8(&iter))
+		{
+			dbFound = true;
 			uint32_t strLength;
 			const char *db = bson_iter_utf8(&iter, &strLength);
 			if (strcmp(db, "admin") != 0)
@@ -1374,6 +1552,7 @@ ParseUsersInfoDocument(const bson_value_t *usersInfoBson, GetUserSpec *spec)
 		else if (strcmp(bsonDocKey, "user") == 0 && BSON_ITER_HOLDS_UTF8(
 					 &iter))
 		{
+			userFound = true;
 			uint32_t strLength;
 			const char *userString = bson_iter_utf8(&iter, &strLength);
 			spec->user = (StringView) {
@@ -1381,6 +1560,21 @@ ParseUsersInfoDocument(const bson_value_t *usersInfoBson, GetUserSpec *spec)
 				.length = strLength
 			};
 		}
+	}
+
+	/* The usersInfo document must contain either 'forAllDBs' or (exclusive) 'user' and 'db' together*/
+	if (userFound ^ dbFound)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg(
+							"'usersInfo' document must contain both 'user' and 'db' together.")));
+	}
+
+	if (!(forAllDBsFound ^ userFound))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg(
+							"'usersInfo' document must contain either 'forAllDBs: true', or 'user' and 'db'.")));
 	}
 }
 
@@ -1404,12 +1598,14 @@ GetAllUsersInfo(void)
 		"  JOIN pg_auth_members am ON parent.oid = am.roleid "
 		"  JOIN pg_roles child ON am.member = child.oid "
 		"  WHERE child.rolcanlogin = true "
-		"    AND child.rolname NOT IN ('%s', '%s')"
+		"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s') "
 		") "
 		"SELECT ARRAY_AGG(%s.row_get_bson(r) ORDER BY r.child_role, r.parent_role) "
 		"FROM r;",
 		ApiRootInternalRole, ApiRootRole,
-		ApiAdminRole, ApiAdminRoleV2, CoreSchemaName);
+		ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole,
+		ApiSettingsManagerRole,
+		CoreSchemaName);
 
 	bool readOnly = true;
 	bool isNull = false;
@@ -1447,10 +1643,14 @@ GetSingleUserInfo(const char *userName, bool returnDocuments)
 			"  JOIN pg_roles child ON am.member = child.oid "
 			"  WHERE child.rolcanlogin = true "
 			"    AND child.rolname = $1"
+			"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s') "
 			") "
 			"SELECT ARRAY_AGG(%s.row_get_bson(r) ORDER BY r.parent_role) "
 			"FROM r;",
-			ApiRootInternalRole, ApiRootRole, CoreSchemaName);
+			ApiRootInternalRole, ApiRootRole,
+			ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole,
+			ApiSettingsManagerRole,
+			CoreSchemaName);
 	}
 	else
 	{
@@ -1464,9 +1664,12 @@ GetSingleUserInfo(const char *userName, bool returnDocuments)
 			"JOIN pg_roles child ON am.member = child.oid "
 			"WHERE child.rolcanlogin = true "
 			"  AND child.rolname = $1 "
+			"  AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s') "
 			"ORDER BY parent.rolname "
 			"LIMIT 1;",
-			ApiRootInternalRole, ApiRootRole);
+			ApiRootInternalRole, ApiRootRole,
+			ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole,
+			ApiSettingsManagerRole);
 	}
 
 	int argCount = 1;
@@ -1478,10 +1681,19 @@ GetSingleUserInfo(const char *userName, bool returnDocuments)
 
 	bool readOnly = true;
 	bool isNull = false;
-	return ExtensionExecuteQueryWithArgsViaSPI(cmdStr, argCount,
-											   argTypes, argValues, NULL,
-											   readOnly, SPI_OK_SELECT,
-											   &isNull);
+
+	Datum result = ExtensionExecuteQueryWithArgsViaSPI(cmdStr, argCount,
+													   argTypes, argValues, NULL,
+													   readOnly, SPI_OK_SELECT,
+													   &isNull);
+	if (isNull)
+	{
+		return (Datum) 0;
+	}
+	else
+	{
+		return result;
+	}
 }
 
 

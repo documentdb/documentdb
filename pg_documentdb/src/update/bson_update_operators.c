@@ -17,6 +17,7 @@
 #include "types/decimal128.h"
 #include "utils/documentdb_errors.h"
 #include "io/bson_traversal.h"
+#include "utils/hashset_utils.h"
 #include "utils/sort_utils.h"
 
 /* --------------------------------------------------------- */
@@ -1261,8 +1262,8 @@ AddToSetWriteFinalArray(UpdateOperatorWriter *writer,
 	bson_iter_t currentArrayIter;
 
 	UpdateArrayWriter *arrayWriter = UpdateWriterGetArrayWriter(writer);
+	HTAB *existingElementsHash = CreateBsonValueHashSet();
 
-	List *existingElements = NIL;
 	if (existingValue->value_type != BSON_TYPE_EOD)
 	{
 		BsonValueInitIterator(existingValue, &currentArrayIter);
@@ -1271,16 +1272,24 @@ AddToSetWriteFinalArray(UpdateOperatorWriter *writer,
 		while (bson_iter_next(&currentArrayIter))
 		{
 			const bson_value_t *value = bson_iter_value(&currentArrayIter);
+			bool found = false;
 
-			bson_value_t *elementInList = palloc(sizeof(bson_value_t));
-			*elementInList = *value;
-			existingElements = lappend(existingElements, elementInList);
+			BsonValueHashEntry hashEntry = {
+				.bsonValue = *value,
+				.collationString = NULL
+			};
 
-			UpdateArrayWriterWriteOriginalValue(arrayWriter, value);
+			hash_search(existingElementsHash, &hashEntry, HASH_ENTER,
+						&found);
+
+			UpdateArrayWriterWriteValueWithModifyType(arrayWriter, value,
+													  MODIFY_TYPE_ORIGINAL_REWRITE);
 		}
 	}
 
-	/* For every new elements, iterate over the child elements list and add a new Node, if it is not a duplicate */
+	/* For every new elements, check if its present in the table (add if missing),
+	 * and write new distinct value to the target array
+	 */
 	if (isEach)
 	{
 		bson_iter_t newElementsIter;
@@ -1288,40 +1297,29 @@ AddToSetWriteFinalArray(UpdateOperatorWriter *writer,
 		while (bson_iter_next(&newElementsIter))
 		{
 			const bson_value_t *newValue = bson_iter_value(&newElementsIter);
-			ListCell *cell;
+			BsonValueHashEntry searchEntry = {
+				.bsonValue = *newValue,
+				.collationString = NULL
+			};
+
 			bool found = false;
-			foreach(cell, existingElements)
-			{
-				bson_value_t *item = lfirst(cell);
-				if (BsonValueEquals(item, newValue))
-				{
-					found = true;
-					break;
-				}
-			}
+			hash_search(existingElementsHash, &searchEntry, HASH_ENTER, &found);
 
 			if (!found)
 			{
-				bson_value_t *elementInList = palloc(sizeof(bson_value_t));
-				*elementInList = *newValue;
-				existingElements = lappend(existingElements, elementInList);
 				UpdateArrayWriterWriteModifiedValue(arrayWriter, newValue);
 			}
 		}
 	}
 	else
 	{
-		ListCell *cell;
+		BsonValueHashEntry searchEntry = {
+			.bsonValue = *elementsToAdd,
+			.collationString = NULL
+		};
+
 		bool found = false;
-		foreach(cell, existingElements)
-		{
-			bson_value_t *item = lfirst(cell);
-			if (BsonValueEquals(item, elementsToAdd))
-			{
-				found = true;
-				break;
-			}
-		}
+		hash_search(existingElementsHash, &searchEntry, HASH_FIND, &found);
 
 		if (!found)
 		{
@@ -1329,7 +1327,7 @@ AddToSetWriteFinalArray(UpdateOperatorWriter *writer,
 		}
 	}
 
-	list_free_deep(existingElements);
+	hash_destroy(existingElementsHash);
 	UpdateArrayWriterFinalize(writer, arrayWriter);
 }
 

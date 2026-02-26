@@ -49,7 +49,7 @@ get_bloat_stats_worker(PG_FUNCTION_ARGS)
 	StringInfo bloatEstimateQuery = makeStringInfo();
 	appendStringInfo(bloatEstimateQuery,
 					 "WITH constants AS ("
-					 "   SELECT %d AS bs, 23 AS hdr, 8 AS ma"
+					 "   SELECT %d::numeric AS bs, 23::numeric AS hdr, 8::numeric AS ma"
 					 "),",
 					 BLCKSZ);
 

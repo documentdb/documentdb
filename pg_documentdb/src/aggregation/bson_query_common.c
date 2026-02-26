@@ -18,16 +18,17 @@ DollarRangeParams *
 ParseQueryDollarRange(pgbsonelement *filterElement)
 {
 	DollarRangeParams *rangeParams = palloc0(sizeof(DollarRangeParams));
-	InitializeQueryDollarRange(filterElement, rangeParams);
+	InitializeQueryDollarRange(&filterElement->bsonValue, rangeParams);
 	return rangeParams;
 }
 
 
 void
-InitializeQueryDollarRange(pgbsonelement *filterElement, DollarRangeParams *rangeParams)
+InitializeQueryDollarRange(const bson_value_t *filterValue,
+						   DollarRangeParams *rangeParams)
 {
 	bson_iter_t rangeIter;
-	BsonValueInitIterator(&filterElement->bsonValue, &rangeIter);
+	BsonValueInitIterator(filterValue, &rangeIter);
 	while (bson_iter_next(&rangeIter))
 	{
 		const char *key = bson_iter_key(&rangeIter);
@@ -56,6 +57,11 @@ InitializeQueryDollarRange(pgbsonelement *filterElement, DollarRangeParams *rang
 			rangeParams->isFullScan = true;
 			rangeParams->orderScanDirection = BsonValueAsInt32(bson_iter_value(
 																   &rangeIter));
+		}
+		else if (strcmp(key, "elemMatchIndexOp") == 0)
+		{
+			rangeParams->isElemMatch = true;
+			rangeParams->elemMatchValue = *bson_iter_value(&rangeIter);
 		}
 		else
 		{

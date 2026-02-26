@@ -1,4 +1,30 @@
-### documentdb v0.108-0 (Unreleased) ###
+### documentdb v0.110-0 (Unreleased) ###
+* Add support for keyword `description` in `$jsonSchema` *[Feature]*
+* Integrate cargo tools to identify dependencies for pg_documentdb_gw *[Feature]* (#263)
+* Add support for killSessions command *[Feature]* (#402)
+* Support arbitrary database user and password *[Feature]* (#306)
+* Fix crash in `bson_dollar_lookup_project` when matched documents array contains NULL elements from LEFT JOIN *[Bugfix]* (#465)
+* Fix crash in `$densify` with `partitionByFields` on shard key due to mismatched sort operators for INT8 partition expression *[Bugfix]* (#464)
+* Fix crash in `shard_collection` when implicit collection creation fails and returns NULL *[Bugfix]* (#462)
+* Fix crash in `$let` when `in` expression is a constant *[Bugfix]* (#463)
+* Support for TTL cron job to repeat deletes in batches until the one minute budget is exhausted, instead of deleting one batch per index per minute.*[Perf]*
+* Crash fix when zero rows reach $first/$last/$firstN/$lastN accumulators in $group stage with no $sort *[Bugfix]*. (#466)
+
+### documentdb v0.109-0 (Unreleased) ###
+* Support collation with find positional queries *[Feature]*
+* Short-circuit in `$cond` runtime evaluation *[Perf]*
+* Support operator variables(eg: $map.as alias) in let variable spec *[Bugfix]*
+* Support for `killOp` administrative command *[Feature]*
+* Fix `$addToSet` behavior and skip the top-level field rewrite because it's already done in the operator *[Bugfix]*
+* Performance improvements for $addToSet update operator up to ~70x for large existing and update arrays. *[Perf]*
+* Removed feature flags `documentdb.enableCompact`, `documentdb.enableBucketAutoStage` and `documentdb.enableIndexHintSupport`
+* Fix use-after-free segmentation fault in `$let` *[Bugfix]* 
+* Optimize `$makeArray` on constant expressions.*[Perf]*
+* Short-circuit in `$switch` at parse time *[Perf]*
+* Enable ordered indexes by default. Can be turned off by specifying "storageEngine": {"enableOrderedIndex": false} for a single index or by turning off the `documentdb.defaultUseCompositeOpClass` GUC.
+* Fix NULL document crash from `$in: []` optimization on sharded collections.
+
+### documentdb v0.108-0 (January 08, 2026) ###
 * Top-level `let` variables and `$$NOW` supported by default.
 * Fix collation support on find and aggregation when variableSpec is not available *[Bugfix]*.
 * Support `dropRole` command *[Feature]*
@@ -15,7 +41,7 @@
 * Provide Rust dev environment in devcontainer *[Feature]*
 * Add extension that adds a gateway host that's run as a postgres background worker *[Feature]*
 
-### documentdb v0.107-0 (Unreleased) ###
+### documentdb v0.107-0 (October 22, 2025) ###
 * Support sort by _id against the _id index using the enableIndexOrderbyPushdown flag *[Feature]*.
 * Improvements to explain for various scan types *[Feature]*.
 * Support schema enforcement with CSFLE integration *[Preview]*

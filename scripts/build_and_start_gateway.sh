@@ -14,7 +14,6 @@ userPassword=""
 hostname="localhost"
 port="9712" # Default port
 owner=$(whoami)
-
 while getopts "d:u:p:n:chsP:o:" opt; do
     case $opt in
     d)
@@ -41,7 +40,9 @@ while getopts "d:u:p:n:chsP:o:" opt; do
     h)
         help="true"
         ;;
-    s) createUser="false" ;;
+    s)
+        createUser="false"
+        ;;
     esac
 
     # Assume empty string if it's unset since we cannot reference to
@@ -68,7 +69,7 @@ if [ "$help" == "true" ]; then
     echo "${green}       are no longer required."
     echo "${green}[-o] - optional argument. specifies the owner for the database operations. Default is postgres."
     echo "${green}if SetupConfigurationFile not specified assumed to be"
-    echo "${green}oss/pg_documentdb_gw/SetupConfiguration.json and the default port is 10260"
+    echo "${green}pg_documentdb_gw/SetupConfiguration.json and the default port is 10260"
     exit 1
 fi
 
@@ -83,6 +84,8 @@ while [[ -L $source ]]; do
     [[ $source != /* ]] && source="$scriptroot/$source"
 done
 scriptDir="$(cd -P "$(dirname "$source")" && pwd)"
+
+. $scriptDir/utils.sh
 
 # Check if PostgreSQL is running with a timeout of 10 minutes
 timeout=600
@@ -101,8 +104,11 @@ done
 echo "PostgreSQL is ready."
 
 if [ "$clean" = "true" ]; then
-    echo "Cleaning the build directory..."
+    echo "Building DocumentDB Gateway after cleaning..."
+    pushd "$scriptDir/../pg_documentdb_gw"
     cargo clean
+    cargo build --profile=release-with-symbols
+    popd
 fi
 
 if [ "$createUser" = "true" ]; then
@@ -115,31 +121,20 @@ if [ "$createUser" = "true" ]; then
         exit 1
     fi
 
-    echo "Setting up user $userName with owner $owner"
-    echo "Checking if role $userName exists..."
-    if ! psql -h "$hostname" -p "$port" -U "$owner" -d postgres -c "SELECT 1 FROM pg_roles WHERE rolname = '$userName';" | grep -q 1; then
-        echo "Role $userName does not exist. Creating role..."
-        if ! psql -h "$hostname" -p "$port" -U "$owner" -d postgres -c "CREATE ROLE \"$userName\" WITH LOGIN INHERIT PASSWORD '$userPassword' IN ROLE documentdb_admin_role;"; then
-            echo "Failed to create role $userName."
-            exit 1
-        fi
-    else
-        echo "Role $userName already exists."
-    fi
-    if ! psql -h "$hostname" -p "$port" -U "$owner" -d postgres -c "ALTER ROLE \"$userName\" CREATEROLE"; then
-        echo "Failed to alter role $userName."
-        exit 1
-    fi
-    if ! psql -h "$hostname" -p "$port" -U "$owner" -d postgres -c "GRANT \"$userName\" TO $owner WITH ADMIN OPTION"; then
-        echo "Failed to grant role $userName to $owner."
-        exit 1
-    fi
+    SetupCustomAdminUser "$userName" "$userPassword" "$port" "$owner"
 else
     echo "Skipping user creation."
 fi
 
+cd $scriptDir/../pg_documentdb_gw/
+
 if [ -z "$configFile" ]; then
-    /home/documentdb/gateway/documentdb_gateway
+    ./target/release-with-symbols/documentdb_gateway
 else
-    /home/documentdb/gateway/documentdb_gateway "$configFile"
-fi
+    ./target/release-with-symbols/documentdb_gateway "$configFile"
+fi &
+
+gateway_pid=$!
+
+# Wait for the gateway process to keep the script alive
+wait $gateway_pid

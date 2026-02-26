@@ -36,10 +36,13 @@ PG_LDFLAGS += -l:pg_documentdb_distributed.so -L $(DOCUMENTDB_DISTRIBUTED_DIR)
 endif
 
 ifeq ($(CC),gcc)
-    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB)
+    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB)
 else
-    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB)
+    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB)
 endif
+
+# Include the overrides if exists
+-include $(OSS_SRC_DIR)/../Makefile_overrides.cflags
 
 ifneq ($(SKIP_API_SCHEMA),yes)
     ifndef API_SCHEMA_NAME
@@ -155,7 +158,3 @@ EXTENSION_SQL_ONLY_DEFINES += -D__CORE_SCHEMA__=$(CORE_SCHEMA_NAME)
 EXTENSION_SQL_ONLY_DEFINES += -D__CORE_SCHEMA_V2__=$(CORE_SCHEMA_NAME_V2)
 
 SQL_DEFINES = $(EXTENSION_SQL_ONLY_DEFINES)
-
-ifneq ($(EXTRA_INCLUDE),)
-include $(EXTRA_INCLUDE)
-endif

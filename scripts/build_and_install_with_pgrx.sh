@@ -9,17 +9,20 @@ set -e
 PGVERSION=""
 SOURCEDIR=""
 INSTALL="False"
+CLEAN="False"
 help="false"
 PACKAGEDIR=""
 profile=""
 
-while getopts "d:v:ihp:r:" opt; do
+while getopts "d:v:ichp:r:" opt; do
   case $opt in
     d) SOURCEDIR="$OPTARG"
     ;;
     v) PGVERSION="$OPTARG"
     ;;
     i) INSTALL="True"
+    ;;
+    c) CLEAN="True"
     ;;
     h) help="true"
     ;;
@@ -39,18 +42,24 @@ while getopts "d:v:ihp:r:" opt; do
 done
 
 if [ "$help" == "true" ]; then
-    echo "Usage: $0 -d <source_directory> -v <postgres_version> [-i] [-h]"
+    echo "Usage: $0 -d <source_directory> -v <postgres_version> [-i] [-h] [-p <package_directory>] [-r <profile>] [-c]"
     echo "  -d <source_directory>   : Directory containing the source code to build and install (defaults to current dir)."
     echo "  -v <postgres_version>   : Version of PostgreSQL to use (e.g., 12, 13, 14, 15)."
     echo "  -i                      : Install the built extension into PostgreSQL."
     echo "  -h                      : Display this help message."
     echo "  -p <package_directory>  : Directory to store the built package (optional)."
-    echo "  -r <profile>            : Build profile to use (optional, e.g., release, debug)."
+    echo "  -r <profile>            : Build profile to use (optional, e.g., release, dev)."
+    echo "  -c                      : Clean the build artifacts before building."
     exit 0
 fi
 
 if [ "$SOURCEDIR" == "" ]; then
     SOURCEDIR=$(pwd)
+fi
+
+if [ ! -f "$SOURCEDIR/Cargo.toml" ]; then
+  echo "Error: Cargo.toml not found in source directory: $SOURCEDIR"
+  exit 1
 fi
 
 if [ "$PACKAGEDIR" != "" ] && [ "$INSTALL" == "True" ]; then
@@ -59,8 +68,8 @@ if [ "$PACKAGEDIR" != "" ] && [ "$INSTALL" == "True" ]; then
 fi
 
 if [ "$PGVERSION" == "" ]; then
-    echo "Postgres version not provided. Use -v to provide Postgres version."
-    exit 1
+    PGVERSION=$(pg_config --version | awk '{print $2}' | cut -d. -f1)
+    echo "Using default PostgreSQL version: $PGVERSION"
 fi
 
 source="${BASH_SOURCE[0]}"
@@ -72,49 +81,33 @@ while [[ -h $source ]]; do
    # symlink file was located
    [[ $source != /* ]] && source="$scriptroot/$source"
 done
-
 scriptDir="$( cd -P "$( dirname "$source" )" && pwd )"
 
-. $scriptDir/utils.sh
+$scriptDir/install_pgrx.sh -d $SOURCEDIR -v $PGVERSION
 
+. $scriptDir/utils.sh
 pgBinDir=$(GetPostgresPath $PGVERSION)
 PATH=$pgBinDir:$PATH;
 pg_config_path=$pgBinDir/pg_config
 
-# Install cargo-pgrx
-pgrxInstallRequired="false"
-pgrxVersionRequired=$(grep -o 'pgrx = "[^"]*"' $SOURCEDIR/Cargo.toml | cut -d '"' -f 2 | sed 's/=//')
-if command -v cargo-pgrx > /dev/null; then
-    pgrxVersionInstalled=$(cargo pgrx --version | awk '{print $2}')
-    if [ "$pgrxVersionInstalled" != "$pgrxVersionRequired" ]; then
-      pgrxInstallRequired="true"
-    else
-      echo "cargo-pgrx version $pgrxVersionInstalled is already installed."
-    fi
-else
-  pgrxInstallRequired="true"
-fi
-
-if [ "$pgrxInstallRequired" == "true" ]; then
-    echo "Installing cargo-pgrx..."
-    cargo install --locked cargo-pgrx@${pgrxVersionRequired}
-fi
-
-cargo pgrx init --pg$PGVERSION $pg_config_path
-
-profileArg=""
+packageProfileArg=""
+installProfileArg=""
 if [ "$profile" != "" ]; then
-    profileArg="--profile $profile"
+    packageProfileArg="--profile $profile"
+    installProfileArg=$packageProfileArg
 else
-    profile="--profile release"
+    installProfileArg="--release"
+    packageProfileArg=""
+fi
+
+pushd $SOURCEDIR
+if [ "$CLEAN" == "True" ]; then
+    cargo clean
 fi
 
 if [ "$INSTALL" == "True" ]; then
-    pushd $SOURCEDIR
-    cargo pgrx install --sudo --pg-config $pg_config_path $profileArg
-    popd
+    cargo pgrx install --sudo --pg-config $pg_config_path $installProfileArg
 elif [ "$PACKAGEDIR" != "" ]; then
-    pushd $SOURCEDIR
-    cargo pgrx package --pg-config $pg_config_path --out-dir $PACKAGEDIR $profileArg --no-default-features
-    popd
+    cargo pgrx package --pg-config $pg_config_path --out-dir $PACKAGEDIR $packageProfileArg --no-default-features
 fi
+popd

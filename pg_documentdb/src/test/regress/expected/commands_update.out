@@ -1,6 +1,7 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 1500;
 SET documentdb.next_collection_index_id TO 1500;
+SET documentdb.enableupdatebsondocument TO false;
 select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":1,"_id":1,"b":1}');
 NOTICE:  creating collection
  ?column? 
@@ -1613,3 +1614,4 @@ NOTICE:  creating collection
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""Unrecognized operator specified: $id"" } ] }",f)
 (1 row)
 
+SET documentdb.enableupdatebsondocument TO true;

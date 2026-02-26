@@ -121,16 +121,29 @@ PGDLLEXPORT char *ApiCatalogSchemaNameV2 = "documentdb_api_catalog";
 PGDLLEXPORT char *ApiGucPrefix = "documentdb";
 PGDLLEXPORT char *ApiGucPrefixV2 = "documentdb";
 PGDLLEXPORT char *PostgisSchemaName = "public";
+PGDLLIMPORT char *ApiInternalReadWriteSchemaName = "documentdb_api_internal_readwrite";
+PGDLLIMPORT char *ApiInternalReadOnlySchemaName = "documentdb_api_internal_readonly";
+PGDLLIMPORT char *ApiInternalAdminSchemaName = "documentdb_api_internal_admin";
+PGDLLIMPORT char *ApiInternalBgworkerSchemaName = "documentdb_api_internal_bgworker";
 
 /* Role names */
 PGDLLEXPORT char *ApiAdminRole = "documentdb_admin_role";
 PGDLLEXPORT char *ApiAdminRoleV2 = "documentdb_admin_role";
 PGDLLEXPORT char *ApiBgWorkerRole = "documentdb_bg_worker_role";
+PGDLLEXPORT char *ApiClusterAdminRole = "documentdb_cluster_admin_role";
 PGDLLEXPORT char *ApiReadOnlyRole = "documentdb_readonly_role";
 PGDLLEXPORT char *ApiReadWriteRole = "documentdb_readwrite_role";
+PGDLLEXPORT char *ApiReplicationRole = "";
 PGDLLEXPORT char *ApiRootInternalRole = "documentdb_root_role";
 PGDLLEXPORT char *ApiRootRole = "documentdb_root_role";
+PGDLLEXPORT char *ApiSettingsManagerRole = "";
 PGDLLEXPORT char *ApiUserAdminRole = "documentdb_user_admin_role";
+
+/* Privileged Action System Roles */
+PGDLLEXPORT char *ApiCollectionFindRole = "documentdb_api_find_role";
+PGDLLEXPORT char *ApiCollectionInsertRole = "documentdb_api_insert_role";
+PGDLLEXPORT char *ApiCollectionUpdateRole = "documentdb_api_update_role";
+PGDLLEXPORT char *ApiCollectionRemoveRole = "documentdb_api_remove_role";
 
 /* Schema functions migrated from a public API to an internal API schema
  * (e.g. from documentdb_api -> documentdb_api_internal)
@@ -143,6 +156,8 @@ PGDLLEXPORT char *ApiCatalogToApiInternalSchemaName = "documentdb_api_internal";
 PGDLLEXPORT char *DocumentDBApiInternalSchemaName = "documentdb_api_internal";
 
 PGDLLEXPORT char *ApiCatalogToCoreSchemaName = "documentdb_core";
+
+extern bool EnableRbacCompliantSchemas;
 
 typedef struct DocumentDBApiOidCacheData
 {
@@ -175,6 +190,9 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OID of the <bson> OPERATOR(ApiCatalogSchemaName.=) <bson> operator */
 	Oid BsonEqualOperatorId;
+
+	/* OID of the function for bson_equals UDF */
+	Oid BsonEqualFunctionOid;
 
 	/* OID of the <bson> OPERATOR(ApiCatalogSchemaName.@=) <bson> operator */
 	Oid BsonEqualMatchOperatorId;
@@ -618,6 +636,12 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the float8 >= float8 operator */
 	Oid Float8GreaterThanEqualOperatorId;
 
+	/* OID of the bson_unique_index_equal operator =?= */
+	Oid BsonUniqueIndexEqualOperatorId;
+
+	/* OID of the bson_unique_shard_path_equal operator =#= */
+	Oid BsonUniqueShardPathEqualOperatorId;
+
 	/* OID of the array_append postgres function */
 	Oid PostgresArrayAppendFunctionOid;
 
@@ -707,6 +731,12 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OID of the bson_aggregation_distinct function */
 	Oid ApiCatalogAggregationDistinctFunctionId;
+
+	/* OID of the bson_aggregation_getmore function */
+	Oid ApiCatalogAggregationGetMoreFunctionId;
+
+	/* OID of the cursor_get_more function */
+	Oid CursorGetMoreFunctionOid;
 
 	/* OID of the BSONCOVARIANCEPOP aggregate function */
 	Oid ApiCatalogBsonCovariancePopAggregateFunctionOid;
@@ -806,6 +836,12 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OID of the BSONSUM aggregate function */
 	Oid ApiCatalogBsonSumAggregateFunctionOid;
+
+	/* OID of the BSONCOMMANDCOUNT aggregate function */
+	Oid ApiCatalogBsonCommandCountAggregateFunctionOid;
+
+	/* OID of the BSONCOUNT aggregate function */
+	Oid ApiCatalogBsonCountAggregateFunctionOid;
 
 	/* OID of the bson_linear_fill window function */
 	Oid ApiCatalogBsonLinearFillFunctionOid;
@@ -1152,6 +1188,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the ApiInternalSchemaName.delete_worker function */
 	Oid DeleteWorkerFunctionOid;
 
+	/* OID of the ApiInternalSchemaName.command_node_worker function */
+	Oid CommandNodeWorkerFunctionOid;
+
 	/* OID of ApiInternalSchemaName.{ExtensionObjectPrefix}_core_bson_to_bson*/
 	Oid DocumentDBCoreBsonToBsonFunctionOId;
 
@@ -1175,6 +1214,9 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* Opfamily for the bson */
 	Oid BsonRumCompositeIndexOperatorFamily;
+
+	/* Gets the oid of the bsonquery[] type */
+	Oid BsonQueryArrayTypeOid;
 } DocumentDBApiOidCacheData;
 
 static DocumentDBApiOidCacheData Cache;
@@ -1980,6 +2022,33 @@ BsonRangeMatchOperatorOid(void)
 }
 
 
+/* Returns the OID of bson_dollar_unique_index_equal operator =?= */
+Oid
+BsonUniqueIndexEqualOperatorId(void)
+{
+	/* Initially we defined this one in the catalog schema, then we moved it to the internal schema. */
+	Oid result = GetBinaryOperatorId(&Cache.BsonUniqueIndexEqualOperatorId, BsonTypeId(),
+									 "=?=", BsonTypeId());
+
+	if (result == InvalidOid)
+	{
+		result = GetInternalBinaryOperatorId(&Cache.BsonUniqueIndexEqualOperatorId,
+											 BsonTypeId(), "=?=", BsonTypeId());
+	}
+
+	return result;
+}
+
+
+/* Returns the OID of ApiInternalSchema.bson_dollar_unique_shard_path_equal operator =#= */
+Oid
+BsonUniqueShardPathEqualOperatorId(void)
+{
+	return GetInternalBinaryOperatorId(&Cache.BsonUniqueShardPathEqualOperatorId,
+									   BsonTypeId(), "=#=", BsonTypeId());
+}
+
+
 /*
  * Returns the OID of ApiCatalogSchemaName.bson_dollar_in function.
  */
@@ -2217,6 +2286,19 @@ BsonEqualOperatorId(void)
 {
 	return GetCoreBinaryOperatorId(&Cache.BsonEqualOperatorId,
 								   BsonTypeId(), "=", BsonTypeId());
+}
+
+
+/*
+ * BsonEqualFunctionOid returns the OID of the CoreSchema.bson_equal function UDF.
+ */
+Oid
+BsonEqualFunctionOid(void)
+{
+	return GetBinaryOperatorFunctionIdWithSchema(&Cache.BsonEqualFunctionOid,
+												 "bson_equal",
+												 BsonTypeId(), BsonTypeId(),
+												 CoreSchemaName);
 }
 
 
@@ -3060,6 +3142,29 @@ InsertWorkerFunctionOid(void)
 
 
 Oid
+CommandNodeWorkerFunctionOid(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (Cache.CommandNodeWorkerFunctionOid == InvalidOid)
+	{
+		List *functionNameList = list_make2(makeString(DocumentDBApiInternalSchemaName),
+											makeString("command_node_worker"));
+		Oid paramOids[6] = {
+			OIDOID, DocumentDBCoreBsonTypeId(), REGCLASSOID, TEXTARRAYOID, BOOLOID,
+			TEXTOID
+		};
+		bool missingOK = true;
+
+		Cache.CommandNodeWorkerFunctionOid =
+			LookupFuncName(functionNameList, 6, paramOids, missingOK);
+	}
+
+	return Cache.CommandNodeWorkerFunctionOid;
+}
+
+
+Oid
 DeleteWorkerFunctionOid(void)
 {
 	InitializeDocumentDBApiExtensionCache();
@@ -3344,6 +3449,36 @@ ApiCatalogAggregationDistinctFunctionId(void)
 		"bson_aggregation_distinct",
 		TEXTOID, BsonTypeId(),
 		"1.7");
+}
+
+
+Oid
+ApiCatalogAggregationGetMoreFunctionId(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (Cache.ApiCatalogAggregationGetMoreFunctionId == InvalidOid)
+	{
+		List *functionNameList = list_make2(makeString(ApiCatalogSchemaName),
+											makeString("bson_aggregation_getmore"));
+		Oid paramOids[3] = { TEXTOID, BsonTypeId(), BsonTypeId() };
+		bool missingOK = true;
+
+		Cache.ApiCatalogAggregationGetMoreFunctionId =
+			LookupFuncName(functionNameList, 3, paramOids, missingOK);
+	}
+
+	return Cache.ApiCatalogAggregationGetMoreFunctionId;
+}
+
+
+Oid
+CursorGetMoreFunctionOid(void)
+{
+	return GetOperatorFunctionIdThreeArgs(
+		&Cache.CursorGetMoreFunctionOid, ApiSchemaNameV2, "cursor_get_more", TEXTOID,
+		DocumentDBCoreBsonTypeId(),
+		DocumentDBCoreBsonTypeId());
 }
 
 
@@ -3820,6 +3955,23 @@ BsonSumAggregateFunctionOid(void)
 {
 	return GetAggregateFunctionByName(&Cache.ApiCatalogBsonSumAggregateFunctionOid,
 									  ApiCatalogSchemaName, "bsonsum");
+}
+
+
+Oid
+BsonCommandCountAggregateFunctionOid(void)
+{
+	return GetAggregateFunctionByName(
+		&Cache.ApiCatalogBsonCommandCountAggregateFunctionOid,
+		ApiInternalSchemaNameV2, "bsoncommandcount");
+}
+
+
+Oid
+BsonCountAggregateFunctionOid(void)
+{
+	return GetAggregateFunctionByName(&Cache.ApiCatalogBsonCountAggregateFunctionOid,
+									  ApiInternalSchemaNameV2, "bsoncount");
 }
 
 
@@ -6952,6 +7104,13 @@ GetClusterBsonQueryTypeId()
 	}
 
 	return typeId;
+}
+
+
+Oid
+GetClusterBsonQueryArrayTypeId()
+{
+	return GetArrayTypeOid(&Cache.BsonQueryArrayTypeOid, GetClusterBsonQueryTypeId());
 }
 
 

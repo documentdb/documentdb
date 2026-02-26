@@ -82,3 +82,47 @@ SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "comma
 SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize';
 
 SELECT documentdb_api.drop_collection('commands_compact_db','compact_test_sharded');
+
+
+-- sharded test
+SELECT documentdb_api.create_collection('commands_compact_db', 'compact_test_sharded');
+SELECT documentdb_api.shard_collection('commands_compact_db', 'compact_test_sharded', '{"_id": "hashed"}', false);
+
+DO $$
+DECLARE i int;
+BEGIN
+-- each doc is "a": 500KB, "c": 5 MB - ~5.5 MB & there's 10 of them
+FOR i IN 1..51 LOOP
+PERFORM documentdb_api.insert_one('commands_compact_db', 'compact_test_sharded', FORMAT('{ "_id": %s, "a": "%s", "c": [ %s "d" ] }',i, repeat('Sample', 100000), repeat('"' || repeat('a', 1000) || '", ', 5000))::documentdb_core.bson);
+COMMIT;
+END LOOP;
+END;
+$$;
+
+DO $$
+DECLARE i int;
+BEGIN
+-- each doc is "a": 500KB, "c": 5 MB - ~5.5 MB & there's 10 of them
+FOR i IN 1..45 LOOP
+UPDATE documentdb_data.documents_24323 SET document = document::bytea::bson WHERE document @@ '{ "_id": 1 }';
+COMMIT;
+END LOOP;
+END;
+$$;
+
+SET citus.show_shards_for_app_name_prefixes to '*';
+
+-- VALID, first need to analyze the table so that stats are up to date
+ANALYZE VERBOSE documentdb_data.documents_24323;
+SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize';
+
+-- set relpages to INT32_MAX - 1
+UPDATE pg_class
+SET relpages = 2147483646
+WHERE oid = 'documentdb_data.documents_24323_2432023'::regclass;
+
+SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": true}');
+SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false}');
+SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize';
+RESET citus.show_shards_for_app_name_prefixes;
+SELECT documentdb_api.drop_collection('commands_compact_db','compact_test_sharded');

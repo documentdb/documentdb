@@ -61,7 +61,8 @@ static QTNode * RewriteQueryTree(QTNode *node, bool *rewrote);
 static IndexTraverseOption GetTextIndexTraverseOption(void *contextOptions,
 													  const char *currentPath, uint32_t
 													  currentPathLength,
-													  bson_type_t bsonType);
+													  bson_type_t bsonType,
+													  int32_t *pathIndex);
 
 static Oid ExtractTsConfigFromLanguage(const StringView *stringView,
 									   bool isCreateIndex);
@@ -789,10 +790,11 @@ FormatTraverseOptionForText(IndexTraverseOption pathOption, bson_type_t bsonType
 static IndexTraverseOption
 GetTextIndexTraverseOption(void *contextOptions,
 						   const char *currentPath, uint32_t currentPathLength,
-						   bson_type_t bsonType)
+						   bson_type_t bsonType, int32_t *pathIndex)
 {
 	BsonGinTextPathOptions *indexOpts = (BsonGinTextPathOptions *) contextOptions;
 
+	*pathIndex = 0;
 	if (indexOpts->isWildcard)
 	{
 		/* Root wildcard */
@@ -808,7 +810,9 @@ GetTextIndexTraverseOption(void *contextOptions,
 	IndexTraverseOption overallOption = IndexTraverse_Invalid;
 	for (uint32_t i = 0; i < pathCount; i++)
 	{
-		uint32_t indexPathLength = *(uint32_t *) pathSpecBytes;
+		/* Use memcpy to avoid misaligned memory access - buffer may not be 4-byte aligned */
+		uint32_t indexPathLength;
+		memcpy(&indexPathLength, pathSpecBytes, sizeof(uint32_t));
 		const char *indexPath = pathSpecBytes + sizeof(uint32_t);
 
 		/* Skip through other metadata */
@@ -1045,7 +1049,8 @@ FillDefaultLanguageSpec(const char *defaultLanguage, void *buffer)
 				.string = defaultLanguage, .length = strlen(defaultLanguage)
 			};
 			bool isCreateIndex = true;
-			*address = ExtractTsConfigFromLanguage(&languageView, isCreateIndex);
+			Oid languageOid = ExtractTsConfigFromLanguage(&languageView, isCreateIndex);
+			memcpy(address, &languageOid, sizeof(Oid));
 		}
 	}
 
@@ -1107,7 +1112,9 @@ FillWeightsSpec(const char *weightsSpec, void *buffer)
 	if (buffer != NULL)
 	{
 		char *bufferPtr = (char *) buffer;
-		*((uint32_t *) bufferPtr) = pathCount;
+
+		/* Use memcpy to avoid misaligned memory access - buffer may not be 4-byte aligned */
+		memcpy(bufferPtr, &pathCount, sizeof(uint32_t));
 		bufferPtr += sizeof(uint32_t);
 
 		/* Save space for the weights array */
@@ -1117,7 +1124,8 @@ FillWeightsSpec(const char *weightsSpec, void *buffer)
 		for (int i = 0; i < 4; i++)
 		{
 			/* Initialize it to the default */
-			weightDatums[i] = Float4GetDatum(1.0f / maxWeight);
+			Datum defaultWeight = Float4GetDatum(1.0f / maxWeight);
+			memcpy(&weightDatums[i], &defaultWeight, sizeof(Datum));
 		}
 
 		PgbsonInitIterator(bson, &weightsIter);
@@ -1128,7 +1136,7 @@ FillWeightsSpec(const char *weightsSpec, void *buffer)
 			StringView pathView = bson_iter_key_string_view(&weightsIter);
 
 			/* add the prefixed path length */
-			*((uint32_t *) bufferPtr) = pathView.length;
+			memcpy(bufferPtr, &pathView.length, sizeof(uint32_t));
 			bufferPtr += sizeof(uint32_t);
 
 			/* Add the path */
@@ -1163,8 +1171,8 @@ FillWeightsSpec(const char *weightsSpec, void *buffer)
 				case 2:
 				case 3:
 				{
-					weightDatums[(int) weightLabel] = Float4GetDatum(((float) weight /
-																	  maxWeight));
+					Datum weightDatum = Float4GetDatum(((float) weight / maxWeight));
+					memcpy(&weightDatums[(int) weightLabel], &weightDatum, sizeof(Datum));
 					break;
 				}
 
@@ -1310,12 +1318,13 @@ GenerateTsVectorWithOptions(pgbson *document,
 							BsonGinTextPathOptions *options)
 {
 	GenerateTermsContext context = { 0 };
+	GinEntryPathData pathData = { 0 };
 	context.options = (void *) options;
 	context.traverseOptionsFunc = &GetTextIndexTraverseOption;
 	context.generateNotFoundTerm = false;
 
 	bool addRootTerm = false;
-	GenerateTerms(document, &context, addRootTerm);
+	GenerateTerms(document, &context, &pathData, addRootTerm);
 
 	/* Phase 2: Generate TSVector */
 
@@ -1341,10 +1350,10 @@ GenerateTsVectorWithOptions(pgbson *document,
 
 	StringView languagePathBuffer = { 0 };
 
-	for (int i = 0; i < context.totalTermCount; i++)
+	for (int i = 0; i < pathData.terms.index; i++)
 	{
 		BsonIndexTerm term = { 0 };
-		InitializeBsonIndexTerm(DatumGetByteaP(context.terms.entries[i]), &term);
+		InitializeBsonIndexTerm(DatumGetByteaP(pathData.terms.entries[i]), &term);
 
 		if (term.element.bsonValue.value_type == BSON_TYPE_UTF8)
 		{
@@ -1391,7 +1400,9 @@ GenerateTsVectorWithOptions(pgbson *document,
 			pathSpecBytes += sizeof(Datum) * 4;
 			for (uint32_t i = 0; i < pathCount; i++)
 			{
-				uint32_t indexPathLength = *(uint32_t *) pathSpecBytes;
+				/* Use memcpy to avoid misaligned memory access - buffer may not be 4-byte aligned */
+				uint32_t indexPathLength;
+				memcpy(&indexPathLength, pathSpecBytes, sizeof(uint32_t));
 				const char *indexPath = pathSpecBytes + sizeof(uint32_t);
 				char pathWeight = *(char *) (pathSpecBytes + indexPathLength +
 											 sizeof(uint32_t));

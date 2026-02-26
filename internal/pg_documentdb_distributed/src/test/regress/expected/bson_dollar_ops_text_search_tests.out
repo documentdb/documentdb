@@ -91,6 +91,18 @@ ERROR:  A text index is necessary to perform a $text query.
 -- no more than 1 $text:
 SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$and": [ { "$text": { "$search": "cat" } }, { "$text": { "$search": "dogs" } }] }';
 ERROR:  Excessive number of text expressions
+-- Test tsquery stack depth, max depth is 32
+-- 32 should work
+SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "--------------------------------cat" } }';
+                          document                          
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "this is a cat" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "these are cats" }
+(2 rows)
+
+-- one more should fail
+SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "---------------------------------cat" } }';
+ERROR:  tsquery stack too small
 CALL documentdb_api.drop_indexes('db', '{ "dropIndexes": "bson_dollar_ops_text_search", "index": "a_text" }');
                           retval                          
 ---------------------------------------------------------------------

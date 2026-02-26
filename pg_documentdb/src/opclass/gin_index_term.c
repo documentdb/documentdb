@@ -20,6 +20,7 @@
 #include "types/decimal128.h"
 #include "io/bsonvalue_utils.h"
 
+extern bool EnableCollationWithIndexes;
 
 /*
  * While this looks like a flags enum, it started out that way
@@ -44,6 +45,10 @@ typedef enum IndexTermMetadata
 
 	IndexTermComposite = 0x04,
 
+	IndexTermValueOnly = 0x05,
+
+	IndexTermValueOnlyTruncated = 0x06,
+
 	IndexTermUndefinedValue = 0x08,
 
 	IndexTermPartialUndefinedValue = 0x0C,
@@ -52,18 +57,47 @@ typedef enum IndexTermMetadata
 
 	IndexTermDescendingTruncated = 0x81,
 
+	IndexTermValueOnlyDescending = 0x85,
+
+	IndexTermValueOnlyDescendingTruncated = 0x86,
+
 	IndexTermDescendingUndefinedValue = 0x88,
 
 	IndexTermDescendingPartialUndefinedValue = 0x8C,
+
+	/* This is used by bsonindexterm to indicate it has
+	 * collation prefixed data. This is not used for data
+	 * storage in the index.
+	 */
+	IndexTermMetadataCollationPrefixed = 0xFF,
 } IndexTermMetadata;
 
+
+/*
+ * Cached state for gin_bson_compare collation lookup.
+ * We cache this to avoid repeated opclass option extraction.
+ */
+typedef struct GinBsonCompareState
+{
+	/* The cached collation string (NULL if no collation) */
+	const char *collationString;
+
+	/* The opclass options pointer used to extract collation (for assertion) */
+	bytea *options;
+} GinBsonCompareState;
+
+
 extern int IndexTermCompressionThreshold;
+
+static const char *BsonHexIndexPrefix = "BSONITERMHEX";
+static uint32_t BsonHexIndexPrefixLength = 12;
 
 /* --------------------------------------------------------- */
 /* Forward Declaration */
 /* --------------------------------------------------------- */
 static bool SerializeTermToWriter(pgbson_writer *writer, pgbsonelement *indexElement,
-								  const IndexTermCreateMetadata *termMetadata);
+								  const IndexTermCreateMetadata *termMetadata,
+								  bool allowValueOnly, bool *isValueOnly);
 
 static BsonIndexTermSerialized SerializeBsonIndexTermCore(pgbsonelement *indexElement,
 														  const IndexTermCreateMetadata *
@@ -80,13 +114,175 @@ static bool TruncateArrayTerm(int32_t dataSize, int32_t indexTermSoftLimit, int3
 static bytea * BuildSerializedIndexTerm(pgbsonelement *indexElement, const
 										IndexTermCreateMetadata *createMetadata,
 										IndexTermMetadata termMetadata,
+										bool forceSetMetadata,
 										BsonIndexTerm *indexTerm);
-static int32_t CompareCompositeIndexTerms(bytea *left, bytea *right);
+static int32_t CompareCompositeIndexTerms(const uint8_t *leftBuffer,
+										  uint32_t leftIndexTermSize,
+										  const uint8_t *rightBuffer,
+										  uint32_t rightIndexTermSize,
+										  const char *collation);
+static void InitializeBsonIndexTermFromBuffer(const uint8_t *buffer,
+											  uint32_t indexTermSize,
+											  BsonIndexTerm *indexTerm);
+static int32_t InitializeCompositeIndexTermBuffer(const uint8_t *buffer, uint32_t
+												  termSize,
+												  BsonIndexTerm indexTerm[INDEX_MAX_KEYS]);
 
 /* --------------------------------------------------------- */
 /* Top level exports */
 /* --------------------------------------------------------- */
 PG_FUNCTION_INFO_V1(gin_bson_compare);
+PG_FUNCTION_INFO_V1(bsonindexterm_compare_btree);
+PG_FUNCTION_INFO_V1(gin_bson_index_term_to_bson);
+PG_FUNCTION_INFO_V1(gin_bson_to_bsonindexterm);
+
+PG_FUNCTION_INFO_V1(bsonindexterm_in);
+PG_FUNCTION_INFO_V1(bsonindexterm_out);
+PG_FUNCTION_INFO_V1(bsonindexterm_recv);
+PG_FUNCTION_INFO_V1(bsonindexterm_send);
+
+PG_FUNCTION_INFO_V1(bsonindexterm_eq);
+PG_FUNCTION_INFO_V1(bsonindexterm_lt);
+PG_FUNCTION_INFO_V1(bsonindexterm_gt);
+PG_FUNCTION_INFO_V1(bsonindexterm_gte);
+PG_FUNCTION_INFO_V1(bsonindexterm_lte);
+
+
+inline static bool
+IsIndexTermMetadataTruncated(IndexTermMetadata termMetadata)
+{
+	return termMetadata == IndexTermTruncated ||
+		   termMetadata == IndexTermDescendingTruncated ||
+		   termMetadata == IndexTermValueOnlyTruncated ||
+		   termMetadata == IndexTermValueOnlyDescendingTruncated;
+}
+
+
+inline static bool
+IsIndexTermMetadataValueOnly(IndexTermMetadata termMetadata)
+{
+	return termMetadata == IndexTermValueOnly ||
+		   termMetadata == IndexTermValueOnlyTruncated ||
+		   termMetadata == IndexTermValueOnlyDescending ||
+		   termMetadata == IndexTermValueOnlyDescendingTruncated;
+}
+
+
+inline static bool
+IsIndexTermMetadataComposite(IndexTermMetadata metadata)
+{
+	return metadata == IndexTermComposite;
+}
+
+
+inline static int32_t
+CompareBsonGinIndexTerms(const uint8_t *leftBuffer, uint32_t leftSize,
+						 const uint8_t *rightBuffer, uint32_t rightSize,
+						 const char *collation)
+{
+	bool isLeftComposite = IsIndexTermMetadataComposite(leftBuffer[0]);
+	bool isRightComposite = IsIndexTermMetadataComposite(rightBuffer[0]);
+	int32_t compareTerm;
+	if (isLeftComposite || isRightComposite)
+	{
+		/* Both are composite terms: Compare as composite */
+		compareTerm = CompareCompositeIndexTerms(leftBuffer, leftSize, rightBuffer,
+												 rightSize, collation);
+	}
+	else
+	{
+		BsonIndexTerm leftTerm;
+		BsonIndexTerm rightTerm;
+		InitializeBsonIndexTermFromBuffer(leftBuffer, leftSize, &leftTerm);
+		InitializeBsonIndexTermFromBuffer(rightBuffer, rightSize, &rightTerm);
+		bool isComparisonValidIgnore = false;
+		compareTerm = CompareBsonIndexTerm(&leftTerm, &rightTerm,
+										   &isComparisonValidIgnore, collation);
+	}
+
+	return compareTerm;
+}
+
+
+static const char *
+ExtractCollationAndUpdateBuffer(const uint8_t **buffer, uint32_t *size)
+{
+	const char *collation = NULL;
+	if ((*buffer)[0] == IndexTermMetadataCollationPrefixed)
+	{
+		collation = (const char *) (*buffer + 1);
+		uint32_t collationLength = strlen(collation);
+		*buffer += 1 + collationLength + 1;
+		*size -= 1 + collationLength + 1;
+	}
+	return collation;
+}
+
+
+inline static int32_t
+CompareBsonIndexTerms(bytea *left, bytea *right)
+{
+	const uint8_t *leftBuffer = (const uint8_t *) VARDATA_ANY(left);
+	uint32_t leftSize = VARSIZE_ANY_EXHDR(left);
+
+	const uint8_t *rightBuffer = (const uint8_t *) VARDATA_ANY(right);
+	uint32_t rightSize = VARSIZE_ANY_EXHDR(right);
+
+	const char *leftCollation = ExtractCollationAndUpdateBuffer(&leftBuffer, &leftSize);
+	const char *rightCollation = ExtractCollationAndUpdateBuffer(&rightBuffer,
+																 &rightSize);
+
+	if ((leftCollation == NULL) ^ (rightCollation == NULL))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg(
+							"Cannot compare bson index terms with different collations")));
+	}
+	else if ((leftCollation != NULL) && strcmp(leftCollation, rightCollation) != 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg(
+							"Cannot compare bson index terms with different collations")));
+	}
+
+	return CompareBsonGinIndexTerms(leftBuffer, leftSize, rightBuffer, rightSize,
+									leftCollation);
+}
+
+
+int32_t
+CompareSerializedBsonIndexTermWithCollation(Datum a, Datum b, const char *collation)
+{
+	bytea *left = DatumGetByteaP(a);
+	bytea *right = DatumGetByteaP(b);
+
+	const uint8_t *leftBuffer = (const uint8_t *) VARDATA_ANY(left);
+	uint32_t leftSize = VARSIZE_ANY_EXHDR(left);
+
+	const uint8_t *rightBuffer = (const uint8_t *) VARDATA_ANY(right);
+	uint32_t rightSize = VARSIZE_ANY_EXHDR(right);
+	return CompareBsonGinIndexTerms(leftBuffer, leftSize, rightBuffer,
+									rightSize, collation);
+}
+
+
+/*
+ * Populates the GinBsonCompareState from opclass options.
+ */
+static void
+PopulateGinBsonCompareState(GinBsonCompareState *state, bytea *options)
+{
+	state->collationString = NULL;
+	if (options != NULL)
+	{
+		StringView collationView = { 0 };
+		GetCollationFromIndexOptions(options, &collationView);
+		if (collationView.string != NULL)
+		{
+			state->collationString = collationView.string;
+		}
+	}
+}
 
 
 /*
@@ -102,54 +298,454 @@ gin_bson_compare(PG_FUNCTION_ARGS)
 	bytea *left = PG_GETARG_BYTEA_PP(0);
 	bytea *right = PG_GETARG_BYTEA_PP(1);
 
+	const char *collationString = NULL;
+	if (EnableCollationWithIndexes)
+	{
+		/* Get collation from fn_extra cache, or extract from opclass options and cache */
+		GinBsonCompareState *state = (GinBsonCompareState *) fcinfo->flinfo->fn_extra;
 
-	bool isLeftComposite = IsSerializedIndexTermComposite(left);
-	bool isRightComposite = IsSerializedIndexTermComposite(right);
-	int32_t compareTerm;
-	if (isLeftComposite && isRightComposite)
-	{
-		/* Both are composite terms: Compare as composite */
-		compareTerm = CompareCompositeIndexTerms(left, right);
-	}
-	else if (isLeftComposite || isRightComposite)
-	{
-		/* One of them is composite - composite is greater than non-composite */
-		compareTerm = isLeftComposite ? 1 : -1;
-	}
-	else
-	{
-		BsonIndexTerm leftTerm;
-		BsonIndexTerm rightTerm;
-		InitializeBsonIndexTerm(left, &leftTerm);
-		InitializeBsonIndexTerm(right, &rightTerm);
-		bool isComparisonValidIgnore = false;
-		compareTerm = CompareBsonIndexTerm(&leftTerm, &rightTerm,
-										   &isComparisonValidIgnore);
+		if (state != NULL)
+		{
+			Assert(!PG_HAS_OPCLASS_OPTIONS() ||
+				   state->options == (bytea *) PG_GET_OPCLASS_OPTIONS());
+
+			collationString = state->collationString;
+		}
+		else if (PG_HAS_OPCLASS_OPTIONS())
+		{
+			bytea *options = (bytea *) PG_GET_OPCLASS_OPTIONS();
+
+			MemoryContext oldContext = MemoryContextSwitchTo(fcinfo->flinfo->fn_mcxt);
+			state = palloc0(sizeof(GinBsonCompareState));
+			PopulateGinBsonCompareState(state, options);
+			state->options = options;
+			MemoryContextSwitchTo(oldContext);
+
+			fcinfo->flinfo->fn_extra = state;
+			collationString = state->collationString;
+		}
 	}
 
+	const uint8_t *leftBuffer = (const uint8_t *) VARDATA_ANY(left);
+	uint32_t leftSize = VARSIZE_ANY_EXHDR(left);
+
+	const uint8_t *rightBuffer = (const uint8_t *) VARDATA_ANY(right);
+	uint32_t rightSize = VARSIZE_ANY_EXHDR(right);
+	int32_t compareTerm = CompareBsonGinIndexTerms(leftBuffer, leftSize, rightBuffer,
+												   rightSize, collationString);
 	PG_FREE_IF_COPY(left, 0);
 	PG_FREE_IF_COPY(right, 1);
 	PG_RETURN_INT32(compareTerm);
 }
 
 
-static int32_t
-CompareCompositeIndexTerms(bytea *left, bytea *right)
+Datum
+bsonindexterm_compare_btree(PG_FUNCTION_ARGS)
 {
-	uint32_t leftIndexTermSize = VARSIZE_ANY_EXHDR(left);
-	const uint8_t *leftBuffer = (const uint8_t *) VARDATA_ANY(left);
+	bytea *left = PG_GETARG_BYTEA_PP(0);
+	bytea *right = PG_GETARG_BYTEA_PP(1);
 
-	uint32_t rightIndexTermSize = VARSIZE_ANY_EXHDR(right);
-	const uint8_t *rightBuffer = (const uint8_t *) VARDATA_ANY(right);
+	int32_t compareTerm = CompareBsonIndexTerms(left, right);
+	PG_FREE_IF_COPY(left, 0);
+	PG_FREE_IF_COPY(right, 1);
+	PG_RETURN_INT32(compareTerm);
+}
 
-	Assert(leftIndexTermSize > (sizeof(uint8_t) + 5));
-	Assert(rightIndexTermSize > (sizeof(uint8_t) + 5));
 
-	if ((leftBuffer[0] != IndexTermComposite) ||
-		(rightBuffer[0] != IndexTermComposite))
+Datum
+bsonindexterm_in(PG_FUNCTION_ARGS)
+{
+	char *arg = PG_GETARG_CSTRING(0);
+
+	bytea *indexTerm;
+	if (arg == NULL)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-						errmsg("Cannot compare non-composite index terms as composite")));
+		indexTerm = NULL;
+	}
+	else if (arg[0] == 'B')
+	{
+		int32_t strLength = strlen(arg);
+		int32_t hexStringLength = (strLength - BsonHexIndexPrefixLength);
+		if (hexStringLength <= 0 || (hexStringLength % 2 != 0))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+								"Invalid Hex string for bson index term input")));
+		}
+
+		if (strncmp(arg, BsonHexIndexPrefix, BsonHexIndexPrefixLength) != 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"Bson index term Hex string does not have valid prefix %s",
+								BsonHexIndexPrefix)));
+		}
+
+		uint32_t binaryLength = hexStringLength / 2;
+
+		int allocSize = binaryLength + VARHDRSZ;
+		bytea *pgbsonVal = (bytea *) palloc(allocSize);
+
+		uint64 actualBinarySize = hex_decode(&arg[BsonHexIndexPrefixLength],
+											 hexStringLength, VARDATA(pgbsonVal));
+		Assert(actualBinarySize == binaryLength);
+		SET_VARSIZE(pgbsonVal, (uint32_t) actualBinarySize + VARHDRSZ);
+		indexTerm = pgbsonVal;
+	}
+	else
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("Invalid input string for a bson index term")));
+	}
+
+	PG_RETURN_POINTER(indexTerm);
+}
+
+
+Datum
+bsonindexterm_out(PG_FUNCTION_ARGS)
+{
+	bytea *arg = PG_GETARG_BYTEA_PP(0);
+
+	size_t binarySize = VARSIZE_ANY_EXHDR(arg);
+	size_t hexEncodedSize = binarySize * 2;
+	size_t hexStringSize = hexEncodedSize + 1 + BsonHexIndexPrefixLength; /* add \0 and prefix "BSONINDEXTERMHEX"; */
+	char *hexString = palloc(hexStringSize);
+
+	memcpy(hexString, BsonHexIndexPrefix, BsonHexIndexPrefixLength);
+
+	const char *indexTermData = VARDATA_ANY(arg);
+
+	uint64 hexStringActualSize = hex_encode(indexTermData, binarySize,
+											&hexString[BsonHexIndexPrefixLength]);
+	Assert(hexStringActualSize == hexEncodedSize);
+
+	hexString[hexStringActualSize + BsonHexIndexPrefixLength] = 0;
+	PG_RETURN_CSTRING(hexString);
+}
+
+
+Datum
+bsonindexterm_recv(PG_FUNCTION_ARGS)
+{
+	StringInfo buf = (StringInfo) PG_GETARG_POINTER(0);
+
+	uint32_t length = buf->len;
+	char *rawbytes = buf->data;
+
+	int bson_size = length + VARHDRSZ;
+	bytea *indexterm = (bytea *) palloc(bson_size);
+	SET_VARSIZE(indexterm, bson_size);
+	memcpy(VARDATA(indexterm), rawbytes, length);
+
+	/* let caller know we consumed whole buffer */
+	buf->cursor = buf->len;
+	PG_RETURN_POINTER(indexterm);
+}
+
+
+Datum
+bsonindexterm_send(PG_FUNCTION_ARGS)
+{
+	/* We need a copy to ensure that this can be pfree-ed */
+	PG_RETURN_POINTER(PG_DETOAST_DATUM_COPY(PG_GETARG_DATUM(0)));
+}
+
+
+Datum
+bsonindexterm_eq(PG_FUNCTION_ARGS)
+{
+	bytea *leftTerm = PG_GETARG_BYTEA_PP(0);
+	bytea *rightTerm = PG_GETARG_BYTEA_PP(1);
+
+	int32_t compareTerm = CompareBsonIndexTerms(leftTerm, rightTerm);
+
+	PG_FREE_IF_COPY(leftTerm, 0);
+	PG_FREE_IF_COPY(rightTerm, 1);
+	PG_RETURN_BOOL(compareTerm == 0);
+}
+
+
+Datum
+bsonindexterm_lt(PG_FUNCTION_ARGS)
+{
+	bytea *leftTerm = PG_GETARG_BYTEA_PP(0);
+	bytea *rightTerm = PG_GETARG_BYTEA_PP(1);
+
+	int32_t compareTerm = CompareBsonIndexTerms(leftTerm, rightTerm);
+
+	PG_FREE_IF_COPY(leftTerm, 0);
+	PG_FREE_IF_COPY(rightTerm, 1);
+	PG_RETURN_BOOL(compareTerm < 0);
+}
+
+
+Datum
+bsonindexterm_gt(PG_FUNCTION_ARGS)
+{
+	bytea *leftTerm = PG_GETARG_BYTEA_PP(0);
+	bytea *rightTerm = PG_GETARG_BYTEA_PP(1);
+
+	int32_t compareTerm = CompareBsonIndexTerms(leftTerm, rightTerm);
+
+	PG_FREE_IF_COPY(leftTerm, 0);
+	PG_FREE_IF_COPY(rightTerm, 1);
+	PG_RETURN_BOOL(compareTerm > 0);
+}
+
+
+Datum
+bsonindexterm_gte(PG_FUNCTION_ARGS)
+{
+	bytea *leftTerm = PG_GETARG_BYTEA_PP(0);
+	bytea *rightTerm = PG_GETARG_BYTEA_PP(1);
+
+	int32_t compareTerm = CompareBsonIndexTerms(leftTerm, rightTerm);
+
+	PG_FREE_IF_COPY(leftTerm, 0);
+	PG_FREE_IF_COPY(rightTerm, 1);
+	PG_RETURN_BOOL(compareTerm >= 0);
+}
+
+
+Datum
+bsonindexterm_lte(PG_FUNCTION_ARGS)
+{
+	bytea *leftTerm = PG_GETARG_BYTEA_PP(0);
+	bytea *rightTerm = PG_GETARG_BYTEA_PP(1);
+
+	int32_t compareTerm = CompareBsonIndexTerms(leftTerm, rightTerm);
+
+	PG_FREE_IF_COPY(leftTerm, 0);
+	PG_FREE_IF_COPY(rightTerm, 1);
+	PG_RETURN_BOOL(compareTerm <= 0);
+}
+
+
+/*
+ * Debug function to print the bytea into a bson format.
+ */
+Datum
+gin_bson_index_term_to_bson(PG_FUNCTION_ARGS)
+{
+	bytea *indexTerm = PG_GETARG_BYTEA_PP(0);
+	const uint8_t *termBuffer = (const uint8_t *) VARDATA_ANY(indexTerm);
+	uint32_t termSize = VARSIZE_ANY_EXHDR(indexTerm);
+
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	const char *collation = ExtractCollationAndUpdateBuffer(&termBuffer, &termSize);
+
+	if (IsIndexTermMetadataComposite(termBuffer[0]))
+	{
+		BsonIndexTerm terms[INDEX_MAX_KEYS] = { 0 };
+		int numTerms = InitializeCompositeIndexTermBuffer(termBuffer, termSize, terms);
+
+		pgbson_array_writer arrayWriter;
+		PgbsonWriterStartArray(&writer, "$$COMP", 6, &arrayWriter);
+		for (int i = 0; i < numTerms; i++)
+		{
+			pgbson_writer childWriter;
+			PgbsonArrayWriterStartDocument(&arrayWriter, &childWriter);
+			PgbsonWriterAppendValue(&childWriter, terms[i].element.path,
+									terms[i].element.pathLength,
+									&terms[i].element.bsonValue);
+			PgbsonWriterAppendInt32(&childWriter, "$flags", 6, terms[i].termMetadata);
+			PgbsonArrayWriterEndDocument(&arrayWriter, &childWriter);
+		}
+
+		PgbsonWriterEndArray(&writer, &arrayWriter);
+	}
+	else
+	{
+		BsonIndexTerm term;
+		InitializeBsonIndexTermFromBuffer(termBuffer, termSize, &term);
+		PgbsonWriterAppendValue(&writer, term.element.path, term.element.pathLength,
+								&term.element.bsonValue);
+		PgbsonWriterAppendInt32(&writer, "$flags", 6, term.termMetadata);
+	}
+
+	if (collation != NULL)
+	{
+		PgbsonWriterAppendUtf8(&writer, "$collation", 10, collation);
+	}
+
+	PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
+}
+
+
+static bytea *
+GetIndexTermFromBsonDocument(bson_iter_t *documentIter)
+{
+	pgbsonelement termElement = { 0 };
+	if (!bson_iter_next(documentIter))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("bson index term must have at least one value")));
+	}
+
+	/* First is the term path and value */
+	BsonIterToPgbsonElement(documentIter, &termElement);
+
+	/* There's one more element that has the term metadata */
+	if (!bson_iter_next(documentIter))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("bson index term must have term metadata ($flags)")));
+	}
+
+	if (strcmp(bson_iter_key(documentIter), "$flags") != 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("bson index term must have term metadata ($flags)")));
+	}
+
+	if (!BSON_ITER_HOLDS_INT(documentIter))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("$flags must be a numeric value")));
+	}
+
+	int64_t flagsValue = BsonValueAsInt64(bson_iter_value(documentIter));
+	if (flagsValue < 0 || flagsValue > UINT8_MAX)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("$flags must be a valid value in the flags range")));
+	}
+
+	BsonIndexTerm indexTerm = { 0 };
+	indexTerm.termMetadata = (IndexTermMetadata) flagsValue;
+	IndexTermCreateMetadata createMetadata = { 0 };
+	createMetadata.indexTermSizeLimit = INT32_MAX;
+	createMetadata.allowValueOnly = IsIndexTermMetadataValueOnly(indexTerm.termMetadata);
+	createMetadata.indexVersion = IndexOptionsVersion_V0;
+	createMetadata.isDescending = IsIndexTermValueDescending(&indexTerm);
+	createMetadata.isWildcard = false;
+	createMetadata.pathPrefix.string = "$";
+	createMetadata.pathPrefix.length = 1;
+
+	bool forceSetMetadata = true;
+	bytea *indexTermVal = BuildSerializedIndexTerm(&termElement, &createMetadata,
+												   indexTerm.termMetadata,
+												   forceSetMetadata,
+												   &indexTerm);
+	return indexTermVal;
+}
+
+
+bytea *
+FormCollatedIndexTerm(bytea *sourceTerm, const char *collation, uint32_t collationLength)
+{
+	/* Prepend collation to the index term */
+	uint32_t termSize = VARSIZE_ANY_EXHDR(sourceTerm);
+	uint8_t *termBuffer = (uint8_t *) VARDATA_ANY(sourceTerm);
+
+	bytea *newTerm = (bytea *) palloc(termSize + collationLength + 2 + VARHDRSZ);
+	uint8_t *newTermBuffer = (uint8_t *) VARDATA(newTerm);
+	newTermBuffer[0] = IndexTermMetadataCollationPrefixed;
+	memcpy(&newTermBuffer[1], collation, collationLength);
+	newTermBuffer[1 + collationLength] = 0; /* null terminate */
+	memcpy(&newTermBuffer[1 + collationLength + 1], termBuffer, termSize);
+	SET_VARSIZE(newTerm, termSize + collationLength + 2 + VARHDRSZ);
+	return newTerm;
+}
+
+
+Datum
+gin_bson_to_bsonindexterm(PG_FUNCTION_ARGS)
+{
+	pgbson *bson = PG_GETARG_PGBSON(0);
+
+	bson_iter_t docIterator;
+	PgbsonInitIterator(bson, &docIterator);
+
+	if (!bson_iter_next(&docIterator))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg("Must have at least one field in the document")));
+	}
+
+	pgbsonelement indexElement;
+	BsonIterToPgbsonElement(&docIterator, &indexElement);
+
+	/* First element is $$COMP - it's a composite term */
+	bytea *termValue = NULL;
+	if (strcmp(indexElement.path, "$$COMP") == 0)
+	{
+		if (indexElement.bsonValue.value_type != BSON_TYPE_ARRAY)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg("$$COMP must be an array")));
+		}
+
+		bytea *individualTerms[INDEX_MAX_KEYS] = { 0 };
+
+		bson_iter_t compIterator;
+		BsonValueInitIterator(&indexElement.bsonValue, &compIterator);
+
+		int termIndex = 0;
+		while (bson_iter_next(&compIterator))
+		{
+			bson_iter_t docIter;
+			if (!BSON_ITER_HOLDS_DOCUMENT(&compIterator) || !bson_iter_recurse(
+					&compIterator, &docIter))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"bson index term must be serialized as a bson document")));
+			}
+
+			individualTerms[termIndex] = GetIndexTermFromBsonDocument(&docIter);
+			termIndex++;
+		}
+
+		BsonIndexTermSerialized serializedTerm = SerializeCompositeBsonIndexTerm(
+			individualTerms, termIndex);
+		termValue = serializedTerm.indexTermVal;
+	}
+	else
+	{
+		/* Reset iterator to first element */
+		PgbsonInitIterator(bson, &docIterator);
+		termValue = GetIndexTermFromBsonDocument(&docIterator);
+	}
+
+	if (bson_iter_next(&docIterator))
+	{
+		BsonIterToPgbsonElement(&docIterator, &indexElement);
+		if (strcmp(indexElement.path, "$collation") == 0)
+		{
+			uint32_t collationLength = indexElement.bsonValue.value.v_utf8.len;
+			const char *collation = indexElement.bsonValue.value.v_utf8.str;
+
+			/* Prepend collation to the index term */
+			termValue = FormCollatedIndexTerm(termValue, collation, collationLength);
+		}
+		else
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"Unexpected extra field in bson index term document: %s",
+								indexElement.path)));
+		}
+	}
+
+	PG_RETURN_POINTER(termValue);
+}
+
+
+static int32_t
+CompareCompositeIndexTerms(const uint8_t *leftBuffer, uint32_t leftIndexTermSize,
+						   const uint8_t *rightBuffer, uint32_t rightIndexTermSize,
+						   const char *collation)
+{
+	Assert(leftIndexTermSize > (sizeof(uint8_t) + 2));
+	Assert(rightIndexTermSize > (sizeof(uint8_t) + 2));
+
+	if (!IsIndexTermMetadataComposite(leftBuffer[0]) ||
+		!IsIndexTermMetadataComposite(rightBuffer[0]))
+	{
+		/* One of them is composite - composite is greater than non-composite */
+		return IsIndexTermMetadataComposite(leftBuffer[0]) ? 1 : -1;
 	}
 
 	/* Skip the first byte - gets the first terms metadata */
@@ -162,8 +758,8 @@ CompareCompositeIndexTerms(bytea *left, bytea *right)
 	{
 		bytea *leftBytes = (bytea *) leftBuffer;
 		bytea *rightBytes = (bytea *) rightBuffer;
-		uint32_t leftSize = VARSIZE(leftBytes);
-		uint32_t rightSize = VARSIZE(rightBytes);
+		uint32_t leftSize = VARSIZE_ANY(leftBytes);
+		uint32_t rightSize = VARSIZE_ANY(rightBytes);
 
 		BsonIndexTerm leftTerm;
 		BsonIndexTerm rightTerm;
@@ -171,7 +767,7 @@ CompareCompositeIndexTerms(bytea *left, bytea *right)
 		InitializeBsonIndexTerm(rightBytes, &rightTerm);
 		bool isComparisonValidIgnore = false;
 		int32_t compareTerm = CompareBsonIndexTerm(&leftTerm, &rightTerm,
-												   &isComparisonValidIgnore);
+												   &isComparisonValidIgnore, collation);
 		if (compareTerm != 0)
 		{
 			return compareTerm;
@@ -192,7 +788,7 @@ CompareCompositeIndexTerms(bytea *left, bytea *right)
 inline static int32_t
 CompareIndexTermPathAndValue(const BsonIndexTerm *leftTerm, const
 							 BsonIndexTerm *rightTerm,
-							 bool *isComparisonValid)
+							 bool *isComparisonValid, const char *collation)
 {
 	/* Compare path */
 	StringView leftView = {
@@ -210,9 +806,9 @@ CompareIndexTermPathAndValue(const BsonIndexTerm *leftTerm, const
 	/* We explicitly ignore the validity of the comparisons since this is applying
 	 * a sort operation on types and values
 	 */
-	cmp = CompareBsonValueAndType(&leftTerm->element.bsonValue,
-								  &rightTerm->element.bsonValue,
-								  isComparisonValid);
+	cmp = CompareBsonValueAndTypeWithCollation(&leftTerm->element.bsonValue,
+											   &rightTerm->element.bsonValue,
+											   isComparisonValid, collation);
 	if (cmp != 0)
 	{
 		return cmp;
@@ -254,28 +850,38 @@ CompareIndexTermPathAndValue(const BsonIndexTerm *leftTerm, const
  */
 int32_t
 CompareBsonIndexTerm(const BsonIndexTerm *leftTerm, const BsonIndexTerm *rightTerm,
-					 bool *isComparisonValid)
+					 bool *isComparisonValid, const char *collation)
 {
 	/* First compare metadata - metadata terms are less than all terms */
-	if (leftTerm->isIndexTermMetadata ^ rightTerm->isIndexTermMetadata)
+	if (IsIndexTermMetadata(leftTerm) ^ IsIndexTermMetadata(rightTerm))
 	{
 		/* If left is metadata and right is not metadata this will be
 		 * 1 - 0 == 1 so return -1 (left < right )
 		 */
-		return (int32_t) rightTerm->isIndexTermMetadata -
-			   (int32_t) leftTerm->isIndexTermMetadata;
+		return (int32_t) IsIndexTermMetadata(rightTerm) -
+			   (int32_t) IsIndexTermMetadata(leftTerm);
 	}
 
 	/* If it's not a metadata term, then ensure that we don't compare asc/desc mixed */
 	bool isLeftDescending = IsIndexTermValueDescending(leftTerm);
 	if (isLeftDescending ^ IsIndexTermValueDescending(rightTerm))
 	{
+		/* Special case here - the root truncated term is not metadata */
+		if (IsRootTruncationTerm(leftTerm) || IsRootTruncationTerm(rightTerm))
+		{
+			/* Treat similar to metadata terms */
+			return (int32_t) IsRootTruncationTerm(rightTerm) -
+				   (int32_t) IsRootTruncationTerm(leftTerm);
+		}
+
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-						errmsg("Cannot compare ascending and descending index terms")));
+						errmsg(
+							"Cannot compare ascending and descending index terms: left %d, right %d",
+							leftTerm->termMetadata, rightTerm->termMetadata)));
 	}
 
 	int32_t compare = CompareIndexTermPathAndValue(leftTerm, rightTerm,
-												   isComparisonValid);
+												   isComparisonValid, collation);
 
 	return isLeftDescending ? -compare : compare;
 }
@@ -289,9 +895,9 @@ IsSerializedIndexTermComposite(bytea *indexTermSerialized)
 		indexTermSerialized);
 
 	/* size must be bigger than metadata + bson overhead */
-	Assert(indexTermSize > (sizeof(uint8_t) + 5));
+	Assert(indexTermSize >= (sizeof(uint8_t) + 2));
 
-	return (IndexTermMetadata) buffer[0] == IndexTermComposite;
+	return IsIndexTermMetadataComposite(buffer[0]);
 }
 
 
@@ -306,10 +912,9 @@ IsSerializedIndexTermTruncated(bytea *indexTermSerialized)
 		indexTermSerialized);
 
 	/* size must be bigger than metadata + bson overhead */
-	Assert(indexTermSize > (sizeof(uint8_t) + 5));
+	Assert(indexTermSize > (sizeof(uint8_t)));
 
-	return (IndexTermMetadata) buffer[0] == IndexTermTruncated ||
-		   (IndexTermMetadata) buffer[0] == IndexTermDescendingTruncated;
+	return IsIndexTermMetadataTruncated(buffer[0]);
 }
 
 
@@ -321,7 +926,7 @@ IsSerializedIndexTermMetadata(bytea *indexTermSerialized)
 		indexTermSerialized);
 
 	/* size must be bigger than metadata + bson overhead */
-	Assert(indexTermSize > (sizeof(uint8_t) + 5));
+	Assert(indexTermSize > (sizeof(uint8_t) + 2));
 
 	return (IndexTermMetadata) buffer[0] == IndexTermIsMetadata;
 }
@@ -330,8 +935,7 @@ IsSerializedIndexTermMetadata(bytea *indexTermSerialized)
 bool
 IsIndexTermTruncated(const BsonIndexTerm *indexTerm)
 {
-	return indexTerm->termMetadata == IndexTermTruncated ||
-		   indexTerm->termMetadata == IndexTermDescendingTruncated;
+	return IsIndexTermMetadataTruncated(indexTerm->termMetadata);
 }
 
 
@@ -358,6 +962,57 @@ IsIndexTermValueDescending(const BsonIndexTerm *indexTerm)
 }
 
 
+bool
+IsIndexTermMetadata(const BsonIndexTerm *indexTerm)
+{
+	return indexTerm->termMetadata == IndexTermIsMetadata;
+}
+
+
+static void
+InitializeBsonIndexTermFromBuffer(const uint8_t *buffer, uint32_t indexTermSize,
+								  BsonIndexTerm *indexTerm)
+{
+	/* size must be bigger than metadata + bson overhead */
+	Assert((indexTermSize >= (sizeof(uint8_t) + 2)));
+
+	/* First we have the metadata */
+	indexTerm->termMetadata = buffer[0];
+	switch ((IndexTermMetadata) buffer[0])
+	{
+		case IndexTermIsMetadata:
+		{
+			/* Next is the bson data serialized */
+			BsonDocumentBytesToPgbsonElementUnsafe(
+				(const uint8_t *) &buffer[1], indexTermSize - 1, &indexTerm->element);
+			return;
+		}
+
+		case IndexTermValueOnly:
+		case IndexTermValueOnlyTruncated:
+		case IndexTermValueOnlyDescending:
+		case IndexTermValueOnlyDescendingTruncated:
+		{
+			bool skipLengthOffset = true;
+			BsonDocumentBytesToPgbsonElementWithOptionsUnsafe(
+				(const uint8_t *) &buffer[1], indexTermSize - 1, &indexTerm->element,
+				skipLengthOffset);
+			indexTerm->element.path = "$";
+			indexTerm->element.pathLength = 1;
+			return;
+		}
+
+		default:
+		{
+			/* Next is the bson data serialized */
+			BsonDocumentBytesToPgbsonElementUnsafe(
+				(const uint8_t *) &buffer[1], indexTermSize - 1, &indexTerm->element);
+			return;
+		}
+	}
+}
+
+
 /*
  * Initializes the BsonIndexTerm from the serialized index format.
  */
@@ -366,30 +1021,7 @@ InitializeBsonIndexTerm(bytea *indexTermSerialized, BsonIndexTerm *indexTerm)
 {
 	uint32_t indexTermSize = VARSIZE_ANY_EXHDR(indexTermSerialized);
 	const uint8_t *buffer = (const uint8_t *) VARDATA_ANY(indexTermSerialized);
-
-	/* size must be bigger than metadata + bson overhead */
-	Assert(indexTermSize > (sizeof(uint8_t) + 5));
-
-	/* First we have the metadata */
-	indexTerm->isIndexTermMetadata = false;
-	indexTerm->termMetadata = buffer[0];
-	switch ((IndexTermMetadata) buffer[0])
-	{
-		case IndexTermIsMetadata:
-		{
-			indexTerm->isIndexTermMetadata = true;
-			break;
-		}
-
-		default:
-		{
-			break;
-		}
-	}
-
-	/* Next is the bson data serialized */
-	BsonDocumentBytesToPgbsonElementUnsafe((const uint8_t *) &buffer[1], indexTermSize -
-										   1, &indexTerm->element);
+	InitializeBsonIndexTermFromBuffer(buffer, indexTermSize, indexTerm);
 }
 
 
@@ -422,7 +1054,7 @@ InitializeSerializedCompositeIndexTerm(bytea *indexTermSerialized,
 
 		bytea *bytes = (bytea *) buffer;
 		termValues[index] = bytes;
-		uint32_t leftSize = VARSIZE(bytes);
+		uint32_t leftSize = VARSIZE_ANY(bytes);
 
 		/* Proceed to the subsequent term */
 		index++;
@@ -438,17 +1070,23 @@ int32_t
 InitializeCompositeIndexTerm(bytea *indexTermSerialized, BsonIndexTerm
 							 indexTerm[INDEX_MAX_KEYS])
 {
-	if (!IsSerializedIndexTermComposite(indexTermSerialized))
+	uint32_t termSize = VARSIZE_ANY_EXHDR(indexTermSerialized);
+	const uint8_t *buffer = (const uint8_t *) VARDATA_ANY(indexTermSerialized);
+	return InitializeCompositeIndexTermBuffer(buffer, termSize, indexTerm);
+}
+
+
+static int32_t
+InitializeCompositeIndexTermBuffer(const uint8_t *buffer, uint32_t termSize,
+								   BsonIndexTerm indexTerm[INDEX_MAX_KEYS])
+{
+	if (!IsIndexTermMetadataComposite(buffer[0]))
 	{
-		InitializeBsonIndexTerm(indexTermSerialized, &indexTerm[0]);
+		InitializeBsonIndexTermFromBuffer(buffer, termSize, &indexTerm[0]);
 		return 1;
 	}
 
-	uint32_t termSize = VARSIZE_ANY_EXHDR(indexTermSerialized);
-	const uint8_t *buffer = (const uint8_t *) VARDATA_ANY(indexTermSerialized);
-
-	Assert(termSize > (sizeof(uint8_t) + 5));
-
+	Assert(termSize > (sizeof(uint8_t) + 2));
 	if (buffer[0] != IndexTermComposite)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
@@ -470,7 +1108,7 @@ InitializeCompositeIndexTerm(bytea *indexTermSerialized, BsonIndexTerm
 		}
 
 		bytea *bytes = (bytea *) buffer;
-		uint32_t leftSize = VARSIZE(bytes);
+		uint32_t leftSize = VARSIZE_ANY(bytes);
 
 		InitializeBsonIndexTerm(bytes, &indexTerm[index]);
 
@@ -889,7 +1527,8 @@ TruncateDocumentTerm(int32_t existingTermSize, int32_t softLimit, int32_t hardLi
  */
 static bool
 SerializeTermToWriter(pgbson_writer *writer, pgbsonelement *indexElement,
-					  const IndexTermCreateMetadata *termMetadata)
+					  const IndexTermCreateMetadata *termMetadata,
+					  bool allowValueOnly, bool *isValueOnly)
 {
 	/* Bson size + \0 overhead + path + \0 + type marker */
 	StringView indexPath =
@@ -912,8 +1551,17 @@ SerializeTermToWriter(pgbson_writer *writer, pgbsonelement *indexElement,
 		}
 
 		/* Index term should occupy a minimal amount of space */
-		indexPath.length = 1;
-		indexPath.string = "$";
+		if (termMetadata->allowValueOnly && allowValueOnly)
+		{
+			indexPath.length = 0;
+			indexPath.string = "";
+			*isValueOnly = true;
+		}
+		else
+		{
+			indexPath.length = 1;
+			indexPath.string = "$";
+		}
 	}
 	else if (termMetadata->indexTermSizeLimit > 0 && termMetadata->isWildcard)
 	{
@@ -1165,13 +1813,14 @@ SerializeBsonIndexTermCore(pgbsonelement *indexElement,
 {
 	BsonIndexTermSerialized serializedTerm = { 0 };
 	BsonIndexTerm indexTerm = { 0 };
+	bool forceSetMetadata = false;
 
 	bytea *indexTermVal = BuildSerializedIndexTerm(indexElement, createMetadata,
-												   termMetadata, &indexTerm);
+												   termMetadata, forceSetMetadata,
+												   &indexTerm);
 
 	serializedTerm.indexTermVal = indexTermVal;
 	serializedTerm.isIndexTermTruncated = IsIndexTermTruncated(&indexTerm);
-	serializedTerm.isRootMetadataTerm = indexTerm.isIndexTermMetadata;
 	return serializedTerm;
 }
 
@@ -1221,13 +1870,14 @@ SerializeBsonIndexTermWithCompression(pgbsonelement *indexElement,
 	IndexTermMetadata termMetadata = IndexTermNoMetadata;
 	BsonIndexTerm indexTerm = { 0 };
 	BsonCompressableIndexTermSerialized serializedTerm = { 0 };
+	bool forceSetMetadata = false;
 
 	bytea *indexTermVal = BuildSerializedIndexTerm(indexElement, createMetadata,
-												   termMetadata, &indexTerm);
+												   termMetadata, forceSetMetadata,
+												   &indexTerm);
 	serializedTerm.indexTermDatum = CompressTermIfNeeded(indexTermVal);
 
 	serializedTerm.isIndexTermTruncated = IsIndexTermTruncated(&indexTerm);
-	serializedTerm.isRootMetadataTerm = indexTerm.isIndexTermMetadata;
 	return serializedTerm;
 }
 
@@ -1242,7 +1892,6 @@ SerializeCompositeBsonIndexTerm(bytea **individualTerms, int32_t numTerms)
 		/* Special case, it's just 1 term - treat it as a non-composite term */
 		serializedTerm.indexTermVal = individualTerms[0];
 		serializedTerm.isIndexTermTruncated = false;
-		serializedTerm.isRootMetadataTerm = false;
 		return serializedTerm;
 	}
 
@@ -1251,8 +1900,18 @@ SerializeCompositeBsonIndexTerm(bytea **individualTerms, int32_t numTerms)
 
 	for (int i = 0; i < numTerms; i++)
 	{
-		/* Take the content size of each (including varhdr size) */
-		totalSize += VARSIZE(individualTerms[i]);
+		/* Take the content size of each (including varhdr size)
+		 * Similar to heap_compute_data_size, see if we can leverage VARSIZE_SHORT
+		 * for the VARHDRSIZE
+		 */
+		if (VARATT_CAN_MAKE_SHORT(individualTerms[i]))
+		{
+			totalSize += VARATT_CONVERTED_SHORT_SIZE(individualTerms[i]);
+		}
+		else
+		{
+			totalSize += VARSIZE(individualTerms[i]);
+		}
 	}
 
 	/* now the composite term will be a bytea with the concat of the values */
@@ -1266,13 +1925,22 @@ SerializeCompositeBsonIndexTerm(bytea **individualTerms, int32_t numTerms)
 	{
 		/* Take the content size of each (excluding varhdr size) */
 		uint32_t dataSize = VARSIZE(individualTerms[i]);
-		memcpy(dataBuffer, individualTerms[i], dataSize);
-		dataBuffer += dataSize;
+		if (VARATT_CAN_MAKE_SHORT(individualTerms[i]))
+		{
+			uint8_t data_length = VARATT_CONVERTED_SHORT_SIZE(individualTerms[i]);
+			SET_VARSIZE_SHORT(dataBuffer, data_length);
+			memcpy(dataBuffer + 1, VARDATA(individualTerms[i]), data_length - 1);
+			dataBuffer += data_length;
+		}
+		else
+		{
+			memcpy(dataBuffer, individualTerms[i], dataSize);
+			dataBuffer += dataSize;
+		}
 	}
 
 	serializedTerm.indexTermVal = compositeTerm;
 	serializedTerm.isIndexTermTruncated = false;
-	serializedTerm.isRootMetadataTerm = false;
 	return serializedTerm;
 }
 
@@ -1288,7 +1956,6 @@ SerializeCompositeBsonIndexTermWithCompression(bytea **individualTerms,
 		/* Special case, it's just 1 term - treat it as a non-composite term */
 		serializedTerm.indexTermDatum = CompressTermIfNeeded(individualTerms[0]);
 		serializedTerm.isIndexTermTruncated = false;
-		serializedTerm.isRootMetadataTerm = false;
 		return serializedTerm;
 	}
 
@@ -1297,7 +1964,6 @@ SerializeCompositeBsonIndexTermWithCompression(bytea **individualTerms,
 		SerializeCompositeBsonIndexTerm(individualTerms, numTerms);
 	serializedTerm.indexTermDatum = CompressTermIfNeeded(indexTerm.indexTermVal);
 	serializedTerm.isIndexTermTruncated = indexTerm.isIndexTermTruncated;
-	serializedTerm.isRootMetadataTerm = indexTerm.isRootMetadataTerm;
 	return serializedTerm;
 }
 
@@ -1414,6 +2080,24 @@ GenerateRootMultiKeyTerm(const IndexTermCreateMetadata *termData)
 }
 
 
+Datum
+GenerateCorrelatedRootArrayTerm(const IndexTermCreateMetadata *termData)
+{
+	bson_iter_t iter;
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	PgbsonWriterAppendInt32(&writer, "", 0, RootMetadataKind_CorrelatedRootArray);
+
+	PgbsonWriterGetIterator(&writer, &iter);
+
+	pgbsonelement element = { 0 };
+	BsonIterToSinglePgbsonElement(&iter, &element);
+	IndexTermMetadata termMetadata = IndexTermIsMetadata;
+	return PointerGetDatum(SerializeBsonIndexTermCore(&element, termData,
+													  termMetadata).indexTermVal);
+}
+
+
 /*
  * This is a marker term that is generated when a given document has a term
  * that is truncated.
@@ -1444,52 +2128,80 @@ static bytea *
 BuildSerializedIndexTerm(pgbsonelement *indexElement, const
 						 IndexTermCreateMetadata *createMetadata,
 						 IndexTermMetadata termMetadata,
+						 bool forceSetMetadata,
 						 BsonIndexTerm *indexTerm)
 {
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
+	bool isValueOnly = false;
+
+	/* Only allow user terms to be value only */
+	bool allowValueOnly = termMetadata == IndexTermNoMetadata || forceSetMetadata;
 	bool isTermTruncated = SerializeTermToWriter(&writer, indexElement,
-												 createMetadata);
-	if (isTermTruncated && (termMetadata == IndexTermNoMetadata))
-	{
-		/* If the term is truncated, we need to mark it as such */
-		termMetadata = IndexTermTruncated;
-	}
+												 createMetadata,
+												 allowValueOnly,
+												 &isValueOnly);
 
-	if (termMetadata == IndexTermIsMetadata)
+	if (unlikely(forceSetMetadata))
 	{
-		indexTerm->isIndexTermMetadata = true;
-	}
-
-	/* Patch term metadata for descending */
-	if (createMetadata->isDescending)
-	{
-		switch (termMetadata)
+		if (IsIndexTermMetadataValueOnly(termMetadata) && !isValueOnly)
 		{
-			case IndexTermNoMetadata:
-			case IndexTermTruncated:
-			case IndexTermPartialUndefinedValue:
-			case IndexTermUndefinedValue:
+			ereport(ERROR, (errmsg(
+								"Index term requested no valueOnly generation but got a valueOnlyoffset")));
+		}
+	}
+	else
+	{
+		if (isValueOnly)
+		{
+			if (!allowValueOnly)
 			{
-				termMetadata |= IndexTermDescending;
-				break;
+				ereport(ERROR, (errmsg(
+									"Index term requested no valueOnly generation but got a valueOnlyoffset")));
 			}
 
-			case IndexTermIsMetadata:
-			{
-				/* This is a metadata term, so we don't need to patch it */
-				break;
-			}
+			termMetadata = isTermTruncated ? IndexTermValueOnlyTruncated :
+						   IndexTermValueOnly;
+		}
+		else if (isTermTruncated && (termMetadata == IndexTermNoMetadata))
+		{
+			/* If the term is truncated, we need to mark it as such */
+			termMetadata = IndexTermTruncated;
+		}
 
-			default:
+		/* Patch term metadata for descending */
+		if (createMetadata->isDescending)
+		{
+			switch (termMetadata)
 			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-								errmsg("Unexpected term metadata %d for descending index",
-									   termMetadata),
-								errdetail_log(
-									"Unexpected term metadata %d for descending index",
-									termMetadata)));
-				break;
+				case IndexTermValueOnly:
+				case IndexTermValueOnlyTruncated:
+				case IndexTermNoMetadata:
+				case IndexTermTruncated:
+				case IndexTermPartialUndefinedValue:
+				case IndexTermUndefinedValue:
+				{
+					termMetadata |= IndexTermDescending;
+					break;
+				}
+
+				case IndexTermIsMetadata:
+				{
+					/* This is a metadata term, so we don't need to patch it */
+					break;
+				}
+
+				default:
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+									errmsg(
+										"Unexpected term metadata %d for descending index",
+										termMetadata),
+									errdetail_log(
+										"Unexpected term metadata %d for descending index",
+										termMetadata)));
+					break;
+				}
 			}
 		}
 	}
@@ -1512,13 +2224,44 @@ BuildSerializedIndexTerm(pgbsonelement *indexElement, const
 							IsIndexTermTruncated(indexTerm))));
 	}
 
-	int indexTermSize = dataSize + VARHDRSZ + sizeof(uint8_t);
-	bytea *indexTermVal = (bytea *) palloc(indexTermSize);
-	SET_VARSIZE(indexTermVal, indexTermSize);
+	if (isValueOnly)
+	{
+		/* Allocate enough for the actual data + overhead */
+		int indexTermAllocSize = dataSize + VARHDRSZ + sizeof(uint8_t);
+		bytea *indexTermVal = (bytea *) palloc(indexTermAllocSize);
+		uint8_t *buffer = (uint8_t *) indexTermVal;
 
-	uint8_t *buffer = (uint8_t *) VARDATA(indexTermVal);
-	buffer[0] = termMetadata;
-	indexTerm->termMetadata = termMetadata;
-	PgbsonWriterCopyToBuffer(&writer, &buffer[1], dataSize);
-	return indexTermVal;
+		/* we first copy the bson onto the buffer at the appropriate offset
+		 * We need 4 bytes in the beginning for the VARLENA header, 1 byte for
+		 * the metadata. Technically the content starts at byte 6 (index 5).
+		 * However, since BSON prepends a 4-byte length header, we serialize
+		 * it starting at index 1 so that the path + value_type starts at
+		 * index 5.
+		 */
+		PgbsonWriterCopyToBuffer(&writer, &buffer[1], dataSize);
+
+		/* Now set the metadata */
+		buffer[4] = termMetadata;
+
+		/* Set the real VARSIZE: We subtract the 4 bytes of length we removed
+		 * from the bson, and the trailing '\0' that bson carries.
+		 */
+		int indexTermSize = indexTermAllocSize - sizeof(int32_t) - 1;
+		SET_VARSIZE(indexTermVal, indexTermSize);
+
+		indexTerm->termMetadata = termMetadata;
+		return indexTermVal;
+	}
+	else
+	{
+		int indexTermSize = dataSize + VARHDRSZ + sizeof(uint8_t);
+		bytea *indexTermVal = (bytea *) palloc(indexTermSize);
+		SET_VARSIZE(indexTermVal, indexTermSize);
+
+		uint8_t *buffer = (uint8_t *) VARDATA(indexTermVal);
+		buffer[0] = termMetadata;
+		indexTerm->termMetadata = termMetadata;
+		PgbsonWriterCopyToBuffer(&writer, &buffer[1], dataSize);
+		return indexTermVal;
+	}
 }

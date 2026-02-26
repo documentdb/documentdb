@@ -228,7 +228,7 @@ BEGIN;
     "c": {"$exists": 1}
   }
   ';
-                                                                                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                                                                                       
+                                                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -237,10 +237,9 @@ BEGIN;
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                ->  Bitmap Heap Scan on documents_12003_120020 collection
-                     Recheck Cond: ((document OPERATOR(documentdb_api_catalog.#=) '{ "a" : [ { "a" : "b" }, "c", { "$numberInt" : "1" } ] }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#=) '{ "b" : { "c" : { "d" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }, "e" : { "f" : { "$numberInt" : "0" } } } }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#>=) '{ "c" : { "$minKey" : 1 } }'::documentdb_core.bsonquery))
-                     Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "a" : [ { "a" : "b" }, "c", { "$numberInt" : "1" } ] }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "b" : { "c" : { "d" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }, "e" : { "f" : { "$numberInt" : "0" } } } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>=) '{ "c" : { "$minKey" : 1 } }'::documentdb_core.bson))
+                     Recheck Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "a" : [ { "a" : "b" }, "c", { "$numberInt" : "1" } ] }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "b" : { "c" : { "d" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }, "e" : { "f" : { "$numberInt" : "0" } } } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>=) '{ "c" : { "$minKey" : 1 } }'::documentdb_core.bson))
                      ->  Bitmap Index Scan on my_idx_5
-(10 rows)
+(9 rows)
 
   -- cannot use my_idx_5 since "b.e" is missing
   EXPLAIN (COSTS OFF) SELECT COUNT(*)
@@ -307,7 +306,7 @@ BEGIN;
     ]
   }
   ';
-                                                                                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                                                                                         
+                                                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -316,8 +315,8 @@ BEGIN;
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                ->  Bitmap Heap Scan on documents_12003_120020 collection
-                     Recheck Cond: ((document OPERATOR(documentdb_api_catalog.#=) '{ "a" : [ { "a" : "b" }, "c", { "$numberInt" : "1" } ] }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#=) '{ "b" : { "c" : { "d" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }, "e" : { "f" : { "$numberInt" : "0" } } } }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#>=) '{ "c" : { "$minKey" : 1 } }'::documentdb_core.bsonquery))
-                     Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "b" : { "c" : { "d" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }, "e" : { "f" : { "$numberInt" : "0" } } } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>=) '{ "c" : { "$minKey" : 1 } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "another_field" : { "$numberInt" : "6" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : [ { "a" : "b" }, "c", { "$numberInt" : "1" } ] }'::documentdb_core.bson))
+                     Recheck Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "a" : [ { "a" : "b" }, "c", { "$numberInt" : "1" } ] }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "b" : { "c" : { "d" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }, "e" : { "f" : { "$numberInt" : "0" } } } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>=) '{ "c" : { "$minKey" : 1 } }'::documentdb_core.bson))
+                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "another_field" : { "$numberInt" : "6" } }'::documentdb_core.bson)
                      ->  Bitmap Index Scan on my_idx_5
 (10 rows)
 

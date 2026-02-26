@@ -45,6 +45,14 @@ for validationFileName in $(ls ./expected/*_tests_index_comp_desc.out); do
     if [ $? -ne 0 ]; then echo "Validation failed on '${validationFileName}' against '${runtimeFileName}' error code $?"; exit 1; fi;
 done
 
+for validationFileName in $(ls ./expected/*_tests_index_comp_wild.out); do
+    runtimeFileName=${validationFileName/_tests_index_comp_wild.out/_tests_runtime.out};
+
+    $diff -s -I 'SET documentdb.next_collection_id' -I 'documentdb.enableCompositeWildcardIndex' -I 'documentdb.enableDescendingCompositeIndex' -I 'SET documentdb.next_collection_index_id' -I 'SET citus.next_shard_id' -I 'SELECT documentdb_api.create_collection' -I 'set documentdb.forceDisableSeqScan' -I 'SELECT documentdb_api_internal.create_indexes' -I 'set local documentdb.enableNewCompositeIndexOpClass' -I 'set local enable_seqscan' -I 'documentdb.next_collection_id' -I 'set local enable_bitmapscan' -I 'set local documentdb.forceUseIndexIfAvailable' -I 'set local citus.enable_local_execution' -I '\\set' -I 'set enable_seqscan'  -I 'set documentdb.forceUseIndexIfAvailable' -I 'documentdb.enableGeospatial' \
+        $validationFileName $runtimeFileName;
+    if [ $? -ne 0 ]; then echo "Validation failed on '${validationFileName}' against '${runtimeFileName}' error code $?"; exit 1; fi;
+done
+
 for validationFileName in $(ls ./expected/*_tests_index_comp_unique.out); do
     runtimeFileName=${validationFileName/_tests_index_comp_unique.out/_tests_runtime.out};
 
@@ -75,7 +83,7 @@ aggregateCollectionIdStr=""
 aggregateShardIdStr=""
 maxCollectionIdStr=""
 
-validationExceptions="/sql/documentdb_distributed_test_helpers.sql,/sql/public_api_schema.sql,/sql/documentdb_distributed_setup.sql"
+validationExceptions="/sql/documentdb_distributed_test_helpers.sql,/sql/public_api_schema.sql,/sql/documentdb_distributed_setup.sql,/sql/distributed_install_setup.sql"
 
 skippedDuplicateCheckFile=""
 echo "Validating test file output"
@@ -106,11 +114,32 @@ for validationFile in $(ls $scriptDir/expected/*.out); do
 
     # check if the base file is in the schedule
     findResult=""
+    # Check RBAC schedules for RBAC test files
+    if [[ "$fileNameBase" =~ ^rbac_ ]]; then
+        for schedule in rbac_tests_schedule; do
+            findResult=$(grep "$fileNameBase" $schedule || true)
+            [ -n "$findResult" ] && break
+        done
+
+        # Skip the basic_schedule_core check if found in RBAC schedules
+        if [ -n "$findResult" ]; then
+            continue
+        fi
+    fi
+
     for macro in "" "!PG16_OR_HIGHER!" "!PG17_OR_HIGHER!"; do
         fileNameMod=$(echo "$fileNameBase" | sed -E "s/_tests/${macro}_tests/g")
         findResult=$(grep "$fileNameMod" basic_schedule_core || true)
         [ -n "$findResult" ] && break
     done
+
+    if [ "$findResult" == "" ]; then
+        for macro in "" "!PG16_OR_HIGHER!" "!PG17_OR_HIGHER!"; do
+            fileNameMod=$(echo "$fileNameBase" | sed -E "s/_tests/_tests${macro}/g")
+            findResult=$(grep "$fileNameMod" basic_schedule_core || true)
+            [ -n "$findResult" ] && break
+        done
+    fi
 
     if [ "$findResult" == "" ]; then
         if [[ "$fileNameBase" =~ "pg15" ]] || [[ "$fileNameBase" =~ "pg16" ]] || [[ "$fileNameBase" =~ "pg17" ]] || [[ "$fileNameBase" =~ "_explain" ]]; then
@@ -121,11 +150,21 @@ for validationFile in $(ls $scriptDir/expected/*.out); do
         fi
     fi
 
+    isSimpleIncludeTest=false
+    if [[ "$sqlFile" =~ _pg[0-9]+ ]]; then
+        lineCount=$(cat $scriptDir/sql/$sqlFile | wc -l)
+        if [ $lineCount -eq 0 ]; then
+            isSimpleIncludeTest="true"
+        fi
+    fi
+
     # Extract the actual collection ID (we'll use this to check for uniqueness).
     collectionIdOutput=$(grep -m 1 'documentdb.next_collection_id' $validationFile || true)
 
     # Fail if not found.
-    if [ "$collectionIdOutput" == "" ]; then
+    if [ "$isSimpleIncludeTest" == "true" ]; then
+        echo "Skipping test file prefix validation on '${sqlFile}' due to it being a simple test"
+    elif [ "$collectionIdOutput" == "" ]; then
         echo "Test file prefix Validation failed on '${sqlFile}': Please ensure test files set documentdb.next_collection_id";
         exit 1;
     fi;
@@ -136,7 +175,7 @@ for validationFile in $(ls $scriptDir/expected/*.out); do
 
     # Allow skipping unique checks
     skipUniqueCheck="false"
-    if [[ "$sqlFile" =~ "tests_runtime.sql" ]] || [[ "$sqlFile" =~ "explain_index_composite" ]] || [[ "$sqlFile" =~ "explain_index_comp_desc.sql" ]] || [[ "$sqlFile" =~ "tests_index_no_bitmap.sql" ]] || [[ "$sqlFile" =~ "tests_index.sql" ]] ||  [[ "$sqlFile" =~ "tests_index_backcompat.sql" ]] || [[ "$sqlFile" =~ "tests_pg17_explain" ]] || [[ "$sqlFile" =~ "tests_explain_index.sql" ]] || [[ "$sqlFile" =~ "tests_explain_index_no_bitmap.sql" ]]; then
+    if [[ "$sqlFile" =~ "tests_runtime.sql" ]] || [[ "$sqlFile" =~ "explain_index_comp_wild" ]] || [[ "$sqlFile" =~ "explain_index_composite" ]] || [[ "$sqlFile" =~ "explain_index_comp_desc.sql" ]] || [[ "$sqlFile" =~ "tests_index_no_bitmap.sql" ]] || [[ "$sqlFile" =~ "tests_index.sql" ]] ||  [[ "$sqlFile" =~ "tests_index_backcompat.sql" ]] || [[ "$sqlFile" =~ "tests_pg17_explain" ]] || [[ "$sqlFile" =~ "tests_explain_index.sql" ]] || [[ "$sqlFile" =~ "tests_explain_index_no_bitmap.sql" ]]; then
             skippedDuplicateCheckFile="$skippedDuplicateCheckFile $sqlFile"
             skipUniqueCheck="true"
     elif [[ "$sqlFile" =~ _pg[0-9]+ ]]; then

@@ -960,33 +960,57 @@ AddPathStringToHashset(List *indexIdList, HTAB *stringHashSet)
 
 		if (IsBsonRegularIndexAm(indexRelation->rd_rel->relam))
 		{
-			int numberOfKeyAttributes = IndexRelationGetNumberOfKeyAttributes(
-				indexRelation);
-			for (int i = 0; i < numberOfKeyAttributes; i++)
+			if (IsCompositeOpClass(indexRelation))
 			{
-				/* Check if the index is a single path index */
-				if (indexRelation->rd_opcoptions[i] != NULL &&
-					IsSinglePathOpFamilyOid(indexRelation->rd_rel->relam,
-											indexRelation->rd_opfamily[i]))
+				/* Composite op class is always on the first column. */
+				if (indexRelation->rd_opcoptions[0] != NULL)
 				{
-					bytea *optBytea = indexRelation->rd_opcoptions[i];
+					int32_t numPaths = GetCompositeOpClassPathCount(
+						indexRelation->rd_opcoptions[0]);
 
-					BsonGinSinglePathOptions *indexOption =
-						(BsonGinSinglePathOptions *) optBytea;
-					uint32_t pathCount = 0;
-					const char *pathStr;
-					Get_Index_Path_Option(indexOption, path, pathStr, pathCount);
+					/* In theory compound composite could work if we match the first path of the index, but let's be restrictive for now and we can expand if needed. */
+					if (numPaths == 1)
+					{
+						const char *pathStr = GetCompositeFirstIndexPath(
+							indexRelation->rd_opcoptions[0]);
 
-					char *copiedPathStr = palloc(pathCount + 1);
-					strcpy(copiedPathStr, pathStr);
+						StringView hashEntry = CreateStringViewFromString(pathStr);
 
-					/* Add the index path to the hash set */
-					StringView hashEntry = CreateStringViewFromStringWithLength(
-						copiedPathStr,
-						pathCount);
+						bool found = false;
+						hash_search(stringHashSet, &hashEntry, HASH_ENTER, &found);
+					}
+				}
+			}
+			else
+			{
+				int numberOfKeyAttributes = IndexRelationGetNumberOfKeyAttributes(
+					indexRelation);
+				for (int i = 0; i < numberOfKeyAttributes; i++)
+				{
+					/* Check if the index is a single path index */
+					if (indexRelation->rd_opcoptions[i] != NULL &&
+						IsSinglePathOpFamilyOid(indexRelation->rd_rel->relam,
+												indexRelation->rd_opfamily[i]))
+					{
+						bytea *optBytea = indexRelation->rd_opcoptions[i];
 
-					bool found = false;
-					hash_search(stringHashSet, &hashEntry, HASH_ENTER, &found);
+						BsonGinSinglePathOptions *indexOption =
+							(BsonGinSinglePathOptions *) optBytea;
+						uint32_t pathCount = 0;
+						const char *pathStr;
+						Get_Index_Path_Option(indexOption, path, pathStr, pathCount);
+
+						char *copiedPathStr = palloc(pathCount + 1);
+						strcpy(copiedPathStr, pathStr);
+
+						/* Add the index path to the hash set */
+						StringView hashEntry = CreateStringViewFromStringWithLength(
+							copiedPathStr,
+							pathCount);
+
+						bool found = false;
+						hash_search(stringHashSet, &hashEntry, HASH_ENTER, &found);
+					}
 				}
 			}
 		}

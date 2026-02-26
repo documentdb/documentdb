@@ -33,6 +33,7 @@ extern bool ThrowDeadlockOnCrud;
 extern bool EnableBackendStatementTimeout;
 extern int MaxCustomCommandTimeout;
 extern bool EnableVariablesSupportForWriteCommands;
+extern bool RumFailOnLostPath;
 
 /*
  *  This is a list of command options that are not currently supported.
@@ -183,26 +184,27 @@ FindShardKeyValueForDocumentId(MongoCollection *collection, const bson_value_t *
 
 	Oid *argTypes = palloc0(argCount * sizeof(Oid));
 	Datum *argValues = palloc0(argCount * sizeof(Datum));
+
 	char *argNulls = palloc0(argCount * sizeof(char));
+	memset(argNulls, ' ', argCount);
 
 	Oid bsonTypeId = BsonTypeId();
 
 	/* set the query spec */
 	argTypes[0] = bsonTypeId;
 	argValues[0] = PointerGetDatum(PgbsonInitFromDocumentBsonValue(queryDoc));
-	argNulls[0] = ' ';
 
 	if (applyVariableSpec || applyCollation)
 	{
 		/* set the variableSpec */
 		argTypes[1] = bsonTypeId;
-		argValues[1] = applyVariableSpec ? PointerGetDatum(variableSpecBson) : (Datum) 0;
-		argNulls[1] = applyVariableSpec ? ' ' : 'n';
+		argValues[1] = applyVariableSpec ? PointerGetDatum(variableSpecBson) :
+					   PointerGetDatum(PgbsonInitEmpty());
 
 		/* set the collation string */
 		argTypes[2] = TEXTOID;
-		argValues[2] = applyCollation ? CStringGetTextDatum(collationString) : (Datum) 0;
-		argNulls[2] = applyCollation ? ' ' : 'n';
+		argValues[2] = applyCollation ? CStringGetTextDatum(collationString) :
+					   CStringGetTextDatum("");
 	}
 
 	/* set _id filter */
@@ -216,7 +218,6 @@ FindShardKeyValueForDocumentId(MongoCollection *collection, const bson_value_t *
 		argTypes[idArgIndex] = BYTEAOID;
 		argValues[idArgIndex] = PointerGetDatum(CastPgbsonToBytea(PgbsonWriterGetPgbson(
 																	  &writer)));
-		argNulls[idArgIndex] = ' ';
 	}
 
 	/* set the orderby _id filter */
@@ -229,7 +230,6 @@ FindShardKeyValueForDocumentId(MongoCollection *collection, const bson_value_t *
 
 		argTypes[idOrderByIndex] = bsonTypeId;
 		argValues[idOrderByIndex] = PointerGetDatum(PgbsonWriterGetPgbson(&writer));
-		argNulls[idOrderByIndex] = ' ';
 	}
 
 	bool readOnly = false;
@@ -350,7 +350,7 @@ GetWriteErrorFromErrorData(ErrorData *errorData, int writeErrorIdx)
 
 	if (errorData->sqlerrcode == ERRCODE_INTERNAL_ERROR && errorData->message != NULL)
 	{
-		if (strcmp(errorData->message, "Lost Path") == 0)
+		if (RumFailOnLostPath && strcmp(errorData->message, "Lost path") == 0)
 		{
 			/*
 			 * We need to throw this updated error and retry at the gateway

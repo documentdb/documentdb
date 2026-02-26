@@ -15,6 +15,7 @@
 
 #include "io/bson_core.h"
 #include "aggregation/bson_positional_query.h"
+#include "collation/collation.h"
 #include "query/query_operator.h"
 #include "operators/bson_expr_eval.h"
 #include "metadata/metadata_cache.h"
@@ -100,12 +101,13 @@ static void PositionalSetIntermediateArrayIndex(void *state, int32_t index);
  * object that is used in evaluation of the positional $ operator.
  */
 BsonPositionalQueryData *
-GetPositionalQueryData(const bson_value_t *query)
+GetPositionalQueryData(const bson_value_t *query, const char *collationString)
 {
 	/* Step 1: Create Quals for the query based on BSON value inputs */
 	bson_iter_t queryDocIterator;
 	BsonValueInitIterator(query, &queryDocIterator);
-	List *queryQuals = CreateQualsForBsonValueTopLevelQueryIter(&queryDocIterator);
+	List *queryQuals = CreateQualsForBsonValueTopLevelQueryIter(&queryDocIterator,
+																collationString);
 
 	List *finalQuals = NIL;
 
@@ -229,8 +231,11 @@ ProcessSingleFuncExpr(FuncExpr *expr, List **finalList, bool isArrayMatch, const
 	Expr *secondArg = lsecond(expr->args);
 	Assert(IsA(secondArg, Const));
 	Const *argConst = (Const *) secondArg;
-	PgbsonToSinglePgbsonElement(DatumGetPgBson(argConst->constvalue),
-								&singleElement);
+
+	const char *collationString = PgbsonToSinglePgbsonElementWithCollation(DatumGetPgBson(
+																			   argConst->
+																			   constvalue),
+																		   &singleElement);
 
 	/* The path becomes the key to the list - the value converts to the FuncExpr */
 	const char *path;
@@ -317,9 +322,24 @@ ProcessSingleFuncExpr(FuncExpr *expr, List **finalList, bool isArrayMatch, const
 		}
 
 		/* Refer to the actual quals of elemMatch since we evaluate inside arrays ourselves */
-		qual->evalState = GetExpressionEvalState(&singleElement.bsonValue,
-												 CurrentMemoryContext);
+		qual->evalState = GetExpressionEvalStateWithCollation(&singleElement.bsonValue,
+															  CurrentMemoryContext,
+															  collationString);
 		qual->isArrayMatch = true;
+	}
+	else if (IsCollationApplicable(collationString))
+	{
+		/* if the collation in the qual is valid, we maintain it and use it in the function execution */
+		pgbson_writer writer;
+		PgbsonWriterInit(&writer);
+
+		PgbsonWriterAppendValue(&writer, "", 0, &singleElement.bsonValue);
+		PgbsonWriterAppendUtf8(&writer, "collation", 9, collationString);
+
+		argConst->constvalue = PointerGetDatum(PgbsonWriterGetPgbson(&writer));
+
+		qual->evalState = GetExpressionEvalStateFromFuncExpr(expr,
+															 CurrentMemoryContext);
 	}
 	else
 	{

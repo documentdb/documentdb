@@ -183,6 +183,17 @@ BuildSchemaTreeCoreOnNode(bson_iter_t *schemaIter, SchemaNode *node)
 		{
 			ParseEncryptMetadata(value, node);
 		}
+		else if (strcmp(key, "description") == 0)
+		{
+			if (value->value_type != BSON_TYPE_UTF8)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
+								errmsg(
+									"$jsonSchema keyword 'description' must be a string")));
+			}
+
+			/* No validation needed for description field */
+		}
 
 		/* TODO: Add other Common Validators here */
 

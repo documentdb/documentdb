@@ -21,11 +21,6 @@ scriptDir="$( cd -P "$( dirname "$source" )" && pwd )"
 . $scriptDir/setup_versions.sh
 CITUS_REF=$(GetCitusVersion $citusVersion)
 
-if [ "${PGVERSION:-}" == "18" ]; then
-    echo "Skipping Citus install for PG18"
-    exit 0
-fi
-
 . $scriptDir/utils.sh
 if [ "${PGVERSION:-}" != "" ]; then
     pgPath=$(GetPostgresPath $PGVERSION)

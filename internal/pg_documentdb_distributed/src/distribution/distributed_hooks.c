@@ -15,6 +15,7 @@
 #include <utils/lsyscache.h>
 #include <utils/memutils.h>
 #include <metadata/index.h>
+#include <parser/parse_func.h>
 
 #include "io/bson_core.h"
 #include "utils/query_utils.h"
@@ -29,9 +30,12 @@
 #include "shard_colocation.h"
 #include "distributed_hooks.h"
 
+#include "distributed_index_operations.h"
+
 extern bool UseLocalExecutionShardQueries;
 extern char *ApiDistributedSchemaName;
 
+extern bool ShouldSetupIndexQueueInUdf;
 extern bool EnableMetadataReferenceTableSync;
 extern char *DistributedOperationsQuery;
 extern char *DistributedApplicationNamePrefix;
@@ -646,7 +650,7 @@ ShouldScheduleIndexBuildsCore()
 
 
 static List *
-GetDistributedShardIndexOidsCore(uint64_t collectionId, int indexId)
+GetDistributedShardIndexOidsCore(uint64_t collectionId, int indexId, bool ignoreMissing)
 {
 	/* First for the given collection, get the shard ids associated with it */
 	char tableName[NAMEDATALEN] = { 0 };
@@ -672,7 +676,7 @@ GetDistributedShardIndexOidsCore(uint64_t collectionId, int indexId)
 		{
 			indexShardList = lappend_oid(indexShardList, indexOid);
 		}
-		else
+		else if (!ignoreMissing)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 							errmsg("failed to find index to get index metadata."
@@ -681,6 +685,47 @@ GetDistributedShardIndexOidsCore(uint64_t collectionId, int indexId)
 	}
 
 	return indexShardList;
+}
+
+
+static const char *
+GetDistributedOperationCancellationQuery(int64 shardId, StringView *opIdView,
+										 int *nargs, Oid **argTypes, Datum **argValues,
+										 char **argNulls)
+{
+	StringInfo query = makeStringInfo();
+
+	/*
+	 * KillOp query attempts to cancel any operation that is still active but is a no-op
+	 * when the operation is already finished the connection state is 'idle', in order to
+	 * kill idle connection we have to force terminate the backend.
+	 *
+	 * For distributed cases we use citus overrides to cancel operations that are identified the
+	 * gpid
+	 */
+	appendStringInfo(query,
+					 " SELECT "
+					 "  CASE WHEN state = 'idle' THEN pg_terminate_backend($1)"
+					 "       ELSE pg_cancel_backend($1)"
+					 "  END "
+					 " FROM citus_stat_activity WHERE global_pid = $1 "
+					 " AND (EXTRACT(epoch FROM query_start) * 1000000)::numeric(20,0) = $2::numeric(20,0) "
+					 " AND NOT is_worker_query "
+					 "LIMIT 1");
+
+	*nargs = 2;
+	*argTypes = palloc(sizeof(Oid) * (*nargs));
+	*argValues = palloc(sizeof(Datum) * (*nargs));
+	*argNulls = palloc0(sizeof(char) * (*nargs));
+	(*argTypes)[0] = INT8OID;
+	(*argValues)[0] = Int64GetDatum(shardId);
+	(*argTypes)[1] = TEXTOID;
+	(*argValues)[1] = CStringGetTextDatum(opIdView->string);
+
+	(*argNulls)[0] = ' ';
+	(*argNulls)[1] = ' ';
+
+	return query->data;
 }
 
 
@@ -707,6 +752,7 @@ InitializeDocumentDBDistributedHooks(void)
 	ensure_metadata_table_replicated_hook = EnsureMetadataTableReplicatedCore;
 	DefaultInlineWriteOperations = false;
 	ShouldUpgradeDataTables = false;
+	ShouldSetupIndexQueueInUdf = false;
 
 	UpdateColocationHooks();
 
@@ -720,6 +766,9 @@ InitializeDocumentDBDistributedHooks(void)
 	should_schedule_index_builds_hook = ShouldScheduleIndexBuildsCore;
 
 	get_shard_index_oids_hook = GetDistributedShardIndexOidsCore;
+
+	update_postgres_index_hook = UpdateDistributedPostgresIndex;
+	get_operation_cancellation_query_hook = GetDistributedOperationCancellationQuery;
 
 	DistributedOperationsQuery =
 		"SELECT * FROM pg_stat_activity LEFT JOIN pg_catalog.get_all_active_transactions() ON process_id = pid JOIN pg_catalog.pg_dist_local_group ON TRUE";

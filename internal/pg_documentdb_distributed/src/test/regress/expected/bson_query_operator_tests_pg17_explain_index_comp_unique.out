@@ -115,9 +115,9 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_1200" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_1204" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "a", "c", "_id" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "1" } }'::bson, false) bson_rum_unique_shard_path_ops WITH =#=)
-    "documents_rum_index_1205" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "a.b", "_id" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "a.b" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "1" } }'::bson, false) bson_rum_unique_shard_path_ops WITH =#=)
-    "documents_rum_index_1206" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "b", "a", "_id" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "b" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "1" } }'::bson, false) bson_rum_unique_shard_path_ops WITH =#=)
+    "documents_rum_index_1204" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "a", "c", "_id" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "a" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "1" } }'::bson, false, true) bson_rum_unique_shard_path_ops (cmp='true') WITH =#=)
+    "documents_rum_index_1205" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "a.b", "_id" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "a.b" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "1" } }'::bson, false, true) bson_rum_unique_shard_path_ops (cmp='true') WITH =#=)
+    "documents_rum_index_1206" EXCLUDE USING documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "b", "a", "_id" ]', tl='2691') WITH =?=, generate_unique_shard_document(document, shard_key_value, '{ "b" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "1" } }'::bson, false, true) bson_rum_unique_shard_path_ops (cmp='true') WITH =#=)
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '1200'::bigint)
 
@@ -598,8 +598,8 @@ SELECT documentdb_api.insert_one('db','queryoperator', '{"_id": 26, "a" : [NaN, 
 (1 row)
 
 /* validate explain */
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$eq" : 1 }}';
-                                                                   QUERY PLAN                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$eq" : 1 }}'$cmd$ );
+                                                              run_explain_and_trim                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=4 loops=1)
    Task Count: 1
@@ -610,6 +610,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
                indexName: queryoperator_ab
+               indexKey: {"a.b": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a.b": [1, 1], "_id": (MinKey, MaxKey)]
                innerScanLoops: 4 loops
@@ -620,10 +621,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_ab (actual rows=4 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$ne" : 1 }}';
-                                                                    QUERY PLAN                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$ne" : 1 }}'$cmd$ );
+                                                               run_explain_and_trim                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=23 loops=1)
    Task Count: 1
@@ -634,6 +635,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=23 loops=1)
                indexName: queryoperator_ab
+               indexKey: {"a.b": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a.b": [MinKey, MaxKey], "_id": (MinKey, MaxKey)]
                innerScanLoops: 26 loops
@@ -645,10 +647,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_ab (actual rows=26 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@!=) '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(20 rows)
+(21 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$gt" : 1 }}';
-                                                                   QUERY PLAN                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$gt" : 1 }}'$cmd$ );
+                                                              run_explain_and_trim                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=4 loops=1)
    Task Count: 1
@@ -659,6 +661,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
                indexName: queryoperator_ab
+               indexKey: {"a.b": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a.b": (1, Infinity], "_id": (MinKey, MaxKey)]
                innerScanLoops: 4 loops
@@ -669,10 +672,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_ab (actual rows=4 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@>) '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$gte" : 1 }}';
-                                                                    QUERY PLAN                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$gte" : 1 }}'$cmd$ );
+                                                               run_explain_and_trim                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=5 loops=1)
    Task Count: 1
@@ -683,6 +686,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
                indexName: queryoperator_ab
+               indexKey: {"a.b": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a.b": [1, Infinity], "_id": (MinKey, MaxKey)]
                innerScanLoops: 5 loops
@@ -693,10 +697,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_ab (actual rows=5 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$lt" : 1 }}';
-                                                                   QUERY PLAN                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$lt" : 1 }}'$cmd$ );
+                                                              run_explain_and_trim                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=5 loops=1)
    Task Count: 1
@@ -707,6 +711,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
                indexName: queryoperator_ab
+               indexKey: {"a.b": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a.b": [-Infinity, 1), "_id": (MinKey, MaxKey)]
                innerScanLoops: 5 loops
@@ -717,10 +722,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_ab (actual rows=5 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@<) '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$lte" : 1 }}';
-                                                                    QUERY PLAN                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$lte" : 1 }}'$cmd$ );
+                                                               run_explain_and_trim                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=6 loops=1)
    Task Count: 1
@@ -731,6 +736,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
                indexName: queryoperator_ab
+               indexKey: {"a.b": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a.b": [-Infinity, 1], "_id": (MinKey, MaxKey)]
                innerScanLoops: 6 loops
@@ -741,11 +747,11 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_ab (actual rows=6 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@<=) '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
 /* validate explain for single path index */
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'singlepathindexexists') WHERE document @@ '{ "a": { "$lte" : 1 }}';
-                                                                   QUERY PLAN                                                                   
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'singlepathindexexists') WHERE document @@ '{ "a": { "$lte" : 1 }}'$cmd$ );
+                                                              run_explain_and_trim                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -756,6 +762,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
                indexName: a_index
+               indexKey: {"a": 1,"_id": 1}
                isMultiKey: false
                indexBounds: ["a": [-Infinity, 1], "_id": (MinKey, MaxKey)]
                innerScanLoops: 1 loops
@@ -766,10 +773,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on a_index (actual rows=1 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@<=) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'singlepathindexexists') WHERE document @@ '{ "a": { "$exists" : 1 }}';
-                                                                QUERY PLAN                                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'singlepathindexexists') WHERE document @@ '{ "a": { "$exists" : 1 }}'$cmd$ );
+                                                           run_explain_and_trim                                                            
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=4 loops=1)
    Task Count: 1
@@ -780,6 +787,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
                indexName: a_index
+               indexKey: {"a": 1,"_id": 1}
                isMultiKey: false
                indexBounds: ["a": [MinKey, MaxKey], "_id": (MinKey, MaxKey)]
                innerScanLoops: 4 loops
@@ -790,10 +798,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on a_index (actual rows=4 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "$minKey" : 1 } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'singlepathindexexists') WHERE document @@ '{ "a": { "$exists" : 0 }}';
-                                                                  QUERY PLAN                                                                   
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'singlepathindexexists') WHERE document @@ '{ "a": { "$exists" : 0 }}'$cmd$ );
+                                                             run_explain_and_trim                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -804,6 +812,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
                indexName: a_index
+               indexKey: {"a": 1,"_id": 1}
                isMultiKey: false
                indexBounds: ["a": (MinKey, null], "_id": (MinKey, MaxKey)]
                innerScanLoops: 1 loops
@@ -814,11 +823,11 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on a_index (actual rows=1 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@?) '{ "a" : { "$numberInt" : "0" } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
 /* validate explain for the individual items as well */
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gt" : { "b": 1 } }}';
-                                                                       QUERY PLAN                                                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gt" : { "b": 1 } }}'$cmd$ );
+                                                                  run_explain_and_trim                                                                   
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=15 loops=1)
    Task Count: 1
@@ -829,6 +838,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=15 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": ({ "b" : 1 }, [  ]), "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 15 loops
@@ -839,10 +849,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=15 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@>) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gt" : { "b": [ true, false ] } }}';
-                                                                    QUERY PLAN                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gt" : { "b": [ true, false ] } }}'$cmd$ );
+                                                               run_explain_and_trim                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -853,6 +863,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": ({ "b" : [ true, false ] }, [  ]), "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 1 loops
@@ -863,10 +874,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=1 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@>) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gt" : [ { "b": [ 2, 3, 4 ] } ] }}';
-                                                                                                   QUERY PLAN                                                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gt" : [ { "b": [ 2, 3, 4 ] } ] }}'$cmd$ );
+                                                                                              run_explain_and_trim                                                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Task Count: 1
@@ -877,6 +888,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [{ "b" : [ 2, 3, 4 ] }, MaxKey], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 6 loops
@@ -888,10 +900,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=6 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@>) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
-(20 rows)
+(21 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gte" : { "b": 1 } }}';
-                                                                        QUERY PLAN                                                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gte" : { "b": 1 } }}'$cmd$ );
+                                                                   run_explain_and_trim                                                                   
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=16 loops=1)
    Task Count: 1
@@ -902,6 +914,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=16 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [{ "b" : 1 }, [  ]), "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 16 loops
@@ -912,10 +925,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=16 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gte" : { "b": [ true, false ] } }}';
-                                                                    QUERY PLAN                                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gte" : { "b": [ true, false ] } }}'$cmd$ );
+                                                               run_explain_and_trim                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -926,6 +939,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [{ "b" : [ true, false ] }, [  ]), "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 1 loops
@@ -936,10 +950,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=1 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gte" : [ { "b": [ 2, 3, 4 ] } ] }}';
-                                                                                                    QUERY PLAN                                                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gte" : [ { "b": [ 2, 3, 4 ] } ] }}'$cmd$ );
+                                                                                               run_explain_and_trim                                                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Task Count: 1
@@ -950,6 +964,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [{ "b" : [ 2, 3, 4 ] }, MaxKey], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 6 loops
@@ -961,10 +976,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=6 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
-(20 rows)
+(21 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lt" : { "b": 1 } }}';
-                                                                       QUERY PLAN                                                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lt" : { "b": 1 } }}'$cmd$ );
+                                                                  run_explain_and_trim                                                                   
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=5 loops=1)
    Task Count: 1
@@ -975,6 +990,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [{ }, { "b" : 1 }), "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 5 loops
@@ -985,10 +1001,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=5 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@<) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lt" : { "b": [ true, false ] } }}';
-                                                                    QUERY PLAN                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lt" : { "b": [ true, false ] } }}'$cmd$ );
+                                                               run_explain_and_trim                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=18 loops=1)
    Task Count: 1
@@ -999,6 +1015,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=18 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [{ }, { "b" : [ true, false ] }), "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 18 loops
@@ -1009,10 +1026,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=18 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@<) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lt" : [ { "b": [ 2, 3, 4 ] } ] }}';
-                                                                                                   QUERY PLAN                                                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lt" : [ { "b": [ 2, 3, 4 ] } ] }}'$cmd$ );
+                                                                                              run_explain_and_trim                                                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=9 loops=1)
    Task Count: 1
@@ -1023,6 +1040,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=9 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [MinKey, [ { "b" : [ 2, 3, 4 ] } ]), "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 26 loops
@@ -1034,10 +1052,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=26 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@<) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
-(20 rows)
+(21 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lte" : { "b": 1 } }}';
-                                                                        QUERY PLAN                                                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lte" : { "b": 1 } }}'$cmd$ );
+                                                                   run_explain_and_trim                                                                   
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=6 loops=1)
    Task Count: 1
@@ -1048,6 +1066,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [{ }, { "b" : 1 }], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 6 loops
@@ -1058,10 +1077,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=6 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@<=) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lte" : { "b": [ true, false ] } }}';
-                                                                    QUERY PLAN                                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lte" : { "b": [ true, false ] } }}'$cmd$ );
+                                                               run_explain_and_trim                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=18 loops=1)
    Task Count: 1
@@ -1072,6 +1091,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=18 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [{ }, { "b" : [ true, false ] }], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 18 loops
@@ -1082,10 +1102,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=18 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@<=) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lte" : [ { "b": [ 2, 3, 4 ] } ] }}';
-                                                                                                    QUERY PLAN                                                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lte" : [ { "b": [ 2, 3, 4 ] } ] }}'$cmd$ );
+                                                                                               run_explain_and_trim                                                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=9 loops=1)
    Task Count: 1
@@ -1096,6 +1116,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=9 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [MinKey, [ { "b" : [ 2, 3, 4 ] } ]], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 26 loops
@@ -1107,10 +1128,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=26 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@<=) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
-(20 rows)
+(21 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$eq" : { "b": 1 } }}';
-                                                                       QUERY PLAN                                                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$eq" : { "b": 1 } }}'$cmd$ );
+                                                                  run_explain_and_trim                                                                   
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Task Count: 1
@@ -1121,6 +1142,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [{ "b" : 1 }, { "b" : 1 }], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 2 loops
@@ -1131,10 +1153,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=2 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$eq" : { "b": [ true, false ] } }}';
-                                                                    QUERY PLAN                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$eq" : { "b": [ true, false ] } }}'$cmd$ );
+                                                               run_explain_and_trim                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Task Count: 1
@@ -1145,6 +1167,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [{ "b" : [ true, false ] }, { "b" : [ true, false ] }], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 0 loops
@@ -1154,10 +1177,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Recheck Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=0 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
-(18 rows)
+(19 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$eq" : [ { "b": [ 2, 3, 4 ] } ] }}';
-                                                                                                                   QUERY PLAN                                                                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$eq" : [ { "b": [ 2, 3, 4 ] } ] }}'$cmd$ );
+                                                                                                              run_explain_and_trim                                                                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Task Count: 1
@@ -1168,6 +1191,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [[ { "b" : [ 2, 3, 4 ] } ], [ { "b" : [ 2, 3, 4 ] } ]], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)], ["a": [{ "b" : [ 2, 3, 4 ] }, { "b" : [ 2, 3, 4 ] }], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 0 loops
@@ -1177,10 +1201,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Recheck Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=0 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
-(18 rows)
+(19 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$ne" : { "b": 1 } }}';
-                                                                        QUERY PLAN                                                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$ne" : { "b": 1 } }}'$cmd$ );
+                                                                   run_explain_and_trim                                                                   
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=25 loops=1)
    Task Count: 1
@@ -1191,6 +1215,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=25 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [MinKey, MaxKey], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 26 loops
@@ -1202,10 +1227,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=26 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@!=) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
-(20 rows)
+(21 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$ne" : { "b": [ true, false ] } }}';
-                                                                    QUERY PLAN                                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$ne" : { "b": [ true, false ] } }}'$cmd$ );
+                                                               run_explain_and_trim                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=27 loops=1)
    Task Count: 1
@@ -1216,6 +1241,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=27 loops=1)
                indexName: queryoperator_a_c
+               indexKey: {"a": 1,"c": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [MinKey, MaxKey], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                innerScanLoops: 27 loops
@@ -1226,10 +1252,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperator_a_c (actual rows=27 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@!=) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$ne" : [ { "b": [ 2, 3, 4 ] } ] }}';
-                                                                                            QUERY PLAN                                                                                            
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$ne" : [ { "b": [ 2, 3, 4 ] } ] }}'$cmd$ );
+                                                                                       run_explain_and_trim                                                                                       
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=27 loops=1)
    Task Count: 1
@@ -1246,8 +1272,8 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                      Index Cond: (shard_key_value = '1200'::bigint)
 (13 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2 }}' ORDER BY object_id;
-                                                                             QUERY PLAN                                                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2 }}' ORDER BY object_id$cmd$ );
+                                                                        run_explain_and_trim                                                                        
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -1260,8 +1286,8 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                Index Cond: ((shard_key_value = '1200'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
 (9 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2, "$ne" : null }}' ORDER BY object_id;
-                                                                             QUERY PLAN                                                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2, "$ne" : null }}' ORDER BY object_id$cmd$ );
+                                                                        run_explain_and_trim                                                                        
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -1275,8 +1301,8 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                Filter: (document OPERATOR(documentdb_api_catalog.@!=) '{ "_id" : null }'::documentdb_core.bson)
 (10 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2, "$in": [ 1, 2 ] }}' ORDER BY object_id;
-                                                                                                                                                            QUERY PLAN                                                                                                                                                            
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2, "$in": [ 1, 2 ] }}' ORDER BY object_id$cmd$ );
+                                                                                                                                                       run_explain_and_trim                                                                                                                                                       
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -1290,8 +1316,8 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                Filter: (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::documentdb_core.bson)
 (10 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2, "$gt": 20, "$lt": 40 }}' ORDER BY object_id;
-                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                  
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2, "$gt": 20, "$lt": 40 }}' ORDER BY object_id$cmd$ );
+                                                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                                                             
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Task Count: 1
@@ -1301,12 +1327,11 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Tuple data received from node: 0 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Index Scan using _id_ on documents_1200_1200005 collection (actual rows=0 loops=1)
-               Index Cond: ((shard_key_value = '1200'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>) '{ "" : { "$numberInt" : "20" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : { "$numberInt" : "40" } }'::documentdb_core.bson))
-               Filter: ((document OPERATOR(documentdb_api_catalog.@>) '{ "_id" : { "$numberInt" : "20" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<) '{ "_id" : { "$numberInt" : "40" } }'::documentdb_core.bson))
-(10 rows)
+               Index Cond: ((shard_key_value = '1200'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>) '{ "" : { "$numberInt" : "20" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : { "$numberInt" : "40" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberDouble" : "-Infinity" } }'::documentdb_core.bson))
+(9 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$all": [ 2 ], "$in": [ 1, 2 ] } }' ORDER BY object_id;
-                                                                                                                                                            QUERY PLAN                                                                                                                                                            
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$all": [ 2 ], "$in": [ 1, 2 ] } }' ORDER BY object_id$cmd$ );
+                                                                                                                                                       run_explain_and_trim                                                                                                                                                       
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -1320,8 +1345,8 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                Filter: (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::documentdb_core.bson)
 (10 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$all": [ 2 ], "$ne": 40 }}' ORDER BY object_id;
-                                                                             QUERY PLAN                                                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$all": [ 2 ], "$ne": 40 }}' ORDER BY object_id$cmd$ );
+                                                                        run_explain_and_trim                                                                        
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -1335,8 +1360,8 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                Filter: (document OPERATOR(documentdb_api_catalog.@!=) '{ "_id" : { "$numberInt" : "40" } }'::documentdb_core.bson)
 (10 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2, "$all" : [ 1, 2 ] }}' ORDER BY object_id;
-                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2, "$all" : [ 1, 2 ] }}' ORDER BY object_id$cmd$ );
+                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                            
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Task Count: 1
@@ -1347,11 +1372,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Index Scan using _id_ on documents_1200_1200005 collection (actual rows=0 loops=1)
                Index Cond: ((shard_key_value = '1200'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
-               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(10 rows)
+(9 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$gt" : 1, "$lte" : 5 }}' ORDER BY object_id;
-                                                                                                                               QUERY PLAN                                                                                                                                
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$gt" : 1, "$lte" : 5 }}' ORDER BY object_id$cmd$ );
+                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=4 loops=1)
    Task Count: 1
@@ -1361,12 +1385,11 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Tuple data received from node: 172 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Index Scan using _id_ on documents_1200_1200005 collection (actual rows=4 loops=1)
-               Index Cond: ((shard_key_value = '1200'::bigint) AND (object_id OPERATOR(documentdb_core.>) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberInt" : "5" } }'::documentdb_core.bson))
-               Filter: ((document OPERATOR(documentdb_api_catalog.@>) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<=) '{ "_id" : { "$numberInt" : "5" } }'::documentdb_core.bson))
-(10 rows)
+               Index Cond: ((shard_key_value = '1200'::bigint) AND (object_id OPERATOR(documentdb_core.>) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberInt" : "5" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberDouble" : "-Infinity" } }'::documentdb_core.bson))
+(9 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [{"_id":1},{"_id":1}]}' ORDER BY object_id;
-                                                                                                                               QUERY PLAN                                                                                                                               
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [{"_id":1},{"_id":1}]}' ORDER BY object_id$cmd$ );
+                                                                                                                          run_explain_and_trim                                                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -1379,8 +1402,8 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                Index Cond: ((shard_key_value = '1200'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson))
 (9 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [{"_id":1},{"_id":2}]}' ORDER BY object_id;
-                                                                                                                               QUERY PLAN                                                                                                                               
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [{"_id":1},{"_id":2}]}' ORDER BY object_id$cmd$ );
+                                                                                                                          run_explain_and_trim                                                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Task Count: 1
@@ -1391,11 +1414,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Index Scan using _id_ on documents_1200_1200005 collection (actual rows=0 loops=1)
                Index Cond: ((shard_key_value = '1200'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
-               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(10 rows)
+(9 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or"  : [{"_id":1},{"_id":2}]}' ORDER BY object_id;
-                                                                                                          QUERY PLAN                                                                                                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or"  : [{"_id":1},{"_id":2}]}' ORDER BY object_id$cmd$ );
+                                                                                                     run_explain_and_trim                                                                                                     
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Task Count: 1
@@ -1408,8 +1430,8 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                Index Cond: ((shard_key_value = '1200'::bigint) AND (object_id OPERATOR(documentdb_core.=) ANY ('{"{ \"\" : { \"$numberInt\" : \"1\" } }","{ \"\" : { \"$numberInt\" : \"2\" } }"}'::documentdb_core.bson[])))
 (9 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or"  : [{"_id": { "$gt": 1, "$lte" : 5 }}, {"_id":1}]}' ORDER BY object_id;
-                                                                                                                                                                              QUERY PLAN                                                                                                                                                                               
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or"  : [{"_id": { "$gt": 1, "$lte" : 5 }}, {"_id":1}]}' ORDER BY object_id$cmd$ );
+                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=5 loops=1)
    Task Count: 1
@@ -1420,7 +1442,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Sort (actual rows=5 loops=1)
                Sort Key: object_id
-               Sort Method: quicksort  Memory: 25kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Bitmap Heap Scan on documents_1200_1200005 collection (actual rows=5 loops=1)
                      Recheck Cond: (shard_key_value = '1200'::bigint)
                      Filter: (((document OPERATOR(documentdb_api_catalog.@>) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<=) '{ "_id" : { "$numberInt" : "5" } }'::documentdb_core.bson)) OR (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson))
@@ -1430,8 +1452,8 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                            Index Cond: (shard_key_value = '1200'::bigint)
 (17 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [{"_id":1}, {"_id": { "$gte": 1, "$lte" : 5 }}]}' ORDER BY object_id;
-                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                  
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [{"_id":1}, {"_id": { "$gte": 1, "$lte" : 5 }}]}' ORDER BY object_id$cmd$ );
+                                                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                                                             
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -1441,12 +1463,11 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Tuple data received from node: 40 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Index Scan using _id_ on documents_1200_1200005 collection (actual rows=1 loops=1)
-               Index Cond: ((shard_key_value = '1200'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberInt" : "5" } }'::documentdb_core.bson))
-               Filter: ((document OPERATOR(documentdb_api_catalog.@>=) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<=) '{ "_id" : { "$numberInt" : "5" } }'::documentdb_core.bson))
-(10 rows)
+               Index Cond: ((shard_key_value = '1200'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberInt" : "5" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberDouble" : "-Infinity" } }'::documentdb_core.bson))
+(9 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a"  : {"$all" : [{"$elemMatch" : {"b" : "M", "c" : {"$gt" : 50} } }, {"$elemMatch" : {"c" : 100, "d" : "Y" } }]}}' ORDER BY object_id;
-                                                                                                                                                     QUERY PLAN                                                                                                                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a"  : {"$all" : [{"$elemMatch" : {"b" : "M", "c" : {"$gt" : 50} } }, {"$elemMatch" : {"c" : 100, "d" : "Y" } }]}}' ORDER BY object_id$cmd$ );
+                                                                                                                                                run_explain_and_trim                                                                                                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Task Count: 1
@@ -1457,9 +1478,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Sort (actual rows=2 loops=1)
                Sort Key: object_id
-               Sort Method: quicksort  Memory: 25kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
                      indexName: queryoperator_ab
+                     indexKey: {"a.b": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["a.b": ["M", "M"], "_id": (MinKey, MaxKey)]
                      innerScanLoops: 2 loops
@@ -1469,12 +1491,12 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                            Filter: ((document OPERATOR(documentdb_api_catalog.@#?) '{ "a" : { "b" : "M", "c" : { "$gt" : { "$numberInt" : "50" } } } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@#?) '{ "a" : { "c" : { "$numberInt" : "100" }, "d" : "Y" } }'::documentdb_core.bson))
                            Heap Blocks: exact=1
                            ->  Bitmap Index Scan on queryoperator_ab (actual rows=2 loops=1)
-                                 Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a.b" : "M" }'::documentdb_core.bson)
-(22 rows)
+                                 Index Cond: (document OPERATOR(documentdb_api_catalog.@<>) '{ "a.b" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "M", "isTopLevel" : false } ] } }'::documentdb_core.bson)
+(23 rows)
 
 -- $or gets converted to $in for simple expressions.
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or" : [ { "a": 3 }, { "b": 4 } ] }' ORDER BY object_id;
-                                                                                                                          QUERY PLAN                                                                                                                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or" : [ { "a": 3 }, { "b": 4 } ] }' ORDER BY object_id$cmd$ );
+                                                                                                                     run_explain_and_trim                                                                                                                     
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Task Count: 1
@@ -1485,15 +1507,17 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Sort (actual rows=0 loops=1)
                Sort Key: object_id
-               Sort Method: quicksort  Memory: 25kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
                      indexName: queryoperator_a_c
+                     indexKey: {"a": 1,"c": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["a": [3, 3], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                      innerScanLoops: 0 loops
                      scanType: regular
                      scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
                      indexName: queryoperator_b_a
+                     indexKey: {"b": 1,"a": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["b": [4, 4], "a": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                      innerScanLoops: 0 loops
@@ -1506,10 +1530,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                                        Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "3" } }'::documentdb_core.bson)
                                  ->  Bitmap Index Scan on queryoperator_b_a (actual rows=0 loops=1)
                                        Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "b" : { "$numberInt" : "4" } }'::documentdb_core.bson)
-(30 rows)
+(32 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or" : [ { "a": 3 }, { "a": { "$gte": 4 } } ] }' ORDER BY object_id;
-                                                                                                                          QUERY PLAN                                                                                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or" : [ { "a": 3 }, { "a": { "$gte": 4 } } ] }' ORDER BY object_id$cmd$ );
+                                                                                                                     run_explain_and_trim                                                                                                                      
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Task Count: 1
@@ -1520,15 +1544,17 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Sort (actual rows=2 loops=1)
                Sort Key: object_id
-               Sort Method: quicksort  Memory: 25kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
                      indexName: queryoperator_a_c
+                     indexKey: {"a": 1,"c": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["a": [3, 3], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                      innerScanLoops: 0 loops
                      scanType: regular
                      scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
                      indexName: queryoperator_a_c
+                     indexKey: {"a": 1,"c": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["a": [4, Infinity], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                      innerScanLoops: 2 loops
@@ -1542,10 +1568,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                                        Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "3" } }'::documentdb_core.bson)
                                  ->  Bitmap Index Scan on queryoperator_a_c (actual rows=2 loops=1)
                                        Index Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "$numberInt" : "4" } }'::documentdb_core.bson)
-(31 rows)
+(33 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or" : [ { "a": 3 }, { "a": 5 } ] }' ORDER BY object_id;
-                                                                                    QUERY PLAN                                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or" : [ { "a": 3 }, { "a": 5 } ] }' ORDER BY object_id$cmd$ );
+                                                                               run_explain_and_trim                                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Task Count: 1
@@ -1556,9 +1582,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Sort (actual rows=0 loops=1)
                Sort Key: object_id
-               Sort Method: quicksort  Memory: 25kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
                      indexName: queryoperator_a_c
+                     indexKey: {"a": 1,"c": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["a": [3, 3], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)], ["a": [5, 5], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                      innerScanLoops: 0 loops
@@ -1568,10 +1595,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                            Recheck Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "a" : [ { "$numberInt" : "3" }, { "$numberInt" : "5" } ] }'::documentdb_core.bson)
                            ->  Bitmap Index Scan on queryoperator_a_c (actual rows=0 loops=1)
                                  Index Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "a" : [ { "$numberInt" : "3" }, { "$numberInt" : "5" } ] }'::documentdb_core.bson)
-(21 rows)
+(22 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or" : [ { "a": 3 }, { "$and": [ { "a": 5 } ] } ] }' ORDER BY object_id;
-                                                                                    QUERY PLAN                                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or" : [ { "a": 3 }, { "$and": [ { "a": 5 } ] } ] }' ORDER BY object_id$cmd$ );
+                                                                               run_explain_and_trim                                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Task Count: 1
@@ -1582,9 +1609,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Sort (actual rows=0 loops=1)
                Sort Key: object_id
-               Sort Method: quicksort  Memory: 25kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
                      indexName: queryoperator_a_c
+                     indexKey: {"a": 1,"c": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["a": [3, 3], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)], ["a": [5, 5], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                      innerScanLoops: 0 loops
@@ -1594,11 +1622,11 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                            Recheck Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "a" : [ { "$numberInt" : "3" }, { "$numberInt" : "5" } ] }'::documentdb_core.bson)
                            ->  Bitmap Index Scan on queryoperator_a_c (actual rows=0 loops=1)
                                  Index Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "a" : [ { "$numberInt" : "3" }, { "$numberInt" : "5" } ] }'::documentdb_core.bson)
-(21 rows)
+(22 rows)
 
 -- $and/$or with a single element gets elided
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or" : [ { "a": { "$gt": 3 } } ] }' ORDER BY object_id;
-                                                                                                                                              QUERY PLAN                                                                                                                                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or" : [ { "a": { "$gt": 3 } } ] }' ORDER BY object_id$cmd$ );
+                                                                                                                                         run_explain_and_trim                                                                                                                                         
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Output: remote_scan.object_id, remote_scan.document
@@ -1612,10 +1640,11 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT obje
          ->  Sort (actual rows=2 loops=1)
                Output: object_id, document
                Sort Key: collection.object_id
-               Sort Method: quicksort  Memory: 25kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
                      Output: object_id, document
                      indexName: queryoperator_a_c
+                     indexKey: {"a": 1,"c": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["a": (3, Infinity], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                      innerScanLoops: 2 loops
@@ -1627,10 +1656,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT obje
                            Heap Blocks: exact=1
                            ->  Bitmap Index Scan on queryoperator_a_c (actual rows=2 loops=1)
                                  Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "a" : { "$numberInt" : "3" } }'::documentdb_core.bson)
-(27 rows)
+(28 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [ { "a": { "$gt": 3 } } ] }' ORDER BY object_id;
-                                                                                                                                              QUERY PLAN                                                                                                                                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [ { "a": { "$gt": 3 } } ] }' ORDER BY object_id$cmd$ );
+                                                                                                                                         run_explain_and_trim                                                                                                                                         
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Output: remote_scan.object_id, remote_scan.document
@@ -1644,10 +1673,11 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT obje
          ->  Sort (actual rows=2 loops=1)
                Output: object_id, document
                Sort Key: collection.object_id
-               Sort Method: quicksort  Memory: 25kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
                      Output: object_id, document
                      indexName: queryoperator_a_c
+                     indexKey: {"a": 1,"c": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["a": (3, Infinity], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                      innerScanLoops: 2 loops
@@ -1659,11 +1689,11 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT obje
                            Heap Blocks: exact=1
                            ->  Bitmap Index Scan on queryoperator_a_c (actual rows=2 loops=1)
                                  Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "a" : { "$numberInt" : "3" } }'::documentdb_core.bson)
-(27 rows)
+(28 rows)
 
 -- $or of $exists false/$eq: null simplifies
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [ { "a": 3 }, { "$or": [ { "b": null }, { "b": { "$exists": false }} ] } ] }' ORDER BY object_id;
-                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [ { "a": 3 }, { "$or": [ { "b": null }, { "b": { "$exists": false }} ] } ] }' ORDER BY object_id$cmd$ );
+                                                                                                                                                                                        run_explain_and_trim                                                                                                                                                                                         
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Output: remote_scan.object_id, remote_scan.document
@@ -1677,24 +1707,23 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT obje
          ->  Sort (actual rows=0 loops=1)
                Output: object_id, document
                Sort Key: collection.object_id
-               Sort Method: quicksort  Memory: 25kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
                      Output: object_id, document
                      indexName: queryoperator_b_a
+                     indexKey: {"b": 1,"a": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["b": (MinKey, null], "a": [3, 3], "_id": (MinKey, MaxKey)]
                      innerScanLoops: 0 loops
                      scanType: regular
                      scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
-                     ->  Bitmap Heap Scan on documentdb_data.documents_1200_1200005 collection (actual rows=0 loops=1)
+                     ->  Index Scan using queryoperator_b_a on documentdb_data.documents_1200_1200005 collection (actual rows=0 loops=1)
                            Output: object_id, document
-                           Recheck Cond: ((collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "3" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "b" : null }'::documentdb_core.bson))
-                           ->  Bitmap Index Scan on queryoperator_b_a (actual rows=0 loops=1)
-                                 Index Cond: ((collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "3" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "b" : null }'::documentdb_core.bson))
-(26 rows)
+                           Index Cond: ((collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "3" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "b" : null }'::documentdb_core.bson))
+(25 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [ { "a": 3 }, { "$or": [ { "b": null }, { "b": { "$exists": true }} ] } ] }' ORDER BY object_id;
-                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [ { "a": 3 }, { "$or": [ { "b": null }, { "b": { "$exists": true }} ] } ] }' ORDER BY object_id$cmd$ );
+                                                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Output: remote_scan.object_id, remote_scan.document
@@ -1708,16 +1737,18 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT obje
          ->  Sort (actual rows=0 loops=1)
                Output: object_id, document
                Sort Key: collection.object_id
-               Sort Method: quicksort  Memory: 25kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
                      Output: object_id, document
                      indexName: queryoperator_b_a
+                     indexKey: {"b": 1,"a": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["b": (MinKey, null], "a": [3, 3], "_id": (MinKey, MaxKey)]
                      innerScanLoops: 0 loops
                      scanType: regular
                      scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
                      indexName: queryoperator_b_a
+                     indexKey: {"b": 1,"a": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["b": [MinKey, MaxKey], "a": [3, 3], "_id": (MinKey, MaxKey)]
                      innerScanLoops: 0 loops
@@ -1731,10 +1762,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT obje
                                        Index Cond: ((collection.document OPERATOR(documentdb_api_catalog.@=) '{ "b" : null }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "3" } }'::documentdb_core.bson))
                                  ->  Bitmap Index Scan on queryoperator_b_a (actual rows=0 loops=1)
                                        Index Cond: ((collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "b" : { "$minKey" : 1 } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "3" } }'::documentdb_core.bson))
-(35 rows)
+(37 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [ { "a": 3 }, { "$or": [ { "b": null }, { "c": { "$exists": false }} ] } ] }' ORDER BY object_id;
-                                                                                                                                                                                                                                              QUERY PLAN                                                                                                                                                                                                                                               
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [ { "a": 3 }, { "$or": [ { "b": null }, { "c": { "$exists": false }} ] } ] }' ORDER BY object_id$cmd$ );
+                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Output: remote_scan.object_id, remote_scan.document
@@ -1748,16 +1779,18 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT obje
          ->  Sort (actual rows=0 loops=1)
                Output: object_id, document
                Sort Key: collection.object_id
-               Sort Method: quicksort  Memory: 25kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
                      Output: object_id, document
                      indexName: queryoperator_b_a
+                     indexKey: {"b": 1,"a": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["b": (MinKey, null], "a": [3, 3], "_id": (MinKey, MaxKey)]
                      innerScanLoops: 0 loops
                      scanType: regular
                      scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
                      indexName: queryoperator_a_c
+                     indexKey: {"a": 1,"c": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["a": [3, 3], "c": (MinKey, null], "_id": (MinKey, MaxKey)]
                      innerScanLoops: 0 loops
@@ -1771,10 +1804,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT obje
                                        Index Cond: ((collection.document OPERATOR(documentdb_api_catalog.@=) '{ "b" : null }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "3" } }'::documentdb_core.bson))
                                  ->  Bitmap Index Scan on queryoperator_a_c (actual rows=0 loops=1)
                                        Index Cond: ((collection.document OPERATOR(documentdb_api_catalog.@?) '{ "c" : false }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "3" } }'::documentdb_core.bson))
-(35 rows)
+(37 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [ { "a": 3 }, { "$or": [ { "b": null }, { "c": null }, { "c": { "$exists": false }} ] } ] }' ORDER BY object_id;
-                                                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [ { "a": 3 }, { "$or": [ { "b": null }, { "c": null }, { "c": { "$exists": false }} ] } ] }' ORDER BY object_id$cmd$ );
+                                                                                                                                                                                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                      
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Output: remote_scan.object_id, remote_scan.document
@@ -1788,22 +1821,25 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT obje
          ->  Sort (actual rows=0 loops=1)
                Output: object_id, document
                Sort Key: collection.object_id
-               Sort Method: quicksort  Memory: 25kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
                      Output: object_id, document
                      indexName: queryoperator_b_a
+                     indexKey: {"b": 1,"a": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["b": (MinKey, null], "a": [3, 3], "_id": (MinKey, MaxKey)]
                      innerScanLoops: 0 loops
                      scanType: regular
                      scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
                      indexName: queryoperator_a_c
+                     indexKey: {"a": 1,"c": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["a": [3, 3], "c": (MinKey, null], "_id": (MinKey, MaxKey)]
                      innerScanLoops: 0 loops
                      scanType: regular
                      scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
                      indexName: queryoperator_a_c
+                     indexKey: {"a": 1,"c": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["a": [3, 3], "c": (MinKey, null], "_id": (MinKey, MaxKey)]
                      innerScanLoops: 0 loops
@@ -1819,11 +1855,11 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, VERBOSE ON) SELECT obje
                                        Index Cond: ((collection.document OPERATOR(documentdb_api_catalog.@=) '{ "c" : null }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "3" } }'::documentdb_core.bson))
                                  ->  Bitmap Index Scan on queryoperator_a_c (actual rows=0 loops=1)
                                        Index Cond: ((collection.document OPERATOR(documentdb_api_catalog.@?) '{ "c" : false }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "3" } }'::documentdb_core.bson))
-(43 rows)
+(46 rows)
 
 -- $in with 1 element gets converted to $eq
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a" : { "$in": [ 1 ]} }' ORDER BY object_id;
-                                                                     QUERY PLAN                                                                      
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a" : { "$in": [ 1 ]} }' ORDER BY object_id$cmd$ );
+                                                                run_explain_and_trim                                                                 
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Task Count: 1
@@ -1834,9 +1870,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Sort (actual rows=2 loops=1)
                Sort Key: object_id
-               Sort Method: quicksort  Memory: 25kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
                      indexName: queryoperator_a_c
+                     indexKey: {"a": 1,"c": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["a": [1, 1], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                      innerScanLoops: 2 loops
@@ -1847,10 +1884,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                            Heap Blocks: exact=1
                            ->  Bitmap Index Scan on queryoperator_a_c (actual rows=2 loops=1)
                                  Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(22 rows)
+(23 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a" : { "$in": [ ]} }' ORDER BY object_id;
-                        QUERY PLAN                         
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a" : { "$in": [ ]} }' ORDER BY object_id$cmd$ );
+                   run_explain_and_trim                    
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Task Count: 1
@@ -1861,13 +1898,13 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Sort (actual rows=0 loops=1)
                Sort Key: object_id
-               Sort Method: quicksort  Memory: 25kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Result (actual rows=0 loops=1)
                      One-Time Filter: false
 (12 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a" : { "$in": [ 1, 2 ]} }' ORDER BY object_id;
-                                                                                    QUERY PLAN                                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a" : { "$in": [ 1, 2 ]} }' ORDER BY object_id$cmd$ );
+                                                                               run_explain_and_trim                                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Task Count: 1
@@ -1878,9 +1915,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Sort (actual rows=2 loops=1)
                Sort Key: object_id
-               Sort Method: quicksort  Memory: 25kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
                      indexName: queryoperator_a_c
+                     indexKey: {"a": 1,"c": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["a": [1, 1], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)], ["a": [2, 2], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                      innerScanLoops: 2 loops
@@ -1891,10 +1929,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                            Heap Blocks: exact=1
                            ->  Bitmap Index Scan on queryoperator_a_c (actual rows=2 loops=1)
                                  Index Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::documentdb_core.bson)
-(22 rows)
+(23 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a" : { "$nin": [ 1 ]} }' ORDER BY object_id;
-                                                                      QUERY PLAN                                                                      
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a" : { "$nin": [ 1 ]} }' ORDER BY object_id$cmd$ );
+                                                                 run_explain_and_trim                                                                 
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=25 loops=1)
    Task Count: 1
@@ -1905,9 +1943,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Sort (actual rows=25 loops=1)
                Sort Key: object_id
-               Sort Method: quicksort  Memory: 27kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=25 loops=1)
                      indexName: queryoperator_a_c
+                     indexKey: {"a": 1,"c": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["a": [MinKey, MaxKey], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                      innerScanLoops: 26 loops
@@ -1919,10 +1958,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                            Heap Blocks: exact=1
                            ->  Bitmap Index Scan on queryoperator_a_c (actual rows=26 loops=1)
                                  Index Cond: (document OPERATOR(documentdb_api_catalog.@!=) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(23 rows)
+(24 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a" : { "$nin": [ ]} }' ORDER BY object_id;
-                                            QUERY PLAN                                            
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a" : { "$nin": [ ]} }' ORDER BY object_id$cmd$ );
+                                       run_explain_and_trim                                       
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=27 loops=1)
    Task Count: 1
@@ -1933,7 +1972,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Sort (actual rows=27 loops=1)
                Sort Key: object_id
-               Sort Method: quicksort  Memory: 27kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Bitmap Heap Scan on documents_1200_1200005 collection (actual rows=27 loops=1)
                      Recheck Cond: (shard_key_value = '1200'::bigint)
                      Heap Blocks: exact=1
@@ -1941,8 +1980,8 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                            Index Cond: (shard_key_value = '1200'::bigint)
 (15 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a" : { "$nin": [ 1, 2 ]} }' ORDER BY object_id;
-                                                                                    QUERY PLAN                                                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a" : { "$nin": [ 1, 2 ]} }' ORDER BY object_id$cmd$ );
+                                                                               run_explain_and_trim                                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=25 loops=1)
    Task Count: 1
@@ -1953,9 +1992,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Sort (actual rows=25 loops=1)
                Sort Key: object_id
-               Sort Method: quicksort  Memory: 27kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=25 loops=1)
                      indexName: queryoperator_a_c
+                     indexKey: {"a": 1,"c": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["a": [MinKey, MaxKey], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)], ["a": [MinKey, MaxKey], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                      innerScanLoops: 27 loops
@@ -1967,10 +2007,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                            Heap Blocks: exact=1
                            ->  Bitmap Index Scan on queryoperator_a_c (actual rows=27 loops=1)
                                  Index Cond: (document OPERATOR(documentdb_api_catalog.@!*=) '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::documentdb_core.bson)
-(23 rows)
+(24 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or" : [ { "a": 3 }, { "a": { "$in": [ 4 ] }} ] }' ORDER BY object_id;
-                                                                                    QUERY PLAN                                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or" : [ { "a": 3 }, { "a": { "$in": [ 4 ] }} ] }' ORDER BY object_id$cmd$ );
+                                                                               run_explain_and_trim                                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Task Count: 1
@@ -1981,9 +2021,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
          Node: host=localhost port=58070 dbname=regression
          ->  Sort (actual rows=0 loops=1)
                Sort Key: object_id
-               Sort Method: quicksort  Memory: 25kB
+               Sort Method: quicksort  Memory: xxxkB
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
                      indexName: queryoperator_a_c
+                     indexKey: {"a": 1,"c": 1,"_id": 1}
                      isMultiKey: true
                      indexBounds: ["a": [3, 3], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)], ["a": [4, 4], "c": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
                      innerScanLoops: 0 loops
@@ -1993,10 +2034,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT object_id, docum
                            Recheck Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "a" : [ { "$numberInt" : "3" }, { "$numberInt" : "4" } ] }'::documentdb_core.bson)
                            ->  Bitmap Index Scan on queryoperator_a_c (actual rows=0 loops=1)
                                  Index Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "a" : [ { "$numberInt" : "3" }, { "$numberInt" : "4" } ] }'::documentdb_core.bson)
-(21 rows)
+(22 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM documentdb_api.collection('db', 'queryoperatorIn') WHERE document @@ '{ "a" : { "$in" : [ NaN, 1000 ] } }';
-                                                                                     QUERY PLAN                                                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM documentdb_api.collection('db', 'queryoperatorIn') WHERE document @@ '{ "a" : { "$in" : [ NaN, 1000 ] } }'$cmd$ );
+                                                                                run_explain_and_trim                                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Task Count: 1
@@ -2007,6 +2048,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM do
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
                indexName: queryoperatorin_a
+               indexKey: {"a": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [NaN, NaN], "_id": (MinKey, MaxKey)], ["a": [1000, 1000], "_id": (MinKey, MaxKey)]
                innerScanLoops: 2 loops
@@ -2017,10 +2059,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM do
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperatorin_a (actual rows=2 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "a" : [ { "$numberDouble" : "NaN" }, { "$numberInt" : "1000" } ] }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM documentdb_api.collection('db', 'queryoperatorIn') WHERE document @@ '{ "a" : { "$in" : [ Infinity, 1000  ] } }';
-                                                                                       QUERY PLAN                                                                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM documentdb_api.collection('db', 'queryoperatorIn') WHERE document @@ '{ "a" : { "$in" : [ Infinity, 1000  ] } }'$cmd$ );
+                                                                                  run_explain_and_trim                                                                                   
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Task Count: 1
@@ -2031,6 +2073,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM do
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
                indexName: queryoperatorin_a
+               indexKey: {"a": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [Infinity, Infinity], "_id": (MinKey, MaxKey)], ["a": [1000, 1000], "_id": (MinKey, MaxKey)]
                innerScanLoops: 2 loops
@@ -2041,10 +2084,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM do
                      Heap Blocks: exact=1
                      ->  Bitmap Index Scan on queryoperatorin_a (actual rows=2 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "a" : [ { "$numberDouble" : "Infinity" }, { "$numberInt" : "1000" } ] }'::documentdb_core.bson)
-(19 rows)
+(20 rows)
 
-EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM documentdb_api.collection('db', 'queryoperatorIn') WHERE document @@ '{ "a" : { "$in" : [ 1.01, 10 ] } }';
-                                                                                             QUERY PLAN                                                                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM documentdb_api.collection('db', 'queryoperatorIn') WHERE document @@ '{ "a" : { "$in" : [ 1.01, 10 ] } }'$cmd$ );
+                                                                                        run_explain_and_trim                                                                                        
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Task Count: 1
@@ -2055,6 +2098,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM do
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
                indexName: queryoperatorin_a
+               indexKey: {"a": 1,"_id": 1}
                isMultiKey: true
                indexBounds: ["a": [1.01, 1.01], "_id": (MinKey, MaxKey)], ["a": [10, 10], "_id": (MinKey, MaxKey)]
                innerScanLoops: 0 loops
@@ -2064,6 +2108,6 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM do
                      Recheck Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "a" : [ { "$numberDouble" : "1.0100000000000000089" }, { "$numberInt" : "10" } ] }'::documentdb_core.bson)
                      ->  Bitmap Index Scan on queryoperatorin_a (actual rows=0 loops=1)
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "a" : [ { "$numberDouble" : "1.0100000000000000089" }, { "$numberInt" : "10" } ] }'::documentdb_core.bson)
-(18 rows)
+(19 rows)
 
 COMMIT;

@@ -95,6 +95,12 @@ uint64 ExtensionExecuteCappedStatementWithArgsViaSPI(const char *query, int narg
 char * ExtensionExecuteQueryOnLocalhostViaLibPQ(char *query);
 
 /*
+ * Same as ExtensionExecuteQueryOnLocalhostViaLibPQ but ensures that the transaction mode
+ * is read/write enabled
+ */
+char * ExtensionExecuteForcedReadWriteQueryOnLocalhostViaLibPQ(char *query);
+
+/*
  * Same as ExtensionExecuteQueryOnLocalhostViaLibPQ, but connects as specific user.
  */
 char * ExtensionExecuteQueryAsUserOnLocalhostViaLibPQ(char *query, const Oid userOid,

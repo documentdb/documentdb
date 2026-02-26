@@ -14,6 +14,7 @@
 #include <utils/array.h>
 
 #include "io/bson_core.h"
+#include "background_worker/background_worker_job.h"
 
 #define INVALID_INDEX_ID ((int) 0)
 
@@ -219,10 +220,6 @@ typedef struct
 	MongoIndexKind indexKind;
 } MongoIndexSupport;
 
-/* index build tasks */
-void UnscheduleIndexBuildTasks(char *extensionPrefix);
-void ScheduleIndexBuildTasks(char *extensionPrefix);
-
 MongoIndexKind GetMongoIndexKind(char *indexKindName, bool *isSupported);
 
 /* query index metadata */
@@ -314,11 +311,13 @@ IndexCmdStatus GetIndexBuildStatusFromIndexQueue(int indexId);
 IndexCmdRequest * GetRequestFromIndexQueue(uint64 collectionId,
 										   MemoryContext mcxt);
 IndexCmdRequest * GetSkippableRequestFromIndexQueue(int expireTimeInSeconds,
-													List *skipCollections);
+													List *skipCollections,
+													MemoryContext mcxt);
 uint64 * GetCollectionIdsForIndexBuild(List *excludeCollectionIds);
 void AddRequestInIndexQueue(char *createIndexCmd, int indexId, uint64 collectionId, char
 							cmd_type, Oid userOid);
 char * GetIndexQueueName(void);
+void CreateIndexQueueIfNotExists(bool includeOptions, bool includeDropCommandType);
 const char * GetIndexTypeFromKeyDocument(pgbson *keyDocument);
 
 /* Static utilities */
