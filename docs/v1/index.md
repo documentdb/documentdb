@@ -20,6 +20,8 @@ A curated collection of guides to help you understand what DocumentDB is, why it
 - [Joins](joins.md)
 - [Packaging](packaging.md)
 - [Data Initialization](data-initialization.md)
+- [Schema Validation](schema_validation.md)
+- [JSON Schema (`$jsonSchema`)](json_schema.md)
 
 ---
 
