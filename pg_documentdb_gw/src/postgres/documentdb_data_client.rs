@@ -588,39 +588,22 @@ impl PgDataClient for DocumentDBDataClient {
     ) -> Result<Response> {
         let (request, request_info, request_tracker) = request_context.get_components();
         // TODO: Handle the case where !nameOnly - the legacy gateway simply returns 0s in the appropriate format
-        let filter = request.document().get_document("filter").ok();
-        let filter_string = filter.map_or("", |_| "WHERE document @@ $1");
-
         let list_db_query = connection_context
             .service_context
             .query_catalog()
-            .list_databases(filter_string);
-        let connection = self.pull_connection(connection_context).await?;
+            .list_databases();
 
-        let list_database_rows = match filter {
-            None => {
-                connection
-                    .query(
-                        &list_db_query,
-                        &[],
-                        &[],
-                        Timeout::transaction(request_info.max_time_ms),
-                        request_tracker,
-                    )
-                    .await?
-            }
-            Some(filter) => {
-                connection
-                    .query(
-                        &list_db_query,
-                        &[Type::BYTEA],
-                        &[&PgDocument(filter)],
-                        Timeout::transaction(request_info.max_time_ms),
-                        request_tracker,
-                    )
-                    .await?
-            }
-        };
+        let list_database_rows = self
+            .pull_connection(connection_context)
+            .await?
+            .query(
+                list_db_query,
+                &[Type::BYTEA],
+                &[&PgDocument(request.document())],
+                Timeout::transaction(request_info.max_time_ms),
+                request_tracker,
+            )
+            .await?;
 
         Ok(Response::Pg(PgResponse::new(list_database_rows)))
     }

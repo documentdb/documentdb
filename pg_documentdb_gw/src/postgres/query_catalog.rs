@@ -310,9 +310,8 @@ impl QueryCatalog {
         &self.update_bulk
     }
 
-    pub fn list_databases(&self, filter_string: &str) -> String {
-        self.list_databases
-            .replace("{filter_string}", filter_string)
+    pub fn list_databases(&self) -> &str {
+        &self.list_databases
     }
 
     pub fn list_collections(&self) -> &str {
@@ -511,15 +510,7 @@ pub fn create_query_catalog() -> QueryCatalog {
             process_update: "SELECT * FROM documentdb_api.update($1, $2, $3, NULL)".to_string(),
             update_txn_proc: "CALL documentdb_api.update_txn_proc($1, $2, $3, NULL)".to_string(),
             update_bulk: "CALL documentdb_api.update_bulk($1, $2, $3, NULL)".to_string(),
-            list_databases: "WITH r1 AS (SELECT DISTINCT database_name AS name
-                                FROM documentdb_api_catalog.collections),
-                             r2 AS (SELECT documentdb_core.row_get_bson(r1) AS document FROM r1),
-                             r3 AS (SELECT document FROM r2 {filter_string}),
-                             r4 AS (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(r3.document, ''), '{ \"\": [] }') AS \"databases\",
-                                           1.0::float8                                                                        AS \"ok\"
-                                    FROM r3)
-                        SELECT documentdb_core.row_get_bson(r4) AS document
-                        FROM r4".to_string(),
+            list_databases: "SELECT documentdb_api.list_databases($1)".to_string(),
             list_collections: "SELECT cursorPage, continuation, persistConnection, cursorId FROM documentdb_api.list_collections_cursor_first_page($1, $2)".to_string(),
             validate: "SELECT documentdb_api.validate($1, $2)".to_string(),
             find_and_modify: "SELECT * FROM documentdb_api.find_and_modify($1, $2, NULL)".to_string(),
