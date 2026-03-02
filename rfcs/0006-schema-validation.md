@@ -9,6 +9,9 @@ discussion: ""
 
 # RFC-0006: Schema Validation
 
+## Problem
+
+DocumentDB users need to enforce document structure constraints to ensure data quality and application reliability. 
 ## Overview
 
 Schema validation enforces document structure constraints at write time. The implementation supports:
@@ -152,6 +155,39 @@ ALTER TABLE collections
 - **Field path indexing**: O(1) schema node lookup via hash tables
 - **Memory management**: Compiled state in PostgreSQL memory context, shared across sessions, freed on collection drop
 
+### API Changes
+
+**Modified functions:**
+
+1. **`documentdb_api.create_collection_view()`** - Extended to accept validation options:
+   ```sql
+   SELECT documentdb_api.create_collection_view('test_db', 
+     '{ "create": "users", 
+        "validator": {"$jsonSchema": {"bsonType": "object", "required": ["email"]}},
+        "validationLevel": "strict",
+        "validationAction": "error"
+     }');
+   ```
+   
+   **Parameters added to spec BSON:**
+   - `validator` (bson): Validation expression (`$jsonSchema`, `$expr`, or mixed)
+   - `validationLevel` (string): `"off"` | `"strict"` | `"moderate"`
+   - `validationAction` (string): `"error"` | `"warn"`
+
+2. **`documentdb_api.coll_mod()`** - Support updating validation rules:
+   ```sql
+   SELECT documentdb_api.coll_mod('test_db', 'users',
+     '{"collMod": "users",
+       "validator": {"$jsonSchema": {"bsonType": "object"}},
+       "validationLevel": "moderate",
+       "validationAction": "warn"
+     }');
+   ```
+
+3. **Write operations** - Internal support for `bypassDocumentValidation` flag
+   - Passed through command spec BSON in insert/update/aggregate commands
+   - Checked in `CheckSchemaValidationEnabled()` before validation
+
 ### Testing Coverage
 
 **Regression tests:**
@@ -266,39 +302,3 @@ Document failed validation:
    - Compare behavior with MongoDB for compatibility
    - Test edge cases (nested schemas, array validation, type coercion)
    - Benchmark performance with large documents/complex schemas
-
-### Example: Implementing `enum` Validator
-
-**Tree Builder** (`bson_json_schema_tree.c`):
-```c
-else if (strcmp(key, "enum") == 0)
-{
-    if (value->value_type != BSON_TYPE_ARRAY)
-        ereport(ERROR, ...);
-    
-    // Store enum array in node->validations
-    ParseEnumValues(value, node);
-    node->validationFlags.common |= CommonValidationTypes_Enum;
-}
-```
-
-**Validator** (`bson_json_schema_validator.c`):
-```c
-if (flags & CommonValidationTypes_Enum)
-{
-    if (!BsonValueInEnumArray(value, node->validations.common->enumValues))
-        return false;
-}
-```
-
-**Tests** (`bson_dollar_ops_json_schema_build_tree_tests.sql`):
-```sql
--- Valid: value in enum
-SELECT bson_dollar_json_schema('{"status": "active"}'::bson,
-  '{"enum": ["active", "inactive"]}'::bson);  -- true
-
--- Invalid: value not in enum  
-SELECT bson_dollar_json_schema('{"status": "pending"}'::bson,
-  '{"enum": ["active", "inactive"]}'::bson);  -- false
-```
-
