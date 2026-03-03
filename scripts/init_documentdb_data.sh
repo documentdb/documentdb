@@ -12,6 +12,7 @@ PASSWORD=""
 INIT_DATA_PATH="/init_doc_db.d"
 VERBOSE="false"
 DOCUMENTDB_PORT="10260"
+ENABLE_HTTP="${ENABLE_HTTP:-false}"
 LOG_FILE="${ENTRYPOINT_LOG:-/var/log/documentdb/gateway_entrypoint.log}"
 LOG_FILE_AVAILABLE="false"
 
@@ -39,6 +40,7 @@ Options:
   -d, --data-path PATH         Path to directory containing .js initialization files
                                (default: /init_doc_db.d)
   -v, --verbose                Enable verbose output
+  --enable-http                Connect to DocumentDB without TLS
 
 Examples:
   # Initialize with custom data files
@@ -81,6 +83,10 @@ while [[ $# -gt 0 ]]; do
             VERBOSE="true"
             shift
             ;;
+        --enable-http)
+            ENABLE_HTTP="true"
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
             usage
@@ -93,6 +99,16 @@ done
 if [ -z "$PASSWORD" ]; then
     echo "Error: Password is required. Use -p or --password to specify the password."
     exit 1
+fi
+
+if [ "$ENABLE_HTTP" != "true" ] && [ "$ENABLE_HTTP" != "false" ]; then
+    echo "Error: ENABLE_HTTP must be true or false."
+    exit 1
+fi
+
+MONGOSH_TLS_ARGS=(--tls --tlsAllowInvalidCertificates)
+if [ "$ENABLE_HTTP" = "true" ]; then
+    MONGOSH_TLS_ARGS=()
 fi
 
 # Verbose logging function
@@ -128,7 +144,7 @@ wait_for_documentdb() {
     
     while [ $attempt -le $max_attempts ]; do
         if command -v mongosh >/dev/null 2>&1; then
-            if mongosh "localhost:${DOCUMENTDB_PORT}" -u "$USERNAME" -p "$PASSWORD" --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "db.runCommand({ping: 1})" >/dev/null 2>&1; then
+            if mongosh "localhost:${DOCUMENTDB_PORT}" -u "$USERNAME" -p "$PASSWORD" --authenticationMechanism SCRAM-SHA-256 "${MONGOSH_TLS_ARGS[@]}" --eval "db.runCommand({ping: 1})" >/dev/null 2>&1; then
                 echo "DocumentDB is ready!"
                 return 0
             fi
@@ -174,7 +190,7 @@ run_init_scripts() {
             print_file_and_log "$init_file"
             print_and_log "---- End init data: $(basename \"$init_file\") ----"
 
-            if mongosh "localhost:${DOCUMENTDB_PORT}" -u "$USERNAME" -p "$PASSWORD" --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --file "$init_file"; then
+            if mongosh "localhost:${DOCUMENTDB_PORT}" -u "$USERNAME" -p "$PASSWORD" --authenticationMechanism SCRAM-SHA-256 "${MONGOSH_TLS_ARGS[@]}" --file "$init_file"; then
                 log "Successfully executed: $(basename "$init_file")"
             else
                 echo "Error: Failed to execute: $(basename "$init_file")"
