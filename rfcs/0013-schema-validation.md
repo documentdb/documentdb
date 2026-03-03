@@ -1,5 +1,5 @@
 ---
-rfc: 0006
+rfc: 0013
 title: "Schema Validation for DocumentDB Collections"
 status: Complete
 owner: "@jiahu2"
@@ -7,7 +7,7 @@ issue: ""
 discussion: ""
 ---
 
-# RFC-0006: Schema Validation
+# RFC-0013: Schema Validation
 
 ## Problem
 
