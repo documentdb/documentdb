@@ -107,7 +107,7 @@ Optional arguments:
                         By default, sample collections (users, products, orders, analytics) in 'sampledb' database will be created.
                         Overrides SKIP_INIT_DATA environment variable.
   --disable-extended-rum
-                        Disable the pg_documentdb_extended_rum extension and use legacy rum instead.
+                        Disable the use of extended_rum for indexes.
                         By default, extended rum is enabled.
                         Overrides DISABLE_EXTENDED_RUM environment variable.
                         
