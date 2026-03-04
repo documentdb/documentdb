@@ -112,7 +112,7 @@ Optional arguments:
                         Overrides DISABLE_EXTENDED_RUM environment variable.
   --enable-tls
                         Enable TLS enforcement on the gateway endpoint.
-                        By default, TLS is not enforced (matching MongoDB default behavior).
+                        By default, TLS is not enforced.
                         Overrides ENABLE_TLS environment variable.
 EOF
 }
@@ -435,7 +435,7 @@ if [ "$ENABLE_TLS" = "true" ]; then
     jq '.EnforceTls = true' $configFile > $configFile.tmp && \
     mv $configFile.tmp $configFile
 else
-    echo "TLS enforcement disabled (default, matching MongoDB behavior)..."
+    echo "TLS enforcement disabled by default..."
     jq '.EnforceTls = false' $configFile > $configFile.tmp && \
     mv $configFile.tmp $configFile
 fi
