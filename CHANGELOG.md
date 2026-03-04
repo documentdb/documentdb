@@ -12,7 +12,7 @@
 * Fix crash in `$let` when `in` expression is a constant *[Bugfix]* (#463)
 * Support for TTL cron job to repeat deletes in batches until the one minute budget is exhausted, instead of deleting one batch per index per minute.*[Perf]*
 * Crash fix when zero rows reach $first/$last/$firstN/$lastN accumulators in $group stage with no $sort *[Bugfix]*. (#466)
-* Add `--enable-http` flag for `documentdb-local` to disable TLS enforcement on the gateway endpoint *[Feature]*
+* Add `--enable-tls` flag for `documentdb-local` to enable TLS enforcement on the gateway endpoint *[Feature]*
   
 ### documentdb v0.109-0 (Unreleased) ###
 * Support collation with find positional queries *[Feature]*

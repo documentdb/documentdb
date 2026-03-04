@@ -12,7 +12,7 @@ PASSWORD=""
 INIT_DATA_PATH="/init_doc_db.d"
 VERBOSE="false"
 DOCUMENTDB_PORT="10260"
-ENABLE_HTTP="${ENABLE_HTTP:-false}"
+ENABLE_TLS="${ENABLE_TLS:-false}"
 LOG_FILE="${ENTRYPOINT_LOG:-/var/log/documentdb/gateway_entrypoint.log}"
 LOG_FILE_AVAILABLE="false"
 
@@ -40,7 +40,7 @@ Options:
   -d, --data-path PATH         Path to directory containing .js initialization files
                                (default: /init_doc_db.d)
   -v, --verbose                Enable verbose output
-  --enable-http                Connect to DocumentDB without TLS
+  --enable-tls                 Connect to DocumentDB with TLS
 
 Examples:
   # Initialize with custom data files
@@ -83,8 +83,8 @@ while [[ $# -gt 0 ]]; do
             VERBOSE="true"
             shift
             ;;
-        --enable-http)
-            ENABLE_HTTP="true"
+        --enable-tls)
+            ENABLE_TLS="true"
             shift
             ;;
         *)
@@ -101,14 +101,14 @@ if [ -z "$PASSWORD" ]; then
     exit 1
 fi
 
-if [ "$ENABLE_HTTP" != "true" ] && [ "$ENABLE_HTTP" != "false" ]; then
-    echo "Error: ENABLE_HTTP must be true or false."
+if [ "$ENABLE_TLS" != "true" ] && [ "$ENABLE_TLS" != "false" ]; then
+    echo "Error: ENABLE_TLS must be true or false."
     exit 1
 fi
 
-MONGOSH_TLS_ARGS=(--tls --tlsAllowInvalidCertificates)
-if [ "$ENABLE_HTTP" = "true" ]; then
-    MONGOSH_TLS_ARGS=()
+MONGOSH_TLS_ARGS=()
+if [ "$ENABLE_TLS" = "true" ]; then
+    MONGOSH_TLS_ARGS=(--tls --tlsAllowInvalidCertificates)
 fi
 
 # Verbose logging function

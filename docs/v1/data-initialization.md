@@ -11,7 +11,6 @@ The entrypoint honors the following environment variables:
 
 - `INIT_DATA_PATH`: Directory containing `.js` initialization files (default: `/init_doc_db.d`).
 - `SKIP_INIT_DATA`: Set to `true` to skip loading built-in sample data (default: `false`).
-- `ENABLE_HTTP`: Set to `true` to disable TLS enforcement on the gateway endpoint (default: `false`). When enabled, `mongosh` init scripts connect without `--tls` flags.
 
 > Note: When custom initialization is requested with `--init-data-path`, the entrypoint internally sets `SKIP_INIT_DATA=true` so that only the provided scripts run.
 
@@ -19,7 +18,6 @@ The entrypoint honors the following environment variables:
 
 - `--init-data-path [PATH]`: Execute all `.js` files in the specified directory (alphabetical order) using `mongosh`.
 - `--skip-init-data`: Skip loading the built-in sample collections.
-- `--enable-http`: Disable TLS enforcement on the gateway endpoint for plain connections.
 
 If no option is supplied, the emulator starts with the built-in sample data.
 

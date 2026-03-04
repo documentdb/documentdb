@@ -2,17 +2,17 @@
 
 set -euo pipefail
 
-IMAGE_NAME="${1:-documentdb-local:test-http}"
+IMAGE_NAME="${1:-documentdb-local:test-tls}"
 LOG_DIR="${2:-documentdb-local-logs}"
 CONTAINER_SUFFIX="$$"
 
+PLAIN_CONTAINER="docdb-plain-${CONTAINER_SUFFIX}"
 TLS_CONTAINER="docdb-tls-${CONTAINER_SUFFIX}"
-HTTP_CONTAINER="docdb-http-${CONTAINER_SUFFIX}"
 
 mkdir -p "$LOG_DIR"
 
 cleanup() {
-    for container in "$TLS_CONTAINER" "$HTTP_CONTAINER"; do
+    for container in "$PLAIN_CONTAINER" "$TLS_CONTAINER"; do
         if docker ps -a --format '{{.Names}}' | grep -q "^${container}$"; then
             docker logs "$container" > "$LOG_DIR/${container}.log" 2>&1 || true
             docker rm -f "$container" >/dev/null 2>&1 || true
@@ -75,8 +75,37 @@ wait_for_sample_data() {
     return 1
 }
 
-# Default mode: TLS enforced.
-docker run -d --name "$TLS_CONTAINER" "$IMAGE_NAME" --password mypassword
+# Default mode: TLS not enforced (matching MongoDB default).
+docker run -d --name "$PLAIN_CONTAINER" "$IMAGE_NAME" --password mypassword
+wait_for_ping "$PLAIN_CONTAINER" plain
+wait_for_sample_data "$PLAIN_CONTAINER"
+
+# Plain connection must succeed in default mode.
+docker exec "$PLAIN_CONTAINER" mongosh \
+    --host localhost \
+    --port 10260 \
+    -u default_user \
+    -p mypassword \
+    --authenticationDatabase admin \
+    --quiet \
+    --eval 'db.runCommand({ ping: 1 }).ok' | grep -q "1"
+
+# TLS connection should also succeed in default mode (gateway accepts both).
+docker exec "$PLAIN_CONTAINER" mongosh \
+    --host localhost \
+    --port 10260 \
+    -u default_user \
+    -p mypassword \
+    --authenticationDatabase admin \
+    --tls \
+    --tlsAllowInvalidCertificates \
+    --quiet \
+    --eval 'db.runCommand({ ping: 1 }).ok' | grep -q "1"
+
+docker rm -f "$PLAIN_CONTAINER" >/dev/null
+
+# TLS mode: TLS enforcement enabled.
+docker run -d --name "$TLS_CONTAINER" "$IMAGE_NAME" --password mypassword --enable-tls
 wait_for_ping "$TLS_CONTAINER" tls
 
 # TLS connection must succeed.
@@ -106,36 +135,9 @@ fi
 
 docker rm -f "$TLS_CONTAINER" >/dev/null
 
-# HTTP mode: TLS enforcement disabled.
-docker run -d --name "$HTTP_CONTAINER" "$IMAGE_NAME" --password mypassword --enable-http
-wait_for_ping "$HTTP_CONTAINER" plain
-wait_for_sample_data "$HTTP_CONTAINER"
-
-# Plain connection must succeed.
-docker exec "$HTTP_CONTAINER" mongosh \
-    --host localhost \
-    --port 10260 \
-    -u default_user \
-    -p mypassword \
-    --authenticationDatabase admin \
-    --quiet \
-    --eval 'db.runCommand({ ping: 1 }).ok' | grep -q "1"
-
-# TLS connection should also succeed in HTTP mode.
-docker exec "$HTTP_CONTAINER" mongosh \
-    --host localhost \
-    --port 10260 \
-    -u default_user \
-    -p mypassword \
-    --authenticationDatabase admin \
-    --tls \
-    --tlsAllowInvalidCertificates \
-    --quiet \
-    --eval 'db.runCommand({ ping: 1 }).ok' | grep -q "1"
-
-# Invalid ENABLE_HTTP value must fail.
-if docker run --rm -e ENABLE_HTTP=maybe "$IMAGE_NAME" --password mypassword > "$LOG_DIR/invalid-enable-http.log" 2>&1; then
-    echo "Expected invalid ENABLE_HTTP value to fail."
+# Invalid ENABLE_TLS value must fail.
+if docker run --rm -e ENABLE_TLS=maybe "$IMAGE_NAME" --password mypassword > "$LOG_DIR/invalid-enable-tls.log" 2>&1; then
+    echo "Expected invalid ENABLE_TLS value to fail."
     exit 1
 fi
-grep -q "Invalid enable-http value" "$LOG_DIR/invalid-enable-http.log"
+grep -q "Invalid enable-tls value" "$LOG_DIR/invalid-enable-tls.log"

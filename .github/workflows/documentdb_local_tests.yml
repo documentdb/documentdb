@@ -21,9 +21,9 @@ on:
       - "*.md"
 
 jobs:
-  documentdb-local-http-tests:
+  documentdb-local-tls-tests:
     runs-on: ${{ matrix.runner }}
-    name: documentdb-local TLS/HTTP tests on ${{ matrix.arch }}
+    name: documentdb-local TLS tests on ${{ matrix.arch }}
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     strategy:
       fail-fast: false
@@ -48,11 +48,11 @@ jobs:
             --build-arg BASE_IMAGE=debian:trixie-slim \
             --build-arg POSTGRES_VERSION=17 \
             --build-arg DEB_PACKAGE_REL_PATH=downloaded-artifacts/$(ls downloaded-artifacts | grep -v 'dbgsym') \
-            -t documentdb-local:test-http-${{ matrix.arch }} \
+            -t documentdb-local:test-tls-${{ matrix.arch }} \
             -f .github/containers/Build-Ubuntu/Dockerfile_gateway .
 
-      - name: Run TLS and HTTP smoke tests
+      - name: Run TLS smoke tests
         run: |
           bash ./scripts/run_documentdb_local_http_tests.sh \
-            documentdb-local:test-http-${{ matrix.arch }} \
+            documentdb-local:test-tls-${{ matrix.arch }} \
             documentdb-local-logs

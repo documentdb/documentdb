@@ -67,8 +67,8 @@ Step 3. Setup DocumentDB using Docker
    # Run the container with your chosen username and password
    docker run -dt -p 10260:10260 --name documentdb-container documentdb --username <YOUR_USERNAME> --password <YOUR_PASSWORD>
 
-   # Optional: enable HTTP mode (disable TLS enforcement)
-   docker run -dt -p 10260:10260 --name documentdb-container documentdb --username <YOUR_USERNAME> --password <YOUR_PASSWORD> --enable-http
+   # Optional: enable TLS enforcement
+   docker run -dt -p 10260:10260 --name documentdb-container documentdb --username <YOUR_USERNAME> --password <YOUR_PASSWORD> --enable-tls
    docker image rm -f ghcr.io/documentdb/documentdb/documentdb-local:latest || echo "No existing documentdb image to remove"
 
 ```
@@ -87,16 +87,16 @@ from pymongo import MongoClient
 
 # Create a MongoDB client and open a connection to DocumentDB
 client = pymongo.MongoClient(
-    'mongodb://<YOUR_USERNAME>:<YOUR_PASSWORD>@localhost:10260/?tls=true&tlsAllowInvalidCertificates=true'
+    'mongodb://<YOUR_USERNAME>:<YOUR_PASSWORD>@localhost:10260/'
 )
 
 ```
 
-If you started `documentdb-local` with `--enable-http`, use:
+If you started `documentdb-local` with `--enable-tls`, use:
 
 ```python
 client = pymongo.MongoClient(
-    'mongodb://<YOUR_USERNAME>:<YOUR_PASSWORD>@localhost:10260/'
+    'mongodb://<YOUR_USERNAME>:<YOUR_PASSWORD>@localhost:10260/?tls=true&tlsAllowInvalidCertificates=true'
 )
 ```
 

@@ -110,10 +110,10 @@ Optional arguments:
                         Disable the use of extended_rum for indexes.
                         By default, extended rum is enabled.
                         Overrides DISABLE_EXTENDED_RUM environment variable.
-  --enable-http
-                        Enable HTTP mode by disabling TLS enforcement on the gateway endpoint.
-                        By default, TLS is enforced.
-                        Overrides ENABLE_HTTP environment variable.
+  --enable-tls
+                        Enable TLS enforcement on the gateway endpoint.
+                        By default, TLS is not enforced (matching MongoDB default behavior).
+                        Overrides ENABLE_TLS environment variable.
 EOF
 }
 
@@ -213,8 +213,8 @@ do
         export DISABLE_EXTENDED_RUM=true
         shift;;
 
-    --enable-http)
-        export ENABLE_HTTP=true
+    --enable-tls)
+        export ENABLE_TLS=true
         shift;;
 
     -*)
@@ -235,7 +235,7 @@ export START_POSTGRESQL=${START_POSTGRESQL:-true}
 export INIT_DATA_PATH=${INIT_DATA_PATH:-/init_doc_db.d}
 export SKIP_INIT_DATA=${SKIP_INIT_DATA:-false}
 export DISABLE_EXTENDED_RUM=${DISABLE_EXTENDED_RUM:-false}
-export ENABLE_HTTP=${ENABLE_HTTP:-false}
+export ENABLE_TLS=${ENABLE_TLS:-false}
 
 # Setup centralized log directory structure
 echo "Setting up centralized log directory at /var/log/documentdb..."
@@ -308,10 +308,10 @@ if [ -n "$SKIP_INIT_DATA" ] && \
     exit 1
 fi
 
-if [ -n "$ENABLE_HTTP" ] && \
-   [ "$ENABLE_HTTP" != "true" ] && \
-   [ "$ENABLE_HTTP" != "false" ]; then
-    echo "Invalid enable-http value $ENABLE_HTTP, must be true or false"
+if [ -n "$ENABLE_TLS" ] && \
+   [ "$ENABLE_TLS" != "true" ] && \
+   [ "$ENABLE_TLS" != "false" ]; then
+    echo "Invalid enable-tls value $ENABLE_TLS, must be true or false"
     exit 1
 fi
 
@@ -430,8 +430,12 @@ if [ -n "${CERT_PATH:-}" ] && [ -n "${KEY_FILE:-}" ]; then
     mv $configFile.tmp $configFile
 fi
 
-if [ "$ENABLE_HTTP" = "true" ]; then
-    echo "Enabling HTTP mode (TLS enforcement disabled)..."
+if [ "$ENABLE_TLS" = "true" ]; then
+    echo "Enabling TLS enforcement..."
+    jq '.EnforceTls = true' $configFile > $configFile.tmp && \
+    mv $configFile.tmp $configFile
+else
+    echo "TLS enforcement disabled (default, matching MongoDB behavior)..."
     jq '.EnforceTls = false' $configFile > $configFile.tmp && \
     mv $configFile.tmp $configFile
 fi
