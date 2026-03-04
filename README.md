@@ -67,9 +67,10 @@ Step 3. Setup DocumentDB using Docker
    # Run the container with your chosen username and password
    docker run -dt -p 10260:10260 --name documentdb-container documentdb --username <YOUR_USERNAME> --password <YOUR_PASSWORD>
 
-   # Optional: enable TLS enforcement
-   docker run -dt -p 10260:10260 --name documentdb-container documentdb --username <YOUR_USERNAME> --password <YOUR_PASSWORD> --enable-tls
    docker image rm -f ghcr.io/documentdb/documentdb/documentdb-local:latest || echo "No existing documentdb image to remove"
+
+   # Optional: enable TLS enforcement (add --enable-tls to the docker run command above)
+   # docker run -dt -p 10260:10260 --name documentdb-container documentdb --username <YOUR_USERNAME> --password <YOUR_PASSWORD> --enable-tls
 
 ```
 

@@ -53,6 +53,6 @@ jobs:
 
       - name: Run TLS smoke tests
         run: |
-          bash ./scripts/run_documentdb_local_http_tests.sh \
+          bash ./scripts/run_documentdb_local_tls_tests.sh \
             documentdb-local:test-tls-${{ matrix.arch }} \
             documentdb-local-logs
