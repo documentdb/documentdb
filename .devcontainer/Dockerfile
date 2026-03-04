@@ -35,6 +35,9 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     libtool \
     libicu-dev \
     libssl-dev \
+    liblz4-dev \
+    libzstd-dev \
+    libxml2-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Add pgdg repo
