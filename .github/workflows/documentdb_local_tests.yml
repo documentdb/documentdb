@@ -56,11 +56,3 @@ jobs:
           bash ./scripts/run_documentdb_local_http_tests.sh \
             documentdb-local:test-http-${{ matrix.arch }} \
             documentdb-local-logs
-
-      - name: Upload documentdb-local test logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: documentdb-local-http-logs-${{ matrix.arch }}
-          overwrite: true
-          path: documentdb-local-logs/**
