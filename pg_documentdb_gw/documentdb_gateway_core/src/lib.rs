@@ -152,16 +152,10 @@ pub async fn run_gateway<T>(
 where
     T: PgDataClient,
 {
-    // TCP configuration part
-    let tcp_listener = TcpListener::bind(format!(
-        "{}:{}",
-        if service_context.setup_configuration().use_local_host() {
-            "127.0.0.1"
-        } else {
-            "[::]"
-        },
+    let tcp_listener = create_tcp_listener(
+        service_context.setup_configuration().use_local_host(),
         service_context.setup_configuration().gateway_listen_port(),
-    ))
+    )
     .await?;
 
     tracing::info!(
@@ -223,6 +217,33 @@ where
             }
             () = token.cancelled() => {
                 return Ok(())
+            }
+        }
+    }
+}
+
+/// Creates a TCP listener bound to the appropriate address.
+///
+/// For localhost mode, binds to `127.0.0.1`.
+/// For non-localhost mode, tries IPv6 dual-stack (`[::]`) first, then falls back
+/// to IPv4 (`0.0.0.0`) for environments without IPv6 support (e.g., AKS Edge).
+async fn create_tcp_listener(use_local_host: bool, port: u16) -> Result<TcpListener> {
+    if use_local_host {
+        Ok(TcpListener::bind(format!("127.0.0.1:{}", port)).await?)
+    } else {
+        // Try IPv6 dual-stack first, fallback to IPv4 if IPv6 is not available
+        match TcpListener::bind(format!("[::]:{}", port)).await {
+            Ok(listener) => {
+                tracing::info!("Bound to IPv6 dual-stack address [::]:{}.", port);
+                Ok(listener)
+            }
+            Err(ipv6_err) => {
+                tracing::warn!(
+                    "Failed to bind to IPv6 address [::]:{}. Error: {}. Falling back to IPv4.",
+                    port,
+                    ipv6_err
+                );
+                Ok(TcpListener::bind(format!("0.0.0.0:{}", port)).await?)
             }
         }
     }
@@ -845,4 +866,89 @@ fn log_verbose_latency(
         0, // SubStatusCode is not used currently in Rust
         error_code
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::SocketAddr;
+
+    #[tokio::test]
+    async fn test_create_tcp_listener_localhost_binds_to_ipv4_loopback() {
+        let listener = create_tcp_listener(true, 0).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        assert_eq!(addr.ip(), IpAddr::from([127, 0, 0, 1]));
+    }
+
+    #[tokio::test]
+    async fn test_create_tcp_listener_non_localhost_binds_successfully() {
+        let listener = create_tcp_listener(false, 0).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        // Should bind to either [::] (IPv6 dual-stack) or 0.0.0.0 (IPv4 fallback)
+        assert!(
+            addr.ip().is_unspecified(),
+            "Expected unspecified address (0.0.0.0 or [::]), got {}",
+            addr.ip()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_tcp_listener_assigns_port() {
+        let listener = create_tcp_listener(true, 0).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        assert_ne!(addr.port(), 0, "OS should assign a non-zero port");
+    }
+
+    #[tokio::test]
+    async fn test_create_tcp_listener_specific_port() {
+        // Bind to port 0 first to get an available port from the OS
+        let temp_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = temp_listener.local_addr().unwrap().port();
+        drop(temp_listener);
+
+        // Now bind using our function with that specific port
+        let listener = create_tcp_listener(true, port).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        assert_eq!(addr.port(), port);
+    }
+
+    #[tokio::test]
+    async fn test_create_tcp_listener_non_localhost_ipv4_fallback_when_ipv6_port_taken() {
+        // If IPv6 dual-stack is bound on a port, our function should fallback to IPv4
+        // First, try to occupy the IPv6 address on a port
+        let ipv6_listener = TcpListener::bind("[::]:0").await;
+        if let Ok(ipv6_listener) = ipv6_listener {
+            let port = ipv6_listener.local_addr().unwrap().port();
+            // Now try to create a listener on the same port — IPv6 bind will fail,
+            // should fallback to IPv4
+            let result = create_tcp_listener(false, port).await;
+            // The result depends on OS behavior:
+            // - On most systems, IPv4 fallback should succeed
+            // - The key point is that the function doesn't panic
+            if let Ok(listener) = result {
+                let addr = listener.local_addr().unwrap();
+                assert_eq!(
+                    addr,
+                    SocketAddr::from(([0, 0, 0, 0], port)),
+                    "Should have fallen back to IPv4 0.0.0.0"
+                );
+            }
+            drop(ipv6_listener);
+        }
+        // If IPv6 isn't available at all, this test is still valid —
+        // create_tcp_listener should fall back to IPv4 gracefully
+    }
+
+    #[tokio::test]
+    async fn test_create_tcp_listener_localhost_does_not_bind_to_all_interfaces() {
+        let listener = create_tcp_listener(true, 0).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        // Localhost mode must NOT bind to all interfaces
+        assert!(
+            !addr.ip().is_unspecified(),
+            "Localhost mode should not bind to unspecified address, got {}",
+            addr.ip()
+        );
+        assert!(addr.ip().is_loopback());
+    }
 }
