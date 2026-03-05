@@ -22,6 +22,17 @@ Today there is no automated feedback loop: a contributor opens a PR, the public
 CI passes, but 3rd party integrations might fail. There is no standard mechanism
 for external CI systems to participate in the PR validation process.
 
+**Upstream-first strategy:** The project is moving toward an upstream-first
+development model where external contributors submit PRs directly to the public
+GitHub repository. When these PRs pass the public CI but break
+internal/proprietary extensions or downstream integrations, there is currently
+no automated way to detect this before merge.
+
+**Licensed or proprietary test suites:** Some 3rd party organizations may run
+test suites that cannot be shared publicly due to licensing or IP constraints.
+These organizations need a mechanism to run their tests against PRs and report
+a PASS/FAIL signal without exposing test details.
+
 **Who is impacted:** Contributors, maintainers, and any organization that builds
 products or services on top of DocumentDB.
 
@@ -33,15 +44,19 @@ test suites that exercise code paths not covered by the public CI.
 tests out-of-band, with no automated feedback to PR authors.
 
 **Success criteria:**
-- One or more external CI systems can register to test PRs automatically.
-- PASS/FAIL results are posted as non-gating PR comments.
+- One or more external CI systems can register to test PRs.
+- PASS/FAIL results are posted as GitHub commit status checks on the PR.
+- Each registered system declares whether its result is **informational**
+  (non-gating) or **required** (blocking). Default: informational.
 - Adding a new 3rd party CI requires only configuration changes, not code changes.
 - The mechanism is secure against unauthorized triggers and forged results.
+- Triggering 3rd party CI requires explicit maintainer approval (no automatic
+  triggers on untrusted PRs).
 
 **Non-goals:**
-- Making 3rd party results a required (gating) status check.
 - Providing 3rd parties with access to internal infrastructure or secrets.
 - Replacing the existing public GitHub Actions CI.
+- Exposing test names, output, or detailed results from proprietary test suites.
 
 ---
 
@@ -73,12 +88,13 @@ polling loop management. The callback pattern is superior in all dimensions.
 
 | Principle | How We Apply It |
 |---|---|
-| **Non-gating** | Results are PR comments, not required status checks. Maintainers decide. |
+| **Configurable gating** | Each system declares informational (non-gating) or required (blocking). Default: informational. |
 | **One comment per patch set** | Each `synchronize` event produces at most one result comment per system. |
 | **Recheck support** | Maintainers can comment `/recheck` to re-trigger all 3rd party tests. |
 | **Public logs** | Comments include a link to accessible build logs when possible. |
 | **Contact information** | Bot comments identify the system and link to a contact page. |
 | **Stable operation** | New systems start in informational mode for ≥2 weeks before going production. |
+| **Maintainer approval** | 3rd party CI is only triggered after explicit maintainer approval — never automatically on untrusted PRs. |
 
 ---
 
@@ -120,12 +136,41 @@ on:
     types: [created]  # for /recheck support
 ```
 
+> **Security:** This workflow does NOT immediately fire webhooks. On
+> `pull_request` events from external contributors, it waits for a maintainer
+> to approve the run (see Maintainer Approval Gate below). The `/recheck`
+> comment path is inherently maintainer-gated since only users with write
+> access should use it.
+
+#### Maintainer Approval Gate
+
+Third-party CI pipelines MUST NOT be triggered automatically on PR events
+from external contributors. Malicious PRs can exploit CI compute for
+cryptocurrency mining, inject code via Makefile or branch names that
+exfiltrates internal data, or abuse pipeline resources.
+
+**Trigger flow:**
+
+1. Public GitHub Actions CI runs first on the PR (existing behavior).
+2. A maintainer (someone with write access to the repo) reviews the PR for
+   obvious malicious content.
+3. The maintainer **explicitly approves** triggering 3rd party CI — either via:
+   - A `/run-3rd-party-ci` comment on the PR, or
+   - A manual workflow dispatch targeting that PR.
+4. Only after approval does the webhook fire to registered 3rd party CI systems.
+5. **Safeguard:** Public OSS CI must have already passed before 3rd party CI
+   can be triggered. This ensures basic code quality checks happen first.
+
+This mirrors the established GitHub Actions approval flow for first-time
+contributors and was the proven pattern in other large OSS projects with
+internal CI.
+
 #### Job: `trigger-3rd-party-pipelines`
 
 For each registered 3rd party CI system:
 
 1. Build a JSON payload containing `pr_number`, `commit_sha`, `source_branch`, `repo`.
-2. Compute HMAC-SHA1 over the payload using that system's shared secret.
+2. Compute HMAC-SHA256 over the payload using that system's shared secret.
 3. POST to the system's registered webhook endpoint with the signature header.
 4. Verify HTTP 200 response.
 
@@ -237,6 +282,84 @@ When a maintainer comments `/recheck` on a PR, the `issue_comment` trigger fires
 The workflow filters for comments matching `/recheck` on open PRs, then
 re-triggers all registered 3rd party webhooks.
 
+### Failure Handling Workflow
+
+When a 3rd party CI reports **FAIL**:
+
+1. The PR receives a GitHub commit status check (or PR comment) with a generic
+   FAIL status and a link to the system contact. **No internal logs or test
+   details are exposed.**
+2. The 3rd party organization investigates internally to determine root cause.
+3. **Two possible outcomes:**
+   - **Contributor fix required:** The 3rd party communicates (via PR comment
+     or private message) what the contributor needs to change, without
+     exposing proprietary test details. They may suggest: *"Please run
+     [public test suite X] to validate compatibility."*
+   - **Internal fix required:** The 3rd party determines the change is
+     desirable for the project but requires corresponding internal work.
+     The PR can proceed; the internal team tracks their own follow-up.
+4. For proprietary or licensed test suites, **no test names, output,
+   or detailed results** are shared in PR comments — only PASS/FAIL.
+
+### Contributor Capabilities
+
+**What contributors can run locally:**
+- The public CI test suites (SQL tests, gateway tests) — always available.
+- Any open-source test framework against their own DocumentDB instance.
+
+**What contributors cannot access:**
+- Internal/proprietary test suites run by 3rd party CI systems.
+- Internal/proprietary test infrastructure or detailed results.
+
+Contributors may be *suggested* to run specific open-source tests when a
+failure is detected, but they will not be given access to proprietary
+test code or infrastructure.
+
+### Pipeline Security Requirements
+
+Any pipeline that builds or tests untrusted external PR code MUST implement
+the following security controls. This applies to all registered 3rd party CI
+systems, not just internal ones.
+
+| Requirement | Details |
+|---|---|
+| **Dedicated agent pool** | Use a completely separate, purpose-built agent pool — NOT the team's regular internal pool. |
+| **De-privileged execution** | Pipeline access tokens have NO permissions beyond what's strictly needed. No access to internal repos, no network access to internal services. |
+| **Network isolation** | Containers running the build are network-restricted. No access to corporate networks, VPNs, or internal subnets. |
+| **No internal repo access** | The pipeline pulls code directly from the public GitHub PR — it does NOT have access to check out or read internal repository contents. |
+| **Ephemeral environments** | Build containers are destroyed after each run. No persistent state between builds. |
+| **Security review** | The pipeline configuration MUST go through a security review before going live. |
+
+**Threat model:**
+
+| Threat | Vector | Mitigation |
+|---|---|---|
+| Resource abuse | Crypto mining via CI compute | Maintainer approval gate; resource limits on agent pool |
+| Code injection | Malicious Makefile targets or build scripts | De-privileged execution; ephemeral containers; code review before approval |
+| Branch name injection | Branch names crafted to execute code on checkout | Sanitize branch names; use commit SHA for checkout, not branch name |
+| Exfiltration | PR code attempts to read/upload internal repo contents | Network isolation; no internal repo access |
+| Lateral movement | Exploiting CI to access internal services | Network isolation; dedicated pool with no corpnet access |
+
+> **Recommendation:** Organizations setting up their 3rd party CI pipeline
+> should consult with teams that have already solved this problem
+> rather than building security controls
+> from scratch.
+
+### Merge Conflict Handling
+
+When an external PR triggers a 3rd party CI pipeline that builds against
+internal code, the pipeline may fail due to merge conflicts between the
+upstream PR and internal-only changes.
+
+**Policy:**
+
+1. The pipeline reports FAIL back to GitHub.
+2. The 3rd party organization performs an **immediate forward sync** from their
+   internal repo to upstream to resolve the conflict.
+3. The contributor is asked to rebase their PR after the sync completes.
+4. Merge conflicts should be resolved same-day rather than making contributors
+   wait for a scheduled sync cycle.
+
 ### API Changes
 
 No DocumentDB API changes. This RFC only adds GitHub Actions workflows and
@@ -250,7 +373,7 @@ N/A.
 
 | Item | Type | Description |
 |---|---|---|
-| `<SYSTEM>_WEBHOOK_SECRET` | GitHub repo secret | Per-system HMAC-SHA1 key for signing outbound payloads |
+| `<SYSTEM>_WEBHOOK_SECRET` | GitHub repo secret | Per-system HMAC-SHA256 key for signing outbound payloads |
 | `<SYSTEM>_CALLBACK_SECRET` | GitHub repo secret | Per-system HMAC-SHA256 key for verifying inbound callbacks |
 | `GITHUB_CALLBACK_TOKEN` | 3rd party CI secret | Fine-grained PAT (`contents:write` on this repo only) for `repository_dispatch` |
 | Trigger matrix entry | Workflow YAML | Webhook URL, secret name, and signature header per system |
@@ -293,7 +416,7 @@ does not affect any other system, and allows independent secret rotation.
 
 ### Security Considerations
 
-- **Outbound HMAC-SHA1** (GitHub → 3rd party): Every trigger POST is signed. The
+- **Outbound HMAC-SHA256** (GitHub → 3rd party): Every trigger POST is signed. The
   3rd party verifies and rejects tampered or unsigned requests.
 - **Inbound HMAC-SHA256** (3rd party → GitHub): Each callback is signed with that
   system's per-system `<SYSTEM>_CALLBACK_SECRET`. The workflow looks up the correct
@@ -301,8 +424,14 @@ does not affect any other system, and allows independent secret rotation.
   another.
 - **Fine-grained PAT**: Each `GITHUB_CALLBACK_TOKEN` is restricted to a single
   repository with `contents:write` scope. No access to other repos or admin actions.
+- **Maintainer approval gate**: 3rd party CI is never triggered automatically on
+  untrusted PRs. A maintainer with write access must explicitly approve each run.
+  Public OSS CI must pass first.
+- **Pipeline isolation**: All 3rd party CI pipelines that execute untrusted PR code
+  should run in de-privileged, network-isolated, ephemeral environments (see Pipeline
+  Security Requirements above).
 - **No code access**: The trigger webhook only starts a pipeline. Pipelines check
-  out code from their own fork/upstream, not from untrusted sources.
+  out code from the public GitHub PR, not from internal/proprietary repositories.
 - **Secret rotation**: All secrets and PATs should be rotated at least quarterly.
 
 ### Migration Path
@@ -331,10 +460,22 @@ N/A — this is a new feature with no existing behavior to migrate from.
 
 ### Open Questions
 
-- [ ] Question: Should there be a maximum time limit between trigger and callback? (e.g., ignore callbacks older than 3 hours)
-  - Discussion: TBD
-- [ ] Question: Should the callback workflow also set a GitHub commit status in addition to a PR comment?
-  - Discussion: TBD
+- [x] Question: Should there be a maximum time limit between trigger and callback? (e.g., ignore callbacks older than 3 hours)
+  - **Resolved:** Yes — implement a 3-hour TTL. Callbacks arriving after 3 hours
+    from the trigger event are silently dropped. This prevents stale results
+    from posting on PRs that may have already been updated.
+- [x] Question: Should the callback workflow also set a GitHub commit status in addition to a PR comment?
+  - **Resolved:** Yes — use a GitHub commit status check (visible on the PR's
+    Checks tab) as the primary reporting mechanism. This shows directly on the
+    PR as "3rd Party CI (System): ✅ passed" or "❌ failed." External
+    contributors cannot see internal pipeline logs but can see the pass/fail
+    status inline. PR comments remain as supplementary detail.
+- [x] Question: Should 3rd party results be gating or non-gating?
+  - **Resolved:** Configurable per registered system. Each system declares
+    whether its result is **informational** (non-gating) or **required**
+    (blocking merge). Default: informational. Systems that are the primary
+    integration test suite for the project should start as required/blocking
+    and can be relaxed to informational as public OSS test coverage improves.
 
 ### Implementation Notes
 
