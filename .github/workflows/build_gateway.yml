@@ -117,7 +117,7 @@ jobs:
         DIGEST=$(docker buildx imagetools inspect ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }} \
           | awk '/^Digest:/ { print $2 }')
         cosign verify \
-          --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/build_gateway.yml@refs/heads/${{ github.ref_name }}" \
+          --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/build_gateway.yml@${{ github.ref }}" \
           --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
           ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}@${DIGEST}
 
@@ -151,6 +151,6 @@ jobs:
         DIGEST=$(docker buildx imagetools inspect ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }} \
           | awk '/^Digest:/ { print $2 }')
         cosign verify \
-          --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/build_gateway.yml@refs/heads/${{ github.ref_name }}" \
+          --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/build_gateway.yml@${{ github.ref }}" \
           --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
           ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}@${DIGEST}
