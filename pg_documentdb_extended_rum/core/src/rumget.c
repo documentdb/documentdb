@@ -841,10 +841,6 @@ restartScanEntry:
 			entry->isFinished = false;
 		}
 	}
-	else if (entry->curKeyCategory == RUM_CAT_ORDER_ITEM)
-	{
-		ereport(ERROR, (errmsg("Unsupported call startScanEntry on order item key")));
-	}
 	else if (btreeEntry.findItem(&btreeEntry, stackEntry) ||
 			 (entry->queryCategory == RUM_CAT_EMPTY_QUERY &&
 			  entry->scanWithAddInfo))
@@ -1881,7 +1877,7 @@ startScan(IndexScanDesc scan)
 		scanType = RumOrderedScan;
 		startOrderedScanEntries(scan, rumstate, so);
 	}
-	else if (so->norderbys > 0 &&
+	else if ((so->norderbys > 0 || RumEnableOrderedOperatorScans) &&
 			 so->willSort && !rumstate->useAlternativeOrder)
 	{
 		scanType = RumOrderedScan;
@@ -4099,6 +4095,13 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 		/* Check if the current tuple matches */
 		idatum = rumtuple_get_key(&so->rumstate, itup, &icategory);
 
+		if (icategory != RUM_CAT_NORM_KEY)
+		{
+			/* move right and continue on null keys */
+			so->orderByScanData->orderStack->off += so->orderScanDirection;
+			continue;
+		}
+
 		markedEntryFinished = false;
 		scanFinished = false;
 		canSkipCheck = false;
@@ -4621,17 +4624,17 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 
 	if (so->firstCall)
 	{
+		if (!ScanDirectionIsNoMovement(direction))
+		{
+			so->orderScanDirection = direction;
+		}
+
 		/*
 		 * Set up the scan keys, and check for unsatisfiable query.
 		 */
 		if (RumIsNewKey(scan))
 		{
 			rumNewScanKey(scan);
-		}
-
-		if (!ScanDirectionIsNoMovement(direction))
-		{
-			so->orderScanDirection = direction;
 		}
 
 		so->firstCall = false;

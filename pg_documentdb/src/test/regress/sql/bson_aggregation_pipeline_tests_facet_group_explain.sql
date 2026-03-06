@@ -17,9 +17,22 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group_exp", "pipeline": [ { "$group": { "_id": 1, "c": { "$sum": 10 }}}]}');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group_exp", "pipeline": [ { "$group": { "_id": 1, "c": { "$max": 10 }}}]}');
 
+SET documentdb.enableNewMinMaxAccumulators TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group_exp", "pipeline": [ { "$group": { "_id": 1, "c": { "$max": 10 }}}]}');
+SET documentdb.enableNewMinMaxAccumulators TO off;
+
 -- test where only some are non-const
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group_exp", "pipeline": [ { "$group": { "_id": 1, "c": { "$max": "$a" }}}]}');
+
+SET documentdb.enableNewMinMaxAccumulators TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group_exp", "pipeline": [ { "$group": { "_id": 1, "c": { "$max": "$a" }}}]}');
+SET documentdb.enableNewMinMaxAccumulators TO off;
+
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group_exp", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": 1 }}}]}');
 
 -- both are non const
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group_exp", "pipeline": [ { "$group": { "_id": "$a", "c": { "$max": "$b" }}}]}');
+
+SET documentdb.enableNewMinMaxAccumulators TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group_exp", "pipeline": [ { "$group": { "_id": "$a", "c": { "$max": "$b" }}}]}');
+SET documentdb.enableNewMinMaxAccumulators TO off;

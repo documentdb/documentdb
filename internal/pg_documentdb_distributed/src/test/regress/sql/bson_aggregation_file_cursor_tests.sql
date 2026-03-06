@@ -177,6 +177,11 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$sort": { "_id": -1 } }]}');
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
 
+-- $max with file cursor - test with new aggregate implementation
+SET documentdb.enableNewMinMaxAccumulators TO on;
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
+
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 1, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }, { "$limit": 1 }]}');
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 1, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }, { "$limit": 1 }, { "$addFields": { "c": "$a" }}]}');
 
@@ -199,6 +204,12 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 1, pageSize => 0, pipeline => '{ "": [{ "$limit": 1 }]}');
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$sort": { "_id": -1 } }]}');
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+
+-- $max with local execution off - test with new aggregate implementation
+SET documentdb.enableNewMinMaxAccumulators TO on;
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
+
 RESET citus.enable_local_execution;
 
 -- with sharded
@@ -223,6 +234,11 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$sort": { "_id": -1 } }]}');
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
 
+-- $max with sharded file cursor - test with new aggregate implementation
+SET documentdb.enableNewMinMaxAccumulators TO on;
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
+
 -- With local execution off.
 set citus.enable_local_execution to off;
 SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2, obfuscate_id => true);
@@ -238,6 +254,12 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 1, pageSize => 0, pipeline => '{ "": [{ "$limit": 1 }]}', obfuscate_id => true);
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$sort": { "_id": -1 } }]}', obfuscate_id => true);
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }', obfuscate_id => true);
+
+-- $max with file cursor sharded - test with new aggregate implementation
+SET documentdb.enableNewMinMaxAccumulators TO on;
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }', obfuscate_id => true);
+SET documentdb.enableNewMinMaxAccumulators TO off;
+
 RESET citus.enable_local_execution;
 
 -- start draining first page first (should not persist connection and have a query file)

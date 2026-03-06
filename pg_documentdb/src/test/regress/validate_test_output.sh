@@ -82,6 +82,10 @@ for validationFile in $(ls $check_directory/expected/*.out); do
     fi
 
     if ! [[ ":$collectionIdOutput:" =~ "00:" ]]; then
+        if [[ "$sqlFile" =~ "commands_shard_collection.sql" ]]; then
+            echo "Skipping collection ID multiple of 100 check for $sqlFile since it's a special case for testing the collection_id check"
+            continue;
+        fi
         echo "CollectionId used in '$sqlFile' must be a multiple of 100: " $collectionIdOutput;
         exit 1;
     fi

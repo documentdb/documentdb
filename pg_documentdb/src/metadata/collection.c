@@ -130,7 +130,6 @@ static MongoCollection * GetMongoCollectionByNameDatumCore(Datum databaseNameDat
 														   Datum collectionNameDatum,
 														   LOCKMODE lockMode);
 static Datum GetCollectionOrViewCore(PG_FUNCTION_ARGS, bool allowViews);
-static uint64 GetCollectionIdFromShardName(const char *shardName);
 
 /*
  * CollectionCacheIsValid determines whether the collections hashes are
@@ -253,10 +252,10 @@ InvalidateCollectionByRelationId(Oid relationId)
 						HASH_REMOVE, &foundInCache);
 
 		/*
-		 * We currently always create entries together and only
-		 * call this function with a valid cache.
+		 * The name-hash entry may not exist if the collection was
+		 * only loaded via GetMongoCollectionByColId (which only
+		 * populates RelationIdToCollectionHash, not NameToCollectionHash).
 		 */
-		Assert(foundInCache);
 
 		if (foundInCache)
 		{
@@ -417,29 +416,32 @@ GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode)
 
 
 /*
- * GetMongoCollectionByRelationShardId gets the MongoCollection metadata by
- * relation Id of one of the collection's shard tables. This is used by
- * change stream aggregation to lookup a collection for a given change's
- * relation id parsed from the WAL records. It finds the collection Id
- * from the relation ID using the naming convention of the shard table
- * name format documents_<collection ID>_<shard ID> and just calls the
- * GetMongoCollectionByColId to lookup the collection's meta data from
- * the hash table.
+ * GetMongoCollectionByRelationOid checks if a collection
+ * with the specified relationId exists in the ApiCatalogSchemaName.
  */
 MongoCollection *
-GetMongoCollectionByRelationShardId(Oid relationId)
+GetMongoCollectionByRelationOid(Oid relationId, bool requireShardTable)
 {
-	/* Get the relation's name using the relationId. */
-	const char *shardName = get_rel_name(relationId);
+	if (get_rel_namespace(relationId) != ApiDataNamespaceOid())
+	{
+		return NULL;
+	}
 
-	/* If the shardName lookup failed, return false. */
-	if (shardName == NULL)
+	/* Get the relation's name using the relationId. */
+	const char *relationName = get_rel_name(relationId);
+
+	/* If the relation lookup failed, return false. */
+	if (relationName == NULL)
 	{
 		return NULL;
 	}
 
 	/* Get the collection ID from the shard table name. */
-	uint64 collectionId = GetCollectionIdFromShardName(shardName);
+	uint64 collectionId = 0;
+	if (!CheckRelNameValidity(relationName, &collectionId, requireShardTable))
+	{
+		return NULL;
+	}
 
 	/*
 	 * If the collection Id can't be parsed from relation's name,
@@ -576,6 +578,8 @@ TrySetCollectionShard(MongoCollection *collection)
 
 	int savedGUCLevel = NewGUCNestLevel();
 	SetGUCLocally("client_min_messages", "WARNING");
+
+	/* Get shard table name (distributed) or original tableName (single node) */
 	const char *shardName = TryGetShardNameForUnshardedCollection(
 		collection->relationId, collection->collectionId, collection->tableName);
 	RollbackGUCChange(savedGUCLevel);
@@ -1975,21 +1979,39 @@ UpdateMongoCollectionUsingIds(MongoCollection *mongoCollection, uint64 collectio
 }
 
 
-static uint64
-GetCollectionIdFromShardName(const char *shardName)
+/*
+ * CheckRelNameValidity verifies if a relation name follows the DocumentDB collection
+ * naming convention and extracts the collection ID if valid.
+ */
+bool
+CheckRelNameValidity(const char *relName, uint64_t *collectionId, bool validateShardTable)
 {
-	uint64 collectionId = 0, shardId = 0;
-
-	/* Use sscanf to parse the string */
-	int scanned = sscanf(shardName, "documents_%lu_%lu", &collectionId, &shardId);
-
-	/* Check if sscanf successfully scanned 2 numbers and the prefix is correct */
-	if (scanned == 2 && strncmp(shardName, "documents_", 10) == 0)
+	if (relName == NULL ||
+		strncmp(relName, "documents_", 10) != 0)
 	{
-		return collectionId;
+		return false;
 	}
-	else
+
+	/* We use strtoull since it returns the first character that didn't match
+	 * We expect this to return the '_' character when it's a collection shard
+	 * like ApiDataSchemaName.documents_1_111 and the parsed value will be 1.
+	 * Alternatively, this will be \0 and the parsed value will be 1 if the
+	 * table is documents_1 (parent table).
+	 */
+	char *numEndPointer = NULL;
+	uint64 parsedCollectionId = strtoull(&relName[10], &numEndPointer, 10);
+
+	if (!validateShardTable)
 	{
-		return -1;
+		*collectionId = parsedCollectionId;
+		return true;
 	}
+
+	if (IsShardTableForDocumentDbTable(relName, numEndPointer))
+	{
+		*collectionId = parsedCollectionId;
+		return true;
+	}
+
+	return false;
 }

@@ -20,7 +20,7 @@ pg_test = []
 
 [dependencies]
 pgrx = { version ="=0.16.0", default-features = false }
-documentdb_gateway = { path = "../pg_documentdb_gw" }
+documentdb_gateway_core = { path = "../pg_documentdb_gw/documentdb_gateway_core" }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -33,6 +33,9 @@ complexity = { level = "warn", priority = -1 }
 correctness = { level = "warn", priority = -1 }
 suspicious = { level = "warn", priority = -1 }
 perf = { level = "warn", priority = -1 }
+
+needless_pass_by_ref_mut = "warn"
+unused_async = "warn"
 
 [profile.release-with-symbols]
 inherits = "release"

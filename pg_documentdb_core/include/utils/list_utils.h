@@ -17,6 +17,7 @@
 char * StringListJoin(const List *stringList, const char *delim);
 void SortStringList(List *stringList);
 bool StringListsAreEqual(const List *leftStringList, const List *rightStringList);
+bool StringListBinarySearch(const List *stringList, const char *target);
 const char * StringListGetBsonArrayRepr(const List *stringList);
 void AddStringListToBsonArrayRepr(pgbson_writer *bsonWriter, const List *stringList,
 								  const char *arrayName);

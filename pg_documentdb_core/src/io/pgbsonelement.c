@@ -92,7 +92,7 @@ PgbsonToSinglePgbsonElement(const pgbson *bson, pgbsonelement *element)
 
 /*
  * Converts a pgbson that has one or two entries into a pgbson element,
- * and optionally sets the collationString if the second entry has key: "collation".
+ * and optionally returns the collationString if the second entry has key: "collation".
  * Throws error in all other cases.
  */
 const char *
@@ -100,7 +100,6 @@ PgbsonToSinglePgbsonElementWithCollation(const pgbson *filter, pgbsonelement *el
 {
 	bson_iter_t iter;
 	PgbsonInitIterator(filter, &iter);
-	const char *collationString = NULL;
 
 	if (!bson_iter_next(&iter))
 	{
@@ -110,7 +109,8 @@ PgbsonToSinglePgbsonElementWithCollation(const pgbson *filter, pgbsonelement *el
 
 	BsonIterToPgbsonElement(&iter, element);
 
-	if (bson_iter_next(&iter))
+	const char *collationString = NULL;
+	if (EnableCollation && bson_iter_next(&iter))
 	{
 		if (strcmp(bson_iter_key(&iter), "collation") == 0)
 		{
@@ -298,6 +298,8 @@ FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element
 						skipLengthOffset)
 {
 #if BSON_BYTE_ORDER == BSON_BIG_ENDIAN
+	bson_iter_t iterator;
+
 	if (!bson_iter_init_from_data(&iterator,
 								  data,
 								  data_len))

@@ -11,8 +11,10 @@
 #include <postgres.h>
 #include <math.h>
 #include <common/int128.h>
+#include <catalog/pg_operator.h>
 #include <catalog/pg_type.h>
 #include <nodes/makefuncs.h>
+#include <nodes/nodeFuncs.h>
 #include <parser/parse_clause.h>
 #include <parser/parse_node.h>
 #include <optimizer/optimizer.h>
@@ -20,6 +22,11 @@
 #include <utils/fmgroids.h>
 #include <utils/datetime.h>
 #include <utils/array.h>
+
+/* pg_operator_d.h defines Int8LessOperator but not the equality operator */
+#ifndef Int8EqualOperator
+#define Int8EqualOperator 410
+#endif
 
 #include "aggregation/bson_aggregation_window_operators.h"
 #include "aggregation/bson_aggregation_statistics.h"
@@ -163,6 +170,9 @@ static void UpdateWindowAggregationOperator(const pgbsonelement *element,
 static WindowFunc * GetSimpleBsonExpressionGetWindowFunc(const bson_value_t *opValue,
 														 WindowOperatorContext *context,
 														 Oid aggregateFunctionOid);
+static WindowFunc * GetWindowFuncWithExprAggregate(const bson_value_t *opValue,
+												   WindowOperatorContext *context,
+												   Oid aggregateFunctionOid);
 static inline void ValidateInputForRankFunctions(const bson_value_t *opValue,
 												 WindowOperatorContext *context,
 												 char *opName);
@@ -980,8 +990,22 @@ UpdatePartitionAndSortClauses(Query *query, Expr *docExpr,
 
 		SortGroupClause *partitionClause = makeNode(SortGroupClause);
 		partitionClause->tleSortGroupRef = partitionTle->ressortgroupref;
-		partitionClause->eqop = BsonEqualOperatorId();
-		partitionClause->sortop = BsonLessThanOperatorId();
+
+		/*
+		 * When partitionBy matches the shard key, the partition expression
+		 * is the INT8 shard_key_value column rather than a BSON expression.
+		 * Use INT8 operators in that case to avoid BSON comparison on int values.
+		 */
+		if (exprType((Node *) partitionByExpr) == INT8OID)
+		{
+			partitionClause->eqop = Int8EqualOperator;
+			partitionClause->sortop = Int8LessOperator;
+		}
+		else
+		{
+			partitionClause->eqop = BsonEqualOperatorId();
+			partitionClause->sortop = BsonLessThanOperatorId();
+		}
 		partitionClause->nulls_first = false;
 		partitionClause->hashable = true;
 
@@ -1543,6 +1567,38 @@ GetSimpleBsonExpressionGetWindowFunc(const bson_value_t *opValue,
 		functionOid, BsonTypeId(), args, InvalidOid,
 		InvalidOid, COERCE_EXPLICIT_CALL);
 	windowFunc->args = list_make1(accumFunc);
+	return windowFunc;
+}
+
+
+/*
+ * Helper function to get the window function using "WithExpr" aggregate functions
+ * (e.g., bsonmaxwithexpr, bsonminwithexpr).
+ * Note: collation is not currently supported in $setWindowFields, so we pass NULL.
+ */
+static WindowFunc *
+GetWindowFuncWithExprAggregate(const bson_value_t *opValue,
+							   WindowOperatorContext *context,
+							   Oid aggregateFunctionOid)
+{
+	WindowFunc *windowFunc = makeNode(WindowFunc);
+	windowFunc->winfnoid = aggregateFunctionOid;
+	windowFunc->wintype = BsonTypeId();
+	windowFunc->winref = context->winRef;
+	windowFunc->winstar = false;
+	windowFunc->winagg = true;
+
+	Const *exprConst = MakeBsonConst(BsonValueToDocumentPgbson(opValue));
+
+	Expr *variableSpec = context->variableContext != NULL ?
+						 context->variableContext :
+						 (Expr *) makeNullConst(BsonTypeId(), -1, InvalidOid);
+
+	/* Collation is not supported in $setWindowFields yet, so pass NULL */
+	Const *collationConst = makeNullConst(TEXTOID, -1, InvalidOid);
+
+	windowFunc->args = list_make4(context->docExpr, exprConst, variableSpec,
+								  collationConst);
 	return windowFunc;
 }
 
@@ -3047,33 +3103,42 @@ HandleDollarConstFillWindowOperator(const bson_value_t *opValue,
 
 
 /*
- * Handle the $min window operator. This uses the existing
- * `bsonmin` aggregate function.
+ * Handle the $min window operator.
  *
- * TODO: This is just a quick implementation. Later add inverse transition
- * to make it performant for moving windows
+ * Uses the optimized bsonminwithexpr aggregate when available (v0.110+),
+ * otherwise falls back to the legacy bsonmin aggregate with bson_expression_get wrapper.
  */
 static WindowFunc *
 HandleDollarMinWindowOperator(const bson_value_t *opValue,
 							  WindowOperatorContext *context)
 {
-	/*reuse the logic of min in the group stage.*/
+	if (CanUseWithExprAggregates())
+	{
+		return GetWindowFuncWithExprAggregate(opValue, context,
+											  BsonMinWithExprAggregateFunctionOid());
+	}
+
 	return GetSimpleBsonExpressionGetWindowFunc(opValue, context,
 												BsonMinAggregateFunctionOid());
 }
 
 
 /*
- * Handle the $max window operator. This uses the existing
- * `bsonmax` aggregate function.
+ * Handle the $max window operator.
  *
- * TODO: This is just a quick implementation. Later add inverse transition
- * to make it performant for moving windows
+ * Uses the optimized bsonmaxwithexpr aggregate when available (v0.110+),
+ * otherwise falls back to the legacy bsonmax aggregate with bson_expression_get wrapper.
  */
 static WindowFunc *
 HandleDollarMaxWindowOperator(const bson_value_t *opValue,
 							  WindowOperatorContext *context)
 {
+	if (CanUseWithExprAggregates())
+	{
+		return GetWindowFuncWithExprAggregate(opValue, context,
+											  BsonMaxWithExprAggregateFunctionOid());
+	}
+
 	return GetSimpleBsonExpressionGetWindowFunc(opValue, context,
 												BsonMaxAggregateFunctionOid());
 }

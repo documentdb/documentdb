@@ -195,6 +195,19 @@ SELECT BSONMIN(bson_expression_get(document, '{ "": "$a.b" }')) FROM documentdb_
  { "" : { "$numberInt" : "1" } }
 (1 row)
 
+-- BSONMAXWITHEXPR parity tests for nested path
+SELECT BSONMAXWITHEXPR(document, '{ "": "$a.b" }', NULL, '') FROM documentdb_api.collection('db', 'testAggregates') WHERE document @? '{ "a.b": 1}';
+                                                                                                                 bsonmaxwithexpr                                                                                                                  
+---------------------------------------------------------------------
+ { "" : [ [ { "$numberInt" : "-1" }, { "$numberInt" : "1" }, { "$numberInt" : "2" } ], [ { "$numberInt" : "0" }, { "$numberInt" : "1" }, { "$numberInt" : "2" } ], [ { "$numberInt" : "0" }, { "$numberInt" : "1" }, { "$numberInt" : "7" } ] ] }
+(1 row)
+
+SELECT BSONMINWITHEXPR(document, '{ "": "$a.b" }', NULL, '') FROM documentdb_api.collection('db', 'testAggregates') WHERE document @? '{ "a.b": 1}';
+         bsonminwithexpr         
+---------------------------------------------------------------------
+ { "" : { "$numberInt" : "1" } }
+(1 row)
+
 -- Rebuild bson objects from aggregates
 SELECT bson_repath_and_build('max'::text, BSONMAX(document-> 'i32'), 'sum'::text, BSONSUM(document-> 'i32'), 'average'::text, BSONAVERAGE(document-> 'i32')) FROM documentdb_api.collection('db', 'testAggregates');
                                                        bson_repath_and_build                                                        
@@ -205,6 +218,13 @@ SELECT bson_repath_and_build('max'::text, BSONMAX(document-> 'i32'), 'sum'::text
 -- Null values in aggregates
 SELECT BSONMAX(document-> 'nao existe') FROM documentdb_api.collection('db', 'testAggregates');
     bsonmax    
+---------------------------------------------------------------------
+ { "" : null }
+(1 row)
+
+-- BSONMAXWITHEXPR parity test for null/non-existent field
+SELECT BSONMAXWITHEXPR(document, '{ "": "$nao_existe" }', NULL, '') FROM documentdb_api.collection('db', 'testAggregates');
+ bsonmaxwithexpr 
 ---------------------------------------------------------------------
  { "" : null }
 (1 row)
@@ -270,6 +290,20 @@ SELECT BSONMAX(document-> 'i32'), BSONMAX(document-> 'i64'), BSONMAX(document ->
  { "" : true } | { "" : false } | { "" : true }
 (1 row)
 
+-- BSONMINWITHEXPR parity tests when sharded
+SELECT BSONMINWITHEXPR(document, '{ "": "$i32" }', NULL, ''), BSONMINWITHEXPR(document, '{ "": "$i64" }', NULL, ''), BSONMINWITHEXPR(document, '{ "": "$idbl" }', NULL, '') FROM documentdb_api.collection('db', 'testAggregates');
+         bsonminwithexpr          |          bsonminwithexpr          |            bsonminwithexpr            
+---------------------------------------------------------------------
+ { "" : { "$numberInt" : "-2" } } | { "" : { "$numberLong" : "-2" } } | { "" : { "$numberDouble" : "-2.0" } }
+(1 row)
+
+-- BSONMAXWITHEXPR parity tests when sharded
+SELECT BSONMAXWITHEXPR(document, '{ "": "$i32" }', NULL, ''), BSONMAXWITHEXPR(document, '{ "": "$i64" }', NULL, ''), BSONMAXWITHEXPR(document, '{ "": "$idbl" }', NULL, '') FROM documentdb_api.collection('db', 'testAggregates');
+ bsonmaxwithexpr | bsonmaxwithexpr | bsonmaxwithexpr 
+---------------------------------------------------------------------
+ { "" : true }   | { "" : false }  | { "" : true }
+(1 row)
+
 -- shard on a path that not all documents have:
 SELECT documentdb_api.shard_collection('db', 'testAggregates', '{"_id":"hashed"}', false);
 NOTICE:  Skipping Sharding for collection db.testAggregates as the same options were passed in.
@@ -300,6 +334,20 @@ SELECT BSONMAX(document-> 'i32'), BSONMAX(document-> 'i64'), BSONMAX(document ->
     bsonmax    |    bsonmax     |    bsonmax    
 ---------------------------------------------------------------------
  { "" : true } | { "" : false } | { "" : true }
+(1 row)
+
+-- BSONMINWITHEXPR parity tests (re-sharded)
+SELECT BSONMINWITHEXPR(document, '{ "": "$i32" }', NULL, ''), BSONMINWITHEXPR(document, '{ "": "$i64" }', NULL, ''), BSONMINWITHEXPR(document, '{ "": "$idbl" }', NULL, '') FROM documentdb_api.collection('db', 'testAggregates');
+         bsonminwithexpr          |          bsonminwithexpr          |            bsonminwithexpr            
+---------------------------------------------------------------------
+ { "" : { "$numberInt" : "-2" } } | { "" : { "$numberLong" : "-2" } } | { "" : { "$numberDouble" : "-2.0" } }
+(1 row)
+
+-- BSONMAXWITHEXPR parity tests (re-sharded)
+SELECT BSONMAXWITHEXPR(document, '{ "": "$i32" }', NULL, ''), BSONMAXWITHEXPR(document, '{ "": "$i64" }', NULL, ''), BSONMAXWITHEXPR(document, '{ "": "$idbl" }', NULL, '') FROM documentdb_api.collection('db', 'testAggregates');
+ bsonmaxwithexpr | bsonmaxwithexpr | bsonmaxwithexpr 
+---------------------------------------------------------------------
+ { "" : true }   | { "" : false }  | { "" : true }
 (1 row)
 
 -- validation from field_name_validation.js

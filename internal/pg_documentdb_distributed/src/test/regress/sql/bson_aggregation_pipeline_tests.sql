@@ -111,8 +111,16 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 -- $group
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
 
+SET documentdb.enableNewMinMaxAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
+
 -- $group with keys having dotted path
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d.e": { "$max": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
+
+SET documentdb.enableNewMinMaxAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d.e": { "$max": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 
 -- $group with first/last
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$first": "$_id" }, "e": { "$last":  "$_id" } } }], "cursor": {} }');
@@ -631,4 +639,16 @@ SELECT document FROM bson_aggregation_find('db', '{
 }');
 
 -- drop collection
-SELECT documentdb_api.drop_collection('db', 'collTestEmptyIn')
+SELECT documentdb_api.drop_collection('db', 'collTestEmptyIn');
+
+
+/* primary Index pushdown test for select*/
+SELECT documentdb_api.insert_one('db','indexPushDownTest','{ "_id": 1, "name": "Alex Veridian" }', NULL);
+select collection_id  from documentdb_api_catalog.collections where collection_name = 'indexPushDownTest';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : 1}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$eq" : 1}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$gt" : 1}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$lt" : 1}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$lte" : 1}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$gte" : 1}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_4120_411158 where document @@ '{"_id" : {"$in" : [1,2,3,4,5]}}';

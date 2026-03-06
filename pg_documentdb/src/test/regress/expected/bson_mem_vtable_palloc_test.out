@@ -1,0 +1,20 @@
+SET documentdb.next_collection_id TO 9800;
+SET documentdb.next_collection_index_id TO 9800;
+-- Test: verify that pg_documentdb.so's libbson memory vtable uses palloc
+--
+-- This test creates a temp memory context, switches to it, calls bson_new()
+-- (which allocates via libbson's vtable), and checks whether the memory
+-- context recorded any allocations. If the vtable was properly set to
+-- palloc, allocations land in the PG memory context (returns true).
+-- If still using malloc (vtable not set), no PG allocations occur (returns false).
+CREATE OR REPLACE FUNCTION test_bson_mem_vtable_uses_palloc()
+RETURNS bool
+LANGUAGE C AS 'pg_documentdb', $$test_bson_mem_vtable_uses_palloc$$;
+-- Must return true: libbson allocations in pg_documentdb.so go through palloc
+SELECT test_bson_mem_vtable_uses_palloc();
+ test_bson_mem_vtable_uses_palloc 
+----------------------------------
+ t
+(1 row)
+
+DROP FUNCTION test_bson_mem_vtable_uses_palloc();

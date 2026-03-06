@@ -147,6 +147,53 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "c": 1 }, "hint": "a_1" }');
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "d": 1 }, "hint": "a_1" }');
 
+
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "a": 1 }, "sort": { "_id": 1 }, "hint": "a_1" }');
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "b": 1 }, "sort": { "_id": 1 }, "hint": "a_1" }');
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "c": 1 }, "sort": { "_id": 1 }, "hint": "a_1" }');
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "d": 1 }, "sort": { "_id": 1 }, "hint": "a_1" }');
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "a": null }, "sort": { "_id": 1 }, "hint": "a_1" }');
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "b": null }, "sort": { "_id": 1 }, "hint": "a_1" }');
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "c": null }, "sort": { "_id": 1 }, "hint": "a_1" }');
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "d": null }, "sort": { "_id": 1 }, "hint": "a_1" }');
+
+-- Test skip scan correctness with undefined prefix paths
+-- Collection with varied patterns of missing paths
+SELECT documentdb_api.insert_one('comp_db2', 'skip_undefined_prefix', '{ "_id": 1 }');
+SELECT documentdb_api.insert_one('comp_db2', 'skip_undefined_prefix', '{ "_id": 2, "a": 1 }');
+SELECT documentdb_api.insert_one('comp_db2', 'skip_undefined_prefix', '{ "_id": 3, "a": 1, "c": 10 }');
+SELECT documentdb_api.insert_one('comp_db2', 'skip_undefined_prefix', '{ "_id": 4, "a": 1, "b": 2, "c": 10 }');
+SELECT documentdb_api.insert_one('comp_db2', 'skip_undefined_prefix', '{ "_id": 5, "a": 2 }');
+SELECT documentdb_api.insert_one('comp_db2', 'skip_undefined_prefix', '{ "_id": 6, "a": 2, "c": 20 }');
+SELECT documentdb_api.insert_one('comp_db2', 'skip_undefined_prefix', '{ "_id": 7, "b": 3 }');
+SELECT documentdb_api.insert_one('comp_db2', 'skip_undefined_prefix', '{ "_id": 8, "b": 3, "c": 30 }');
+SELECT documentdb_api.insert_one('comp_db2', 'skip_undefined_prefix', '{ "_id": 9, "c": 40 }');
+SELECT documentdb_api.insert_one('comp_db2', 'skip_undefined_prefix', '{ "_id": 10, "a": 3, "b": 4, "c": 50 }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db2',
+    '{ "createIndexes": "skip_undefined_prefix", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "abc_1", "enableOrderedIndex": true } ] }', TRUE);
+
+-- Suffix-only filters: skip scan must traverse undefined prefix terms
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_undefined_prefix", "filter": { "c": 10 }, "sort": { "_id": 1 }, "hint": "abc_1" }');
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_undefined_prefix", "filter": { "c": 40 }, "sort": { "_id": 1 }, "hint": "abc_1" }');
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_undefined_prefix", "filter": { "b": 3 }, "sort": { "_id": 1 }, "hint": "abc_1" }');
+
+-- Range filter on suffix with upper bound: triggers skip past non-matching entries
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_undefined_prefix", "filter": { "c": { "$gte": 10, "$lte": 30 } }, "sort": { "_id": 1 }, "hint": "abc_1" }');
+
+-- Null queries matching undefined (path-not-found) entries
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_undefined_prefix", "filter": { "a": null }, "sort": { "_id": 1 }, "hint": "abc_1" }');
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_undefined_prefix", "filter": { "b": null }, "sort": { "_id": 1 }, "hint": "abc_1" }');
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_undefined_prefix", "filter": { "c": null }, "sort": { "_id": 1 }, "hint": "abc_1" }');
+
+-- Prefix equality + suffix filter with undefined middle path
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_undefined_prefix", "filter": { "a": 1, "c": 10 }, "sort": { "_id": 1 }, "hint": "abc_1" }');
+
+-- Prefix range + suffix range (complex skip pattern over varied undefined paths)
+SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_undefined_prefix", "filter": { "a": { "$gte": 1, "$lte": 2 }, "c": { "$gte": 10, "$lte": 30 } }, "sort": { "_id": 1 }, "hint": "abc_1" }');
+
+-- EXPLAIN to show skip scan behavior with undefined prefix paths
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_undefined_prefix", "filter": { "c": { "$gte": 10, "$lte": 30 } }, "hint": "abc_1" }');
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_undefined_prefix", "filter": { "a": 1, "c": 10 }, "hint": "abc_1" }');
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "a": null }, "hint": "a_1" }');
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "b": null }, "hint": "a_1" }');
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2', '{ "find": "skip_entry_mixed", "filter": { "c": null }, "hint": "a_1" }');

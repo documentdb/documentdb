@@ -25,6 +25,10 @@
                 // Performance: use a separate Cargo target directory for rust-analyzer and ad-hoc commands.
                 // This minimizes filesystem locking when executing cargo commands in parallel to VS Code.
                 "rust-analyzer.cargo.targetDir": true,
+                // Ensure rust-analyzer can find the pgrx config for pg_documentdb_gw_host builds.
+                "rust-analyzer.server.extraEnv": {
+                    "PGRX_HOME": "/home/documentdb/.pgrx"
+                },
                 // Code style: use `crate` instead of `super` for rust-analyzer generated imports.
                 "rust-analyzer.imports.prefix": "crate",
                 // Rust-analyzer default behavior skips checking/building some parts of the Rust codebase.

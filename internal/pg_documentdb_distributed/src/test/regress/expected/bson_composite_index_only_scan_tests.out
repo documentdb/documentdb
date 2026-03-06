@@ -457,6 +457,25 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT docu
                            Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
 (12 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO on;
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$max": "$_id" } } }]}');
+                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                             
+---------------------------------------------------------------------
+ Subquery Scan on agg_stage_2 (actual rows=1 loops=1)
+   Output: bson_repath_and_build(agg_stage_2.c1, agg_stage_2.c2, agg_stage_2.c3, agg_stage_2.c4)
+   ->  GroupAggregate (actual rows=1 loops=1)
+         Output: '_id'::text, ('{ "" : { "$numberInt" : "1" } }'::bson), 'c'::text, bsonmaxwithexpr(agg_stage_2_1.document, '{ "" : "$_id" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)
+         Group Key: '{ "" : { "$numberInt" : "1" } }'::bson
+         ->  Subquery Scan on agg_stage_2_1 (actual rows=4 loops=1)
+               Output: '{ "" : { "$numberInt" : "1" } }'::bson, agg_stage_2_1.document
+               ->  Limit (actual rows=4 loops=1)
+                     Output: collection.document
+                     ->  Index Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=4 loops=1)
+                           Output: collection.document
+                           Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(12 rows)
+
+SET documentdb.enableNewMinMaxAccumulators TO off;
 -- now test with compound index
 SELECT documentdb_api_internal.create_indexes_non_concurrently('idx_only_scan_db', '{ "createIndexes": "idx_only_scan_coll", "indexes": [ { "key": { "country": 1, "provider": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "country_provider_1" }] }', true);
                                                                                                    create_indexes_non_concurrently                                                                                                    

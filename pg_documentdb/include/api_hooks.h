@@ -12,9 +12,11 @@
 #define EXTENSION_API_HOOKS_H
 
 #include <access/amapi.h>
+#include <utils/memutils.h>
 
 #include "api_hooks_common.h"
 #include "metadata/collection.h"
+
 
 /* Section: General Extension points */
 
@@ -238,5 +240,35 @@ const char * GetOperationCancellationQuery(int64 shardId, StringView *opIdString
 																			argNulls));
 
 bool ShouldUseCompositeOpClassByDefault(void);
+
+
+/*
+ * Create a TTL metrics context for collecting metrics during TTL purge.
+ * Returns an opaque context pointer, or NULL if no hook is set or metrics
+ * collection is disabled.
+ */
+void * CreateTtlMetricsContext(MemoryContext metricsMemoryContext,
+							   int numTtlIndexEntries);
+
+
+/*
+ * Record a single TTL metric entry after a batch delete.
+ * Passes individual metric values to the hook implementation for aggregation.
+ */
+void RecordTtlMetric(void *metricsContext,
+					 uint64 collectionId,
+					 uint64 indexId,
+					 uint64 shardId,
+					 const char *indexName,
+					 double saturationRatio,
+					 double batchDeleteElapsedTimeMs,
+					 uint64 rowsDeleted);
+
+
+/*
+ * Finalize and emit TTL metrics, then clean up the metrics context.
+ * Called after the TTL purge loop completes to aggregate, emit, and free resources.
+ */
+void FinalizeTtlMetrics(void *metricsContext);
 
 #endif

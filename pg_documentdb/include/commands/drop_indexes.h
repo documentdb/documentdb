@@ -14,7 +14,7 @@
 #include "metadata/index.h"
 
 void DropPostgresIndex(uint64 collectionId, int indexId, bool unique,
-					   bool concurrently, bool missingOk);
+					   bool concurrently, bool forceReadWrite, bool missingOk);
 void DropPostgresIndexWithSuffix(uint64 collectionId,
 								 IndexDetails *index,
 								 bool concurrently,

@@ -1,0 +1,31 @@
+
+CREATE OPERATOR __API_SCHEMA_INTERNAL_V2__.< (
+    LEFTARG = __API_SCHEMA_INTERNAL_V2__.bsonindexterm,
+    RIGHTARG = __API_SCHEMA_INTERNAL_V2__.bsonindexterm,
+    PROCEDURE = __API_SCHEMA_INTERNAL_V2__.bsonindexterm_lt
+);
+
+CREATE OPERATOR __API_SCHEMA_INTERNAL_V2__.<= (
+    LEFTARG = __API_SCHEMA_INTERNAL_V2__.bsonindexterm,
+    RIGHTARG = __API_SCHEMA_INTERNAL_V2__.bsonindexterm,
+    PROCEDURE = __API_SCHEMA_INTERNAL_V2__.bsonindexterm_lte
+);
+
+CREATE OPERATOR __API_SCHEMA_INTERNAL_V2__.> (
+    LEFTARG = __API_SCHEMA_INTERNAL_V2__.bsonindexterm,
+    RIGHTARG = __API_SCHEMA_INTERNAL_V2__.bsonindexterm,
+    PROCEDURE = __API_SCHEMA_INTERNAL_V2__.bsonindexterm_gt
+);
+
+CREATE OPERATOR __API_SCHEMA_INTERNAL_V2__.>= (
+    LEFTARG = __API_SCHEMA_INTERNAL_V2__.bsonindexterm,
+    RIGHTARG = __API_SCHEMA_INTERNAL_V2__.bsonindexterm,
+    PROCEDURE = __API_SCHEMA_INTERNAL_V2__.bsonindexterm_gte
+);
+
+
+CREATE OPERATOR __API_SCHEMA_INTERNAL_V2__.= (
+    LEFTARG = __API_SCHEMA_INTERNAL_V2__.bsonindexterm,
+    RIGHTARG = __API_SCHEMA_INTERNAL_V2__.bsonindexterm,
+    PROCEDURE = __API_SCHEMA_INTERNAL_V2__.bsonindexterm_eq
+);

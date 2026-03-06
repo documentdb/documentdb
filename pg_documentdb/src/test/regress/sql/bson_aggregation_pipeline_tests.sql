@@ -109,6 +109,10 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 -- $group
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
 
+SET documentdb.enableNewMinMaxAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
+
 -- $group with first/last
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$first": "$_id" }, "e": { "$last":  "$_id" } } }], "cursor": {} }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$first": "$_id" }, "e": { "$last":  "$_id" } } }], "cursor": {} }');
@@ -500,3 +504,18 @@ SELECT documentdb_api.insert_one('db','lookup_movies','{ "_id": 3, "title": "Cel
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "lookup_movies", "pipeline": [ { "$lookup": { "from": "lookup_directors", "localField": "director", "foreignField": "name", "as": "director_info" } }, { "$unwind": { "path": "$director_info", "preserveNullAndEmptyArrays": true } }, { "$match": { "title": "Celestial Rift" } } ], "cursor": {} }');
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "lookup_movies", "pipeline": [ { "$lookup": { "from": "lookup_directors", "localField": "director", "foreignField": "name", "as": "director_info" } }, { "$unwind": { "path": "$director_info", "preserveNullAndEmptyArrays": true } }, { "$match": { "title": "Celestial Rift" } } ], "cursor": {} }');
+
+/* primary Index pushdown test for select*/
+SELECT documentdb_api.insert_one('db','indexPushDownTest','{ "_id": 1, "name": "Alex Veridian" }', NULL);
+select collection_id  from documentdb_api_catalog.collections where collection_name = 'indexPushDownTest';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_3508 where document @@ '{"_id" : 1}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_3508 where document @@ '{"_id" : {"$eq" : 1}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_3508 where document @@ '{"_id" : {"$gt" : 1}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_3508 where document @@ '{"_id" : {"$lt" : 1}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_3508 where document @@ '{"_id" : {"$lte" : 1}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_3508 where document @@ '{"_id" : {"$gte" : 1}}';
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT * from documentdb_data.documents_3508 where document @@ '{"_id" : {"$in" : [1,2,3,4,5]}}';
+
+-- Regression test for NULL pointer check in BSONFIRSTN/BSONLASTN.
+SELECT documentdb_api.create_collection('db', 'bsonFirstNLastNCrashEmptyCollection');
+SELECT BSONLASTNONSORTED(NULL, 3) FROM documentdb_api.collection('db', 'bsonFirstNLastNCrashEmptyCollection');

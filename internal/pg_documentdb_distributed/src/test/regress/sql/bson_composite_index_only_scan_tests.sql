@@ -86,6 +86,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT docu
 -- this will need index scan
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$max": "$_id" } } }]}');
 
+SET documentdb.enableNewMinMaxAccumulators TO on;
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$max": "$_id" } } }]}');
+SET documentdb.enableNewMinMaxAccumulators TO off;
+
 -- now test with compound index
 SELECT documentdb_api_internal.create_indexes_non_concurrently('idx_only_scan_db', '{ "createIndexes": "idx_only_scan_coll", "indexes": [ { "key": { "country": 1, "provider": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "country_provider_1" }] }', true);
 

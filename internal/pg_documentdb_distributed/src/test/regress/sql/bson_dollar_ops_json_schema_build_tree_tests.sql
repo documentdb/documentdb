@@ -104,6 +104,11 @@ SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "propert
 -- Valid case - array
 SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "properties" : { "name" : { "bsonType": ["string", "object"] } } } }');
 
+------------------------ description ---------------------------------------------
+SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "properties" : { "name" : { "bsonType": "string", "description": "Name of the person" } } } }');
+SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "properties" : { "name" : { "bsonType": "string", "description": 12345 } } } }');
+SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "properties" : { "name" : { "bsonType": "string", "description": true } } } }');
+SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "properties" : { "name" : { "bsonType": "string", "description": ["a", "b"] } } } }');
 
 -------------------------------------------------------------------------------
 --                          Numeric Validators                               --

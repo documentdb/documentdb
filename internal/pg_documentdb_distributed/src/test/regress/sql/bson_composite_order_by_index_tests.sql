@@ -516,3 +516,25 @@ SELECT documentdb_api.coll_mod('comp_db', 'index_orderby_selection', '{ "collMod
 -- now it picks the sort index
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
     SELECT * FROM bson_aggregation_find('comp_db', '{ "find": "index_orderby_selection", "filter": { "filter1": "filter1-5", "filter2": { "$gte": "filter2-55" }, "filter3": { "$gt": 50 } }, "sort": { "orderKey": 1 }, "limit": 10 }');
+
+
+-- test filter pushdown with order by scan
+SELECT COUNT(documentdb_api.insert_one('comp_db', 'testbitmaponorder', FORMAT('{ "_id": %s, "a": "%s%s", "b": "%s%s" }', i, repeat('a', 10000), i, repeat('a', 10000), i)::bson)) FROM generate_series(1, 10000) i;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{ "createIndexes": "testbitmaponorder", "indexes": [ { "key": { "b": 1, "c": 1, "a": 1 }, "name": "b_c_a_1", "enableOrderedIndex": true } ] }', TRUE);
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key('comp_db', 'testbitmaponorder');
+
+\d documentdb_data.documents_68013
+
+ANALYZE documentdb_data.documents_68013;
+
+set documentdb.forceDisableSeqScan to off;
+set documentdb.enableExtendedExplainPlans to off;
+set enable_indexscan to off;
+set enable_bitmapscan to on;
+set seq_page_cost to 1000;
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('comp_db', '{ "find": "testbitmaponorder", "filter": { "a": { "$gt": "" }  }, "sort": { "b": 1 } }');
+
+set work_mem to '64';
+WITH r1 AS (SELECT document FROM bson_aggregation_find('comp_db', '{ "find": "testbitmaponorder", "filter": { "a": { "$gt": "" }  }, "sort": { "b": 1 } }'))
+SELECT COUNT(*) FROM r1;

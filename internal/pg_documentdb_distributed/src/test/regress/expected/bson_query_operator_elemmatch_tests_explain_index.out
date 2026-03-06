@@ -115,8 +115,8 @@ SELECT documentdb_api.insert_one('db','elemmatchtest', '{"_id": 13, "a": [{ "d":
 (1 row)
 
 -- run an explain analyze
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a.b" : { "$elemMatch": {"$gte" : 10, "$lte" : 15} }}';
-                                                                                         QUERY PLAN                                                                                         
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a.b" : { "$elemMatch": {"$gte" : 10, "$lte" : 15} }}' $cmd$);
+                                                                                    run_explain_and_trim                                                                                    
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Task Count: 1
@@ -133,8 +133,8 @@ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT obj
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@#?) '{ "a.b" : { "$gte" : { "$numberInt" : "10" }, "$lte" : { "$numberInt" : "15" } } }'::documentdb_core.bson)
 (13 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": {"b": {"$in": [3]} } } }';
-                                                                             QUERY PLAN                                                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": {"b": {"$in": [3]} } } }'$cmd$);
+                                                                        run_explain_and_trim                                                                        
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -150,8 +150,8 @@ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT obj
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@#?) '{ "a" : { "b" : { "$in" : [ { "$numberInt" : "3" } ] } } }'::documentdb_core.bson)
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": {"b": {"$nin": [1, 2, 3]} } } }';
-                                                                                                     QUERY PLAN                                                                                                      
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": {"b": {"$nin": [1, 2, 3]} } } }'$cmd$);
+                                                                                                run_explain_and_trim                                                                                                 
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=6 loops=1)
    Task Count: 1
@@ -167,8 +167,8 @@ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT obj
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@#?) '{ "a" : { "b" : { "$nin" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] } } }'::documentdb_core.bson)
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": {"$eq" : {"b" : [18]} } } }';
-                                                                             QUERY PLAN                                                                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": {"$eq" : {"b" : [18]} } } }'$cmd$);
+                                                                        run_explain_and_trim                                                                         
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -184,8 +184,8 @@ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT obj
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@#?) '{ "a" : { "$eq" : { "b" : [ { "$numberInt" : "18" } ] } } }'::documentdb_core.bson)
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": {"b": {"$exists" : false} } } }';
-                                                                    QUERY PLAN                                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": {"b": {"$exists" : false} } } }'$cmd$);
+                                                               run_explain_and_trim                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Task Count: 1
@@ -201,8 +201,8 @@ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT obj
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@#?) '{ "a" : { "b" : { "$exists" : false } } }'::documentdb_core.bson)
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": {"b": 1, "c": 2} } }';
-                                                                                    QUERY PLAN                                                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": {"b": 1, "c": 2} } }'$cmd$);
+                                                                               run_explain_and_trim                                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -218,8 +218,8 @@ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT obj
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@#?) '{ "a" : { "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "2" } } }'::documentdb_core.bson)
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": { "$or": [{ "b": {"$gte": 1} }, { "b": { "$lt": 2 }}] } } }';
-                                                                                                          QUERY PLAN                                                                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": { "$or": [{ "b": {"$gte": 1} }, { "b": { "$lt": 2 }}] } } }'$cmd$);
+                                                                                                     run_explain_and_trim                                                                                                      
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=7 loops=1)
    Task Count: 1
@@ -236,8 +236,8 @@ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT obj
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@#?) '{ "a" : { "$or" : [ { "b" : { "$gte" : { "$numberInt" : "1" } } }, { "b" : { "$lt" : { "$numberInt" : "2" } } } ] } }'::documentdb_core.bson)
 (13 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": { "$and": [{ "b": {"$gte": 1} }, { "b": { "$lt": 2 }}] } } }';
-                                                                                                           QUERY PLAN                                                                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": { "$and": [{ "b": {"$gte": 1} }, { "b": { "$lt": 2 }}] } } }'$cmd$);
+                                                                                                      run_explain_and_trim                                                                                                      
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Task Count: 1
@@ -253,8 +253,8 @@ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT obj
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@#?) '{ "a" : { "$and" : [ { "b" : { "$gte" : { "$numberInt" : "1" } } }, { "b" : { "$lt" : { "$numberInt" : "2" } } } ] } }'::documentdb_core.bson)
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": { "$nor": [{ "b": {"$gte": 1} }, { "b": { "$lt": 2 }}] } } }';
-                                                                                                           QUERY PLAN                                                                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": { "$nor": [{ "b": {"$gte": 1} }, { "b": { "$lt": 2 }}] } } }'$cmd$);
+                                                                                                      run_explain_and_trim                                                                                                      
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Task Count: 1
@@ -270,8 +270,8 @@ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT obj
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@#?) '{ "a" : { "$nor" : [ { "b" : { "$gte" : { "$numberInt" : "1" } } }, { "b" : { "$lt" : { "$numberInt" : "2" } } } ] } }'::documentdb_core.bson)
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a.b" : { "$elemMatch": { "$not": {"$gt" : 18, "$lte" : 19} } } }';
-                                                                                               QUERY PLAN                                                                                               
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a.b" : { "$elemMatch": { "$not": {"$gt" : 18, "$lte" : 19} } } }'$cmd$);
+                                                                                          run_explain_and_trim                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=5 loops=1)
    Task Count: 1
@@ -288,8 +288,8 @@ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT obj
 (12 rows)
 
 -- elemMatch with Logical ops and non-logical op
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": { "$or": [{ "b": {"$gte": 1} }, { "b": { "$lt": 2 }}], "b" : 3 } } }';
-                                                                                                                         QUERY PLAN                                                                                                                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": { "$or": [{ "b": {"$gte": 1} }, { "b": { "$lt": 2 }}], "b" : 3 } } }'$cmd$);
+                                                                                                                    run_explain_and_trim                                                                                                                     
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -307,8 +307,8 @@ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT obj
 (13 rows)
 
 /* Nested elemMatch */
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": {"b": { "$elemMatch" : { "$gte": 10, "$lt": 15 } } } } }';
-                                                                                                      QUERY PLAN                                                                                                      
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": {"b": { "$elemMatch" : { "$gte": 10, "$lt": 15 } } } } }'$cmd$);
+                                                                                                 run_explain_and_trim                                                                                                 
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -325,8 +325,8 @@ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT obj
 (12 rows)
 
 -- NOTE: The explain plan can be confusin while printing for alias name for two adjacent elemMatch. In SubPlan 2, you will see it has alias elemmatchd2_1 created but using elemmatchd2 in filters. As per the query plan, filter qual is using attNumber=1 which is expected to refer its immediate RTE that will have :colnames ("elemmatchd2"). I have also tested using query: it is not possible that alias defined inside one EXISTS() be used outside of it and inside any other EXISTS().
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": {"d": { "$elemMatch": { "e": { "$gte": 2, "$lte": 2 } } }, "b": { "$elemMatch": { "$gte": 10, "$lt": 55 } } } } }';
-                                                                                                                                                          QUERY PLAN                                                                                                                                                           
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": {"d": { "$elemMatch": { "e": { "$gte": 2, "$lte": 2 } } }, "b": { "$elemMatch": { "$gte": 10, "$lt": 55 } } } } }'$cmd$);
+                                                                                                                                                     run_explain_and_trim                                                                                                                                                      
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -343,8 +343,8 @@ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT obj
 (12 rows)
 
 /* Non $elemMatch expression and a nested $elemMatch. */
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a.f": 1, "a" : { "$elemMatch": {"d": { "$elemMatch": { "e": { "$gte": 2 } } } } } }';
-                                                                                                                                               QUERY PLAN                                                                                                                                               
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a.f": 1, "a" : { "$elemMatch": {"d": { "$elemMatch": { "e": { "$gte": 2 } } } } } }'$cmd$);
+                                                                                                                                          run_explain_and_trim                                                                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -401,8 +401,8 @@ SELECT documentdb_api.insert_one('db','elemmatchtest', '{"_id": 37, "a": [ { "-1
 (1 row)
 
 -- below queries will use $type:array internally as first filter
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": { "$elemMatch" : { "$in":[ 100 ] } } } }';
-                                                                                  QUERY PLAN                                                                                   
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": { "$elemMatch" : { "$in":[ 100 ] } } } }'$cmd$);
+                                                                             run_explain_and_trim                                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -418,8 +418,8 @@ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT obj
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@#?) '{ "a" : { "$elemMatch" : { "$in" : [ { "$numberInt" : "100" } ] } } }'::documentdb_core.bson)
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": { "0" : 100 } } }';
-                                                                      QUERY PLAN                                                                      
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": { "0" : 100 } } }'$cmd$);
+                                                                 run_explain_and_trim                                                                 
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Task Count: 1
@@ -435,8 +435,8 @@ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT obj
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@#?) '{ "a" : { "0" : { "$numberInt" : "100" } } }'::documentdb_core.bson)
 (12 rows)
 
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": { "0" : {"$gte" : 100 } } } }';
-                                                                            QUERY PLAN                                                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": { "0" : {"$gte" : 100 } } } }'$cmd$);
+                                                                       run_explain_and_trim                                                                        
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Task Count: 1
@@ -453,8 +453,8 @@ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT obj
 (12 rows)
 
 -- below query will not use $type internally
-EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": { "-1" : {"$gte" : 100 } } } }';
-                                                                             QUERY PLAN                                                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'elemmatchtest') where document @@ '{"a" : { "$elemMatch": { "-1" : {"$gte" : 100 } } } }'$cmd$);
+                                                                        run_explain_and_trim                                                                        
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1

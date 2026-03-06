@@ -32,6 +32,7 @@
 #include "metadata/index.h"
 #include "utils/guc_utils.h"
 #include "index_am/index_am_utils.h"
+#include "commands/diagnostic_commands.h"
 
 
 /*
@@ -182,9 +183,15 @@ command_current_op_command(PG_FUNCTION_ARGS)
 Datum
 command_current_op(PG_FUNCTION_ARGS)
 {
+	return current_op(PG_GETARG_PGBSON(0));
+}
+
+
+Datum
+current_op(pgbson *commandSpec)
+{
 	ReportFeatureUsage(FEATURE_COMMAND_CURRENTOP);
 
-	pgbson *commandSpec = PG_GETARG_PGBSON(0);
 	pgbson *filterSpec = NULL;
 	pgbson *aggregateSpec = BuildAggregateSpecFromCommandSpec(commandSpec, &filterSpec);
 

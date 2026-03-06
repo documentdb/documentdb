@@ -17,6 +17,7 @@
 #include "io/bson_hash.h"
 #include "types/decimal128.h"
 #include "utils/documentdb_errors.h"
+#include "collation/collation.h"
 
 /* --------------------------------------------------------- */
 /* Data-types */
@@ -42,14 +43,14 @@ static uint64 BsonHashCompare(bson_iter_t *bsonIterValue,
 														bytesLength,
 														int64 seed),
 							  uint64 (*hash_combine_func)(uint64 left, uint64 right),
-							  int64 seed);
+							  int64 seed, const char *collationString);
 static uint64_t HashBsonValueCompare(const bson_value_t *value,
 									 uint64 (*hash_bytes_func)(const uint8_t *bytes,
 															   uint32_t bytesLength, int64
 															   seed),
 									 uint64 (*hash_combine_func)(uint64 left, uint64
 																 right),
-									 int64 seed);
+									 int64 seed, const char *collationString);
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -71,10 +72,12 @@ extension_bson_hash_int4(PG_FUNCTION_ARGS)
 	bson_iter_t bsonIterator;
 	PgbsonInitIterator(bson, &bsonIterator);
 
+	const char *collationString = NULL;
 	int64 seed = 0;
 	result = UInt32GetDatum((uint32_t) BsonHashCompare(&bsonIterator,
 													   HashBytesUint32AsUint64,
-													   HashCombineUint32AsUint64, seed));
+													   HashCombineUint32AsUint64, seed,
+													   collationString));
 
 	/* Avoid leaking memory for toasted inputs */
 	PG_FREE_IF_COPY(bson, 0);
@@ -95,8 +98,9 @@ extension_bson_hash_int8(PG_FUNCTION_ARGS)
 	bson_iter_t bsonIterator;
 	PgbsonInitIterator(bson, &bsonIterator);
 
+	const char *collationString = NULL;
 	result = UInt64GetDatum(BsonHashCompare(&bsonIterator, HashBytesUint64,
-											hash_combine64, seed));
+											hash_combine64, seed, collationString));
 	PG_FREE_IF_COPY(bson, 0);
 
 	return result;
@@ -106,33 +110,38 @@ extension_bson_hash_int8(PG_FUNCTION_ARGS)
 uint64
 HashBsonComparableExtended(bson_iter_t *bsonIterValue, int64 seed)
 {
+	const char *collationString = NULL;
 	return BsonHashCompare(bsonIterValue, HashBytesUint64,
-						   hash_combine64, seed);
+						   hash_combine64, seed, collationString);
 }
 
 
 uint32_t
 HashBsonComparable(bson_iter_t *bsonIterValue, uint32_t seed)
 {
+	const char *collationString = NULL;
 	return (uint32_t) BsonHashCompare(bsonIterValue,
 									  HashBytesUint32AsUint64,
-									  HashCombineUint32AsUint64, seed);
+									  HashCombineUint32AsUint64, seed, collationString);
 }
 
 
 uint64
-HashBsonValueComparableExtended(const bson_value_t *bsonIterValue, int64 seed)
+HashBsonValueComparableExtended(const bson_value_t *bsonIterValue, int64 seed,
+								const char *collationString)
 {
 	return HashBsonValueCompare(bsonIterValue, HashBytesUint64,
-								hash_combine64, seed);
+								hash_combine64, seed, collationString);
 }
 
 
 uint32_t
 HashBsonValueComparable(const bson_value_t *bsonIterValue, uint32_t seed)
 {
+	const char *collationString = NULL;
 	return (uint32_t) HashBsonValueCompare(bsonIterValue, HashBytesUint32AsUint64,
-										   HashCombineUint32AsUint64, seed);
+										   HashCombineUint32AsUint64, seed,
+										   collationString);
 }
 
 
@@ -469,7 +478,8 @@ BsonHashCompare(bson_iter_t *bsonIterValue,
 				uint64 (*hash_bytes_func)(const uint8_t *bytes, uint32_t bytesLength,
 										  int64 seed),
 				uint64 (*hash_combine_func)(uint64 left, uint64 right),
-				int64 seed)
+				int64 seed,
+				const char *collationString)
 {
 	check_stack_depth();
 	uint64_t hashValue = 0;
@@ -485,7 +495,8 @@ BsonHashCompare(bson_iter_t *bsonIterValue,
 		hashValue = hash_combine_func(hashValue, pathHash);
 
 		uint64_t valueHash = HashBsonValueCompare(&leftElement.bsonValue, hash_bytes_func,
-												  hash_combine_func, seed);
+												  hash_combine_func, seed,
+												  collationString);
 		hashValue = hash_combine_func(hashValue, valueHash);
 	}
 
@@ -514,7 +525,8 @@ HashBsonValueCompare(const bson_value_t *value,
 					 uint64 (*hash_bytes_func)(const uint8_t *bytes, uint32_t bytesLength,
 											   int64 seed),
 					 uint64 (*hash_combine_func)(uint64 left, uint64 right),
-					 int64 seed)
+					 int64 seed,
+					 const char *collationString)
 {
 	int typeCodeInt = (int) value->value_type;
 	switch (value->value_type)
@@ -569,6 +581,22 @@ HashBsonValueCompare(const bson_value_t *value,
 		case BSON_TYPE_SYMBOL:
 		{
 			typeCodeInt = (int) BSON_TYPE_UTF8;
+
+			/* Apply collation sort key for strings if collation is applicable */
+			if (value->value_type == BSON_TYPE_UTF8 &&
+				IsCollationApplicable(collationString))
+			{
+				char *sortKey = GetCollationSortKey(collationString,
+													value->value.v_utf8.str,
+													value->value.v_utf8.len);
+				int sortKeyLength = strlen(sortKey);
+				uint64 hashValue = hash_combine_func(
+					hash_bytes_func((uint8_t *) &typeCodeInt, sizeof(int), seed),
+					hash_bytes_func((uint8_t *) sortKey, sortKeyLength, seed));
+				pfree(sortKey);
+				return hashValue;
+			}
+
 			return hash_combine_func(
 				hash_bytes_func((uint8_t *) &typeCodeInt, sizeof(int), seed),
 				hash_bytes_func((uint8_t *) value->value.v_utf8.str,
@@ -590,7 +618,8 @@ HashBsonValueCompare(const bson_value_t *value,
 
 			return hash_combine_func(
 				hash_bytes_func((uint8_t *) &typeCodeInt, sizeof(int), seed),
-				BsonHashCompare(&leftInnerIt, hash_bytes_func, hash_combine_func, seed));
+				BsonHashCompare(&leftInnerIt, hash_bytes_func, hash_combine_func, seed,
+								collationString));
 		}
 
 		case BSON_TYPE_BINARY:
@@ -706,7 +735,8 @@ HashBsonValueCompare(const bson_value_t *value,
 
 			return hash_combine_func(
 				codeHash,
-				BsonHashCompare(&leftInnerIt, hash_bytes_func, hash_combine_func, seed));
+				BsonHashCompare(&leftInnerIt, hash_bytes_func, hash_combine_func, seed,
+								collationString));
 		}
 
 		case BSON_TYPE_MAXKEY:

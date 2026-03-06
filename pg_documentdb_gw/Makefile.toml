@@ -1,0 +1,35 @@
+[config]
+default_to_workspace = false
+
+[tasks.format-check]
+command = "cargo"
+args = ["fmt", "--all", "--check"]
+
+[tasks.clippy]
+command = "cargo"
+args = ["clippy", "--workspace", "--all-targets", "--all-features", "--frozen", "--", "-D", "warnings"]
+
+[tasks.deny]
+command = "cargo"
+args = ["deny", "check", "bans"]
+
+[tasks.lint]
+dependencies = ["format-check", "clippy", "deny"]
+
+[tasks.build]
+command = "cargo"
+args = ["build", "--workspace"]
+
+[tasks.release-build]
+command = "cargo"
+args = ["build", "--frozen", "--profile=release-with-symbols"]
+
+[tasks.test]
+command = "cargo"
+args = ["test", "--workspace", "--", "--test-threads=1"]
+
+[tasks.dev]
+dependencies = ["build", "lint"]
+
+[tasks.release]
+dependencies = ["release-build", "lint"]

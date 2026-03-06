@@ -13,4 +13,4 @@ while ! grep -q "=== DocumentDB is ready ===" emulator.log; do
 done
 
 echo "Gateway is ready, proceeding with next steps..."
-python test_gateway.py
+python test_gateway.py --username cloudsa --password 123456

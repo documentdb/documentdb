@@ -34,6 +34,9 @@ typedef struct DollarRangeParams
 
 DollarRangeParams * ParseQueryDollarRange(pgbsonelement *filterElement);
 
+bool IsBsonRangeArgsForFullScan(List *args);
+bool IsBsonRangeArgsForFullScanOrElemMatch(List *args);
+bool TryGetRangeParamsForRangeArgs(List *args, DollarRangeParams *params);
 void InitializeQueryDollarRange(const bson_value_t *rangeValue,
 								DollarRangeParams *params);
 

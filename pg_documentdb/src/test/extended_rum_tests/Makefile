@@ -22,7 +22,7 @@ export PG_REGRESS_DIFF_OPTS = -dU10
 .PHONY: check-basic check-minimal
 
 define common_test
-	$(top_builddir)/src/test/regress/pg_regress --encoding=UTF8 --dlpath=$(BASEPATH) $(EXTENSIONLOAD) --temp-instance ./tmp --temp-config ./postgresql.conf --host localhost --port 58070 $(1) $(2) || (cat regression.diffs && false)
+	mkdir -p log && { $(top_builddir)/src/test/regress/pg_regress --encoding=UTF8 --dlpath=$(BASEPATH) $(EXTENSIONLOAD) --temp-instance ./tmp --temp-config ./postgresql.conf --host localhost --port 58070 $(1) $(2) 2>&1; echo $$? > log/.exitcode; } | tee log/summary.out; test $$(cat log/.exitcode) -eq 0 || (cat regression.diffs && false)
 endef
 
 check-basic: generate_version_schedule

@@ -35,6 +35,9 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     libtool \
     libicu-dev \
     libssl-dev \
+    liblz4-dev \
+    libzstd-dev \
+    libxml2-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Add pgdg repo
@@ -149,6 +152,10 @@ COPY scripts/install_rustup.sh /tmp/install_setup/
 COPY rust-toolchain.toml /
 RUN [ "bin/bash", "-c", "/tmp/install_setup/install_rustup.sh --install-toolchain" ]
 RUN chown -R documentdb:documentdb /home/documentdb/.cargo /home/documentdb/.rustup
+
+# Install Rust tools from [tools] section
+COPY scripts/install_rust_tools.sh /tmp/install_setup/
+RUN [ "bin/bash", "-c", "/tmp/install_setup/install_rust_tools.sh /rust-toolchain.toml" ]
 
 ENV PGRX_HOME=/home/documentdb/.pgrx
 RUN mkdir -p $PGRX_HOME

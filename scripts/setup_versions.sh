@@ -26,7 +26,7 @@ CITUS_VERSION=c569f8321f4cbd431f8fa36417df4a3ae025a417
 # This is commit 9aa1384d9d0fcecc326b6c48919d774ad8389e0f
 CITUS_13_VERSION=9aa1384d9d0fcecc326b6c48919d774ad8389e0f
 # For pg18 use an unstable main version for now
-CITUS_PG18_VERSION=b7bfe42f1a4d22db4b1ecc2636cdf83adf27c106
+CITUS_14_VERSION=824d8c062997fa3f8be7ae36abce664fd551a514
 # This is commit 6a065fd8dfb280680304991aa30d7f72787fdb04
 RUM_VERSION=1.3.14
 # This is commit 465b38c737f584d520229f5a1d69d1d44649e4e5
@@ -60,7 +60,7 @@ function GetCitusVersion()
 {
   local citusVersion=$1
   if [ "$PGVERSION" == "18" ]; then
-    echo $CITUS_PG18_VERSION
+    echo $CITUS_14_VERSION
   elif [ "$PGVERSION" == "17" ]; then
     echo $CITUS_13_VERSION
   elif [ "$citusVersion" == "13" ] || [ "$citusVersion" == "v13.0" ] || [ "$citusVersion" == "$CITUS_13_VERSION" ]; then

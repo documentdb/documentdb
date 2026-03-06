@@ -20,11 +20,12 @@
 #include "metadata/metadata_cache.h"
 #include "utils/error_utils.h"
 #include "utils/query_utils.h"
-
+#include "utils/version_utils.h"
 #include "api_hooks.h"
 
 extern bool EnableNativeColocation;
 extern bool EnableDataTableWithoutCreationTime;
+extern bool EnableRbacCompliantSchemas;
 
 static bool CanColocateAtDatabaseLevel(text *databaseDatum);
 static const char * CreatePostgresDataTable(uint64_t collectionId,
@@ -242,9 +243,20 @@ CreatePostgresDataTable(uint64_t collectionId, const char *colocateWith, const
 
 	/* Change the owner to the extension admin */
 	resetStringInfo(createTableStringInfo);
-	appendStringInfo(createTableStringInfo,
-					 "ALTER TABLE %s OWNER TO %s",
-					 dataTableNameInfo->data, ApiAdminRole);
+
+	/* TODO: Remove GUC before migrating ownership of old documents to to documentdb_readwrite_role*/
+	if (EnableRbacCompliantSchemas && IsClusterVersionAtleast(DocDB_V0, 110, 0))
+	{
+		appendStringInfo(createTableStringInfo,
+						 "ALTER TABLE %s OWNER TO %s",
+						 dataTableNameInfo->data, ApiReadWriteRole);
+	}
+	else
+	{
+		appendStringInfo(createTableStringInfo,
+						 "ALTER TABLE %s OWNER TO %s",
+						 dataTableNameInfo->data, ApiAdminRole);
+	}
 
 	ExtensionExecuteQueryViaSPI(createTableStringInfo->data, readOnly, SPI_OK_UTILITY,
 								&isNull);
@@ -317,11 +329,22 @@ CreateRetryTable(char *retryTableName, char *colocateWith, const
 	ExtensionExecuteQueryViaSPI(queryStringInfo->data, readOnly, SPI_OK_UTILITY,
 								&isNull);
 
-	/* Change the owner to the extension admin */
 	resetStringInfo(queryStringInfo);
-	appendStringInfo(queryStringInfo,
-					 "ALTER TABLE %s OWNER TO %s",
-					 retryTableName, ApiAdminRole);
+	if (EnableRbacCompliantSchemas && IsClusterVersionAtleast(DocDB_V0, 110, 0))
+	{
+		/* Change the owner to the ApiReadWriteRole */
+		appendStringInfo(queryStringInfo,
+						 "ALTER TABLE %s OWNER TO %s",
+						 retryTableName, ApiReadWriteRole);
+	}
+	else
+	{
+		/* Change the owner to the extension admin */
+		appendStringInfo(queryStringInfo,
+						 "ALTER TABLE %s OWNER TO %s",
+						 retryTableName, ApiAdminRole);
+	}
+
 	ExtensionExecuteQueryViaSPI(queryStringInfo->data, readOnly, SPI_OK_UTILITY,
 								&isNull);
 

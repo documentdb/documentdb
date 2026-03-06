@@ -14,6 +14,7 @@
 
 #include "io/bson_core.h"
 #include "aggregation/bson_projection_tree.h"
+#include "operators/bson_expression.h"
 
 extern PGDLLIMPORT const StringView IdFieldStringView;
 
@@ -126,15 +127,9 @@ typedef struct ProjectDocumentState
 
 /*
  * Cached state for ReplaceRoot and Redact.
+ * This is an alias for BsonExpressionState which has the same structure.
  */
-typedef struct BsonReplaceRootRedactState
-{
-	/* The aggregation expression data */
-	AggregationExpressionData *expressionData;
-
-	/* The variable context for let if any */
-	ExpressionVariableContext *variableContext;
-} BsonReplaceRootRedactState;
+typedef BsonExpressionState BsonReplaceRootRedactState;
 
 
 const BsonProjectionQueryState * GetProjectionStateForBsonProject(

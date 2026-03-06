@@ -106,6 +106,10 @@ Optional arguments:
   --skip-init-data      Skip initialization with built-in sample data.
                         By default, sample collections (users, products, orders, analytics) in 'sampledb' database will be created.
                         Overrides SKIP_INIT_DATA environment variable.
+  --disable-extended-rum
+                        Disable the use of extended_rum for indexes.
+                        By default, extended rum is enabled.
+                        Overrides DISABLE_EXTENDED_RUM environment variable.
                         
 EOF
 }
@@ -202,6 +206,10 @@ do
         export SKIP_INIT_DATA=true
         shift;;
 
+    --disable-extended-rum)
+        export DISABLE_EXTENDED_RUM=true
+        shift;;
+
     -*)
         echo "Unknown option $1"
         exit 1;; 
@@ -219,6 +227,7 @@ export CREATE_USER=${CREATE_USER:-true}
 export START_POSTGRESQL=${START_POSTGRESQL:-true}
 export INIT_DATA_PATH=${INIT_DATA_PATH:-/init_doc_db.d}
 export SKIP_INIT_DATA=${SKIP_INIT_DATA:-false}
+export DISABLE_EXTENDED_RUM=${DISABLE_EXTENDED_RUM:-false}
 
 # Setup centralized log directory structure
 echo "Setting up centralized log directory at /var/log/documentdb..."
@@ -315,7 +324,11 @@ if [ "$START_POSTGRESQL" = "true" ]; then
         export PGOPTIONS="-e"
     fi
     echo "Starting OSS server..."
-    /home/documentdb/gateway/scripts/start_oss_server.sh $PGOPTIONS -d $DATA_PATH -p $POSTGRESQL_PORT | tee -a "$OSS_SERVER_LOG"
+    EXTENDED_RUM_FLAG="-r"
+    if [ "$DISABLE_EXTENDED_RUM" = "true" ]; then
+        EXTENDED_RUM_FLAG=""
+    fi
+    /home/documentdb/gateway/scripts/start_oss_server.sh $EXTENDED_RUM_FLAG $PGOPTIONS -d $DATA_PATH -p $POSTGRESQL_PORT | tee -a "$OSS_SERVER_LOG"
 
     echo "OSS server started."
     echo "[ENTRYPOINT] Setting up PostgreSQL log streaming..."

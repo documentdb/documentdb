@@ -87,6 +87,7 @@ typedef struct
 	bool generateNotFoundTerm;
 	bool useReducedWildcardTerms;
 	int path;
+	int collation;
 } BsonGinSinglePathOptions;
 
 /*
@@ -104,6 +105,7 @@ typedef struct
 	bool isExclusion;
 	bool includeId;
 	int pathSpec;
+	int collation;
 } BsonGinWildcardProjectionPathOptions;
 
 /*
@@ -208,7 +210,9 @@ bool ValidateIndexForQualifierPathForEquality(bytea *indexOptions, const
 											  BsonIndexStrategy strat);
 
 Size FillSinglePathSpec(const char *prefix, void *buffer);
+Size FillCollationSpec(const char *collation, void *buffer);
 void ValidateSinglePathSpec(const char *prefix);
+void ValidateCollationSpec(const char *collationOption);
 Size FillDeprecatedStringSpec(const char *value, void *ptr);
 
 struct PathKey;
@@ -235,6 +239,8 @@ const char * GetFirstPathFromIndexOptionsIfApplicable(bytea *indexOptions,
 bool PathHasArrayIndexElements(const StringView *path);
 bool SubPathHasArrayIndexElements(const StringView *path, StringView subPath);
 
+void GetCollationFromIndexOptions(void *indexOptions, StringView *collationString);
+
 struct PlannerInfo;
 bool TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct
 										PlannerInfo *root);
@@ -243,13 +249,22 @@ bool TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct
 #define Get_Index_Path_Option(options, field, result, resultFieldLength) \
 	const char *pathDefinition = GET_STRING_RELOPTION(options, field); \
 	if (pathDefinition == NULL) { resultFieldLength = 0; result = NULL; } \
-	else { resultFieldLength = *(uint32_t *) pathDefinition; result = pathDefinition + \
-																	  sizeof(uint32_t); }
+	else { memcpy(&resultFieldLength, pathDefinition, sizeof(uint32_t)); result = \
+			   pathDefinition + sizeof(uint32_t); }
 
 
 #define Get_Index_Path_Option_Length(options, field, resultFieldLength) \
 	const char *pathDefinition = GET_STRING_RELOPTION(options, field); \
 	if (pathDefinition == NULL) { resultFieldLength = 0; } \
-	else { resultFieldLength = *(uint32_t *) pathDefinition; }
+	else { memcpy(&resultFieldLength, pathDefinition, sizeof(uint32_t)); }
+
+/* Macro to retrieve the collation string, if any, value from the index options */
+#define Get_Index_Collation_Option(options, field, result, resultFieldLength) \
+	const char *collationDefinition = GET_STRING_RELOPTION(options, field); \
+	if (collationDefinition == NULL) { resultFieldLength = 0; result = NULL; } \
+	else { \
+		memcpy(&resultFieldLength, collationDefinition, sizeof(uint32_t)); \
+		result = resultFieldLength > 0 ? collationDefinition + sizeof(uint32_t) : NULL; \
+	}
 
 #endif

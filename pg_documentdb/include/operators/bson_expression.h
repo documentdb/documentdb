@@ -231,6 +231,13 @@ typedef struct ParseAggregationExpressionContext
 } ParseAggregationExpressionContext;
 
 
+typedef struct BsonExpressionState
+{
+	AggregationExpressionData *expressionData;
+	ExpressionVariableContext *variableContext;
+} BsonExpressionState;
+
+
 void EvaluateAggregationExpressionDataToWriter(const
 											   AggregationExpressionData *expressionData,
 											   pgbson *document, StringView path,
@@ -253,5 +260,9 @@ void GetTimeSystemVariablesFromVariableSpec(const pgbson *variableSpec,
 pgbson * ParseAndGetTopLevelVariableSpec(const bson_value_t *varSpec,
 										 TimeSystemVariables *timeSystemVariables,
 										 bool isWriteCommand);
+
+void ParseBsonExpressionState(BsonExpressionState *state,
+							  const bson_value_t *expressionValue,
+							  pgbson *variableSpec);
 
 #endif

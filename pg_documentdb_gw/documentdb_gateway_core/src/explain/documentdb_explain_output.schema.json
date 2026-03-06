@@ -1,0 +1,551 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "documentdb-explain-output",
+  "title": "DocumentDB Explain Output",
+  "description": "JSON Schema describing the output produced by DocumentDB's explain command. The gateway translates PostgreSQL EXPLAIN output into this DocumentDB-compatible format. The top-level shape varies depending on whether the explained command is a simple query (find/count/distinct) or an aggregation pipeline, and whether the collection is sharded.",
+  "type": "object",
+  "properties": {
+    "explainVersion": {
+      "type": "number",
+      "const": 2.0,
+      "description": "The version of the explain output format. Always 2.0 for DocumentDB."
+    },
+    "command": {
+      "type": "string",
+      "description": "A shell-style string representation of the explain command that was run, e.g. \"db.runCommand({explain:{'find':'collectionName', ...}})\"."
+    },
+    "explainCommandPlanningTimeMillis": {
+      "type": "number",
+      "description": "Time in milliseconds that the PostgreSQL query planner took to plan the explain command. Truncated to three decimal places. Omitted if zero."
+    },
+    "explainCommandExecTimeMillis": {
+      "type": "number",
+      "description": "Time in milliseconds that PostgreSQL took to execute the explain command. Truncated to three decimal places. Omitted if zero."
+    },
+    "dataSize": {
+      "type": "string",
+      "description": "Total size of tuple data received from distributed worker nodes, as reported by Citus. Only present for distributed (sharded) queries."
+    },
+    "queryPlanner": {
+      "$ref": "#/$defs/QueryPlanner",
+      "description": "Query planner information for non-aggregation commands (find, count, distinct). Present at the top level for simple cursor-based explains."
+    },
+    "executionStats": {
+      "$ref": "#/$defs/ExecutionStats",
+      "description": "Execution statistics for non-aggregation commands. Only present when verbosity is 'executionStats', 'allPlansExecution', or 'allShardsExecution'."
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AggregationStage"
+      },
+      "description": "Array of aggregation pipeline stages for aggregation explains. Each element is an object with a single key naming the aggregation stage (e.g. '$cursor', '$match', '$sort'). Present when the command is an aggregation."
+    },
+    "splitPipeline": {
+      "$ref": "#/$defs/SplitPipeline",
+      "description": "Present for sharded aggregation explains where the pipeline is split between shard-local execution and a merger part. Contains the merger portion of the pipeline."
+    },
+    "shards": {
+      "$ref": "#/$defs/AggregationShards",
+      "description": "Per-shard explain output for sharded aggregation queries. Each shard has its own stages array. Present alongside 'splitPipeline' for distributed aggregations."
+    },
+    "ok": {
+      "type": "number",
+      "const": 1.0,
+      "description": "Standard response status. Always 1.0 on success."
+    }
+  },
+  "required": ["explainVersion", "command", "ok"],
+  "$defs": {
+    "QueryPlanner": {
+      "type": "object",
+      "description": "Describes the query plan chosen by the planner. Wraps the winning execution plan as a tree of stages.",
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "description": "The database and collection namespace in 'db.collection' format. Omitted for aggregation sub-stages and distributed plans."
+        },
+        "winningPlan": {
+          "$ref": "#/$defs/QueryPlanStage",
+          "description": "The execution plan selected by the query optimizer, represented as a recursive tree of stages."
+        }
+      },
+      "required": ["winningPlan"]
+    },
+    "QueryPlanStage": {
+      "type": "object",
+      "description": "A single stage in the query planner's winning plan tree. Each stage describes one logical step in query execution.",
+      "properties": {
+        "stage": {
+          "type": "string",
+          "description": "The name of the execution stage. Possible values include: 'COLLSCAN' (collection scan), 'IXSCAN' (index scan), 'FETCH' (document fetch after index scan), 'SORT' (in-memory sort), 'LIMIT' (result limit), 'COUNT' (count operation), 'OR' (bitmap OR of index scans), 'AND' (bitmap AND of index scans), 'PROJECTION_DEFAULT' (default projection), 'TEXT_MATCH' (full-text search), 'GEO_NEAR_2D' (2D geo-near), 'GEO_NEAR_2DSPHERE' (2D-sphere geo-near), 'SHARD_MERGE' (merge results from multiple shards), 'SINGLE_SHARD' (query routed to a single shard), 'LOOKUP' (lookup/join), 'EOF' (empty result set / no data), 'SAMPLESCAN' (random sample scan), 'SAMPLESORT' ($sample via sort on random()), 'UNIQUE' (deduplication), 'GROUP' ($group aggregation), 'GROUPSORT' (sort for group), 'COUNT_SCAN' (count via aggregation), 'DISTINCT_SCAN' (distinct scan).",
+          "enum": [
+            "COLLSCAN", "IXSCAN", "FETCH", "SORT", "LIMIT", "COUNT",
+            "OR", "AND", "PROJECTION_DEFAULT", "TEXT_MATCH",
+            "GEO_NEAR_2D", "GEO_NEAR_2DSPHERE",
+            "SHARD_MERGE", "SINGLE_SHARD",
+            "LOOKUP", "EOF",
+            "SAMPLESCAN", "SAMPLESORT", "UNIQUE",
+            "GROUP", "GROUPSORT", "COUNT_SCAN", "DISTINCT_SCAN"
+          ]
+        },
+        "indexName": {
+          "type": "string",
+          "description": "Name of the index used by this stage. Present for IXSCAN and other index-based stages, but omitted for FETCH stages."
+        },
+        "direction": {
+          "type": "string",
+          "description": "The scan direction of the index scan (e.g. 'Forward' or 'Backward'). Only present for index scan stages."
+        },
+        "isBitmap": {
+          "type": "boolean",
+          "const": true,
+          "description": "Indicates this stage uses a bitmap index scan. Present (and true) when the underlying PostgreSQL node type contains 'bitmap'."
+        },
+        "isIndexOnlyScan": {
+          "type": "boolean",
+          "const": true,
+          "description": "Indicates the index scan can satisfy the query without fetching the heap tuple. Present (and true) for 'Index Only Scan' node types."
+        },
+        "indexUsage": {
+          "type": "array",
+          "description": "Detailed information about how indexes are used in this stage. Only includes entries whose indexName matches the stage's indexName.",
+          "items": {
+            "$ref": "#/$defs/QueryPlanIndexUsage"
+          }
+        },
+        "pageSize": {
+          "type": "number",
+          "description": "The page size used for batched index lookups. Only present when the PostgreSQL plan reports a non-zero page size."
+        },
+        "startupCost": {
+          "type": "number",
+          "description": "PostgreSQL estimated startup cost for this plan node. Represents the cost before the first row can be returned. Only present when greater than zero."
+        },
+        "totalCost": {
+          "type": "number",
+          "description": "PostgreSQL estimated total cost for this plan node. Represents the cost to return all rows. Only present when greater than zero."
+        },
+        "cosmosSearchCustomParams": {
+          "$ref": "#/$defs/VectorSearchCustomParams",
+          "description": "Custom parameters for Cosmos DB vector search operations. Only present when the plan involves a vector similarity search."
+        },
+        "runtimeFilterSet": {
+          "type": "array",
+          "description": "Array of runtime filter conditions applied after the index scan. Each element is a document mapping an operator (e.g. '$eq', '$gt', '$in') to its operand BSON value. Derived from PostgreSQL 'Filter' expressions. Truncated if total size exceeds 100KB.",
+          "items": {
+            "type": "object",
+            "description": "A single runtime filter condition. Key is the query operator, value is the BSON operand."
+          }
+        },
+        "indexFilterSet": {
+          "type": "array",
+          "description": "Array of index filter conditions pushed down to the index scan. Each element maps a operator to its operand BSON value. Derived from PostgreSQL 'Index Cond' expressions. Truncated if total size exceeds 100KB.",
+          "items": {
+            "type": "object",
+            "description": "A single index filter condition. Key is the query operator, value is the BSON operand."
+          }
+        },
+        "sortKeysCount": {
+          "type": "integer",
+          "description": "Number of sort keys used by this sort stage. Present when the plan has sort keys."
+        },
+        "sortKey": {
+          "type": "array",
+          "description": "Array of BSON documents representing the sort key specification. Each element is a BSON document extracted from the PostgreSQL sort key expressions. Present when sort keys can be parsed into BSON form.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "presortedKeysCount": {
+          "type": "integer",
+          "description": "Number of presorted keys for incremental sort stages. Present when the plan has presorted keys (used for incremental sort optimization)."
+        },
+        "presortedKey": {
+          "type": "array",
+          "description": "Array of BSON documents representing the presorted key specification for incremental sorts.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "hasOrderBy": {
+          "type": "boolean",
+          "const": true,
+          "description": "Indicates the index scan has an ORDER BY clause. Present (and true) only for Index Scan node types that are not FETCH stages and have an 'Order By' expression."
+        },
+        "estimatedTotalKeysExamined": {
+          "type": "number",
+          "description": "PostgreSQL's estimated number of rows (Plan Rows) that this stage will examine. Capped at the maximum 64-bit integer value. Omitted for EOF stages."
+        },
+        "inputStage": {
+          "$ref": "#/$defs/QueryPlanStage",
+          "description": "The single child input stage feeding into this stage. Present when there is exactly one child plan node."
+        },
+        "inputStages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QueryPlanStage"
+          },
+          "description": "Multiple child input stages feeding into this stage (e.g. for OR, AND, or UNION stages). Present when there are two or more child plan nodes."
+        },
+        "shardCount": {
+          "type": "integer",
+          "description": "Number of shards involved in distributed query execution. Present when the stage has a distributed (Citus) plan."
+        },
+        "shardInformation": {
+          "type": "string",
+          "description": "Description of which shard tasks are shown (e.g. 'All'). Present alongside shardCount for distributed plans."
+        },
+        "retrievedDocumentSizeBytes": {
+          "type": "string",
+          "description": "Total size of data retrieved from distributed worker nodes. Present for distributed plans that report tuple data received."
+        },
+        "shards": {
+          "type": "array",
+          "description": "Per-shard winning plans for distributed query execution. Each element contains a shard identifier and the winning plan for that shard.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "shard": {
+                "type": "string",
+                "description": "Shard identifier, e.g. 'shard_0', 'shard_1'."
+              },
+              "winningPlan": {
+                "$ref": "#/$defs/QueryPlanStage",
+                "description": "The winning query plan for this specific shard."
+              },
+              "error": {
+                "type": "string",
+                "description": "Error message if this shard encountered an error during planning."
+              }
+            }
+          }
+        }
+      },
+      "required": ["stage"]
+    },
+    "QueryPlanIndexUsage": {
+      "type": "object",
+      "description": "Detailed index usage information for a query plan stage.",
+      "properties": {
+        "indexName": {
+          "type": "string",
+          "description": "Name of the index being used."
+        },
+        "isMultiKey": {
+          "type": "boolean",
+          "description": "Whether the index is a multikey index (indexes on array fields). Null/omitted if not applicable."
+        },
+        "bounds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Index scan bounds as string representations. Describes the range of keys scanned. e.g. { $eq: 5 } would be shown as [5, 5]; while { $gt: 5, $lte: 10 } would be shown as (5, 10]."
+        },
+        "startBounds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Starting bounds for the index scan range. Present for range-based index scans where the index chooses to do delayed expansion of bounds. The remainingbounds are present in rawBounds."
+        },
+        "rawBounds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Raw (unprocessed) index bounds. Present when the index chooses to do delayed expansion of bounds. The first processed bounds are present in startBounds."
+        }
+      }
+    },
+    "VectorSearchCustomParams": {
+      "type": "object",
+      "description": "Custom parameters for Cosmos DB vector search. These control the accuracy-performance trade-off of approximate nearest neighbor searches.",
+      "properties": {
+        "nProbes": {
+          "type": "number",
+          "description": "Number of IVF (Inverted File) list probes for IVF-based vector indexes. Higher values increase recall at the cost of latency. Omitted if zero."
+        },
+        "efSearch": {
+          "type": "number",
+          "description": "Size of the dynamic candidate list for HNSW (Hierarchical Navigable Small World) index searches. Higher values increase recall at the cost of latency. Omitted if zero."
+        },
+        "lSearch": {
+          "type": "number",
+          "description": "Search list size for DiskANN vector index searches. Higher values increase recall at the cost of latency. Omitted if zero."
+        }
+      }
+    },
+    "ExecutionStats": {
+      "type": "object",
+      "description": "Execution statistics collected when the query is actually executed (verbosity 'executionStats' or higher). Provides actual row counts and timing data.",
+      "properties": {
+        "nReturned": {
+          "type": "integer",
+          "description": "Total number of documents returned by the query."
+        },
+        "executionTimeMillis": {
+          "type": "number",
+          "description": "Total execution time of the top-level plan in milliseconds. Derived from PostgreSQL's 'Actual Total Time'."
+        },
+        "executionStartAtTimeMillis": {
+          "type": "number",
+          "description": "Startup time of the top-level plan in milliseconds. Derived from PostgreSQL's 'Actual Startup Time'."
+        },
+        "totalDocsExamined": {
+          "type": "integer",
+          "description": "Total number of documents examined across all child stages. Calculated as the sum of (actual rows + rows removed by filter) for each child stage."
+        },
+        "totalKeysExamined": {
+          "type": "integer",
+          "description": "Total number of index keys examined across all child stages. Calculated as the sum of (actual rows + rows removed by index recheck) for each child stage."
+        },
+        "executionStages": {
+          "$ref": "#/$defs/ExecutionStatsStage",
+          "description": "Recursive tree of execution stages with per-stage statistics."
+        }
+      },
+      "required": ["nReturned", "executionTimeMillis", "totalDocsExamined", "totalKeysExamined", "executionStages"]
+    },
+    "ExecutionStatsStage": {
+      "type": "object",
+      "description": "Per-stage execution statistics within the execution stages tree.",
+      "properties": {
+        "stage": {
+          "type": "string",
+          "description": "The name of the execution stage. Same possible values as QueryPlanStage.stage."
+        },
+        "nReturned": {
+          "type": "integer",
+          "description": "Number of documents returned by this stage (PostgreSQL's 'Actual Rows')."
+        },
+        "executionTimeMillis": {
+          "type": "number",
+          "description": "Execution time for this stage in milliseconds. Derived from PostgreSQL's 'Actual Total Time'. Truncated to three decimal places."
+        },
+        "executionStartAtTimeMillis": {
+          "type": "number",
+          "description": "Startup time for this stage in milliseconds. Derived from PostgreSQL's 'Actual Startup Time'."
+        },
+        "totalDocsExamined": {
+          "type": "integer",
+          "description": "Documents examined by this stage (actual rows + rows removed by filter). Present when the stage has no index or has a filter or has rows removed by filter."
+        },
+        "totalKeysExamined": {
+          "type": "integer",
+          "description": "Index keys examined by this stage (actual rows + rows removed by index recheck)."
+        },
+        "indexName": {
+          "type": "string",
+          "description": "Name of the index used by this stage. Omitted for FETCH stages."
+        },
+        "totalDocsAnalyzed": {
+          "type": "integer",
+          "description": "Number of heap fetches (documents fetched from the heap after an index-only scan had to recheck visibility). Derived from PostgreSQL's 'Heap Fetches'. Omitted for FETCH stages."
+        },
+        "indexUsage": {
+          "type": "array",
+          "description": "Index usage details for execution stats. Contains scan loop counts, scan type, and duplicate information.",
+          "items": {
+            "$ref": "#/$defs/ExecutionStatsIndexUsage"
+          }
+        },
+        "textIndexVersion": {
+          "type": "integer",
+          "const": 3,
+          "description": "Version of the text index used. Present (and always 3) only for TEXT_MATCH stages."
+        },
+        "usedDisk": {
+          "type": "boolean",
+          "const": true,
+          "description": "Indicates the sort operation spilled to disk. Present (and true) when PostgreSQL reports 'Disk' as the sort space type."
+        },
+        "sortMethod": {
+          "type": "string",
+          "description": "The sort algorithm used (e.g. 'quicksort', 'top-N heapsort', 'external merge'). Derived from PostgreSQL's 'Sort Method'."
+        },
+        "exactBlocksRead": {
+          "type": "integer",
+          "description": "Number of exact heap blocks read during a bitmap heap scan. Derived from PostgreSQL's 'Exact Heap Blocks'. Omitted if zero."
+        },
+        "lossyBlocksRead": {
+          "type": "integer",
+          "description": "Number of lossy heap blocks read during a bitmap heap scan (where the bitmap lost individual tuple tracking). Derived from PostgreSQL's 'Lossy Heap Blocks'. Omitted if zero."
+        },
+        "totalDataSizeSortedBytesEstimate": {
+          "type": "integer",
+          "description": "Estimated total bytes used by the sort operation in memory or on disk. Derived from PostgreSQL's 'Sort Space Used'. Omitted if zero."
+        },
+        "totalDocsRemovedByRuntimeFilter": {
+          "type": "integer",
+          "description": "Number of documents discarded by runtime filters (post-index scan). Derived from PostgreSQL's 'Rows Removed by Filter'. Omitted if zero."
+        },
+        "totalDocsRemovedByIndexRechecks": {
+          "type": "integer",
+          "description": "Number of documents discarded during index rechecks (e.g. in bitmap scans). Derived from PostgreSQL's 'Rows Removed by Index Recheck'. Omitted if zero."
+        },
+        "numBlocksFromCache": {
+          "type": "integer",
+          "description": "Number of shared buffer blocks read from PostgreSQL's buffer cache (cache hits). Derived from PostgreSQL's 'Shared Hit Blocks'. Omitted if zero."
+        },
+        "numBlocksFromDisk": {
+          "type": "integer",
+          "description": "Number of shared buffer blocks read from disk (cache misses). Derived from PostgreSQL's 'Shared Read Blocks'. Omitted if zero."
+        },
+        "ioReadTimeMillis": {
+          "type": "integer",
+          "description": "Time spent on I/O read operations in milliseconds. Derived from PostgreSQL's 'I/O Read Time'. Omitted if zero."
+        },
+        "parallelWorkers": {
+          "type": "integer",
+          "description": "Number of parallel workers launched for this stage. Derived from PostgreSQL's 'Workers Launched'. Omitted if zero."
+        },
+        "inputStage": {
+          "$ref": "#/$defs/ExecutionStatsStage",
+          "description": "The single child input stage. Present when there is exactly one child plan node."
+        },
+        "inputStages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExecutionStatsStage"
+          },
+          "description": "Multiple child input stages. Present when there are two or more child plan nodes."
+        }
+      },
+      "required": ["stage", "nReturned", "executionTimeMillis", "totalKeysExamined"]
+    },
+    "ExecutionStatsIndexUsage": {
+      "type": "object",
+      "description": "Per-index execution statistics for a stage that uses an index.",
+      "properties": {
+        "indexName": {
+          "type": "string",
+          "description": "Name of the index."
+        },
+        "scanLoops": {
+          "type": "integer",
+          "description": "Number of inner scan loop iterations performed by the index scan. Omitted if zero. Depends on the type of scanType executed."
+        },
+        "scanType": {
+          "type": "string",
+          "enum": ["fast", "full", "regular", "ordered", "unknown"],
+          "description": "RUM index scan strategy used. 'ordered' walks index entries in sorted order and is used for index-only scans, parallel scans, or single-entry partial-match scans. 'fast' uses a preConsistent check to skip non-matching entries early. 'regular' iterates all matching entries when preConsistent is unavailable or disabled. 'full' scans an entire posting tree with additional info when the first key requires it. 'unknown' indicates an unrecognized scan type."
+        },
+        "numDuplicates": {
+          "type": "integer",
+          "description": "Number of duplicate index entries encountered during the scan for multi-key indexes. Omitted if zero."
+        },
+        "deadEntriesOrPagesSkipped": {
+          "type": "number",
+          "description": "Number of dead index entries or pages skipped during the index scan (see LP_DEAD). Written as the smallest numeric type (int32 if integral). Omitted if not reported by the index."
+        },
+        "parallelScanCapable": {
+          "type": "boolean",
+          "description": "Indicates whether the index scan is capable of parallel execution in the current execution. Omitted if not reported by the index."
+        },
+        "isBackwardScan": {
+          "type": "boolean",
+          "description": "Indicates whether the index scan is scanning in backward (descending) direction. Omitted if not reported by the index."
+        },
+        "hasCorrelatedTerms": {
+          "type": "boolean",
+          "description": "Indicates whether the index scan on the path has correlated terms for documents on shared anscestor array paths This can happen if there's an index on [ a.b, a.c ] where a is an array. Omitted if not reported by the index."
+        },
+        "scanKeys": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Details of the scan keys used for the index lookup."
+        }
+      }
+    },
+    "AggregationStage": {
+      "type": "object",
+      "description": "A single stage in the aggregation explain output. The object has exactly one key, which is the aggregation stage name (e.g. '$cursor', '$match', '$sort', '$group', '$project', '$addFields', '$unwind', '$lookup', '$limit', '$sample', '$count', '$facet', '$mergeCursors', '$unionWith', '$documents', '$collStats', '$root'). The value is a CursorExplain object (with queryPlanner and optional executionStats). For '$project' and '$addFields' stages, the value also includes the projection/addFields specification fields inline.",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/CursorExplain"
+      }
+    },
+    "CursorExplain": {
+      "type": "object",
+      "description": "The explain output for a cursor-based operation. Contains the query planner output and optionally execution stats. Used both at the top level for find/count/distinct and within each aggregation stage.",
+      "properties": {
+        "queryPlanner": {
+          "$ref": "#/$defs/QueryPlanner",
+          "description": "Query planner information for this stage."
+        },
+        "executionStats": {
+          "$ref": "#/$defs/ExecutionStats",
+          "description": "Execution statistics for this stage. Only present when verbosity is 'executionStats', 'allPlansExecution', or 'allShardsExecution'."
+        }
+      },
+      "required": ["queryPlanner"]
+    },
+    "SplitPipeline": {
+      "type": "object",
+      "description": "Represents a pipeline that has been split for distributed (sharded) execution. The pipeline is divided into a merger part (executed on the coordinator) and a shard part (executed on each shard).",
+      "properties": {
+        "mergerPart": {
+          "type": "object",
+          "description": "The portion of the aggregation pipeline that runs on the coordinator node to merge results from shards. Contains a 'stages' array with the merger stages.",
+          "properties": {
+            "stages": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AggregationStage"
+              },
+              "description": "Array of aggregation stages executed on the coordinator for merging shard results."
+            }
+          },
+          "required": ["stages"]
+        }
+      },
+      "required": ["mergerPart"]
+    },
+    "AggregationShards": {
+      "type": "object",
+      "description": "Per-shard aggregation explain output for distributed queries. Contains metadata about shard distribution and individual shard explain results.",
+      "properties": {
+        "shardCount": {
+          "type": "integer",
+          "description": "Total number of shards involved in the distributed query. Derived from the Citus distributed task count."
+        },
+        "shardInformation": {
+          "type": "string",
+          "description": "Description of which shard results are shown (e.g. 'All'). Derived from Citus 'Tasks Shown' field."
+        },
+        "retrievedDocumentSizeBytes": {
+          "type": "string",
+          "description": "Total bytes of tuple data received from shard worker nodes. Derived from Citus 'Tuple data received from nodes'. Omitted if not reported."
+        }
+      },
+      "required": ["shardCount", "shardInformation"],
+      "patternProperties": {
+        "^shard_\\d+$": {
+          "oneOf": [
+            {
+              "type": "object",
+              "description": "Explain output for a specific shard. Contains the same structure as the top-level aggregation explain (with stages array).",
+              "properties": {
+                "stages": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/AggregationStage"
+                  }
+                }
+              },
+              "required": ["stages"]
+            },
+            {
+              "type": "object",
+              "description": "Error reported by a specific shard during explain execution.",
+              "properties": {
+                "error": {
+                  "type": "string",
+                  "description": "Error message from the shard."
+                }
+              },
+              "required": ["error"]
+            }
+          ]
+        }
+      }
+    }
+  }
+}

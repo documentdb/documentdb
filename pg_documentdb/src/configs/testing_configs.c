@@ -68,9 +68,6 @@ bool ForceDisableSeqScan = DEFAULT_FORCE_DISABLE_SEQ_SCAN;
 #define DEFAULT_CURRENTOP_ADD_SQL_COMMAND false
 bool CurrentOpAddSqlCommand = DEFAULT_CURRENTOP_ADD_SQL_COMMAND;
 
-#define DEFAULT_ALTERNATE_INDEX_HANDLER ""
-char *AlternateIndexHandler = DEFAULT_ALTERNATE_INDEX_HANDLER;
-
 #define DEFAULT_LOG_RELATION_INDEXES_ORDER false
 bool EnableLogRelationIndexesOrder = DEFAULT_LOG_RELATION_INDEXES_ORDER;
 
@@ -94,6 +91,9 @@ bool ForceIndexOnlyScanIfAvailable = DEFAULT_FORCE_INDEX_ONLY_SCAN_IF_AVAILABLE;
 
 #define DEFAULT_FORCE_PARALLEL_SCAN_IF_AVAILABLE false
 bool ForceParallelScanIfAvailable = DEFAULT_FORCE_PARALLEL_SCAN_IF_AVAILABLE;
+
+#define DEFAULT_ENABLE_RBAC_COMPLIANT_SCHEMAS false
+bool EnableRbacCompliantSchemas = DEFAULT_ENABLE_RBAC_COMPLIANT_SCHEMAS;
 
 #define DEFAULT_DISABLE_EXTENDED_RUM_EXPLAIN_PLANS false
 bool DisableExtendedRumExplainPlans = DEFAULT_DISABLE_EXTENDED_RUM_EXPLAIN_PLANS;
@@ -263,13 +263,6 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, &CurrentOpAddSqlCommand, DEFAULT_CURRENTOP_ADD_SQL_COMMAND,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
-	DefineCustomStringVariable(
-		psprintf("%s.alternate_index_handler_name", prefix),
-		gettext_noop(
-			"The name of the index handler to use as opposed to rum (currently for testing only)."),
-		NULL, &AlternateIndexHandler, DEFAULT_ALTERNATE_INDEX_HANDLER,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
 	DefineCustomBoolVariable(
 		psprintf("%s.logRelationIndexesOrder", newGucPrefix),
 		gettext_noop(
@@ -331,6 +324,13 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, &ForceParallelScanIfAvailable,
 		DEFAULT_FORCE_PARALLEL_SCAN_IF_AVAILABLE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableRbacCompliantSchemas", newGucPrefix),
+		gettext_noop(
+			"Enables RBAC compliant schemas."),
+		NULL, &EnableRbacCompliantSchemas, DEFAULT_ENABLE_RBAC_COMPLIANT_SCHEMAS,
+		PGC_POSTMASTER, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.disableExtendedRumExplainPlans", newGucPrefix),

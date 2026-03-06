@@ -445,6 +445,22 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT docu
                      Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
 (9 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO on;
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$max": "$_id" } } }]}');
+                                                                                                                                                                                         QUERY PLAN                                                                                                                                                                                          
+---------------------------------------------------------------------
+ Subquery Scan on agg_stage_2 (actual rows=1 loops=1)
+   Output: bson_repath_and_build(agg_stage_2.c1, agg_stage_2.c2, agg_stage_2.c3, agg_stage_2.c4)
+   ->  GroupAggregate (actual rows=1 loops=1)
+         Output: '_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, bsonmaxwithexpr(collection.document, '{ "" : "$_id" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)
+         ->  Limit (actual rows=4 loops=1)
+               Output: collection.document
+               ->  Index Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=4 loops=1)
+                     Output: collection.document
+                     Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(9 rows)
+
+SET documentdb.enableNewMinMaxAccumulators TO off;
 -- now test with compound index
 SELECT documentdb_api_internal.create_indexes_non_concurrently('idx_only_scan_db', '{ "createIndexes": "idx_only_scan_coll", "indexes": [ { "key": { "country": 1, "provider": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "country_provider_1" }] }', true);
                                                                                                    create_indexes_non_concurrently                                                                                                    
@@ -838,7 +854,7 @@ set documentdb.enableNewCountAggregates to on;
 -- EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$in": ["Mexico", "USA"]}} }, { "$group" : { "_id" : "1", "n" : { "$sum" : 1 } } }]}');
 -- SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$in": ["Mexico", "USA"]}} }, { "$group" : { "_id" : "1", "n" : { "$sum" : 1 } } }]}');
 SELECT COUNT(documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_sharded', bson_build_document('_id'::text, i, 'shardKey'::text, i % 10, 'value'::text, i))) FROM generate_series(1, 1000) i;
-psql:sql/bson_composite_index_only_scan_tests.sql:157: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:161: NOTICE:  creating collection
  count 
 ---------------------------------------------------------------------
   1000
@@ -886,7 +902,7 @@ ROLLBACK;
 -- test index only scan is not enabled for wildcard indexes
 set documentdb.enableCompositeWildcardIndex to on;
 SELECT documentdb_api.insert_one('idx_only_scan_db', 'compwildcard2', '{ "a": { "b": 1, "c": 5 }}');
-psql:sql/bson_composite_index_only_scan_tests.sql:175: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:179: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

@@ -110,8 +110,8 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db2', '{ "create
 ANALYZE;
 begin;
 SET LOCAL enable_seqscan to off;
-EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) EXECUTE distinctQueryWithFilter('db2', 'distinct7', 'd', '{ "b": { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce4" } } }');
-EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) EXECUTE distinctQueryWithFilter('db2', 'distinct7', 'd', '{ "b": { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce6" },"$db": "db", "tt":1 } }');
-EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) EXECUTE distinctQueryWithFilter('db2', 'distinct7', 'd', '{ "b": {"$id": { "$oid" : "147f000000c1de008ec19ce6" }, "$ref" : "distinct6"}}');
-EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) EXECUTE distinctQueryWithFilter('db2', 'distinct7', 'd', '{ "b": { "$in": [ { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce6" },"$db": "db", "tt":1 }, { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce4" }} ] } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) EXECUTE distinctQueryWithFilter('db2', 'distinct7', 'd', '{ "b": { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce4" } } }') $cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) EXECUTE distinctQueryWithFilter('db2', 'distinct7', 'd', '{ "b": { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce6" },"$db": "db", "tt":1 } }') $cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) EXECUTE distinctQueryWithFilter('db2', 'distinct7', 'd', '{ "b": {"$id": { "$oid" : "147f000000c1de008ec19ce6" }, "$ref" : "distinct6"}}') $cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) EXECUTE distinctQueryWithFilter('db2', 'distinct7', 'd', '{ "b": { "$in": [ { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce6" },"$db": "db", "tt":1 }, { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce4" }} ] } }') $cmd$);
 commit;

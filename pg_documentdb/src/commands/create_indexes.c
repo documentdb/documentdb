@@ -41,6 +41,7 @@
 #include "api_hooks.h"
 #include "io/bson_core.h"
 #include "aggregation/bson_projection_tree.h"
+#include "collation/collation.h"
 #include "commands/commands_common.h"
 #include "commands/create_indexes.h"
 #include "commands/diagnostic_commands_common.h"
@@ -159,13 +160,16 @@ extern bool ForceIndexTermTruncation;
 extern int IndexTruncationLimitOverride;
 extern int MaxWildcardIndexKeySize;
 extern bool DefaultEnableLargeUniqueIndexKeys;
-extern bool SkipFailOnCollation;
 extern bool ForceWildcardReducedTerm;
 extern bool EnableCompositeUniqueHash;
 extern bool EnableCompositeWildcardIndex;
+extern bool CreateTTLIndexAsCompositeByDefault;
 extern bool EnableCompositeReducedCorrelatedTerms;
 extern bool EnableUniqueCompositeReducedCorrelatedTerms;
 extern bool EnableCompositeShardDocumentTerms;
+
+extern bool EnableCollationWithIndexes;
+extern bool SkipFailOnCollation;
 
 extern char *AlternateIndexHandler;
 
@@ -235,7 +239,8 @@ static pgbson * GenerateWildcardProjDocument(const BsonIntermediatePathNode *
 static pgbson * GenerateWildcardProjDocumentInternal(const
 													 BsonIntermediatePathNode *treeNode,
 													 bool isTopLevel);
-static Expr * ParseIndexDefPartFilterDocument(const bson_iter_t *indexDefDocIter);
+static Expr * ParseIndexDefPartFilterDocument(const pgbson *partialFilterExprDocument,
+											  const char *collationString);
 static bool CheckPartFilterExprOperatorsWalker(Node *node, void *context);
 static void ThrowUnsupportedPartFilterExprError(Node *node);
 static char * GetPartFilterExprNodeRepr(Node *node);
@@ -303,7 +308,8 @@ static char * GenerateIndexExprStr(const char *indexAmSuffix,
 								   bool enableLargeIndexKeys,
 								   bool useReducedWildcardTerms,
 								   const char *indexAmOpClassCatalogSchema,
-								   const char *indexAmOpClassInternalCatalogSchema);
+								   const char *indexAmOpClassInternalCatalogSchema,
+								   const char *collationString);
 static char * Generate2dsphereIndexExprStr(const IndexDefKey *indexDefKey);
 static char * Generate2dsphereSparseExprStr(const IndexDefKey *indexDefKey);
 static char * GenerateIndexFilterStr(uint64 collectionId, Expr *indexDefPartFilterExpr);
@@ -421,8 +427,19 @@ IsWildCardIndex(IndexDef *indexDef)
 		return false;
 	}
 
-	return indexDef->wildcardProjectionTree != NULL || indexDef->key->isWildcard ||
-		   indexDef->wildcardProjectionDocument != NULL;
+	return indexDef->key->isWildcard && indexDef->wildcardProjectionTree == NULL;
+}
+
+
+inline static bool
+IsWildCardProjectionIndex(IndexDef *indexDef)
+{
+	if (IsTextIndex(indexDef))
+	{
+		return false;
+	}
+
+	return indexDef->wildcardProjectionTree != NULL;
 }
 
 
@@ -448,12 +465,19 @@ GetIndexAmHandlerByName(IndexDef *indexDef)
 		const BsonIndexAmEntry *indexAm = GetBsonIndexAmByIndexAmName(
 			AlternateIndexHandler);
 
-		if ((IsUniqueIndex(indexDef) && indexAm->is_unique_index_supported) ||
-			(IsWildCardIndex(indexDef) && indexAm->is_wild_card_supported) ||
-			(IsSinglePathIndex(indexDef) && indexAm->is_single_path_index_supported) ||
-			(IsCompositePathIndex(indexDef) && indexAm->is_composite_index_supported) ||
-			(IsTextIndex(indexDef) && indexAm->is_text_index_supported) ||
-			(IsHashIndex(indexDef) && indexAm->is_hashed_index_supported))
+		if ((IsUniqueIndex(indexDef) && indexAm->get_unique_path_op_family_oid == NULL) ||
+			(IsWildCardIndex(indexDef) && !indexAm->is_wild_card_supported) ||
+			(IsWildCardProjectionIndex(indexDef) &&
+			 !indexAm->is_wild_card_projection_supported) ||
+			(IsSinglePathIndex(indexDef) && !indexAm->is_single_path_index_supported) ||
+			(IsCompositePathIndex(indexDef) &&
+			 indexAm->get_composite_path_op_family_oid == NULL) ||
+			(IsTextIndex(indexDef) && indexAm->get_text_path_op_family_oid == NULL) ||
+			(IsHashIndex(indexDef) && indexAm->get_hashed_path_op_family_oid == NULL))
+		{
+			return GetBsonIndexAmByIndexAmName("rum");
+		}
+		else
 		{
 			ReportFeatureUsage(FEATURE_CREATE_INDEX_ALTERNATE_AM);
 			return indexAm;
@@ -1382,7 +1406,6 @@ ParseCreateIndexesArg(Datum dbNameDatum, pgbson *arg, bool buildAsUniqueForPrepa
 	}
 
 	/* verify that all non-optional fields are given */
-
 	if (!gotIndexesArray)
 	{
 		ThrowTopLevelMissingFieldError("createIndexes.indexes");
@@ -1608,8 +1631,6 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 			EnsureIndexDefDocFieldType(&indexDefDocIter,
 									   BSON_TYPE_DOCUMENT);
 
-			indexDef->partialFilterExpr =
-				ParseIndexDefPartFilterDocument(&indexDefDocIter);
 			indexDef->partialFilterExprDocument =
 				PgbsonInitFromIterDocumentValue(&indexDefDocIter);
 		}
@@ -1934,11 +1955,31 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 			/* parsed by the method above*/
 			continue;
 		}
-		else if (!SkipFailOnCollation && strcmp(indexDefDocKey, "collation") == 0)
+		else if (strcmp(indexDefDocKey, "collation") == 0)
 		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-							errmsg(
-								"createIndex.collation has not been implemented yet")));
+			ReportFeatureUsage(FEATURE_COLLATION_CREATE_INDEX);
+			if (EnableCollationWithIndexes)
+			{
+				EnsureTopLevelFieldType("collation", &indexDefDocIter,
+										BSON_TYPE_DOCUMENT);
+
+				const bson_value_t *value = bson_iter_value(&indexDefDocIter);
+
+				char collationString[MAX_ICU_COLLATION_LENGTH] = { 0 };
+				ParseAndGetCollationString(value, collationString);
+
+				if (IsCollationValid(collationString))
+				{
+					indexDef->collationString = pstrdup(collationString);
+					indexDef->collationSpec = palloc0(sizeof(bson_value_t));
+					bson_value_copy(value, indexDef->collationSpec);
+				}
+			}
+			else if (!SkipFailOnCollation)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+								errmsg("createIndex.collation is not implemented yet")));
+			}
 		}
 		else if (strcmp(indexDefDocKey, "storageEngine") == 0)
 		{
@@ -1986,7 +2027,6 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 	}
 
 	/* verify that all non-optional fields are given */
-
 	if (!gotKeyDocument)
 	{
 		ThrowIndexDefDocMissingFieldError("key");
@@ -2057,6 +2097,121 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 							errmsg(
 								"enableLargeIndexKeys is only supported with regular indexes.")));
 		}
+	}
+
+	/*
+	 * Below are the check we peform on TTL index spec
+	 *  1. TTL index is not allowed on compound keys. TTL index needs to be single field.
+	 *  2. TTL index can't be defined on _id.
+	 *  3. TTL index can't be a wildcard index.
+	 *
+	 * FYI: 1. Unique and Sparse are valid options for ttl index
+	 *      2. TTL index can be of type hash.
+	 */
+
+	if (isTTLIndex)
+	{
+		ReportFeatureUsage(FEATURE_CREATE_INDEX_TTL);
+
+		ListCell *keyPathCell = NULL;
+		int totalIndexKeyPath = 0;
+		int totalIdKeyPath = 0;
+		foreach(keyPathCell, indexDef->key->keyPathList)
+		{
+			IndexDefKeyPath *indexKeyPath = (IndexDefKeyPath *) lfirst(keyPathCell);
+			char *keyPath = (char *) indexKeyPath->path;
+
+			if (strcmp(keyPath, "_id") == 0)
+			{
+				totalIdKeyPath++;
+			}
+
+			totalIndexKeyPath++;
+		}
+
+		/* "key" : { "_id" : 1, "_id" : 1 } is considered as single-field spec on _id. */
+		if (totalIdKeyPath == totalIndexKeyPath)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDINDEXSPECIFICATIONOPTION),
+							errmsg(
+								"The field 'expireAfterSeconds' is not valid for an _id index specification.")));
+		}
+
+		if (totalIndexKeyPath > 1)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg(
+								"TTL indexes work only on single fields, and compound indexes are incompatible with TTL functionality.")));
+		}
+
+		if (indexDef->key->isWildcard)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg(
+								"Index type 'wildcard' cannot be a TTL index.")));
+		}
+
+		/*
+		 *  While can support creating a ttl index as hash index, it is not performant based on our current approch.
+		 *  If the ttl index is a hash index - searching for all the expired documents would require a scan, as range
+		 *  queries are not supported on hash indexes.
+		 *
+		 *  It is possible to create a parallel b-tree based index - that way we can use the b-tree index to search
+		 *  for the expired documents while supporting a ttl hash index. At some point, if we decide to support
+		 *  "ttl hash indexes" - this may be one of the approaches to try.
+		 *
+		 *  With Hash indexes uniqueness guarantee becomes another challenge, which needs to addressed creatively as well.
+		 */
+		if (indexDef->key->hasHashedIndexes)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg(
+								"Creating a hash index as ttl index is not supported.")));
+		}
+
+		if (indexDef->key->hasTextIndexes)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg(
+								"Creating a text index as ttl index is not supported.")));
+		}
+
+		if (indexDef->key->hasCosmosIndexes)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg(
+								"Creating a cosmosSearch index as ttl index is not supported.")));
+		}
+
+		if (indexDef->key->has2dIndex)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg(
+								"Creating a 2d index as ttl index is not supported.")));
+		}
+
+		if (indexDef->key->has2dsphereIndex)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg(
+								"Creating a 2dsphere index as ttl index is not supported.")));
+		}
+
+		/* TTL indexes should always use single path composite term indexing
+		 * when the GUC `CreateTTLIndexAsCompositeByDefault` is enabled (enabled by default) */
+		if (CreateTTLIndexAsCompositeByDefault && indexDef->enableCompositeTerm !=
+			BoolIndexOption_False)
+		{
+			indexDef->enableCompositeTerm = BoolIndexOption_True;
+		}
+	}
+
+	/* parse the partialFilterExpression with applicable collation*/
+	if (indexDef->partialFilterExprDocument != NULL)
+	{
+		indexDef->partialFilterExpr =
+			ParseIndexDefPartFilterDocument(indexDef->partialFilterExprDocument,
+											indexDef->collationString);
 	}
 
 	if (indexDef->enableCompositeTerm == BoolIndexOption_Undefined &&
@@ -2158,6 +2313,72 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 		}
 	}
 
+	/*
+	 * Validate collation compatibility with index types and options.
+	 * TODO: For now, plumb collation through only for single-path and wildcard indexes.
+	 */
+	bool isUniqueOrBuildAsUniqueIndex = IsUniqueOrBuildAsUniqueIndex(indexDef);
+	bool hasApplicableCollation = IsCollationApplicable(indexDef->collationString);
+	if (hasApplicableCollation)
+	{
+		if (indexDef->key->has2dIndex)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg("Index type '2d' does not support collation")));
+		}
+
+		if (indexDef->key->hasTextIndexes)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg("Index type 'text' does not support collation")));
+		}
+
+		/* We do not support collation with hashed, 2dsphere and cosmosSearch indexes */
+		if (indexDef->key->hasHashedIndexes)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg("Index type 'hashed' does not support collation")));
+		}
+
+		if (indexDef->key->has2dsphereIndex)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg("Index type '2dsphere' does not support collation")));
+		}
+
+		if (indexDef->cosmosSearchOptions != NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg(
+								"Index type 'cosmosSearch' does not support collation")));
+		}
+
+		/* We do not yet support collation with composite indexes */
+		if (indexDef->enableCompositeTerm == BoolIndexOption_True)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg(
+								"Collation is not yet supported for composite indexes")));
+		}
+
+		/* We do not support collation with unique indexes yet */
+		if (isUniqueOrBuildAsUniqueIndex)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg(
+								"Collation is not supported for unique indexes")));
+		}
+	}
+
+	if (indexDef->enableCompositeTerm != BoolIndexOption_True &&
+		indexDef->key->isWildcard && indexDef->key->hasDescendingIndex)
+	{
+		/* Non composite does not support descending indexes */
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+						errmsg(
+							"A numeric value in a $** index key pattern must be positive.")));
+	}
+
 	if (indexDef->buildAsUnique == BoolIndexOption_True &&
 		indexDef->enableCompositeTerm != BoolIndexOption_True)
 	{
@@ -2191,27 +2412,27 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 							"The language_override option is permitted exclusively when using text indexes.")));
 	}
 
-	if (IsUniqueOrBuildAsUniqueIndex(indexDef) && indexDef->key->isWildcard)
+	if (isUniqueOrBuildAsUniqueIndex && indexDef->key->isWildcard)
 	{
 		ereport(ERROR, errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
 				errmsg("Index type 'wildcard' does not support the unique option"));
 	}
 
-	if (IsUniqueOrBuildAsUniqueIndex(indexDef) && indexDef->key->hasHashedIndexes)
+	if (isUniqueOrBuildAsUniqueIndex && indexDef->key->hasHashedIndexes)
 	{
 		ereport(ERROR, errcode(ERRCODE_DOCUMENTDB_LOCATION16764),
 				errmsg(
 					"Index type 'hashed' does not support the unique option."));
 	}
 
-	if (IsUniqueOrBuildAsUniqueIndex(indexDef) && indexDef->key->hasTextIndexes)
+	if (isUniqueOrBuildAsUniqueIndex && indexDef->key->hasTextIndexes)
 	{
 		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						errmsg(
 							"Index type 'text' does not support the unique option")));
 	}
 
-	if (IsUniqueOrBuildAsUniqueIndex(indexDef) && indexDef->enableLargeIndexKeys ==
+	if (isUniqueOrBuildAsUniqueIndex && indexDef->enableLargeIndexKeys ==
 		BoolIndexOption_True)
 	{
 		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -2221,7 +2442,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 
 	if (indexDef->key->hasCosmosIndexes)
 	{
-		if (IsUniqueOrBuildAsUniqueIndex(indexDef))
+		if (isUniqueOrBuildAsUniqueIndex)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 							errmsg(
@@ -2238,7 +2459,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 
 	if (indexDef->key->has2dIndex)
 	{
-		if (IsUniqueOrBuildAsUniqueIndex(indexDef))
+		if (isUniqueOrBuildAsUniqueIndex)
 		{
 			/*
 			 * TODO: Support unique indexes with GIST
@@ -2271,7 +2492,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 
 	if (indexDef->key->has2dsphereIndex)
 	{
-		if (IsUniqueOrBuildAsUniqueIndex(indexDef))
+		if (isUniqueOrBuildAsUniqueIndex)
 		{
 			/*
 			 * TODO: Support unique indexes with GIST
@@ -2385,106 +2606,6 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 					}
 				}
 			}
-		}
-	}
-
-	/*
-	 * Below are the check we peform on TTL index spec
-	 *  1. TTL index is not allowed on composite keys. TTL index needs to be single field.
-	 *  2. TTL index can't be defined on _id. If the spec contains multiple _id fields and nothing else
-	 * it is considered a single field spec.
-	 *  3. TTL index can't be a wildcard index.
-	 *
-	 * FYI: 1. Unique and Sparse are valid options for ttl index
-	 *       2. TTL index can be of type hash.
-	 */
-
-	if (isTTLIndex)
-	{
-		ReportFeatureUsage(FEATURE_CREATE_INDEX_TTL);
-
-		ListCell *keyPathCell = NULL;
-		int totalIndexKeyPath = 0;
-		int totalIdKeyPath = 0;
-		foreach(keyPathCell, indexDef->key->keyPathList)
-		{
-			IndexDefKeyPath *indexKeyPath = (IndexDefKeyPath *) lfirst(keyPathCell);
-			char *keyPath = (char *) indexKeyPath->path;
-
-			if (strcmp(keyPath, "_id") == 0)
-			{
-				totalIdKeyPath++;
-			}
-
-			totalIndexKeyPath++;
-		}
-
-		/* "key" : { "_id" : 1, "_id" : 1 } is considered as single-field spec on _id. */
-		if (totalIdKeyPath == totalIndexKeyPath)
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDINDEXSPECIFICATIONOPTION),
-							errmsg(
-								"The field 'expireAfterSeconds' is not valid for an _id index specification.")));
-		}
-
-		if (totalIndexKeyPath > 1)
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
-							errmsg(
-								"TTL indexes work only on single fields, and compound indexes are incompatible with TTL functionality.")));
-		}
-
-		if (indexDef->key->isWildcard)
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
-							errmsg(
-								"Index type 'wildcard' cannot be a TTL index.")));
-		}
-
-		/*
-		 *  While can support creating a ttl index as hash index, it is not performant based on our current approch.
-		 *  If the ttl index is a hash index - searching for all the expired documents would require a scan, as range
-		 *  queries are not supported on hash indexes.
-		 *
-		 *  It is possible to create a parallel b-tree based index - that way we can use the b-tree index to search
-		 *  for the expired documents while supporting a ttl hash index. At some point, if we decide to support
-		 *  "ttl hash indexes" - this may be one of the approaches to try.
-		 *
-		 *  With Hash indexes uniqueness guarantee becomes another challenge, which needs to addressed creatively as well.
-		 */
-		if (indexDef->key->hasHashedIndexes)
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg(
-								"Creating a hash index as ttl index is not supported.")));
-		}
-
-		if (indexDef->key->hasTextIndexes)
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg(
-								"Creating a text index as ttl index is not supported.")));
-		}
-
-		if (indexDef->key->hasCosmosIndexes)
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg(
-								"Creating a cosmosSearch index as ttl index is not supported.")));
-		}
-
-		if (indexDef->key->has2dIndex)
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg(
-								"Creating a 2d index as ttl index is not supported.")));
-		}
-
-		if (indexDef->key->has2dsphereIndex)
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg(
-								"Creating a 2dsphere index as ttl index is not supported.")));
 		}
 	}
 
@@ -3642,25 +3763,27 @@ GenerateWildcardProjDocumentInternal(const BsonIntermediatePathNode *treeParentN
 
 
 /*
- * ParseIndexDefPartFilterDocument returns an Expr node parsing value of
- * pgbson iterator that points to the "partialFilterExpression" field of
- * an index definiton document.
+ * ParseIndexDefPartFilterDocument returns an Expr node parsing the
+ * "partialFilterExpression" field of an index definition document.
  *
  * Returns a Const(true) node if given "partialFilterExpression" points
  * to an empty document.
  */
 static Expr *
-ParseIndexDefPartFilterDocument(const bson_iter_t *indexDefDocIter)
+ParseIndexDefPartFilterDocument(const pgbson *partialFilterExprDocument,
+								const char *collationString)
 {
 	bson_iter_t partFilterExprIter;
-	bson_iter_recurse(indexDefDocIter, &partFilterExprIter);
+	PgbsonInitIterator(partialFilterExprDocument, &partFilterExprIter);
 
 	BsonQueryOperatorContext context = { 0 };
 	context.documentExpr = (Expr *) MakeSimpleDocumentVar();
 	context.inputType = MongoQueryOperatorInputType_Bson;
 	context.simplifyOperators = false;
 	context.coerceOperatorExprIfApplicable = true;
+	context.convertSupportedInToScalarArrayOp = true;
 	context.variableContext = NULL;
+	context.collationString = collationString;
 	List *partialFilterQuals = CreateQualsFromQueryDocIterator(&partFilterExprIter,
 															   &context);
 
@@ -3723,6 +3846,26 @@ CheckPartFilterExprOperatorsWalker(Node *node, void *context)
 		else
 		{
 			ereport(ERROR, (errmsg("Unrecognized boolean operator encountered")));
+		}
+	}
+	else if (IsA(node, ScalarArrayOpExpr))
+	{
+		ScalarArrayOpExpr *scalarArrayOpExpr = (ScalarArrayOpExpr *) node;
+		if (!scalarArrayOpExpr->useOr)
+		{
+			ereport(ERROR, (errmsg(
+								"Unsupported Scalar array operator expr in  $in operator is supported in partialFilterExpression, only ANY expressions supported")));
+		}
+
+		const MongoQueryOperator *operator = GetMongoQueryOperatorByPostgresFuncId(
+			scalarArrayOpExpr->opfuncid);
+		if (operator->operatorType != QUERY_OPERATOR_EQ)
+		{
+			ThrowUnsupportedPartFilterExprError(node);
+		}
+		else
+		{
+			/* $in is supported operator for partial filter expressions */
 		}
 	}
 	else if (IsA(node, OpExpr) || IsA(node, FuncExpr))
@@ -3929,6 +4072,56 @@ GetPartFilterExprNodeReprWalker(Node *node, void *contextArg)
 		{
 			ereport(ERROR, (errmsg("Unrecognized boolean operator encountered")));
 		}
+	}
+	else if (IsA(node, ScalarArrayOpExpr))
+	{
+		ScalarArrayOpExpr *scalarArrayOpExpr = (ScalarArrayOpExpr *) node;
+		const MongoQueryOperator *operator = GetMongoQueryOperatorByPostgresFuncId(
+			scalarArrayOpExpr->opfuncid);
+
+		if (operator->operatorType != QUERY_OPERATOR_EQ || !scalarArrayOpExpr->useOr)
+		{
+			return false;
+		}
+
+		Node *rhsNode = lsecond(scalarArrayOpExpr->args);
+		if (!IsA(rhsNode, ArrayExpr))
+		{
+			return false;
+		}
+
+		ArrayExpr *bsonConst = (ArrayExpr *) rhsNode;
+
+		ListCell *elemCell;
+		bool isFirst = true;
+		foreach(elemCell, bsonConst->elements)
+		{
+			Expr *elemNode = (Expr *) lfirst(elemCell);
+			if (!IsA(elemNode, Const))
+			{
+				ereport(ERROR, (errmsg("got a non-Const node for an element "
+									   "of array argument of $in operator")));
+			}
+
+			Const *bsonConst = (Const *) elemNode;
+			pgbsonelement element;
+			PgbsonToSinglePgbsonElement((pgbson *) bsonConst->constvalue, &element);
+
+			if (isFirst)
+			{
+				appendStringInfo(context->reprStr, "%s%s $in [ %s",
+								 indentStr->data, element.path,
+								 BsonValueToJsonForLogging(&(element.bsonValue)));
+				isFirst = false;
+			}
+			else
+			{
+				appendStringInfo(context->reprStr, ", %s",
+								 BsonValueToJsonForLogging(&(element.bsonValue)));
+			}
+		}
+
+		appendStringInfo(context->reprStr, " ]\n");
 	}
 	else if (IsA(node, OpExpr) || IsA(node, FuncExpr))
 	{
@@ -4807,6 +5000,12 @@ MakeIndexSpecForIndexDef(IndexDef *indexDef)
 		PgbsonWriterAppendInt32(&writer, "enableOrderedIndex", 18, 1);
 	}
 
+	if (indexDef->collationSpec)
+	{
+		PgbsonWriterAppendValue(&writer, "collation", 9,
+								indexDef->collationSpec);
+	}
+
 	if (indexDef->buildAsUnique == BoolIndexOption_True)
 	{
 		PgbsonWriterAppendInt32(&writer, "buildAsUnique", 13, 1);
@@ -4910,7 +5109,8 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 											  enableLargeIndexKeys,
 											  useReducedWildcardTermGeneration,
 											  indexAm->get_opclass_catalog_schema(),
-											  indexAm->get_opclass_internal_catalog_schema()),
+											  indexAm->get_opclass_internal_catalog_schema(),
+											  indexDef->collationString),
 						 indexDef->partialFilterExpr ? "WHERE (" : "",
 						 indexDef->partialFilterExpr ?
 						 GenerateIndexFilterStr(collectionId,
@@ -5059,7 +5259,8 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 											  enableLargeIndexKeys,
 											  useReducedWildcardTermGeneration,
 											  indexAm->get_opclass_catalog_schema(),
-											  indexAm->get_opclass_internal_catalog_schema()),
+											  indexAm->get_opclass_internal_catalog_schema(),
+											  indexDef->collationString),
 						 indexDef->partialFilterExpr ? "WHERE (" : "",
 						 indexDef->partialFilterExpr ?
 						 GenerateIndexFilterStr(collectionId,
@@ -5423,15 +5624,16 @@ AppendUniqueColumnExpr(StringInfo indexExprStr, IndexDefKey *indexDefKey,
  */
 static char *
 GenerateIndexExprStr(const char *indexAmSuffix,
-					 bool unique, bool buildAsUnique, bool sparse, bool
-					 enableCompositeOpClass,
+					 bool unique, bool buildAsUnique, bool sparse,
+					 bool enableCompositeOpClass,
 					 IndexDefKey *indexDefKey,
 					 const BsonIntermediatePathNode *indexDefWildcardProjTree,
 					 const char *indexName, const char *defaultLanguage,
 					 const char *languageOverride, bool enableLargeIndexKeys,
 					 bool useReducedWildcardTerms,
 					 const char *indexAmOpClassCatalogSchema,
-					 const char *indexAmOpClassInternalCatalogSchema)
+					 const char *indexAmOpClassInternalCatalogSchema,
+					 const char *collationString)
 {
 	StringInfo indexExprStr = makeStringInfo();
 
@@ -5460,6 +5662,8 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 	bool usingNewUniqueIndexOpClass = (unique || buildAsUnique) &&
 									  (enableLargeIndexKeys ||
 									   isUsingCompositeOpClass);
+
+	bool hasApplicableCollation = IsCollationApplicable(collationString);
 
 	/* For unique with truncation, instead of creating a unique hash for every column, we simply create a single
 	 * value with a new operator that handles unique constraints. That way for a composite unique index, we support
@@ -5534,13 +5738,16 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 
 			appendStringInfo(indexExprStr,
 							 "%s document %s.bson_%s_single_path_ops"
-							 "(path='', iswildcard=true%s%s%s)",
+							 "(path='', iswildcard=true%s%s%s%s%s)",
 							 firstColumnWritten ? "," : "",
 							 indexAmOpClassCatalogSchema,
 							 indexAmSuffix,
 							 indexTermSizeLimitArg,
 							 wildcardIndexTruncatedPathLimit,
-							 useReducedWildcardOption);
+							 useReducedWildcardOption,
+							 hasApplicableCollation ? ", collation=" : "",
+							 hasApplicableCollation ?
+							 quote_literal_cstr(collationString) : "");
 
 			firstColumnWritten = true;
 		}
@@ -5563,13 +5770,16 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 			bool includeId = wpPathOps->idFieldInclusion == WP_IM_INCLUDE;
 			appendStringInfo(indexExprStr,
 							 "%s document %s.bson_%s_wildcard_project_path_ops"
-							 "(includeid=%s%s%s",
+							 "(includeid=%s%s%s%s%s",
 							 firstColumnWritten ? "," : "",
 							 indexAmOpClassCatalogSchema,
 							 indexAmSuffix,
 							 includeId ? "true" : "false",
 							 indexTermSizeLimitArg,
-							 wildcardIndexTruncatedPathLimit);
+							 wildcardIndexTruncatedPathLimit,
+							 hasApplicableCollation ? ", collation=" : "",
+							 hasApplicableCollation ?
+							 quote_literal_cstr(collationString) : "");
 
 			firstColumnWritten = true;
 
@@ -5841,7 +6051,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 					}
 
 					appendStringInfo(indexExprStr,
-									 "%s document %s.bson_%s_single_path_ops(path=%s%s%s%s%s)",
+									 "%s document %s.bson_%s_single_path_ops(path=%s%s%s%s%s%s%s)",
 									 firstColumnWritten ? "," : "",
 									 indexAmOpClassCatalogSchema,
 									 indexAmSuffix,
@@ -5849,7 +6059,11 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 									 indexKeyPath->isWildcard ? ",iswildcard=true" : "",
 									 indexTermSizeLimitArg,
 									 generateNotFoundTermOption,
-									 useReducedWildcardOption);
+									 useReducedWildcardOption,
+									 hasApplicableCollation ? ",collation=" : "",
+									 hasApplicableCollation ?
+									 quote_literal_cstr(collationString) : "");
+
 					if (unique)
 					{
 						appendStringInfo(indexExprStr, " WITH OPERATOR(%s.=?=)",
@@ -6074,9 +6288,10 @@ TryDropCollectionIndexes(uint64 collectionId, List *indexIdList, List *indexIsUn
 			/* we might or might not have created the pg index .. */
 			bool missingOk = true;
 			bool concurrently = true;
+			bool forceReadWrite = false;
 			DropPostgresIndex(collectionId, lfirst_int(indexIdListCell),
 							  lfirst_int(indexIsUniqueListCell),
-							  concurrently, missingOk);
+							  concurrently, forceReadWrite, missingOk);
 
 			DeleteCollectionIndexRecord(collectionId, lfirst_int(indexIdListCell));
 		}

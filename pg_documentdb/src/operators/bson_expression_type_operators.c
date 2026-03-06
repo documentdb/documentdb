@@ -846,6 +846,40 @@ ParseDollarMakeArray(const bson_value_t *inputDocument, AggregationExpressionDat
 
 	ParseAggregationExpressionData(argumentData, inputDocument, context);
 
+	if (IsAggregationExpressionConstant(argumentData))
+	{
+		if (IsExpressionResultNullOrUndefined(&argumentData->value))
+		{
+			/* If the argument is undefined, return an empty array. */
+			InitBsonValueAsEmptyArray(&data->value);
+			data->kind = AggregationExpressionKind_Constant;
+			pfree(argumentData);
+			return;
+		}
+
+		/* If the argument is an array, return it as-is. */
+		if (argumentData->value.value_type == BSON_TYPE_ARRAY)
+		{
+			data->value = argumentData->value;
+			data->kind = AggregationExpressionKind_Constant;
+			pfree(argumentData);
+			return;
+		}
+
+		/* Otherwise, wrap the argument in an array. */
+		pgbson_writer writer;
+		PgbsonWriterInit(&writer);
+		pgbson_array_writer arrayWriter;
+		PgbsonWriterStartArray(&writer, "", 0, &arrayWriter);
+		PgbsonArrayWriterWriteValue(&arrayWriter, &argumentData->value);
+		PgbsonWriterEndArray(&writer, &arrayWriter);
+		PgbsonArrayWriterCopyDataToBsonValue(&arrayWriter, &data->value);
+		PgbsonWriterFree(&writer);
+		data->kind = AggregationExpressionKind_Constant;
+		pfree(argumentData);
+		return;
+	}
+
 	data->operator.arguments = argumentData;
 	data->operator.argumentsKind = AggregationExpressionArgumentsKind_Palloc;
 }

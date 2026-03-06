@@ -12,10 +12,11 @@ RELATIVE_INCLUDES = $(addprefix src/, $(INCLUDES))
 
 LDFLAGS_SL += $(filter -lm, $(LIBS))
 
+PG_CPPFLAGS = -Iinclude
 ifeq ($(CC),gcc)
-    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations -fno-lto $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB)
+    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations -fno-lto $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB) -Iinclude
 else
-    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB)
+    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB) -Iinclude
 endif
 
 PG_CFLAGS += -Wno-sign-compare -Wno-type-limits

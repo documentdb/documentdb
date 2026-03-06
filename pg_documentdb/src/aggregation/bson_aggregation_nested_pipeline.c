@@ -2521,6 +2521,7 @@ ProcessLookupCoreWithLet(Query *query, AggregationPipelineBuildContext *context,
 				ScalarArrayOpExpr *inOperator = makeNode(ScalarArrayOpExpr);
 				inOperator->useOr = true;
 				inOperator->opno = BsonEqualOperatorId();
+				inOperator->opfuncid = BsonEqualFunctionOid();
 				Var *matchVar = makeVar(leftQueryRteIndex, newProjectorAttrNum,
 										GetBsonArrayTypeOid(), -1,
 										InvalidOid, matchLevelsUp);

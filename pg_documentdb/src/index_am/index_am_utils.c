@@ -23,14 +23,13 @@ static int BsonNumAlternateAmEntries = 0;
 static const char * GetRumCatalogSchema(void);
 static const char * GetRumInternalSchemaV2(void);
 
+static bool RumScanOrderedFalse(IndexScanDesc scan);
+
 /* Left non-static for internal use */
 BsonIndexAmEntry RumIndexAmEntry = {
 	.is_single_path_index_supported = true,
-	.is_unique_index_supported = true,
 	.is_wild_card_supported = true,
-	.is_composite_index_supported = true,
-	.is_text_index_supported = true,
-	.is_hashed_index_supported = true,
+	.is_wild_card_projection_supported = true,
 	.is_order_by_supported = false,
 	.is_backwards_scan_supported = false,
 	.is_index_only_scan_supported = false,
@@ -47,6 +46,8 @@ BsonIndexAmEntry RumIndexAmEntry = {
 	.get_opclass_internal_catalog_schema = GetRumInternalSchemaV2,
 	.get_multikey_status = NULL,
 	.get_truncation_status = RumGetTruncationStatus,
+	.can_order_in_index_scans = RumScanOrderedFalse,
+	.supports_ordered_operator_scans = false,
 };
 
 /*
@@ -246,7 +247,7 @@ IsUniqueCheckOpFamilyOid(Oid relam, Oid opFamilyOid)
 		return false;
 	}
 
-	return amEntry->is_unique_index_supported &&
+	return amEntry->get_unique_path_op_family_oid != NULL &&
 		   opFamilyOid == amEntry->get_unique_path_op_family_oid();
 }
 
@@ -260,7 +261,7 @@ IsHashedPathOpFamilyOid(Oid relam, Oid opFamilyOid)
 		return false;
 	}
 
-	return amEntry->is_hashed_index_supported &&
+	return amEntry->get_hashed_path_op_family_oid != NULL &&
 		   opFamilyOid == amEntry->get_hashed_path_op_family_oid();
 }
 
@@ -395,6 +396,39 @@ GetIndexSupportsBackwardsScan(Oid relam, bool *indexCanOrder)
 }
 
 
+bool
+GetCompositeOpClassWithProps(Relation indexRelation,
+							 bool *supportsOrderedOperatorScans,
+							 GetMultikeyStatusFunc *multiKeyStatusFunc,
+							 CanOrderInIndexScan *canOrderInIndexScans)
+{
+	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(
+		indexRelation->rd_rel->relam);
+	if (amEntry == NULL)
+	{
+		return false;
+	}
+
+	/* Non unique indexes will have 1 attribute that has the entire composite key
+	 * Unique indexes will have the first attribute matching non-unique indexes, and the
+	 * second attribute matching the unique constraint key.
+	 * We put the composite column first just for convenience, so we can keep the order by
+	 * and query paths the same between the two.
+	 */
+	if ((IndexRelationGetNumberOfKeyAttributes(indexRelation) == 1 ||
+		 IndexRelationGetNumberOfKeyAttributes(indexRelation) == 2) &&
+		indexRelation->rd_opfamily[0] == amEntry->get_composite_path_op_family_oid())
+	{
+		*supportsOrderedOperatorScans = amEntry->supports_ordered_operator_scans;
+		*multiKeyStatusFunc = amEntry->get_multikey_status;
+		*canOrderInIndexScans = amEntry->can_order_in_index_scans;
+		return true;
+	}
+
+	return false;
+}
+
+
 static const char *
 GetRumCatalogSchema(void)
 {
@@ -406,4 +440,11 @@ static const char *
 GetRumInternalSchemaV2(void)
 {
 	return ApiInternalSchemaNameV2;
+}
+
+
+static bool
+RumScanOrderedFalse(IndexScanDesc scan)
+{
+	return false;
 }

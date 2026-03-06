@@ -15,6 +15,7 @@
 
 #include "operators/bson_expression.h"
 #include "utils/documentdb_errors.h"
+#include "utils/version_utils.h"
 
 typedef enum QueryCursorType
 {
@@ -143,6 +144,23 @@ GenerateFirstPageQueryData(void)
 	QueryData queryData = { 0 };
 	queryData.batchSize = DefaultCursorFirstPageBatchSize;
 	return queryData;
+}
+
+
+/*
+ * Feature flag and version check for using optimized "WithExpr" aggregate functions
+ * (e.g., bsonmaxwithexpr, bsonminwithexpr, etc.) instead of the legacy aggregates
+ * that wrap bson_expression_get.
+ *
+ * Used by both $group accumulators and $setWindowFields window operators.
+ */
+extern bool EnableNewMinMaxAccumulators;
+
+inline static bool
+CanUseWithExprAggregates(void)
+{
+	return EnableNewMinMaxAccumulators &&
+		   IsClusterVersionAtleast(DocDB_V0, 110, 0);
 }
 
 

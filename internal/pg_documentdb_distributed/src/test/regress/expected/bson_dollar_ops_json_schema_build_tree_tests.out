@@ -160,6 +160,19 @@ SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "propert
  t
 (1 row)
 
+------------------------ description ---------------------------------------------
+SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "properties" : { "name" : { "bsonType": "string", "description": "Name of the person" } } } }');
+ bson_dollar_json_schema 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "properties" : { "name" : { "bsonType": "string", "description": 12345 } } } }');
+ERROR:  $jsonSchema keyword 'description' must be a string
+SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "properties" : { "name" : { "bsonType": "string", "description": true } } } }');
+ERROR:  $jsonSchema keyword 'description' must be a string
+SELECT bson_dollar_json_schema('{ "name":"pazu" }', '{ "$jsonSchema": { "properties" : { "name" : { "bsonType": "string", "description": ["a", "b"] } } } }');
+ERROR:  $jsonSchema keyword 'description' must be a string
 ---------------------------------------------------------------------
 --                          Numeric Validators                               --
 ---------------------------------------------------------------------

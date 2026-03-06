@@ -32,11 +32,11 @@ PGDLLEXPORT bool RumThrowErrorOnInvalidDataPage =
 #define RUM_DEFAULT_USE_NEW_ITEM_PTR_DECODING true
 PGDLLEXPORT bool RumUseNewItemPtrDecoding = RUM_DEFAULT_USE_NEW_ITEM_PTR_DECODING;
 
-#define RUM_ENABLE_PARALLEL_VACUUM_FLAGS true
-PGDLLEXPORT bool RumEnableParallelVacuumFlags = RUM_ENABLE_PARALLEL_VACUUM_FLAGS;
-
 /* rumbtree.c */
+#define RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT true
 PGDLLEXPORT bool RumTrackIncompleteSplit = RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT;
+
+#define RUM_DEFAULT_FIX_INCOMPLETE_SPLIT true
 PGDLLEXPORT bool RumFixIncompleteSplit = RUM_DEFAULT_FIX_INCOMPLETE_SPLIT;
 
 #define RUM_DEFAULT_ENABLE_INJECT_PAGE_SPLIT_INCOMPLETE false
@@ -64,10 +64,6 @@ PGDLLEXPORT bool RumPreferOrderedIndexScan = RUM_DEFAULT_PREFER_ORDERED_INDEX_SC
 #define RUM_DEFAULT_ENABLE_SKIP_INTERMEDIATE_ENTRY true
 PGDLLEXPORT bool RumEnableSkipIntermediateEntry =
 	RUM_DEFAULT_ENABLE_SKIP_INTERMEDIATE_ENTRY;
-
-/* ruminsert.c */
-#define RUM_DEFAULT_ENABLE_PARALLEL_INDEX_BUILD true
-PGDLLEXPORT bool RumEnableParallelIndexBuild = RUM_DEFAULT_ENABLE_PARALLEL_INDEX_BUILD;
 
 #define RUM_DEFAULT_PARALLEL_INDEX_WORKERS_OVERRIDE -1
 PGDLLEXPORT int RumParallelIndexWorkersOverride =
@@ -109,6 +105,10 @@ PGDLLEXPORT bool RumSkipGlobalVisibilityCheckOnPrune =
 #define RUM_DEFAULT_ENABLE_SUPPORT_DEAD_INDEX_ITEMS false
 PGDLLEXPORT bool RumEnableSupportDeadIndexItems =
 	RUM_DEFAULT_ENABLE_SUPPORT_DEAD_INDEX_ITEMS;
+
+#define RUM_DEFAULT_ENABLE_ORDERED_OPERATOR_SCANS true
+PGDLLEXPORT bool RumEnableOrderedOperatorScans =
+	RUM_DEFAULT_ENABLE_ORDERED_OPERATOR_SCANS;
 
 /* rumselfuncs.c */
 #define RUM_DEFAULT_ENABLE_CUSTOM_COST_ESTIMATE true
@@ -171,15 +171,6 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 
-	DefineCustomBoolVariable(
-		psprintf("%s.enable_parallel_index_build", documentDBRumGucPrefix),
-		"Sets whether or not to enable parallel index build",
-		NULL,
-		&RumEnableParallelIndexBuild,
-		RUM_DEFAULT_ENABLE_PARALLEL_INDEX_BUILD,
-		PGC_USERSET, 0,
-		NULL, NULL, NULL);
-
 	DefineCustomIntVariable(
 		psprintf("%s.parallel_index_workers_override", documentDBRumGucPrefix),
 		"Sets the number of parallel index workers to use (default: -1, meaning no override)",
@@ -239,15 +230,6 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumInjectPageSplitIncomplete,
 		RUM_DEFAULT_ENABLE_INJECT_PAGE_SPLIT_INCOMPLETE,
-		PGC_USERSET, 0,
-		NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enable_set_vacuum_parallel_flags", documentDBRumGucPrefix),
-		"Enables setting the parallel vacuum flags in Postgres",
-		NULL,
-		&RumEnableParallelVacuumFlags,
-		RUM_ENABLE_PARALLEL_VACUUM_FLAGS,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 
@@ -340,6 +322,32 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumSkipGlobalVisibilityCheckOnPrune,
 		RUM_DEFAULT_TRAVERSE_PAGE_ONLY_ON_BACKTRACK,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+	DefineCustomBoolVariable(
+		psprintf("%s.track_incomplete_split", documentDBRumGucPrefix),
+		"Sets whether or not to track incomplete splits",
+		NULL,
+		&RumTrackIncompleteSplit,
+		RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.fix_incomplete_split", documentDBRumGucPrefix),
+		"Sets whether or not to fix incomplete splits",
+		NULL,
+		&RumFixIncompleteSplit,
+		RUM_DEFAULT_FIX_INCOMPLETE_SPLIT,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_ordered_operator_scans", documentDBRumGucPrefix),
+		"Sets whether or not to enable ordered operator scans",
+		NULL,
+		&RumEnableOrderedOperatorScans,
+		RUM_DEFAULT_ENABLE_ORDERED_OPERATOR_SCANS,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 

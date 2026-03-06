@@ -1,11 +1,11 @@
 # DocumentDB Gateway
 
-
 ## Overview
 
 The DocumentDB Gateway acts as a protocol translation layer between MongoDB clients and a PostgreSQL backend. It interprets MongoDB wire protocol, maps commands to PostgreSQL operations, and manages session handling, transactions, cursor-based paging, and TLS termination.
 
 ![DocumentDB Gateway](images/documentdb.gif)
+
 ---
 
 ## MongoDB Request Translation
@@ -69,23 +69,51 @@ Example: `insertMany` → PostgreSQL `BATCH INSERT`.
   - Reconnect logic
   - Transaction recovery via `RecoveryToken`
 
-
 ## Getting started with DocumentDB Gateway
 
 To get started with the DocumentDB Gateway, follow these steps:
-        
+
 1. **Build the Gateway**: Build the DocumentDB Gateway using the provided Dockerfile.
+
     ```bash
     docker build . -f .github/containers/Build-Ubuntu/Dockerfile_gateway -t <image-tag>
     ```
+
 2. **Run the Gateway**: Run the DocumentDB Gateway in a Docker container.
+
     ```bash
     docker run -dt -p 10260:10260 -e USERNAME=<username> -e PASSWORD=<password> <image-tag>
     ```
+
 3. **Connect to the Gateway**: Use Mongosh to connect to the DocumentDB Gateway.
+
     ```bash
     mongosh localhost:10260 -u <username> -p <password> \
         --authenticationMechanism SCRAM-SHA-256 \
         --tls \
         --tlsAllowInvalidCertificates
     ```
+
+## Project Structure
+
+`pg_documentdb_gw` is a Cargo workspace containing four crates:
+
+```text
+pg_documentdb_gw/
+├── Cargo.toml                  # Workspace root (dependencies, profiles, lints)
+├── SetupConfiguration.json     # Default gateway configuration for local runs
+│
+├── documentdb_gateway/         # Binary crate — the gateway entry point
+│   └── src/main.rs             # Tokio runtime setup, signal handling, TLS init
+│
+├── documentdb_gateway_core/    # Core library — TCP wire protocol + PostgreSQL bridge
+│
+├── documentdb_macros/          # Proc-macro crate for code generation
+│
+└── documentdb_tests/           # End-to-end test helpers
+    ├── src/
+    │   ├── commands/           # Per-command test validators (one file per command)
+    │   ├── test_setup/         # Test initialization, client creation, gateway lifecycle
+    │   └── utils/              # Shared test utilities
+    └── tests/                  # Integration test files
+```

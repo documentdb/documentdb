@@ -1,0 +1,14 @@
+# List of accepted licenses for this project
+accepted = [
+    "Apache-2.0",
+    "MIT",
+]
+
+# Ignore build and dev dependencies for cleaner output
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+ignore-transitive-dependencies = true
+
+# Workarounds for crates with unclear licenses
+[whoami]
+accepted = ["Apache-2.0", "MIT"]

@@ -895,6 +895,15 @@ SELECT * FROM documentdb_test_helpers.count_collection_indexes('db', 'background
  t                     |                1
 (2 rows)
 
+-- Disable cron jobs to prevent them from racing with manual build calls below.
+SELECT change_index_jobs_schema.change_index_jobs_status(false);
+psql:sql/create_indexes_background_core.sql:337: NOTICE:  Processing job_id: 2
+psql:sql/create_indexes_background_core.sql:337: NOTICE:  Processing job_id: 3
+ change_index_jobs_status 
+--------------------------
+ 
+(1 row)
+
 -- now call build once.
 -- it's okay to call both since exactly one of them will execute with the other NOOP due to the GUC
 CALL documentdb_api_internal.build_index_concurrently(1);
@@ -920,13 +929,28 @@ SELECT * FROM documentdb_test_helpers.count_collection_indexes('db', 'background
 (2 rows)
 
 -- now queue some reindex jobs and test index builds
-SELECT * FROM documentdb_api_internal.reindex_index_background('db', '{ "collection": "backgroundcoll1", "indexes": [ 32044, 32045 ] }');
-psql:sql/create_indexes_background_core.sql:347: ERROR:  reindex failed, index with id 32044 does not exist
-CONTEXT:  SQL statement "SELECT documentdb_api_internal.reindex_indexes_background_internal('db','BSONHEX4100000002636f6c6c656374696f6e00100000006261636b67726f756e64636f6c6c310004696e646578657300130000001030002c7d00001031002d7d00000000')"
+-- Dynamically look up the b_1 and c_1 index IDs for backgroundcoll1 (last two non-_id indexes by allocation order)
+SELECT index_id AS reindex_idx_1 FROM documentdb_api_catalog.collection_indexes
+  WHERE collection_id = (SELECT collection_id FROM documentdb_api_catalog.collections
+    WHERE database_name = 'db' AND collection_name = 'backgroundcoll1')
+  ORDER BY index_id DESC OFFSET 1 LIMIT 1 \gset
+SELECT index_id AS reindex_idx_2 FROM documentdb_api_catalog.collection_indexes
+  WHERE collection_id = (SELECT collection_id FROM documentdb_api_catalog.collections
+    WHERE database_name = 'db' AND collection_name = 'backgroundcoll1')
+  ORDER BY index_id DESC OFFSET 0 LIMIT 1 \gset
+SELECT * FROM documentdb_api_internal.reindex_index_background('db',
+  format('{ "collection": "backgroundcoll1", "indexes": [ %s, %s ] }', :reindex_idx_1, :reindex_idx_2)::documentdb_core.bson);
+                                                                                                                retval                                                                                                                | ok |                                                   requests                                                   
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----+--------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "0" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } } | t  | { "indexRequest" : { "cmdType" : "R", "ids" : [ { "$numberInt" : "42044" }, { "$numberInt" : "42045" } ] } }
+(1 row)
+
 SELECT index_cmd, cmd_type, index_id, index_cmd_status, collection_id FROM documentdb_api_catalog.documentdb_index_queue order by index_id;
- index_cmd | cmd_type | index_id | index_cmd_status | collection_id 
------------+----------+----------+------------------+---------------
-(0 rows)
+                              index_cmd                               | cmd_type | index_id | index_cmd_status | collection_id 
+----------------------------------------------------------------------+----------+----------+------------------+---------------
+ REINDEX INDEX CONCURRENTLY documentdb_data.documents_rum_index_42044 | R        |    42044 |                1 |         42007
+ REINDEX INDEX CONCURRENTLY documentdb_data.documents_rum_index_42045 | R        |    42045 |                1 |         42007
+(2 rows)
 
 CALL documentdb_api_internal.build_index_concurrently(1);
 --all indexes should be built and queue should be empty.
@@ -934,6 +958,15 @@ SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
  index_cmd | cmd_type | index_id | index_cmd_status | global_pid | start_time | collection_id | comment | attempt | update_time | user_oid | options 
 -----------+----------+----------+------------------+------------+------------+---------------+---------+---------+-------------+----------+---------
 (0 rows)
+
+-- Re-enable cron jobs for the schedule_background_index_build_jobs test below.
+SELECT change_index_jobs_schema.change_index_jobs_status(true);
+psql:sql/create_indexes_background_core.sql:368: NOTICE:  Processing job_id: 2
+psql:sql/create_indexes_background_core.sql:368: NOTICE:  Processing job_id: 3
+ change_index_jobs_status 
+--------------------------
+ 
+(1 row)
 
 ALTER SYSTEM SET documentdb.indexBuildsScheduledOnBgWorker = off;
 SELECT pg_reload_conf();

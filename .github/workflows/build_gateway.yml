@@ -1,12 +1,20 @@
 name: Build and push gateway images
 
 on:
+  workflow_call:
+    inputs:
+      push_images:
+        description: 'if true, push images to GHCR (default: false) otherwise only build'
+        default: false
+        required: false
+        type: boolean
   workflow_dispatch:
     inputs:
       push_images:
         description: 'if true, push images to GHCR (default: false) otherwise only build'
         default: false
         required: false
+        type: boolean
 
   push:
     branches:

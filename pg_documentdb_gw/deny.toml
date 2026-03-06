@@ -1,0 +1,19 @@
+[graph]
+all-features = false
+no-default-features = false
+
+[output]
+feature-depth = 1
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+allow-workspace = true
+# List of crates to deny
+deny = [
+    # allow mongodb rust driver only for integration testing
+    { crate = "mongodb", wrappers = ["documentdb_tests"] },
+]

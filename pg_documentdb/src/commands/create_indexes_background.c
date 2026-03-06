@@ -111,6 +111,7 @@ typedef enum BackgroundIndexRunStatus
 bool ShouldSetupIndexQueueInUdf = true;
 extern int MaxIndexBuildAttempts;
 extern int IndexQueueEvictionIntervalInSec;
+extern bool EnableDropInvalidIndexesOnReadOnly;
 
 /* Do not retry the index build if error code belongs to following list. */
 static const SkippableError SkippableErrors[] = {
@@ -1125,6 +1126,21 @@ setup_index_queue_table(PG_FUNCTION_ARGS)
 		CreateIndexQueueIfNotExists(includeOptions, includeDropCommandType);
 	}
 
+	if (majorVersion == DocDB_V0 &&
+		minorVersion == 110 &&
+		patchVersion == 0)
+	{
+		/* Grant access to index_queue to ApiReadWriteRole */
+		StringInfo grantStr = makeStringInfo();
+		bool isNull = false;
+		appendStringInfo(grantStr,
+						 "GRANT ALL ON TABLE %s TO %s",
+						 GetIndexQueueName(),
+						 ApiReadWriteRole);
+		ExtensionExecuteQueryViaSPI(grantStr->data, false, SPI_OK_UTILITY,
+									&isNull);
+	}
+
 	PG_RETURN_VOID();
 }
 
@@ -1799,9 +1815,10 @@ TryDropCollectionIndex(int indexId)
 			/* we might or might not have created the pg index .. */
 			bool missingOk = true;
 			bool concurrently = true;
+			bool forceReadWrite = EnableDropInvalidIndexesOnReadOnly;
 			DropPostgresIndex(indexDetails->collectionId, indexId,
 							  indexDetails->indexSpec.indexUnique,
-							  concurrently, missingOk);
+							  concurrently, forceReadWrite, missingOk);
 		}
 	}
 	PG_CATCH();
@@ -1892,6 +1909,22 @@ PruneSkippableIndexes(MemoryContext mcxt)
 
 	while (request != NULL)
 	{
+		CHECK_FOR_INTERRUPTS();
+		if (EnableDropInvalidIndexesOnReadOnly)
+		{
+			if (XactReadOnly)
+			{
+				/* This happens if default_transaction_readonly gets set to true
+				 * in this case, start a new transaction with read-write semantics
+				 * so that the drop index below can succeed.
+				 */
+				PopAllActiveSnapshots();
+				CommitTransactionCommand();
+				StartTransactionCommand();
+				SetGUCLocally("transaction_read_only", "false");
+			}
+		}
+
 		/* Acquire the lock to drop the index */
 		if (AcquireAdvisoryExclusiveSessionLockForCreateIndexBackground(
 				request->collectionId) != LOCKACQUIRE_NOT_AVAIL)

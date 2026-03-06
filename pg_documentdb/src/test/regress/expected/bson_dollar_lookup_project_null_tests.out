@@ -1,0 +1,78 @@
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
+SET documentdb.next_collection_id TO 99700;
+SET documentdb.next_collection_index_id TO 99700;
+-- Setup: create collections for lookup project null test
+SELECT documentdb_api.insert_one('db','lookup_null_test_src',' { "_id" : 1, "item_name" : {"a": "x"} }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Test 1: bson_dollar_lookup_project with explicit NULL elements in array should not crash
+-- This reproduces GitHub issue #465 where a LEFT JOIN with no match + sub-pipeline
+-- produces NULL array elements that cause a segfault in BsonLookUpProject.
+SELECT bson_dollar_lookup_project(
+    '{ "a": 1 }'::bson,
+    ARRAY[NULL::bson, '{ "b": 2 }'::bson],
+    'results'::text
+);
+                             bson_dollar_lookup_project                             
+------------------------------------------------------------------------------------
+ { "a" : { "$numberInt" : "1" }, "results" : [ { "b" : { "$numberInt" : "2" } } ] }
+(1 row)
+
+-- Test 2: bson_dollar_lookup_project with all-NULL array should return empty array
+SELECT bson_dollar_lookup_project(
+    '{ "a": 1 }'::bson,
+    ARRAY[NULL::bson, NULL::bson],
+    'results'::text
+);
+             bson_dollar_lookup_project             
+----------------------------------------------------
+ { "a" : { "$numberInt" : "1" }, "results" : [  ] }
+(1 row)
+
+-- Test 3: bson_dollar_lookup_project with no NULLs should work normally
+SELECT bson_dollar_lookup_project(
+    '{ "a": 1 }'::bson,
+    ARRAY['{ "b": 2 }'::bson, '{ "c": 3 }'::bson],
+    'results'::text
+);
+                                              bson_dollar_lookup_project                                              
+----------------------------------------------------------------------------------------------------------------------
+ { "a" : { "$numberInt" : "1" }, "results" : [ { "b" : { "$numberInt" : "2" } }, { "c" : { "$numberInt" : "3" } } ] }
+(1 row)
+
+-- Test 4: Full end-to-end scenario from the issue - LEFT JOIN with non-existent
+-- collection produces NULLs that flow through bson_dollar_add_fields into array_agg.
+WITH lookup_stage as (
+    WITH t1 AS (
+        SELECT document,
+               bson_dollar_lookup_extract_filter_expression(document, '{"setEqual" : "item_name"}') AS match,
+               'mdocs' AS name
+        FROM documentdb_api.collection('db', 'lookup_null_test_src')
+    )
+    SELECT t1.document, t2_agg.document as matched
+    FROM t1
+    LEFT JOIN LATERAL (
+        SELECT document FROM documentdb_api.collection('db', 'lookup_null_test_nonexistent') AS t2
+    ) t2_agg ON TRUE
+),
+subpipeline_stage1 as (
+    SELECT lookup_stage.document,
+           bson_dollar_add_fields(lookup_stage.matched, '{"new": "field"}') as matched
+    FROM lookup_stage
+)
+SELECT bson_dollar_lookup_project(
+    subpipeline_stage1.document,
+    COALESCE(array_agg(subpipeline_stage1.matched::documentdb_core.bson), '{}'::bson[]),
+    'matched_docs'::text
+)
+FROM subpipeline_stage1
+GROUP BY subpipeline_stage1.document;
+                               bson_dollar_lookup_project                               
+----------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "item_name" : { "a" : "x" }, "matched_docs" : [  ] }
+(1 row)
+

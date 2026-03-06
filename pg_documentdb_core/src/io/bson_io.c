@@ -435,18 +435,53 @@ BsonRepathAndBuildCore(PG_FUNCTION_ARGS, bool isBuildDocument)
 					 errdetail("Object keys should be text.")));
 		}
 
+		char *path;
+		int len;
 		if (types[i] != TEXTOID)
 		{
-			ereport(ERROR,
-					(errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-					 errmsg(
-						 "Invalid type: expected a text type field, but received %s instead",
-						 format_type_be(types[i]))));
+			if (isBuildDocument)
+			{
+				Oid outputFunction;
+				bool isVarlena;
+				getTypeOutputInfo(types[i], &outputFunction, &isVarlena);
+
+				FmgrInfo info;
+				LOCAL_FCINFO(innerFcinfo, 1);
+				fmgr_info(outputFunction, &info);
+
+				InitFunctionCallInfoData(*innerFcinfo, &info, 1, fcinfo->fncollation,
+										 fcinfo->context, fcinfo->resultinfo);
+				innerFcinfo->args->value = args[i];
+				innerFcinfo->args->isnull = nulls[i];
+
+				Datum result = FunctionCallInvoke(innerFcinfo);
+				if (innerFcinfo->isnull)
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							 errmsg(
+								 "Invalid type: expected a value coercible to text, but received null instead")));
+				}
+
+				path = DatumGetCString(result);
+				len = strlen(path);
+			}
+			else
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						 errmsg(
+							 "Invalid type: expected a text type field, but received %s instead",
+							 format_type_be(types[i]))));
+			}
+		}
+		else
+		{
+			text *pathText = DatumGetTextP(args[i]);
+			path = (char *) VARDATA_ANY(pathText);
+			len = VARSIZE_ANY_EXHDR(pathText);
 		}
 
-		text *pathText = DatumGetTextP(args[i]);
-		char *path = (char *) VARDATA_ANY(pathText);
-		int len = VARSIZE_ANY_EXHDR(pathText);
 		StringView pathView = { .length = len, .string = path };
 
 		if (pathView.length == 0)

@@ -1,0 +1,23 @@
+[package]
+name = "documentdb_gateway"
+description = "A gateway component for DocumentDB."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[package.metadata.deb]
+name = "documentdb_gateway"
+maintainer = "documentdb-packaging-maintainers@microsoft.com"
+depends = []
+assets = [
+ ["target/release-with-symbols/documentdb_gateway", "usr/bin/", "755"],
+]
+
+[dependencies]
+documentdb_gateway_core.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

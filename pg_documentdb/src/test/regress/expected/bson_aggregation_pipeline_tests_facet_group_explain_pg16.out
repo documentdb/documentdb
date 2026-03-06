@@ -98,6 +98,21 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                      Index Cond: (collection.shard_key_value = '6700'::bigint)
 (8 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group_exp", "pipeline": [ { "$group": { "_id": 1, "c": { "$max": 10 }}}]}');
+                                                                                                                             QUERY PLAN                                                                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_0
+   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
+   ->  GroupAggregate
+         Output: '_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, documentdb_api_internal.bsonmaxwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "10" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)
+         ->  Bitmap Heap Scan on documentdb_data.documents_6700 collection
+               Recheck Cond: (collection.shard_key_value = '6700'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '6700'::bigint)
+(8 rows)
+
+SET documentdb.enableNewMinMaxAccumulators TO off;
 -- test where only some are non-const
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group_exp", "pipeline": [ { "$group": { "_id": 1, "c": { "$max": "$a" }}}]}');
                                                                                                                            QUERY PLAN                                                                                                                           
@@ -113,6 +128,22 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                      Index Cond: (collection.shard_key_value = '6700'::bigint)
 (9 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group_exp", "pipeline": [ { "$group": { "_id": 1, "c": { "$max": "$a" }}}]}');
+                                                                                                                       QUERY PLAN                                                                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_0
+   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
+   ->  GroupAggregate
+         Output: '_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, documentdb_api_internal.bsonmaxwithexpr(collection.document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)
+         ->  Bitmap Heap Scan on documentdb_data.documents_6700 collection
+               Output: collection.shard_key_value, collection.object_id, collection.document
+               Recheck Cond: (collection.shard_key_value = '6700'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '6700'::bigint)
+(9 rows)
+
+SET documentdb.enableNewMinMaxAccumulators TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group_exp", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": 1 }}}]}');
                                                                                                                       QUERY PLAN                                                                                                                      
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -150,3 +181,23 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                            Index Cond: (collection.shard_key_value = '6700'::bigint)
 (13 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group_exp", "pipeline": [ { "$group": { "_id": "$a", "c": { "$max": "$b" }}}]}');
+                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                       
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_0
+   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
+   ->  GroupAggregate
+         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'c'::text, documentdb_api_internal.bsonmaxwithexpr(collection.document, '{ "" : "$b" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)
+         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Sort
+               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
+               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Bitmap Heap Scan on documentdb_data.documents_6700 collection
+                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Recheck Cond: (collection.shard_key_value = '6700'::bigint)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection.shard_key_value = '6700'::bigint)
+(13 rows)
+
+SET documentdb.enableNewMinMaxAccumulators TO off;

@@ -4,6 +4,17 @@ concurrency:
   cancel-in-progress: true
 
 on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'DocumentDB version to build'
+        required: false
+        type: string
+      use_full_matrix:
+        description: 'Use full build matrix (all OS/PG combinations)'
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
   push:
     branches:
@@ -24,7 +35,8 @@ jobs:
     if: github.event.pull_request.draft == false
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(github.event_name == 'pull_request' && '{"include":[{"os":"rhel9","arch":"amd64","runner":"ubuntu-24.04","pg_version":"17"},{"os":"rhel9","arch":"arm64","runner":"ubuntu-24.04-arm","pg_version":"18"}]}' || '{"os":["rhel8","rhel9"],"arch":["amd64","arm64"],"include":[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}],"pg_version":["16","17","18"]}') }}
+      # Use reduced matrix for PRs, full matrix for pushes/releases
+      matrix: ${{ fromJson((github.event_name == 'pull_request' && !inputs.use_full_matrix) && '{"include":[{"os":"rhel9","arch":"amd64","runner":"ubuntu-24.04","pg_version":"17"},{"os":"rhel9","arch":"arm64","runner":"ubuntu-24.04-arm","pg_version":"18"}]}' || '{"os":["rhel8","rhel9"],"arch":["amd64","arm64"],"include":[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}],"pg_version":["16","17","18"]}') }}
 
     steps:
       - name: Checkout repository
@@ -33,9 +45,14 @@ jobs:
       - name: Extract and Format Default Version
         id: extract_version
         run: |
-          DOCUMENTDB_VERSION=$(grep -E "^default_version" pg_documentdb_core/documentdb_core.control | sed -E "s/.*'([0-9]+\.[0-9]+-[0-9]+)'.*/\1/")
-          DOCUMENTDB_VERSION=$(echo $DOCUMENTDB_VERSION | sed "s/-/./g")
-          echo "Extracted Version: $DOCUMENTDB_VERSION"
+          if [ -n "${{ inputs.version }}" ]; then
+            DOCUMENTDB_VERSION="${{ inputs.version }}"
+            echo "Using provided version: $DOCUMENTDB_VERSION"
+          else
+            DOCUMENTDB_VERSION=$(grep -E "^default_version" pg_documentdb_core/documentdb_core.control | sed -E "s/.*'([0-9]+\.[0-9]+-[0-9]+)'.*/\1/")
+            DOCUMENTDB_VERSION=$(echo $DOCUMENTDB_VERSION | sed "s/-/./g")
+            echo "Extracted Version: $DOCUMENTDB_VERSION"
+          fi
           echo "DOCUMENTDB_VERSION=$DOCUMENTDB_VERSION" >> $GITHUB_ENV
 
       - name: Build RPM Package
@@ -45,7 +62,7 @@ jobs:
       - name: Upload RPM Package as Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os }}-${{ matrix.arch }}-pg${{ matrix.pg_version }}-documentdb-${{ env.DOCUMENTDB_VERSION }}
+          name: rpm-${{ matrix.os }}-${{ matrix.arch }}-pg${{ matrix.pg_version }}-${{ env.DOCUMENTDB_VERSION }}
           path: |
             packaging/*.rpm
           retention-days: 7

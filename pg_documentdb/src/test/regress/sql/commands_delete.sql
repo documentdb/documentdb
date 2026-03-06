@@ -334,3 +334,20 @@ SELECT documentdb_api.delete(
         "ordered": false
      }'
 );
+
+
+-- Check for index pushdown
+BEGIN;
+select  documentdb_api.insert('datab', '{"insert":"deleteIndex", "documents":[{"_id":1}]}');
+select  documentdb_api.insert('datab', '{"insert":"deleteIndex", "documents":[{"_id":2}]}');
+SET LOCAL enable_seqscan TO OFF;
+select  documentdb_api.insert('datab', '{"insert":"deleteIndex", "documents":[{"_id":3}]}');
+
+select collection_id  from documentdb_api_catalog.collections where collection_name = 'deleteIndex';
+-- explain plan should show index scan with delete pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_2505 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}', NULL, NULL::text) ;
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_2505 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gt" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_2505 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_2505 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte" : 10}}', NULL, NULL::text);
+EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_2505 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte" : 10}}', NULL, NULL::text);
+COMMIT;

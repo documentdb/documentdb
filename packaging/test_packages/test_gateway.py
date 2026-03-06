@@ -1,10 +1,16 @@
+import argparse
 import pymongo
 
 from pymongo import MongoClient
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--username", required=True)
+parser.add_argument("--password", required=True)
+args = parser.parse_args()
+
 # Create a MongoDB client and open a connection to DocumentDB
 client = pymongo.MongoClient(
-    "mongodb://cloudsa:123456@localhost:10260/?tls=true&tlsAllowInvalidCertificates=true"
+    f"mongodb://{args.username}:{args.password}@localhost:10260/?tls=true&tlsAllowInvalidCertificates=true"
 )
 
 

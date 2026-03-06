@@ -766,3 +766,96 @@ SELECT * FROM bson_dollar_project('{}', '{"result": {"$convert": {"input": "inva
 
 -- Test invalid boolean conversion with onError
 SELECT * FROM bson_dollar_project('{}', '{"result": {"$convert": {"input": "maybe_true", "to": "bool", "onError": false}}}');
+
+-- $makeArray: wraps non-array values in an array
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": 1}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": "hello"}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": true}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": {"a": 1}}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": {"$numberDouble": "3.14"}}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": {"$numberLong": "100"}}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": {"$numberDecimal": "99.99"}}}');
+
+-- $makeArray: returns array as-is if input is already an array
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": [1, 2, 3]}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": []}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": [{"a": 1}, {"b": 2}]}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": [[1, 2], [3, 4]]}}');
+
+-- $makeArray: returns empty array for null/undefined
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": null}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": "$missingField"}}');
+
+-- $makeArray: works with expressions
+SELECT * FROM bson_dollar_project('{"a": 5}', '{"result": {"$makeArray": "$a"}}');
+SELECT * FROM bson_dollar_project('{"a": 5}', '{"result": {"$makeArray": {"$add": ["$a", 10]}}}');
+SELECT * FROM bson_dollar_project('{"a": [1, 2]}', '{"result": {"$makeArray": "$a"}}');
+SELECT * FROM bson_dollar_project('{"b": "text"}', '{"result": {"$makeArray": "$b"}}');
+
+-- $makeArray: works with nested expressions
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": {"$literal": "value"}}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": {"$cond": [true, "yes", "no"]}}}');
+
+-- $makeArray: with objectId, date, binary data
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": {"$oid": "507f1f77bcf86cd799439011"}}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": {"$date": "2024-05-31T18:50:55.000Z"}}}');
+SELECT * FROM bson_dollar_project('{}', '{"result": {"$makeArray": {"$binary": {"base64": "aGVsbG8=", "subType": "00"}}}}');
+
+-- $makeArray: verify result is writable in aggregation pipeline context
+SELECT * from documentdb_api.insert_one('db', 'makeArrayColl', '{"_id": 1, "value": 42}');
+SELECT * from documentdb_api.insert_one('db', 'makeArrayColl', '{"_id": 2, "value": "test"}');
+SELECT * from documentdb_api.insert_one('db', 'makeArrayColl', '{"_id": 3, "value": [1, 2, 3]}');
+SELECT * from documentdb_api.insert_one('db', 'makeArrayColl', '{"_id": 4}');
+SELECT bson_dollar_project(document, '{"_id": 1, "result": {"$makeArray": "$value"}}') FROM documentdb_api.collection('db', 'makeArrayColl') ORDER BY document;
+
+-- $makeArray: test in aggregation pipeline with $group
+SELECT document FROM bson_aggregation_pipeline('db', '{"aggregate": "makeArrayColl", "pipeline": [{"$group": {"_id": {"$makeArray": "$value"}, "count": {"$sum": 1}}}], "cursor": {}}');
+
+-- $makeArray: test in aggregation pipeline with $project
+SELECT document FROM bson_aggregation_pipeline('db', '{"aggregate": "makeArrayColl", "pipeline": [{"$project": {"result": {"$makeArray": "$value"}}}], "cursor": {}}');
+
+-- $makeArray: test in aggregation pipeline with $match (using null/undefined)
+SELECT document FROM bson_aggregation_pipeline('db', '{"aggregate": "makeArrayColl", "pipeline": [{"$project": {"result": {"$makeArray": null}}}, {"$limit": 1}], "cursor": {}}');
+
+-- $makeArray: test in aggregation pipeline with $addFields
+SELECT document FROM bson_aggregation_pipeline('db', '{"aggregate": "makeArrayColl", "pipeline": [{"$addFields": {"wrapped": {"$makeArray": "$_id"}}}, {"$sort": {"_id": 1}}], "cursor": {}}');
+
+-- $makeArray: test in aggregation pipeline with expressions in $group
+SELECT * from documentdb_api.insert_one('db', 'countcoll', '{"_id": 1, "value": 5}');
+SELECT * from documentdb_api.insert_one('db', 'countcoll', '{"_id": 2, "value": 10}');
+SELECT * from documentdb_api.insert_one('db', 'countcoll', '{"_id": 3, "value": 15}');
+SELECT document FROM bson_aggregation_pipeline('db', '{"aggregate": "countcoll", "pipeline": [{"$match": {"value": {"$gt": 0}}}, {"$group": {"_id": {"$makeArray": "$value"}, "n": {"$sum": 1}}}], "cursor": {}}');
+
+-- $makeArray: test with $replaceRoot
+SELECT document FROM bson_aggregation_pipeline('db', '{"aggregate": "makeArrayColl", "pipeline": [{"$replaceRoot": {"newRoot": {"items": {"$makeArray": "$value"}}}}], "cursor": {}}');
+
+-- $makeArray: test with $bucket (wrapping boundary values)
+SELECT document FROM bson_aggregation_pipeline('db', '{"aggregate": "countcoll", "pipeline": [{"$bucket": {"groupBy": "$value", "boundaries": [0, 10, 20], "output": {"ids": {"$push": {"$makeArray": "$_id"}}}}}], "cursor": {}}');
+
+-- $makeArray: test with $facet (multiple pipelines)
+SELECT document FROM bson_aggregation_pipeline('db', '{"aggregate": "countcoll", "pipeline": [{"$facet": {"wrapped": [{"$project": {"result": {"$makeArray": "$value"}}}], "direct": [{"$project": {"value": 1}}]}}], "cursor": {}}');
+
+-- $makeArray: test with $unwind after wrapping
+SELECT document FROM bson_aggregation_pipeline('db', '{"aggregate": "countcoll", "pipeline": [{"$project": {"wrapped": {"$makeArray": "$value"}}}, {"$unwind": "$wrapped"}], "cursor": {}}');
+
+-- $makeArray: test with nested expressions in $project
+SELECT document FROM bson_aggregation_pipeline('db', '{"aggregate": "countcoll", "pipeline": [{"$project": {"result": {"$makeArray": {"$multiply": ["$value", 2]}}}}, {"$sort": {"_id": 1}}], "cursor": {}}');
+
+-- $makeArray: test with $cond inside
+SELECT document FROM bson_aggregation_pipeline('db', '{"aggregate": "countcoll", "pipeline": [{"$project": {"result": {"$makeArray": {"$cond": [{"$gt": ["$value", 10]}, "high", "low"]}}}}, {"$sort": {"_id": 1}}], "cursor": {}}');
+
+-- $makeArray: test with arrays in collection
+SELECT * from documentdb_api.insert_one('db', 'arrayTestColl', '{"_id": 1, "items": [1, 2, 3]}');
+SELECT * from documentdb_api.insert_one('db', 'arrayTestColl', '{"_id": 2, "items": []}');
+SELECT * from documentdb_api.insert_one('db', 'arrayTestColl', '{"_id": 3, "items": "single"}');
+SELECT document FROM bson_aggregation_pipeline('db', '{"aggregate": "arrayTestColl", "pipeline": [{"$project": {"wrapped": {"$makeArray": "$items"}}}, {"$sort": {"_id": 1}}], "cursor": {}}');
+
+-- $makeArray: test with missing field (should return empty array)
+SELECT document FROM bson_aggregation_pipeline('db', '{"aggregate": "countcoll", "pipeline": [{"$project": {"result": {"$makeArray": "$nonExistentField"}}}, {"$limit": 1}], "cursor": {}}');
+
+-- $makeArray: test with complex nested document
+SELECT * from documentdb_api.insert_one('db', 'nestedColl', '{"_id": 1, "data": {"nested": {"value": 42}}}');
+SELECT document FROM bson_aggregation_pipeline('db', '{"aggregate": "nestedColl", "pipeline": [{"$project": {"result": {"$makeArray": "$data"}}}], "cursor": {}}');
+
+-- $makeArray: test in $sortByCount
+SELECT document FROM bson_aggregation_pipeline('db', '{"aggregate": "countcoll", "pipeline": [{"$sortByCount": {"$makeArray": "$value"}}], "cursor": {}}');

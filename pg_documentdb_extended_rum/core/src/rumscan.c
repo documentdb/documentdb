@@ -381,6 +381,12 @@ rumFillScanKey(RumScanOpaque so, OffsetNumber attnum,
 			{
 				case GIN_SEARCH_MODE_INCLUDE_EMPTY:
 				{
+					if (rumstate->rumConfig[attnum - 1].skipGenerateEmptyEntries)
+					{
+						ereport(ERROR, (errmsg(
+											"cannot use INCLUDE_EMPTY search mode when index is built with skipGenerateEmptyEntries option")));
+					}
+
 					queryCategory = RUM_CAT_EMPTY_ITEM;
 					break;
 				}
@@ -526,24 +532,28 @@ freeScanKeys(RumScanOpaque so)
 
 
 static void
-initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch, bool hasOrdering, bool
-			hasParallel)
+initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch, bool hasOrdering,
+			bool hasParallel)
 {
 	Datum *queryValues;
 	int32 nQueryValues = 0;
 	bool *partial_matches = NULL;
 	Pointer *extra_data = NULL;
 	bool *nullFlags = NULL;
+	bool setSearchMode = false;
 	int32 searchMode = GIN_SEARCH_MODE_DEFAULT;
+	bool indexSupportsOrdering = so->rumstate.canOrdering[skey->sk_attno - 1] &&
+								 so->rumstate.orderingFn[skey->sk_attno - 1].fn_nargs ==
+								 4;
 
 	/* Only apply the search mode when it's safe */
 	if ((hasOrdering || RumForceOrderedIndexScan || so->projectIndexTupleData ||
-		 hasParallel) &&
-		so->rumstate.canOrdering[skey->sk_attno - 1] &&
-		so->rumstate.orderingFn[skey->sk_attno - 1].fn_nargs == 4)
+		 hasParallel) && indexSupportsOrdering)
 	{
 		/* Let extractQuery know we're doing an ordered scan */
-		searchMode = GIN_SEARCH_MODE_ALL;
+		setSearchMode = true;
+		searchMode = ScanDirectionIsBackward(so->orderScanDirection) ?
+					 RUM_SEARCH_MODE_ORDERED_REVERSE : RUM_SEARCH_MODE_ORDERED;
 	}
 
 	/*
@@ -579,6 +589,46 @@ initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch, bool hasOrder
 	 * particular we don't allow extractQueryFn to select
 	 * RUM_SEARCH_MODE_EVERYTHING.
 	 */
+	if (searchMode == RUM_SEARCH_MODE_ORDERED ||
+		searchMode == RUM_SEARCH_MODE_ORDERED_REVERSE)
+	{
+		if (!indexSupportsOrdering)
+		{
+			ereport(ERROR, (errmsg(
+								"index does not support ordered scans, but ordering was requested")));
+		}
+
+		if (!setSearchMode && !RumEnableOrderedOperatorScans)
+		{
+			ereport(ERROR, (errmsg(
+								"operator class requested ordered scans, but index disallows it")));
+		}
+
+		if (searchMode == RUM_SEARCH_MODE_ORDERED)
+		{
+			if (ScanDirectionIsBackward(so->orderScanDirection))
+			{
+				ereport(ERROR, (errmsg(
+									"Scan has backward scan direction but operator class requested forward ordering")));
+			}
+
+			so->orderScanDirection = ForwardScanDirection;
+		}
+		else if (searchMode == RUM_SEARCH_MODE_ORDERED_REVERSE)
+		{
+			if (ScanDirectionIsForward(so->orderScanDirection))
+			{
+				ereport(ERROR, (errmsg(
+									"Scan has forward scan direction but operator class requested backward ordering")));
+			}
+
+			so->orderScanDirection = BackwardScanDirection;
+		}
+
+		searchMode = GIN_SEARCH_MODE_DEFAULT;
+		so->willSort = true;
+	}
+
 	if (searchMode < GIN_SEARCH_MODE_DEFAULT ||
 		searchMode > GIN_SEARCH_MODE_ALL)
 	{

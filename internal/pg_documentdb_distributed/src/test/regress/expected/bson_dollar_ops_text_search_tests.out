@@ -467,6 +467,14 @@ SELECT BSONMAX(bson_expression_get(document, '{ "": "$score" }')), bson_expressi
  { "" : { "$numberInt" : "200" } } | { "" : { "$numberDouble" : "1.0" } }
 (1 row)
 
+-- BSONMAXWITHEXPR parity test for text search group
+WITH r1 AS (SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana" } }' )
+SELECT documentdb_api_internal.BSONMAXWITHEXPR(document, '{ "": "$score" }', NULL, ''), bson_expression_get(document, '{ "": { "$meta": "textScore" } }') FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');
+          bsonmaxwithexpr          |         bson_expression_get          
+---------------------------------------------------------------------
+ { "" : { "$numberInt" : "200" } } | { "" : { "$numberDouble" : "1.0" } }
+(1 row)
+
 -- scenarios without $text should return 'query requires text score metadata, but it is not available'
 SELECT bson_dollar_project(document, '{ "_id": 1, "headline": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "score": { "$exists": true } }';
 ERROR:  The query needs text score metadata, but this required information is currently unavailable.
@@ -482,6 +490,11 @@ ERROR:  The query needs text score metadata, but this required information is cu
 CONTEXT:  while executing command on localhost:58070
 WITH r1 AS (SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "score": { "$exists": true } }' )
 SELECT BSONMAX(bson_expression_get(document, '{ "": "$score" }')) FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');
+ERROR:  The query needs text score metadata, but this required information is currently unavailable.
+CONTEXT:  while executing command on localhost:58070
+-- BSONMAXWITHEXPR parity test (error case - no text query)
+WITH r1 AS (SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "score": { "$exists": true } }' )
+SELECT documentdb_api_internal.BSONMAXWITHEXPR(document, '{ "": "$score" }', NULL, '') FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');
 ERROR:  The query needs text score metadata, but this required information is currently unavailable.
 CONTEXT:  while executing command on localhost:58070
 -- test with custom weights.

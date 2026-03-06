@@ -263,6 +263,7 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 
 	/* Find/Aggregate using collation */
 	[FEATURE_COLLATION] = "collation",
+	[FEATURE_COLLATION_CREATE_INDEX] = "collation_with_indexes",
 
 	/* Feature Mapping region - Commands */
 	[FEATURE_COMMAND_AGG_CURSOR_FIRST_PAGE] = "command_agg_cursor_first_page",
@@ -346,6 +347,7 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_CURSOR_TYPE_STREAMING] = "cursor_type_streaming",
 	[FEATURE_CURSOR_TYPE_TAILABLE] = "cursor_type_tailable",
 	[FEATURE_CURSOR_CAN_USE_PRIMARY_KEY_SCAN] = "cursor_can_use_primary_key_scan",
+	[FEATURE_CURSOR_CAN_USE_FAST_BITMAP] = "cursor_can_use_fast_bitmap",
 
 	/* Feature mapping region - ExternalIdentityProvider */
 	[FEATURE_EXTERNAL_IDENTITY_USER_CREATE] = "external_identity_user_create",
@@ -472,11 +474,6 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_UPDATE_OPERATOR_SET] = "update_operator_set",
 	[FEATURE_UPDATE_OPERATOR_SET_ON_INSERT] = "update_operator_set_on_insert",
 	[FEATURE_UPDATE_OPERATOR_UNSET] = "update_operator_unset",
-
-	/* Feature usage stats */
-	[FEATURE_USAGE_TTL_PURGER_CALLS] = "ttl_purger_calls",
-	[FEATURE_USAGE_TTL_SATURATED_BATCHES] = "ttl_saturated_batches",
-	[FEATURE_USAGE_TTL_SLOW_BATCHES] = "ttl_slow_batches",
 
 	/* Feature mapping region - User CRUD*/
 	[FEATURE_USER_CREATE] = "user_create",

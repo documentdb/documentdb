@@ -88,6 +88,12 @@ TryCreatePointReadPlan(Query *query)
 	stmt->commandType = query->commandType;
 	stmt->canSetTag = true;
 
+#if PG_VERSION_NUM >= 180000
+	Bitmapset *unprunableRelIds = NULL;
+	unprunableRelIds = bms_add_member(unprunableRelIds, 1);
+	stmt->unprunableRelids = unprunableRelIds;
+#endif
+
 	stmt->rtable = query->rtable;
 	stmt->jitFlags = 0;
 

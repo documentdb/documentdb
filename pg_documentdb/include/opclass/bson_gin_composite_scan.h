@@ -18,15 +18,18 @@ bool GetEqualityRangePredicatesForIndexPath(struct IndexPath *indexPath, void *o
 											bool equalityPrefixes[INDEX_MAX_KEYS], bool
 											nonEqualityPrefixes[INDEX_MAX_KEYS]);
 bool CompositePathHasFirstColumnSpecified(IndexPath *indexPath);
-char *SerializeBoundsStringForExplain(bytea * entry, void *extraData, PG_FUNCTION_ARGS);
+char *SerializeBoundsStringForExplain(bytea * entry, void *extraData, PG_FUNCTION_ARGS,
+									  List **rawPathBounds);
 
 Datum FormCompositeDatumFromQuals(List *indexQuals, List *indexOrderBy, bool isMultiKey,
-								  bool hasCorrelatedReducedTerm);
+								  bool hasCorrelatedReducedTerm,
+								  bool supportsOperatorOrderedScans);
 char * SerializeCompositeIndexKeyForExplain(bytea *entry);
 bool ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey
 									targetScanKey, bool hasArrayKeys, bool
 									hasCorrelatedReducedTerms,
-									bool hasOrderBys, ScanDirection scanDirection);
+									bool hasOrderBys, ScanDirection scanDirection,
+									bool supportsOrderedOperatorScans);
 ScanDirection DetermineCompositeScanDirection(bytea *compositeScanOptions,
 											  ScanKey orderbys, int norderbys);
  #endif

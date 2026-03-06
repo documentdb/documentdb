@@ -22,6 +22,7 @@ typedef void (*TryExplainIndexFunc)(struct IndexScanDescData *scan, struct
 
 typedef bool (*GetMultikeyStatusFunc)(Relation indexRelation);
 typedef bool (*GetTruncationStatusFunc)(Relation indexRelation);
+typedef bool (*CanOrderInIndexScan)(struct IndexScanDescData *scan);
 
 /*
  * Data structure for an alternative index acess method for indexing bosn.
@@ -30,11 +31,8 @@ typedef bool (*GetTruncationStatusFunc)(Relation indexRelation);
 typedef struct
 {
 	bool is_single_path_index_supported;
-	bool is_unique_index_supported;
 	bool is_wild_card_supported;
-	bool is_composite_index_supported;
-	bool is_text_index_supported;
-	bool is_hashed_index_supported;
+	bool is_wild_card_projection_supported;
 	bool is_order_by_supported;
 	bool is_backwards_scan_supported;
 	bool is_index_only_scan_supported;
@@ -63,6 +61,14 @@ typedef struct
 
 	/* Optional function to that returns the truncation status of an index */
 	GetTruncationStatusFunc get_truncation_status;
+
+	/* An override function that helps determine whether or not the index scan
+	 * can support ordering with order by. An extension method for the indexamroutine
+	 */
+	CanOrderInIndexScan can_order_in_index_scans;
+
+	/* Indicates whether the index supports ordered operator scans */
+	bool supports_ordered_operator_scans;
 } BsonIndexAmEntry;
 
 /*

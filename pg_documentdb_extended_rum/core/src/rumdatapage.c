@@ -12,6 +12,7 @@
  */
 
 #include "postgres.h"
+#include "miscadmin.h"
 
 #include "pg_documentdb_rum.h"
 
@@ -1201,6 +1202,12 @@ dataSplitPageLeaf(RumBtree btree, Buffer lbuf, Buffer rbuf,
 		RumDataPageEntryRevive(rPage);
 	}
 
+	if (RumEnableNewBulkDelete)
+	{
+		RumPageGetCycleId(newlPage) = rum_vacuum_get_cycleId(btree->index);
+		RumPageGetCycleId(rPage) = RumPageGetCycleId(newlPage);
+	}
+
 	/* Calculate the whole size we're going to place */
 	copyPtr = RumDataPageGetData(lpageCopy);
 	RumItemSetMin(&item);
@@ -1606,6 +1613,72 @@ rumDataFillBtreeForIncompleteSplit(RumBtree btree, RumBtreeStack *stack, Buffer 
 	}
 
 	PostingItemSetBlockNumber(&btree->pitem, BufferGetBlockNumber(buffer));
+}
+
+
+/*
+ * Creates new posting tree with one page, containing the given TIDs.
+ * Returns the page number (which will be the root of this posting tree).
+ *
+ * items[] must be in sorted order with no duplicates.
+ */
+BlockNumber
+rumCreatePostingTree(RumState *rumstate, OffsetNumber attnum, Relation index,
+					 RumItem *items, uint32 nitems)
+{
+	BlockNumber blkno;
+	Buffer buffer = RumNewBuffer(index);
+	Page page;
+	int i;
+	Pointer ptr;
+	ItemPointerData prev_iptr = { { 0, 0 }, 0 };
+	GenericXLogState *state = NULL;
+
+	if (rumstate->isBuild)
+	{
+		page = BufferGetPage(buffer);
+		START_CRIT_SECTION();
+	}
+	else
+	{
+		state = GenericXLogStart(index);
+		page = GenericXLogRegisterBuffer(state, buffer, GENERIC_XLOG_FULL_IMAGE);
+	}
+	RumInitPage(page, RUM_DATA | RUM_LEAF, BufferGetPageSize(buffer));
+
+	blkno = BufferGetBlockNumber(buffer);
+
+	RumDataPageMaxOff(page) = nitems;
+	ptr = RumDataPageGetData(page);
+	for (i = 0; i < nitems; i++)
+	{
+		if (i > 0)
+		{
+			prev_iptr = items[i - 1].iptr;
+		}
+		ptr = rumPlaceToDataPageLeaf(ptr, attnum, &items[i],
+									 &prev_iptr, rumstate);
+	}
+	Assert(RumDataPageFreeSpacePre(page, ptr) >= 0);
+	updateItemIndexes(page, attnum, rumstate);
+
+	if (rumstate->isBuild)
+	{
+		MarkBufferDirty(buffer);
+	}
+	else
+	{
+		GenericXLogFinish(state);
+	}
+
+	UnlockReleaseBuffer(buffer);
+
+	if (rumstate->isBuild)
+	{
+		END_CRIT_SECTION();
+	}
+
+	return blkno;
 }
 
 

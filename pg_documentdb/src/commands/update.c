@@ -408,12 +408,14 @@ static inline void ReportUpdateFeatureUsage(int batchSize);
 
 PG_FUNCTION_INFO_V1(command_update_bulk);
 PG_FUNCTION_INFO_V1(command_update);
+PG_FUNCTION_INFO_V1(command_update_txn_proc);
 PG_FUNCTION_INFO_V1(command_update_one);
 PG_FUNCTION_INFO_V1(command_update_worker);
 
 
 /*
  * A wire protocol bulk update on a collection (non-transactional)
+ * this is same as command_update but using procedure
  */
 Datum
 command_update_bulk(PG_FUNCTION_ARGS)
@@ -465,6 +467,55 @@ command_update_bulk(PG_FUNCTION_ARGS)
 	HeapTuple resultTuple = PerformUpdateCore(databaseNameDatum, updateSpec, updateDocs,
 											  transactionId, resultTupDesc,
 											  isTransactional, stableContext);
+	PG_RETURN_DATUM(HeapTupleGetDatum(resultTuple));
+}
+
+
+/*
+ * command_update_txn_proc handles the update command invocation through a PostgreSQL procedure.
+ * this function behaves the same way as command_update.
+ */
+Datum
+command_update_txn_proc(PG_FUNCTION_ARGS)
+{
+	if (PG_ARGISNULL(0))
+	{
+		ereport(ERROR, (errmsg("database name must not be NULL")));
+	}
+
+	if (PG_ARGISNULL(1))
+	{
+		ereport(ERROR, (errmsg("update document cannot be NULL")));
+	}
+
+	Datum databaseNameDatum = PG_GETARG_DATUM(0);
+	pgbson *updateSpec = PG_GETARG_PGBSON(1);
+
+	pgbsonsequence *updateDocs = PG_GETARG_MAYBE_NULL_PGBSON_SEQUENCE(2);
+
+	text *transactionId = NULL;
+	if (!PG_ARGISNULL(3))
+	{
+		transactionId = PG_GETARG_TEXT_P(3);
+	}
+
+	ReportFeatureUsage(FEATURE_COMMAND_UPDATE);
+
+	/* fetch TupleDesc for return value, not interested in resultTypeId */
+	Oid *resultTypeId = NULL;
+	TupleDesc resultTupDesc;
+	TypeFuncClass resultTypeClass =
+		get_call_result_type(fcinfo, resultTypeId, &resultTupDesc);
+
+	if (resultTypeClass != TYPEFUNC_COMPOSITE)
+	{
+		ereport(ERROR, (errmsg("return type must be a row type")));
+	}
+
+	bool isTransactional = true;
+	HeapTuple resultTuple = PerformUpdateCore(databaseNameDatum, updateSpec, updateDocs,
+											  transactionId, resultTupDesc,
+											  isTransactional, CurrentMemoryContext);
 	PG_RETURN_DATUM(HeapTupleGetDatum(resultTuple));
 }
 
@@ -1211,6 +1262,11 @@ DoSingleUpdate(MongoCollection *collection, UpdateSpec *updateSpec, text *transa
 		RollbackAndReleaseCurrentSubTransaction();
 		MemoryContextSwitchTo(oldContext);
 		CurrentResourceOwner = oldOwner;
+
+		if (IsOperatorInterventionError(errorData))
+		{
+			ReThrowError(errorData);
+		}
 
 		MemoryContextSwitchTo(batchResult->resultMemoryContext);
 		batchResult->writeErrors = lappend(batchResult->writeErrors,

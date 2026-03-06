@@ -69,12 +69,7 @@ pg_config_path=$pgBinDir/pg_config
 
 # Install cargo-pgrx
 # use cargo toml-cli to parse the toml file and get the pgrx version.
-if command -v toml > /dev/null; then
-    echo "toml-cli is already installed."
-else
-    echo "Installing toml-cli..."
-    cargo install toml-cli
-fi
+# toml-cli is installed via [tools] section in rust-toolchain.toml
 
 # Get pgrx version from Cargo.toml using toml-cli
 pgrxVersionRequired=$(toml get $SOURCEDIR/Cargo.toml dependencies.pgrx.version 2>/dev/null | tr -d '"' | sed 's/=//')

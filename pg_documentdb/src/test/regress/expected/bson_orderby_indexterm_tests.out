@@ -1,0 +1,92 @@
+SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_api_internal,documentdb_core;
+SET documentdb.next_collection_id TO 900;
+SET documentdb.next_collection_index_id TO 900;
+SELECT bsonindexterm_to_bson(bson_orderby_index('{ "a": 1 }', '{ "a": 1 }'));
+                        bsonindexterm_to_bson                        
+---------------------------------------------------------------------
+ { "$" : { "$numberInt" : "1" }, "$flags" : { "$numberInt" : "5" } }
+(1 row)
+
+SELECT bsonindexterm_to_bson(bson_orderby_index('{ "a": null }', '{ "a": 1 }'));
+               bsonindexterm_to_bson               
+---------------------------------------------------
+ { "$" : null, "$flags" : { "$numberInt" : "5" } }
+(1 row)
+
+SELECT bsonindexterm_to_bson(bson_orderby_index('{ }', '{ "a": 1 }'));
+                        bsonindexterm_to_bson                         
+----------------------------------------------------------------------
+ { "$" : { "$undefined" : true }, "$flags" : { "$numberInt" : "8" } }
+(1 row)
+
+SELECT bsonindexterm_to_bson(bson_orderby_index('{ "a": [ 1, 2, 3 ] }', '{ "a": 1 }'));
+                        bsonindexterm_to_bson                        
+---------------------------------------------------------------------
+ { "$" : { "$numberInt" : "1" }, "$flags" : { "$numberInt" : "5" } }
+(1 row)
+
+SELECT bsonindexterm_to_bson(bson_orderby_index('{ "a": [ 1, 2, 3 ] }', '{ "a": -1 }'));
+                         bsonindexterm_to_bson                         
+-----------------------------------------------------------------------
+ { "$" : { "$numberInt" : "3" }, "$flags" : { "$numberInt" : "133" } }
+(1 row)
+
+SELECT bsonindexterm_to_bson(bson_orderby_index('{ "a": [ 1, { "b": 1 }, { "b": 2 } ] }', '{ "a.b": 1 }'));
+                         bsonindexterm_to_bson                         
+-----------------------------------------------------------------------
+ { "$" : { "$undefined" : true }, "$flags" : { "$numberInt" : "12" } }
+(1 row)
+
+SELECT bsonindexterm_to_bson(bson_orderby_index('{ "a": [ { "b": 0 }, { "b": 1 }, { "b": 2 } ] }', '{ "a.b": 1 }'));
+                        bsonindexterm_to_bson                        
+---------------------------------------------------------------------
+ { "$" : { "$numberInt" : "0" }, "$flags" : { "$numberInt" : "5" } }
+(1 row)
+
+SELECT bsonindexterm_to_bson(bson_orderby_index('{ "a": [ 1, { "b": 1 }, { "b": 2 } ] }', '{ "a.b": -1 }'));
+                         bsonindexterm_to_bson                         
+-----------------------------------------------------------------------
+ { "$" : { "$numberInt" : "2" }, "$flags" : { "$numberInt" : "133" } }
+(1 row)
+
+-- try with collation
+set documentdb_core.enableCollation to on;
+SELECT bsonindexterm_to_bson(bson_orderby_index('{ }', '{ "a": 1 }', 'en-u-ks-level1'));
+                                         bsonindexterm_to_bson                                         
+-------------------------------------------------------------------------------------------------------
+ { "$" : { "$undefined" : true }, "$flags" : { "$numberInt" : "8" }, "$collation" : "en-u-ks-level1" }
+(1 row)
+
+-- case insensitive - picks cat
+SELECT bsonindexterm_to_bson(bson_orderby_index('{ "a": [ "Cat", "dog", "elephant" ] }', '{ "a": 1 }', 'en-u-ks-level1'));
+                                bsonindexterm_to_bson                                
+-------------------------------------------------------------------------------------
+ { "$" : "Cat", "$flags" : { "$numberInt" : "5" }, "$collation" : "en-u-ks-level1" }
+(1 row)
+
+-- case sensitive (default) - picks Dog
+SELECT bsonindexterm_to_bson(bson_orderby_index('{ "a": [ "cat", "Dog", "elephant" ] }', '{ "a": 1 }'));
+               bsonindexterm_to_bson                
+----------------------------------------------------
+ { "$" : "Dog", "$flags" : { "$numberInt" : "5" } }
+(1 row)
+
+-- try with a composite index term
+SELECT bsonindexterm_to_bson(bson_orderby_index('{ "a": [ 1, 2, 3 ], "b": 5 }', '{ "a": 1, "b": 1 }'));
+                                                                    bsonindexterm_to_bson                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "$$COMP" : [ { "$" : { "$numberInt" : "1" }, "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "5" }, "$flags" : { "$numberInt" : "5" } } ] }
+(1 row)
+
+SELECT bsonindexterm_to_bson(bson_orderby_index('{ "a": [ 1, 2, 3 ], "b": 5 }', '{ "a": -1, "b": 1 }'));
+                                                                     bsonindexterm_to_bson                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "$$COMP" : [ { "$" : { "$numberInt" : "3" }, "$flags" : { "$numberInt" : "133" } }, { "$" : { "$numberInt" : "5" }, "$flags" : { "$numberInt" : "5" } } ] }
+(1 row)
+
+SELECT bsonindexterm_to_bson(bson_orderby_index('{ "a": [ 1, 2, 3 ], "b": 5 }', '{ "a": -1, "b": -1 }'));
+                                                                      bsonindexterm_to_bson                                                                      
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "$$COMP" : [ { "$" : { "$numberInt" : "3" }, "$flags" : { "$numberInt" : "133" } }, { "$" : { "$numberInt" : "5" }, "$flags" : { "$numberInt" : "133" } } ] }
+(1 row)
+

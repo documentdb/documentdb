@@ -29,12 +29,14 @@
 #include "collation/collation.h"
 #include "utils/guc_utils.h"
 #include "utils/version_utils.h"
+#include "utils/version_utils.h"
 #include "utils/list_utils.h"
 
 extern bool EnableNativeColocation;
 extern int ShardingMaxChunks;
 extern bool RecreateRetryTableOnSharding;
 extern char *ApiGucPrefixV2;
+extern bool EnableRbacCompliantSchemas;
 extern bool EnablePrepareUnique;
 extern bool ForceUpdateIndexInline;
 
@@ -1212,7 +1214,15 @@ ShardCollectionCore(ShardCollectionArgs *args)
 		collection = GetMongoCollectionByNameDatum(
 			databaseDatum, collectionDatum, AccessShareLock);
 
-		Assert(collection != NULL);
+		if (collection == NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("Failed to create collection %s.%s for sharding",
+								   args->databaseName, args->collectionName),
+							errdetail_log(
+								"Collection was not found after implicit create for sharding for %s.%s",
+								args->databaseName, args->collectionName)));
+		}
 	}
 
 	if (collection->shardKey == NULL &&
@@ -1400,11 +1410,25 @@ ShardCollectionCore(ShardCollectionArgs *args)
 					 tmpDataTableName, collection->tableName);
 	ExtensionExecuteQueryViaSPI(queryInfo->data, readOnly, SPI_OK_UTILITY, &isNull);
 
-	/* Update new table owner to admin role */
-	resetStringInfo(queryInfo);
-	appendStringInfo(queryInfo,
-					 "ALTER TABLE %s OWNER TO %s",
-					 qualifiedDataTableName, ApiAdminRole);
+	/* TODO: Remove GUC before migrating ownership of old documents to to documentdb_readwrite_role*/
+	if (EnableRbacCompliantSchemas && IsClusterVersionAtleast(DocDB_V0, 110, 0))
+	{
+		/* Update new table owner to readwrite role */
+		resetStringInfo(queryInfo);
+		appendStringInfo(queryInfo,
+						 "ALTER TABLE %s OWNER TO %s",
+						 qualifiedDataTableName, ApiReadWriteRole);
+	}
+	else
+	{
+		/* Update new table owner to admin role */
+		resetStringInfo(queryInfo);
+		appendStringInfo(queryInfo,
+						 "ALTER TABLE %s OWNER TO %s",
+						 qualifiedDataTableName, ApiAdminRole);
+	}
+
+
 	ExtensionExecuteQueryViaSPI(queryInfo->data, readOnly, SPI_OK_UTILITY, &isNull);
 
 	/* Make GUC default eventually: Recreate retry_table here with new shards */

@@ -60,6 +60,63 @@ PG_FUNCTION_INFO_V1(documentdb_extension_update_user);
 PG_FUNCTION_INFO_V1(documentdb_extension_get_users);
 PG_FUNCTION_INFO_V1(command_connection_status);
 
+enum DocumentDB_BuiltInRoles
+{
+	DocumentDB_Role_Read_AnyDatabase = 0x1,
+	DocumentDB_Role_ReadWrite_AnyDatabase = 0x2,
+	DocumentDB_Role_Cluster_Admin = 0x4,
+};
+
+typedef struct
+{
+	/* "createUser" field */
+	const char *createUser;
+
+	/* "pwd" field */
+	const char *pwd;
+
+	/* "roles" field */
+	bson_value_t roles;
+
+	/* "identityProvider" field*/
+	bson_value_t identityProviderData;
+
+	/* pgRole the passed in role maps to */
+	char *pgRole;
+
+	/* principalType */
+	char *principalType;
+
+	/* has_identity_provider */
+	bool has_identity_provider;
+} CreateUserSpec;
+
+typedef struct
+{
+	/* "updateUser" field */
+	const char *updateUser;
+
+	/* "pwd" field */
+	const char *pwd;
+} UpdateUserSpec;
+
+typedef struct
+{
+	StringView user;
+	bool showAllUsers;
+	bool showPrivileges;
+} GetUserSpec;
+
+/*
+ * Hash entry structure for user roles.
+ */
+typedef struct UserRoleHashEntry
+{
+	char *user;
+	HTAB *roles;
+	bool isExternal;
+} UserRoleHashEntry;
+
 static void ParseCreateUserSpec(pgbson *createUserSpec, CreateUserSpec *spec);
 static void CreateNativeUser(const CreateUserSpec *createUserSpec);
 static char * ParseDropUserSpec(pgbson *dropSpec);
@@ -642,12 +699,8 @@ DropNativeUser(const char *dropUser)
 
 
 /*
- * documentdb_extension_update_user implements the core logic to update a user.
- * In Mongo community edition a user with userAdmin privileges or root privileges can change
- * other users passwords. In postgres a superuser can change any users password.
- * A user with CreateRole privileges can change pwds of roles they created. Given
- * that ApiAdminRole has neither create role nor superuser privileges in our case
- * a user can only change their own pwd and no one elses.
+ * documentdb_extension_update_user implements the
+ * core logic to update a user
  */
 Datum
 documentdb_extension_update_user(PG_FUNCTION_ARGS)
@@ -1130,7 +1183,7 @@ connection_status(pgbson *showPrivilegesSpec)
 		pgbson_array_writer privilegesArrayWriter;
 		PgbsonWriterStartArray(&authInfoWriter, "authenticatedUserPrivileges", 27,
 							   &privilegesArrayWriter);
-		WriteSingleRolePrivileges(parentRole, &privilegesArrayWriter);
+		WritePrivileges(parentRole, &privilegesArrayWriter);
 		PgbsonWriterEndArray(&authInfoWriter, &privilegesArrayWriter);
 	}
 
@@ -1435,6 +1488,11 @@ ValidateAndObtainUserRole(const bson_value_t *rolesDocument)
 		return ApiAdminRoleV2;
 	}
 
+	if ((userRoles & DocumentDB_Role_ReadWrite_AnyDatabase) != 0)
+	{
+		return ApiReadWriteRole;
+	}
+
 	if ((userRoles & DocumentDB_Role_Read_AnyDatabase) != 0)
 	{
 		return ApiReadOnlyRole;
@@ -1540,12 +1598,13 @@ GetAllUsersInfo(void)
 		"  JOIN pg_auth_members am ON parent.oid = am.roleid "
 		"  JOIN pg_roles child ON am.member = child.oid "
 		"  WHERE child.rolcanlogin = true "
-		"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s') "
+		"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s') "
 		") "
 		"SELECT ARRAY_AGG(%s.row_get_bson(r) ORDER BY r.child_role, r.parent_role) "
 		"FROM r;",
 		ApiRootInternalRole, ApiRootRole,
 		ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole,
+		ApiSettingsManagerRole,
 		CoreSchemaName);
 
 	bool readOnly = true;
@@ -1584,12 +1643,13 @@ GetSingleUserInfo(const char *userName, bool returnDocuments)
 			"  JOIN pg_roles child ON am.member = child.oid "
 			"  WHERE child.rolcanlogin = true "
 			"    AND child.rolname = $1"
-			"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s') "
+			"    AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s') "
 			") "
 			"SELECT ARRAY_AGG(%s.row_get_bson(r) ORDER BY r.parent_role) "
 			"FROM r;",
 			ApiRootInternalRole, ApiRootRole,
 			ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole,
+			ApiSettingsManagerRole,
 			CoreSchemaName);
 	}
 	else
@@ -1604,11 +1664,12 @@ GetSingleUserInfo(const char *userName, bool returnDocuments)
 			"JOIN pg_roles child ON am.member = child.oid "
 			"WHERE child.rolcanlogin = true "
 			"  AND child.rolname = $1 "
-			"  AND child.rolname NOT IN ('%s', '%s', '%s', '%s') "
+			"  AND child.rolname NOT IN ('%s', '%s', '%s', '%s', '%s') "
 			"ORDER BY parent.rolname "
 			"LIMIT 1;",
 			ApiRootInternalRole, ApiRootRole,
-			ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole);
+			ApiAdminRole, ApiAdminRoleV2, ApiBgWorkerRole, ApiReplicationRole,
+			ApiSettingsManagerRole);
 	}
 
 	int argCount = 1;

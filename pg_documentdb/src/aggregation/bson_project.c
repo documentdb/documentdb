@@ -127,7 +127,8 @@ static pgbson * BsonLookUpGetFilterExpression(pgbson *sourceDocument,
 											  char *collationString);
 
 static pgbson * BsonLookUpProject(pgbson *sourceDocument, int numMatchedDocuments,
-								  Datum *mathedArray, char *matchedDocsFieldName);
+								  Datum *mathedArray, bool *matchedNulls,
+								  char *matchedDocsFieldName);
 
 static void BuildBsonPathTreeForDollarProject(BsonProjectionQueryState *state,
 											  BsonProjectionContext *context);
@@ -1131,14 +1132,11 @@ bson_dollar_lookup_project(PG_FUNCTION_ARGS)
 					  &val_datums, &val_is_null_marker, &val_count);
 
 	/*
-	 *  Datum array is not expected to have null, so we can free up the isnull marker array.
-	 *  We could  have used NULL as a param, but passing a real address is the recommended pattern.
-	 *  Implementation of deconstruct_array() can be found in postgres repo: src/backend/utils/adt/arrayfuncs.c
+	 *  The Datum array may contain NULL entries (e.g. from a LEFT JOIN with no match
+	 *  followed by a sub-pipeline stage). BsonLookUpProject handles NULLs by skipping them.
 	 */
-	pfree(val_is_null_marker);
-
 	PG_RETURN_POINTER(BsonLookUpProject(document, val_count, val_datums,
-										matchedDocsFieldName));
+										val_is_null_marker, matchedDocsFieldName));
 }
 
 
@@ -1991,7 +1989,7 @@ BsonLookUpGetFilterExpression(pgbson *sourceDocument,
  */
 static pgbson *
 BsonLookUpProject(pgbson *sourceDocument, int numMatched, Datum *matchedDocument,
-				  char *matchedDocsFieldName)
+				  bool *matchedNulls, char *matchedDocsFieldName)
 {
 	/*
 	 *  Creating an addField spec of the form
@@ -2012,17 +2010,26 @@ BsonLookUpProject(pgbson *sourceDocument, int numMatched, Datum *matchedDocument
 			BsonDefaultCreateIntermediateNode,
 			treatLeafDataAsConstant);
 
+	int matchedIndex = 0;
 	for (int i = 0; i < numMatched; i++)
 	{
+		/* Skip NULL elements that can arise from LEFT JOIN with no match */
+		if (matchedNulls[i])
+		{
+			continue;
+		}
+
 		bson_value_t documentBsonValue = ConvertPgbsonToBsonValue(
 			(pgbson *) matchedDocument[i]);
 
 		const char *relativePath = NULL;
-		AddValueNodeToLeafArrayWithField(matchedDocsNode, relativePath, i,
+		AddValueNodeToLeafArrayWithField(matchedDocsNode, relativePath,
+										 matchedIndex,
 										 &documentBsonValue,
 										 BsonDefaultCreateLeafNode,
 										 treatLeafDataAsConstant,
 										 &ignoreContext);
+		matchedIndex++;
 	}
 
 
