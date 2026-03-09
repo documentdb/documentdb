@@ -17,8 +17,8 @@ SRCDIR   := $(TOPDIR)/SOURCES
 srpm:
 	mkdir -p $(outdir) $(SRCDIR) $(TOPDIR)/SPECS $(TOPDIR)/SRPMS
 
-	# ---- Install cargo/rust (not available until mock installs BuildRequires) ----
-	dnf install -y cargo rust
+	# ---- Install cargo/rust/git (not available until mock installs BuildRequires) ----
+	dnf install -y cargo rust git
 
 	# ---- Source1: mongo-c-driver ----
 	curl -L -o $(SRCDIR)/mongo-c-driver-$(LIBBSON_VERSION).tar.gz \
