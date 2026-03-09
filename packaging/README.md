@@ -92,16 +92,22 @@ The resulting gateway packages will be placed in the output directory (default: 
 1. Go to <https://copr.fedorainfracloud.org> and create a new project (or use an existing one).
 2. Under **Settings → Chroots**, enable:
    - `fedora-42-x86_64`
+   - `fedora-42-aarch64`
    - `epel-9-x86_64`
    - `epel-9-aarch64`
-   > **Note:** PGDG does not publish aarch64 packages for Fedora, so Fedora is x86_64 only.
-   > For aarch64 support, use the EPEL-9 chroots (RHEL 9 / Rocky 9 / Alma 9).
+   > **Note:** PGDG does not publish aarch64 packages for Fedora, so the Fedora aarch64
+   > COPR build uses the RHEL 9 PGDG repo for PostgreSQL dependencies at build time.
+   > For EPEL-9, PGDG provides both x86_64 and aarch64 natively.
 3. Under **Settings → External Repositories**, add the PGDG repos:
 
    **For Fedora chroots:**
    ```
    https://download.postgresql.org/pub/repos/yum/18/fedora/fedora-42-x86_64/
+   https://download.postgresql.org/pub/repos/yum/18/redhat/rhel-9-$basearch/
    ```
+   > **Note:** The RHEL 9 URL is needed for the Fedora aarch64 chroot since PGDG
+   > does not publish Fedora aarch64 packages. The Fedora x86_64 chroot uses
+   > the Fedora-specific URL.
 
    **For EPEL-9 chroots:**
    ```
@@ -155,7 +161,18 @@ dnf install documentdb-gateway
 | File | Purpose |
 |------|---------|
 | `packaging/rpm/spec/documentdb.spec` | Docker-based RPM build (existing) |
-| `packaging/rpm/spec/documentdb-copr.spec` | Copr-compatible spec for Fedora builds |
+| `packaging/rpm/spec/documentdb-copr.spec` | Copr-compatible spec for Fedora and EPEL builds |
+
+### Vendored Build Dependencies
+
+The Copr spec vendors the following libraries from source to avoid distro-specific
+packaging gaps:
+
+| Library | Reason |
+|---------|--------|
+| libbson (mongo-c-driver) | Statically linked; not available as a system package in PGDG |
+| Intel Decimal Math Library | Not packaged in any distro |
+| pcre2 (static) | `pcre2-static` is not available on EL9 without enabling the CRB repo |
 
 ### Testing Copr Builds Locally
 
