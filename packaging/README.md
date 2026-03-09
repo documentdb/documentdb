@@ -109,6 +109,7 @@ Configure the package source in the Copr project:
 | Source type | SCM |
 | SCM type   | git |
 | Clone URL  | `https://github.com/documentdb/documentdb` |
+| SRPM build method | `make_srpm` |
 | Spec file  | `packaging/rpm/spec/documentdb-copr.spec` |
 
 The `.copr/Makefile` in the repository root handles SRPM generation automatically — Copr invokes `make srpm` and the Makefile takes care of the rest.
@@ -145,3 +146,14 @@ dnf install documentdb-gateway
 |------|---------|
 | `packaging/rpm/spec/documentdb.spec` | Docker-based RPM build (existing) |
 | `packaging/rpm/spec/documentdb-copr.spec` | Copr-compatible spec for Fedora builds |
+
+### Testing Copr Builds Locally
+
+Before pushing to Copr, you can test the SRPM build locally in a Fedora container:
+
+```sh
+./packaging/test_copr_srpm.sh
+```
+
+This requires Docker and replicates the Copr mock chroot environment. The resulting SRPM
+is placed in the `packaging/` directory by default (override with `--output-dir`).
