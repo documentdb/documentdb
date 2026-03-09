@@ -1,0 +1,44 @@
+FROM fedora:42
+
+ARG POSTGRES_VERSION=18
+
+# 1. Add PGDG repos (main + common for geospatial deps like gdal, geos, proj)
+#    Note: only x86_64 available for Fedora; use --platform linux/amd64 on ARM hosts
+RUN echo -e "[pgdg${POSTGRES_VERSION}]\nname=PostgreSQL ${POSTGRES_VERSION} for Fedora \$releasever - \$basearch\nbaseurl=https://download.postgresql.org/pub/repos/yum/${POSTGRES_VERSION}/fedora/fedora-\$releasever-\$basearch/\ngpgcheck=0\nenabled=1\n\n[pgdg-common]\nname=PostgreSQL common RPMs for Fedora \$releasever - \$basearch\nbaseurl=https://download.postgresql.org/pub/repos/yum/common/fedora/fedora-\$releasever-\$basearch/\ngpgcheck=0\nenabled=1" \
+    > /etc/yum.repos.d/pgdg.repo
+
+# 2. Install PostgreSQL from PGDG
+RUN dnf install -y \
+    postgresql${POSTGRES_VERSION} \
+    postgresql${POSTGRES_VERSION}-server \
+    postgresql${POSTGRES_VERSION}-libs
+
+# 3. Install optional PG extensions (skip unavailable ones)
+RUN dnf install -y --skip-broken \
+    pgvector_${POSTGRES_VERSION} \
+    pg_cron_${POSTGRES_VERSION} || true
+
+# 4. Enable the Copr repo and install DocumentDB
+RUN dnf install -y 'dnf-command(copr)' && \
+    dnf copr enable -y xgerman/DocumentDB && \
+    dnf install -y \
+    postgresql${POSTGRES_VERSION}-documentdb \
+    documentdb-gateway \
+    documentdb-server
+
+# 5. Locale (needed for regression tests)
+RUN dnf install -y glibc-langpack-en && \
+    localedef -i en_US -f UTF-8 en_US.UTF-8 || true
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+# 6. Smoke test
+ENV PATH=/usr/pgsql-${POSTGRES_VERSION}/bin:$PATH
+USER postgres
+RUN initdb -D /var/lib/pgsql/${POSTGRES_VERSION}/data && \
+    echo "shared_preload_libraries = 'pg_documentdb_core,pg_cron,pg_documentdb'" >> /var/lib/pgsql/${POSTGRES_VERSION}/data/postgresql.conf && \
+    echo "cron.database_name = 'postgres'" >> /var/lib/pgsql/${POSTGRES_VERSION}/data/postgresql.conf && \
+    pg_ctl -D /var/lib/pgsql/${POSTGRES_VERSION}/data start && \
+    psql -c "CREATE EXTENSION documentdb_core CASCADE;" && \
+    psql -c "CREATE EXTENSION documentdb CASCADE;" && \
+    pg_ctl -D /var/lib/pgsql/${POSTGRES_VERSION}/data stop

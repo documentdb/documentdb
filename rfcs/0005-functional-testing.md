@@ -208,7 +208,7 @@ docker run documentdb/functional-tests \
   --connection-string mongodb://cluster.docdb.amazonaws.com:27017 \
   --engine-name amazon-documentdb
 
-# Azure Cosmos DB (MongoDB API)
+# Azure DocumentDB
 docker run documentdb/functional-tests \
   --connection-string mongodb://myaccount.mongo.cosmos.azure.com:27017 \
   --engine-name microsoft-documentdb
