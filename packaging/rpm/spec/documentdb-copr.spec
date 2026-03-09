@@ -297,4 +297,5 @@ rm -rf %{buildroot}/usr/src/documentdb/pg_documentdb_gw/vendor
 - Skip loading documents if group expression is constant *[Perf]*
 - Fix Merge stage not outputing to target collection *[Bugfix]* (#20)
 
-* Thu Jan 23 2025 Shuai Tian
+* Thu Jan 23 2025 Shuai Tian <shuaitian@microsoft.com> - 0.100-0
+- Initial Release
