@@ -52,8 +52,8 @@ Provides:       bundled(libbson) = %{libbson_version}
 Provides:       bundled(intelmathlib) = %{intelmathlib_version}
 
 %description
-DocumentDB is the open-source engine powering vCore-based Azure Cosmos DB for
-MongoDB. It offers a native implementation of document-oriented NoSQL database,
+DocumentDB is the open-source engine powering Azure DocumentDB.
+It offers a native implementation of document-oriented NoSQL database,
 enabling seamless CRUD operations on BSON data types within a PostgreSQL
 framework.
 
@@ -207,7 +207,7 @@ rm -rf %{buildroot}/usr/src/documentdb/pg_documentdb_gw/vendor
 
 # ===========================================================================
 %files
-%license LICENSE
+%license LICENSE NOTICE licenses/
 %defattr(-,root,root,-)
 /usr/pgsql-%{pg_version}/lib/*.so
 /usr/pgsql-%{pg_version}/share/extension/*.control
@@ -220,11 +220,11 @@ rm -rf %{buildroot}/usr/src/documentdb/pg_documentdb_gw/vendor
 %{_libdir}/pkgconfig/libbson-static-1.0.pc
 
 %files -n documentdb-gateway
-%license LICENSE
+%license LICENSE NOTICE
 %{_bindir}/documentdb_gateway
 
 %files -n documentdb-server
-%license LICENSE
+%license LICENSE NOTICE
 
 # ===========================================================================
 %changelog

@@ -4,7 +4,7 @@
 Name:           postgresql%{pg_version}-documentdb
 Version:        DOCUMENTDB_VERSION
 Release:        1%{?dist}
-Summary:        DocumentDB is the open-source engine powering vCore-based Azure Cosmos DB for MongoDB
+Summary:        DocumentDB is the open-source engine powering Azure DocumentDB
 
 License:        MIT
 URL:            https://github.com/microsoft/documentdb
@@ -36,7 +36,7 @@ Requires:       rum_%{pg_version}
 # libbid.a is bundled.
 
 %description
-DocumentDB is the open-source engine powering vCore-based Azure Cosmos DB for MongoDB. 
+DocumentDB is the open-source engine powering Azure DocumentDB. 
 It offers a native implementation of document-oriented NoSQL database, enabling seamless 
 CRUD operations on BSON data types within a PostgreSQL framework.
 
