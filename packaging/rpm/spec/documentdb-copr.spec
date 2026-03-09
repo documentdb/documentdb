@@ -1,6 +1,7 @@
 %global pg_version 18
 %global libbson_version 1.28.0
 %global intelmathlib_version 2.0u3-1
+%global pcre2_version 10.44
 
 %define debug_package %{nil}
 
@@ -17,6 +18,8 @@ Source1:        https://github.com/mongodb/mongo-c-driver/releases/download/%{li
 Source2:        intelrdfpmath-%{intelmathlib_version}.tar.gz
 # Generate: cd pg_documentdb_gw && cargo vendor && tar czf ../documentdb-gateway-vendor.tar.gz vendor/
 Source3:        documentdb-gateway-vendor.tar.gz
+# Vendored pcre2 source (EL9 lacks pcre2-static without CRB)
+Source4:        https://github.com/PCRE2Project/pcre2/releases/download/pcre2-%{pcre2_version}/pcre2-%{pcre2_version}.tar.gz
 
 ExclusiveArch:  x86_64 aarch64
 
@@ -29,7 +32,6 @@ BuildRequires:  postgresql%{pg_version}-devel
 BuildRequires:  libicu-devel
 BuildRequires:  krb5-devel
 BuildRequires:  pcre2-devel
-BuildRequires:  pcre2-static
 BuildRequires:  openssl-devel
 BuildRequires:  rust
 BuildRequires:  cargo
@@ -50,6 +52,7 @@ Requires:       postgis36_%{pg_version}
 
 Provides:       bundled(libbson) = %{libbson_version}
 Provides:       bundled(intelmathlib) = %{intelmathlib_version}
+Provides:       bundled(pcre2) = %{pcre2_version}
 
 %description
 DocumentDB is the open-source engine powering Azure DocumentDB.
@@ -95,6 +98,7 @@ the gateway binary, and the PostgreSQL server.
 # Extract vendored dependency sources inside the main source tree
 tar xf %{SOURCE1}
 tar xf %{SOURCE2}
+tar xf %{SOURCE4}
 
 # Set up Cargo vendored dependencies for the gateway build
 pushd pg_documentdb_gw
@@ -156,12 +160,30 @@ Cflags: -I\${includedir}
 Libs: -L\${libdir} -lbid
 EOF
 
-# ---- 3. Build C PostgreSQL extensions ----
+# ---- 3. Build vendored pcre2 static library (avoids pcre2-static dep on EL9) ----
+mkdir -p pcre2-%{pcre2_version}/build
+pushd pcre2-%{pcre2_version}/build
+cmake \
+    -DCMAKE_C_FLAGS="-fPIC" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=${_vendored} \
+    -DCMAKE_INSTALL_LIBDIR=lib \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DPCRE2_BUILD_PCRE2_8=ON \
+    -DPCRE2_BUILD_PCRE2_16=OFF \
+    -DPCRE2_BUILD_PCRE2_32=OFF \
+    -DPCRE2_BUILD_PCRE2GREP=OFF \
+    -DPCRE2_BUILD_TESTS=OFF \
+    ..
+make %{?_smp_mflags} install
+popd
+
+# ---- 4. Build C PostgreSQL extensions ----
 export PKG_CONFIG_PATH=${_vendored}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}
 make %{?_smp_mflags} \
     PG_CONFIG=/usr/pgsql-%{pg_version}/bin/pg_config
 
-# ---- 4. Build gateway binary ----
+# ---- 5. Build gateway binary ----
 cd pg_documentdb_gw
 cargo build --release
 cd ..
