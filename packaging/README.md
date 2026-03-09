@@ -82,3 +82,66 @@ Supported DEB/Ubuntu distributions:
 Supported PG versions: 15, 16, 17, 18
 
 The resulting gateway packages will be placed in the output directory (default: `packaging`). You can change the output location with the `--output-dir` option.
+
+## Copr RPM Distribution
+
+[Copr](https://copr.fedorainfracloud.org) provides hosted RPM builds for Fedora. This section describes how to set up a Copr project that builds DocumentDB directly from the Git repository.
+
+### Copr Project Setup
+
+1. Go to <https://copr.fedorainfracloud.org> and create a new project (or use an existing one).
+2. Under **Settings → Chroots**, enable:
+   - `fedora-rawhide-x86_64`
+   - `fedora-41-x86_64`
+   - `fedora-42-x86_64`
+3. Under **Settings → External Repositories**, add the PGDG Fedora repo so build dependencies like `postgresql18-devel`, `pgvector_18`, `pg_cron_18`, `postgis36_18`, and `rum_18` are available:
+   ```
+   https://download.postgresql.org/pub/repos/yum/18/fedora/fedora-$releasever-x86_64/
+   ```
+   > **Note:** The `$releasever` variable is expanded by Copr at build time to match the target chroot.
+
+### SCM Integration
+
+Configure the package source in the Copr project:
+
+| Setting    | Value |
+|------------|-------|
+| Source type | SCM |
+| SCM type   | git |
+| Clone URL  | `https://github.com/documentdb/documentdb` |
+| Spec file  | `packaging/rpm/spec/documentdb-copr.spec` |
+
+The `.copr/Makefile` in the repository root handles SRPM generation automatically — Copr invokes `make srpm` and the Makefile takes care of the rest.
+
+Optionally, configure a webhook in **Settings → Webhooks** to trigger automatic rebuilds on push.
+
+### Packages Produced
+
+| Package | Description |
+|---------|-------------|
+| `postgresql18-documentdb` | PostgreSQL 18 extensions (`documentdb_core`, `documentdb`, `documentdb_extended_rum`) |
+| `documentdb-gateway` | MongoDB wire protocol gateway binary |
+| `documentdb-server` | Meta-package that installs everything above |
+
+### User Installation
+
+Enable the Copr repo and install:
+
+```sh
+dnf copr enable <owner>/<project>
+dnf install documentdb-server
+```
+
+Or install individual packages:
+
+```sh
+dnf install postgresql18-documentdb
+dnf install documentdb-gateway
+```
+
+### Spec Files
+
+| File | Purpose |
+|------|---------|
+| `packaging/rpm/spec/documentdb.spec` | Docker-based RPM build (existing) |
+| `packaging/rpm/spec/documentdb-copr.spec` | Copr-compatible spec for Fedora builds |
