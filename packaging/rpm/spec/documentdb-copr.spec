@@ -84,6 +84,10 @@ Requires:       postgresql%{pg_version}-server
 Meta-package that pulls in all DocumentDB components: the PostgreSQL extensions,
 the gateway binary, and the PostgreSQL server.
 
+# PGDG installs to /usr/pgsql-18/lib which triggers Fedora's RPATH check
+# (error 0x0002: "standard library path"). This is expected for PGDG extensions.
+%global __brp_check_rpaths QA_RPATHS=0x0002 /usr/lib/rpm/check-rpaths
+
 # ===========================================================================
 %prep
 %setup -q
