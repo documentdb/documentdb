@@ -91,14 +91,16 @@ The resulting gateway packages will be placed in the output directory (default: 
 
 1. Go to <https://copr.fedorainfracloud.org> and create a new project (or use an existing one).
 2. Under **Settings → Chroots**, enable:
-   - `fedora-rawhide-x86_64`
-   - `fedora-41-x86_64`
    - `fedora-42-x86_64`
+   > **Note:** PGDG does not currently publish aarch64 packages for Fedora, so only x86_64 is supported.
 3. Under **Settings → External Repositories**, add the PGDG Fedora repo so build dependencies like `postgresql18-devel`, `pgvector_18`, `pg_cron_18`, `postgis36_18`, and `rum_18` are available:
    ```
-   https://download.postgresql.org/pub/repos/yum/18/fedora/fedora-$releasever-x86_64/
+   https://download.postgresql.org/pub/repos/yum/18/fedora/fedora-42-$basearch/
    ```
-   > **Note:** The `$releasever` variable is expanded by Copr at build time to match the target chroot.
+   > **Note:** PGDG does not publish repos for every Fedora version. Use the latest
+   > supported version (e.g. `42`) rather than `$releasever`. Use `$basearch` to support
+   > both x86_64 and aarch64. Avoid `fedora-rawhide` chroots unless PGDG has published
+   > packages for that version.
 
 ### SCM Integration
 
