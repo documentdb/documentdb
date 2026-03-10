@@ -1,18 +1,39 @@
-%global pg_version 18
+# ===========================================================================
+# Distro detection: Fedora uses native PG, EL9 uses PGDG PG 18
+# ===========================================================================
+%if 0%{?fedora}
+%global pg_native   1
+%global pg_config   %{_bindir}/pg_config
+%global pg_libdir   %{_libdir}/pgsql
+%global pg_sharedir %{_datadir}/pgsql
+%else
+%global pg_native   0
+%global pg_version  18
+%global pg_config   /usr/pgsql-%{pg_version}/bin/pg_config
+%global pg_libdir   /usr/pgsql-%{pg_version}/lib
+%global pg_sharedir /usr/pgsql-%{pg_version}/share
+%endif
+
+%global pg_cron_version 1.6.7
 %global libbson_version 1.28.0
 %global intelmathlib_version 2.0u3-1
 %global pcre2_version 10.44
 
 %define debug_package %{nil}
 
+# On Fedora the package is unversioned; on EL9 it carries the PGDG PG prefix
+%if 0%{?fedora}
+Name:           documentdb
+%else
 Name:           postgresql%{pg_version}-documentdb
+%endif
 Version:        0.111.0
 Release:        1%{?dist}
 Summary:        DocumentDB — document-oriented NoSQL engine for PostgreSQL
 
 License:        MIT
-URL:            https://github.com/documentdb/documentdb
-Source0:        %{name}-%{version}.tar.gz
+URL:            https://documentdb.io
+Source0:        https://github.com/documentdb/documentdb/archive/refs/tags/v%{version}.tar.gz#/documentdb-%{version}.tar.gz
 Source1:        https://github.com/mongodb/mongo-c-driver/releases/download/%{libbson_version}/mongo-c-driver-%{libbson_version}.tar.gz
 # Generate: git clone --depth 1 -b applied/2.0u3-1 https://git.launchpad.net/ubuntu/+source/intelrdfpmath intelrdfpmath-2.0u3-1 && tar czf intelrdfpmath-2.0u3-1.tar.gz intelrdfpmath-2.0u3-1
 Source2:        intelrdfpmath-%{intelmathlib_version}.tar.gz
@@ -20,6 +41,8 @@ Source2:        intelrdfpmath-%{intelmathlib_version}.tar.gz
 Source3:        documentdb-gateway-vendor.tar.gz
 # Vendored pcre2 source (EL9 lacks pcre2-static without CRB)
 Source4:        https://github.com/PCRE2Project/pcre2/releases/download/pcre2-%{pcre2_version}/pcre2-%{pcre2_version}.tar.gz
+# Vendored pg_cron source (not in Fedora native repos; PostgreSQL License)
+Source5:        https://github.com/citusdata/pg_cron/archive/refs/tags/v%{pg_cron_version}.tar.gz#/pg_cron-%{pg_cron_version}.tar.gz
 
 ExclusiveArch:  x86_64 aarch64
 
@@ -28,7 +51,11 @@ BuildRequires:  gcc-c++
 BuildRequires:  make
 BuildRequires:  cmake
 BuildRequires:  pkg-config
+%if 0%{?fedora}
+BuildRequires:  postgresql-server-devel
+%else
 BuildRequires:  postgresql%{pg_version}-devel
+%endif
 BuildRequires:  libicu-devel
 BuildRequires:  krb5-devel
 BuildRequires:  pcre2-devel
@@ -43,16 +70,30 @@ BuildRequires:  libuuid-devel
 BuildRequires:  lz4-devel
 BuildRequires:  bzip2-devel
 
+# ---------------------------------------------------------------------------
+# Runtime dependencies
+# ---------------------------------------------------------------------------
+%if 0%{?fedora}
+Requires:       postgresql-server
+Requires:       postgresql-contrib
+Requires:       pgvector
+Requires:       postgis
+%else
 Requires:       postgresql%{pg_version}
 Requires:       postgresql%{pg_version}-server
 Requires:       pgvector_%{pg_version}
 Requires:       pg_cron_%{pg_version}
 Requires:       postgis36_%{pg_version}
-# rum_18 is NOT required — documentdb_extended_rum replaces it for PG 18+
+%endif
 
 Provides:       bundled(libbson) = %{libbson_version}
 Provides:       bundled(intelmathlib) = %{intelmathlib_version}
+%if !0%{?fedora}
 Provides:       bundled(pcre2) = %{pcre2_version}
+%endif
+%if 0%{?fedora}
+Provides:       bundled(pg_cron) = %{pg_cron_version}
+%endif
 
 %description
 DocumentDB is the open-source engine powering Azure DocumentDB.
@@ -62,6 +103,9 @@ framework.
 
 This package contains the PostgreSQL extensions: documentdb_core, documentdb,
 and documentdb_extended_rum.
+%if 0%{?fedora}
+pg_cron is bundled (not available in Fedora native repositories).
+%endif
 
 # ---------------------------------------------------------------------------
 # Subpackage: documentdb-gateway
@@ -81,24 +125,40 @@ protocol and translates requests to the DocumentDB PostgreSQL extensions.
 Summary:        DocumentDB Server — complete installation meta-package
 Requires:       %{name} = %{version}-%{release}
 Requires:       documentdb-gateway = %{version}-%{release}
+%if 0%{?fedora}
+Requires:       postgresql-server
+%else
 Requires:       postgresql%{pg_version}-server
+%endif
 
 %description -n documentdb-server
 Meta-package that pulls in all DocumentDB components: the PostgreSQL extensions,
 the gateway binary, and the PostgreSQL server.
 
-# PGDG installs to /usr/pgsql-18/lib which triggers Fedora's RPATH check
-# (error 0x0002: "standard library path"). This is expected for PGDG extensions.
+# EL9/PGDG installs to /usr/pgsql-18/lib which triggers Fedora's RPATH check.
+# Fedora native paths don't have this issue.
+%if !0%{?fedora}
 %global __brp_check_rpaths QA_RPATHS=0x0002 /usr/lib/rpm/check-rpaths
+%endif
 
 # ===========================================================================
 %prep
-%setup -q
+# Source tarball is always named documentdb-VERSION regardless of %{name}
+%setup -q -n documentdb-%{version}
 
 # Extract vendored dependency sources inside the main source tree
 tar xf %{SOURCE1}
 tar xf %{SOURCE2}
+
+%if !0%{?fedora}
+# EL9: extract vendored pcre2 (CRB not available in mock)
 tar xf %{SOURCE4}
+%endif
+
+%if 0%{?fedora}
+# Fedora: extract vendored pg_cron (not in native repos)
+tar xf %{SOURCE5}
+%endif
 
 # Set up Cargo vendored dependencies for the gateway build
 pushd pg_documentdb_gw
@@ -121,6 +181,7 @@ sed -i '/internal/d' Makefile
 # sub-Makefiles append to PG_CFLAGS (e.g. -DCROARING_ATOMIC_IMPL=3 in pg_documentdb/).
 sed -i 's/-Werror //g' Makefile.cflags pg_documentdb_extended_rum/core/Makefile
 
+%if !0%{?fedora}
 # Polyfill str::floor_char_boundary() which is only stable since Rust 1.91.
 # EL9 ships Rust 1.88, so replace with an equivalent using is_char_boundary()
 # (stable since Rust 1.0). Only apply when the system Rust is too old.
@@ -129,6 +190,7 @@ if [ "${RUST_MINOR:-0}" -lt 91 ]; then
     sed -i 's|command_str\.floor_char_boundary(MAX_EXPLAIN_BSON_COMMAND_LENGTH)|{ let mut i = MAX_EXPLAIN_BSON_COMMAND_LENGTH.min(command_str.len()); while i > 0 \&\& !command_str.is_char_boundary(i) { i -= 1; } i }|' \
         pg_documentdb_gw/documentdb_gateway_core/src/explain/mod.rs
 fi
+%endif
 
 # ===========================================================================
 %build
@@ -169,7 +231,8 @@ Cflags: -I\${includedir}
 Libs: -L\${libdir} -lbid
 EOF
 
-# ---- 3. Build vendored pcre2 static library (avoids pcre2-static dep on EL9) ----
+%if !0%{?fedora}
+# ---- 3. Build vendored pcre2 static library (EL9: avoids pcre2-static dep) ----
 mkdir -p pcre2-%{pcre2_version}/build
 pushd pcre2-%{pcre2_version}/build
 cmake \
@@ -186,11 +249,22 @@ cmake \
     ..
 make %{?_smp_mflags} install
 popd
+%endif
 
 # ---- 4. Build C PostgreSQL extensions ----
+# Disable LLVM/JIT bitcode: PGDG PG 18 on Fedora 43+ expects llvm20 which may
+# not be installed. We don't ship bitcode anyway (removed in the install stage).
 export PKG_CONFIG_PATH=${_vendored}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}
 make %{?_smp_mflags} \
-    PG_CONFIG=/usr/pgsql-%{pg_version}/bin/pg_config
+    PG_CONFIG=%{pg_config} \
+    with_llvm=no
+
+%if 0%{?fedora}
+# ---- 4b. Build vendored pg_cron (Fedora only) ----
+pushd pg_cron-%{pg_cron_version}
+make %{?_smp_mflags} PG_CONFIG=%{pg_config} with_llvm=no
+popd
+%endif
 
 # ---- 5. Build gateway binary ----
 cd pg_documentdb_gw
@@ -204,10 +278,18 @@ export PKG_CONFIG_PATH=${_vendored}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFI
 
 # ---- Install C extensions via PGXS ----
 make install DESTDIR=%{buildroot} \
-    PG_CONFIG=/usr/pgsql-%{pg_version}/bin/pg_config
+    PG_CONFIG=%{pg_config} \
+    with_llvm=no
 
 # Remove LLVM/JIT bitcode directory
-rm -rf %{buildroot}/usr/pgsql-%{pg_version}/lib/bitcode
+rm -rf %{buildroot}%{pg_libdir}/bitcode
+
+%if 0%{?fedora}
+# ---- Install vendored pg_cron (Fedora only) ----
+pushd pg_cron-%{pg_cron_version}
+make install DESTDIR=%{buildroot} PG_CONFIG=%{pg_config}
+popd
+%endif
 
 # ---- Bundle vendored libbson shared libraries ----
 mkdir -p %{buildroot}%{_libdir}/pkgconfig
@@ -239,14 +321,20 @@ rm -rf %{buildroot}/usr/src/documentdb/mongo-c-driver-%{libbson_version}
 rm -rf %{buildroot}/usr/src/documentdb/intelrdfpmath-%{intelmathlib_version}
 rm -rf %{buildroot}/usr/src/documentdb/pg_documentdb_gw/target
 rm -rf %{buildroot}/usr/src/documentdb/pg_documentdb_gw/vendor
+%if !0%{?fedora}
+rm -rf %{buildroot}/usr/src/documentdb/pcre2-%{pcre2_version}
+%endif
+%if 0%{?fedora}
+rm -rf %{buildroot}/usr/src/documentdb/pg_cron-%{pg_cron_version}
+%endif
 
 # ===========================================================================
 %files
 %license LICENSE NOTICE licenses/
 %defattr(-,root,root,-)
-/usr/pgsql-%{pg_version}/lib/*.so
-/usr/pgsql-%{pg_version}/share/extension/*.control
-/usr/pgsql-%{pg_version}/share/extension/*.sql
+%{pg_libdir}/*.so
+%{pg_sharedir}/extension/*.control
+%{pg_sharedir}/extension/*.sql
 /usr/src/documentdb
 /usr/lib/intelmathlib/LIBRARY/libbid.a
 %{_libdir}/libbson-1.0.so

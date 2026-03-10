@@ -87,27 +87,28 @@ The resulting gateway packages will be placed in the output directory (default: 
 
 [Copr](https://copr.fedorainfracloud.org) provides hosted RPM builds for Fedora and EPEL. This section describes how to set up a Copr project that builds DocumentDB directly from the Git repository.
 
+### Strategy: Fedora (Native PG) + EL9 (PGDG)
+
+A single spec file (`documentdb-copr.spec`) supports two platforms:
+
+| Platform | PG Source | Extensions | Vendored |
+|----------|-----------|------------|----------|
+| **Fedora 42/43/Rawhide** | Native distro PG (F42=PG16, F43/Rawhide=PG18) | pgvector, PostGIS from Fedora repos | pg_cron (not in Fedora repos) |
+| **EPEL 9** | PGDG PG 18 | All from PGDG (pgvector, pg_cron, PostGIS) | pcre2-static (CRB not in mock) |
+
+The spec uses `%if 0%{?fedora}` conditionals to choose the right package names, paths, and vendored components for each platform.
+
 ### Copr Project Setup
 
 1. Go to <https://copr.fedorainfracloud.org> and create a new project (or use an existing one).
 2. Under **Settings → Chroots**, enable:
-   - `fedora-42-x86_64`
-   - `fedora-42-aarch64`
-   - `epel-9-x86_64`
-   - `epel-9-aarch64`
-   > **Note:** PGDG does not publish aarch64 packages for Fedora, so the Fedora aarch64
-   > COPR build uses the RHEL 9 PGDG repo for PostgreSQL dependencies at build time.
-   > For EPEL-9, PGDG provides both x86_64 and aarch64 natively.
-3. Under **Settings → External Repositories**, add the PGDG repos:
+   - `fedora-42-x86_64`, `fedora-42-aarch64`
+   - `fedora-43-x86_64`, `fedora-43-aarch64`
+   - `fedora-rawhide-x86_64`, `fedora-rawhide-aarch64`
+   - `epel-9-x86_64`, `epel-9-aarch64`
+3. Under **Settings → External Repositories**:
 
-   **For Fedora chroots:**
-   ```
-   https://download.postgresql.org/pub/repos/yum/18/fedora/fedora-42-x86_64/
-   https://download.postgresql.org/pub/repos/yum/18/redhat/rhel-9-$basearch/
-   ```
-   > **Note:** The RHEL 9 URL is needed for the Fedora aarch64 chroot since PGDG
-   > does not publish Fedora aarch64 packages. The Fedora x86_64 chroot uses
-   > the Fedora-specific URL.
+   **For Fedora chroots:** No external repos needed — all dependencies come from native Fedora repos.
 
    **For EPEL-9 chroots:**
    ```
@@ -134,26 +135,40 @@ Optionally, configure a webhook in **Settings → Webhooks** to trigger automati
 
 ### Packages Produced
 
-| Package | Description |
-|---------|-------------|
-| `postgresql18-documentdb` | PostgreSQL 18 extensions (`documentdb_core`, `documentdb`, `documentdb_extended_rum`) |
-| `documentdb-gateway` | MongoDB wire protocol gateway binary |
-| `documentdb-server` | Meta-package that installs everything above |
+| Package | Platform | Description |
+|---------|----------|-------------|
+| `documentdb` | Fedora | PostgreSQL extensions + bundled pg_cron |
+| `postgresql18-documentdb` | EL9 | PostgreSQL 18 extensions (PGDG) |
+| `documentdb-gateway` | Both | MongoDB wire protocol gateway binary |
+| `documentdb-server` | Both | Meta-package that installs everything above |
 
 ### User Installation
 
-Enable the Copr repo and install:
+**Fedora (no external repos needed):**
 
 ```sh
 dnf copr enable <owner>/<project>
 dnf install documentdb-server
 ```
 
-Or install individual packages:
+> **Fedora 42 (PG 16) Note:** After installing, add this line to `postgresql.conf`
+> before starting PostgreSQL:
+> ```
+> documentdb.rum_library_load_option = 'require_documentdb_extended_rum'
+> ```
+> PG 16's default tries to load a standalone `rum.so` which is not packaged in Fedora.
+> This setting uses the bundled `pg_documentdb_extended_rum_core` instead.
+> Fedora 43+ ships PG 18 where this is already the default — no action needed.
+
+**EL9 (requires PGDG repo):**
 
 ```sh
-dnf install postgresql18-documentdb
-dnf install documentdb-gateway
+# First, add the PGDG repo
+dnf install -y https://download.postgresql.org/pub/repos/yum/reporpm/EL-9-$(arch)-pgdg-redhat-repo-latest.noarch.rpm
+
+# Then install from Copr
+dnf copr enable <owner>/<project>
+dnf install documentdb-server
 ```
 
 ### Spec Files
@@ -165,22 +180,23 @@ dnf install documentdb-gateway
 
 ### Vendored Build Dependencies
 
-The Copr spec vendors the following libraries from source to avoid distro-specific
-packaging gaps:
+The Copr spec vendors the following libraries from source:
 
-| Library | Reason |
-|---------|--------|
-| libbson (mongo-c-driver) | Statically linked; not available as a system package in PGDG |
-| Intel Decimal Math Library | Not packaged in any distro |
-| pcre2 (static) | `pcre2-static` is not available on EL9 without enabling the CRB repo |
+| Library | Platform | Reason |
+|---------|----------|--------|
+| libbson (mongo-c-driver) | Both | Statically linked; not available as a system package |
+| Intel Decimal Math Library | Both | Not packaged in any distro |
+| pcre2 (static) | EL9 only | `pcre2-static` is not available on EL9 without enabling the CRB repo |
+| pg_cron | Fedora only | Not packaged in Fedora native repos (PostgreSQL License, safe to vendor) |
 
 ### Testing Copr Builds Locally
 
-Before pushing to Copr, you can test the SRPM build locally in a Fedora container:
+Test with Docker using the provided Dockerfiles:
 
 ```sh
-./packaging/test_copr_srpm.sh
-```
+# Fedora (native PG, native arch — works on both x86_64 and aarch64)
+docker build -f Dockerfile.fedora-test .
 
-This requires Docker and replicates the Copr mock chroot environment. The resulting SRPM
-is placed in the `packaging/` directory by default (override with `--output-dir`).
+# EL9 (PGDG PG 18, native arch)
+docker build -f Dockerfile.el9-test .
+```
