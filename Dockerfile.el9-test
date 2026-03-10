@@ -1,0 +1,59 @@
+FROM almalinux:9
+
+ARG POSTGRES_VERSION=18
+
+# 1. Add PGDG repo (EL9 has both x86_64 and aarch64)
+RUN dnf install -y \
+    https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-$(uname -m)/pgdg-redhat-repo-latest.noarch.rpm && \
+    dnf -qy module disable postgresql
+
+# 2. Install EPEL + enable CRB (needed for PostGIS deps like qhull)
+RUN dnf install -y epel-release && \
+    dnf config-manager --set-enabled crb
+
+# 3. Install PostgreSQL from PGDG
+RUN dnf install -y \
+    postgresql${POSTGRES_VERSION} \
+    postgresql${POSTGRES_VERSION}-server \
+    postgresql${POSTGRES_VERSION}-libs
+
+# 4. Install optional PG extensions (skip unavailable ones)
+RUN dnf install -y --skip-broken \
+    pgvector_${POSTGRES_VERSION} \
+    pg_cron_${POSTGRES_VERSION} || true
+
+# 5. Add PGDG common repo (needed for PostGIS geospatial deps: gdal, geos, proj)
+RUN echo -e "[pgdg-common]\nname=PostgreSQL common RPMs for RHEL/EL 9 - \$basearch\nbaseurl=https://download.postgresql.org/pub/repos/yum/common/redhat/rhel-9-\$basearch/\ngpgcheck=0\nenabled=1" \
+    > /etc/yum.repos.d/pgdg-common.repo
+
+# 6. Install PostGIS and its deps first (may fail on some arches)
+RUN dnf install -y postgis36_${POSTGRES_VERSION} || true
+
+# 7. Enable the Copr repo and install DocumentDB
+#    Use --nobest to allow install even if PostGIS dep can't be fully satisfied
+RUN dnf install -y 'dnf-command(copr)' && \
+    dnf copr enable -y xgerman/DocumentDB && \
+    dnf install -y --nobest \
+    postgresql${POSTGRES_VERSION}-documentdb \
+    documentdb-gateway \
+    documentdb-server
+
+# 8. Verify core packages are installed
+RUN rpm -q postgresql${POSTGRES_VERSION}-documentdb documentdb-gateway
+
+# 9. Locale (needed for regression tests)
+RUN dnf install -y glibc-langpack-en && \
+    localedef -i en_US -f UTF-8 en_US.UTF-8 || true
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+# 10. Smoke test
+ENV PATH=/usr/pgsql-${POSTGRES_VERSION}/bin:$PATH
+USER postgres
+RUN initdb -D /var/lib/pgsql/${POSTGRES_VERSION}/data && \
+    echo "shared_preload_libraries = 'pg_documentdb_core,pg_cron,pg_documentdb'" >> /var/lib/pgsql/${POSTGRES_VERSION}/data/postgresql.conf && \
+    echo "cron.database_name = 'postgres'" >> /var/lib/pgsql/${POSTGRES_VERSION}/data/postgresql.conf && \
+    pg_ctl -D /var/lib/pgsql/${POSTGRES_VERSION}/data start && \
+    psql -c "CREATE EXTENSION documentdb_core CASCADE;" && \
+    psql -c "CREATE EXTENSION documentdb CASCADE;" && \
+    pg_ctl -D /var/lib/pgsql/${POSTGRES_VERSION}/data stop
