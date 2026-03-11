@@ -11,6 +11,12 @@ use std::sync::Arc;
 use tokio::time::{Duration, Instant};
 
 use crate::{
+    auth::{
+        oidc_provider::OidcProvider,
+        provider::ProviderConfig,
+        registry::AuthProviderRegistry,
+        scram_provider::ScramProvider,
+    },
     configuration::{DynamicConfiguration, SetupConfiguration},
     context::ServiceContext,
     error::Result,
@@ -18,7 +24,7 @@ use crate::{
     service::TlsProvider,
 };
 
-pub fn get_service_context(
+pub async fn get_service_context(
     setup_configuration: Box<dyn SetupConfiguration>,
     dynamic_configuration: Arc<dyn DynamicConfiguration>,
     query_catalog: QueryCatalog,
@@ -36,17 +42,36 @@ pub fn get_service_context(
         authentication_pool,
     );
 
+    // Initialize the auth provider registry with both providers enabled by default.
+    let auth_provider_registry = init_auth_provider_registry().await;
+
     let service_context = ServiceContext::new(
         setup_configuration.clone(),
         Arc::clone(&dynamic_configuration),
         query_catalog.clone(),
         connection_pool_manager,
         tls_provider,
+        Some(auth_provider_registry),
     );
 
     postgres::clean_unused_pools(service_context.clone());
 
     service_context
+}
+
+/// Build and initialize the auth provider registry with the default providers.
+async fn init_auth_provider_registry() -> AuthProviderRegistry {
+    let mut registry = AuthProviderRegistry::new();
+    let config = ProviderConfig::default();
+
+    if let Err(e) = registry.register(Box::new(ScramProvider::new()), &config).await {
+        tracing::error!("Failed to register ScramProvider: {e}");
+    }
+    if let Err(e) = registry.register(Box::new(OidcProvider::new()), &config).await {
+        tracing::error!("Failed to register OidcProvider: {e}");
+    }
+
+    registry
 }
 
 pub async fn get_system_connection_pool(

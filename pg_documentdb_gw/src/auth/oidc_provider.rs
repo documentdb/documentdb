@@ -18,7 +18,7 @@ use tokio_postgres::{error::SqlState, types::Type};
 
 use crate::{
     auth::provider::{AuthProvider, ProviderConfig},
-    auth::scram_provider::get_user_oid,
+    auth::get_user_oid,
     auth_legacy::AuthKind,
     context::ConnectionContext,
     error::{DocumentDBError, ErrorCode, Result},

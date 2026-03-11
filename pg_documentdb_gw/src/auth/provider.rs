@@ -4,7 +4,6 @@
  * src/auth/provider.rs
  *
  * Defines the AuthProvider trait and ProviderConfig struct.
- * Populated in task 1.2.
  *
  *-------------------------------------------------------------------------
  */

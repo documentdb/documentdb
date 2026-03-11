@@ -11,7 +11,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use bson::{rawdoc, RawArrayBuf};
+use bson::rawdoc;
+
+use once_cell::sync::Lazy;
 
 use crate::{
     configuration::DynamicConfiguration,
@@ -20,6 +22,14 @@ use crate::{
     protocol::{MAX_BSON_OBJECT_SIZE, MAX_MESSAGE_SIZE_BYTES, OK_SUCCEEDED},
     responses::{RawResponse, Response},
 };
+
+/// Pre-built BSON array for the legacy (GUC disabled) path.
+/// Built once, reused for every isMaster/hello response.
+static DEFAULT_MECHANISMS: Lazy<bson::RawArrayBuf> = Lazy::new(|| {
+    let mut arr = bson::RawArrayBuf::new();
+    arr.push("SCRAM-SHA-256");
+    arr
+});
 
 pub async fn process(
     request_context: &RequestContext<'_>,
@@ -48,26 +58,18 @@ pub async fn process(
         connection_context.client_information = Some(client.to_raw_document_buf());
     }
 
-    // Build the saslSupportedMechs array: query registry when GUC enabled,
-    // otherwise use the hardcoded default.
-    let mechanisms: Vec<String> = if dynamic_configuration.use_pluggable_auth().await {
-        if let Some(registry) = connection_context.service_context.auth_provider_registry() {
-            registry
-                .list_enabled_mechanisms()
-                .iter()
-                .map(|s| s.to_string())
-                .collect()
-        } else {
-            vec!["SCRAM-SHA-256".to_string()]
-        }
+    // saslSupportedMechs: use prebuilt BSON array from registry when GUC
+    // enabled, otherwise use the static default. Clone is cheap — just
+    // copying prebuilt bytes, no per-element iteration.
+    let mechs = if dynamic_configuration.use_pluggable_auth().await {
+        connection_context
+            .service_context
+            .auth_provider_registry()
+            .map(|r| r.mechanisms_bson().clone())
+            .unwrap_or_else(|| DEFAULT_MECHANISMS.clone())
     } else {
-        vec!["SCRAM-SHA-256".to_string()]
+        DEFAULT_MECHANISMS.clone()
     };
-
-    let mut mechs_array = RawArrayBuf::new();
-    for m in &mechanisms {
-        mechs_array.push(m.as_str());
-    }
 
     let mut response_doc = rawdoc! {
         writeable_primary_field: true,
@@ -81,7 +83,7 @@ pub async fn process(
         "maxWireVersion": dynamic_configuration.server_version().await.max_wire_protocol(),
         "readOnly": dynamic_configuration.read_only().await,
         "connectionId": connection_context.get_connection_id_hash(),
-        "saslSupportedMechs": mechs_array,
+        "saslSupportedMechs": mechs,
         "internal": dynamic_configuration.topology(),
         "ok": OK_SUCCEEDED,
     };

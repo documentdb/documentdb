@@ -37,6 +37,7 @@ impl ServiceContext {
         query_catalog: QueryCatalog,
         connection_pool_manager: PoolManager,
         tls_provider: TlsProvider,
+        auth_provider_registry: Option<AuthProviderRegistry>,
     ) -> Self {
         tracing::info!("Initial dynamic configuration: {dynamic_configuration:?}");
 
@@ -51,7 +52,7 @@ impl ServiceContext {
             transaction_store: TransactionStore::new(Duration::from_secs(timeout_secs)),
             query_catalog,
             tls_provider,
-            auth_provider_registry: None,
+            auth_provider_registry,
         };
         ServiceContext(Arc::new(inner))
     }

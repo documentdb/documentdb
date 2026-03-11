@@ -119,7 +119,8 @@ async fn start_gateway(setup_configuration: DocumentDBSetupConfiguration) {
         system_requests_pool,
         authentication_pool,
         tls_provider,
-    );
+    )
+    .await;
 
     run_gateway::<DocumentDBDataClient>(service_context, None, shutdown_token)
         .await

@@ -106,7 +106,8 @@ async fn run(setup_config: DocumentDBSetupConfiguration) {
         system_pool,
         authentication_pool,
         tls_provider,
-    );
+    )
+    .await;
 
     run_gateway::<DocumentDBDataClient>(service_context, None, CancellationToken::new())
         .await

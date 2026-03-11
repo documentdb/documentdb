@@ -459,7 +459,7 @@ pub fn create_query_catalog() -> QueryCatalog {
             authenticate_with_token: "SELECT documentdb_api_internal.authenticate_token($1, $2)".to_string(),
 
             // dynamic.rs
-            pg_settings: "SELECT name, setting FROM pg_settings WHERE name LIKE 'documentdb.%' OR name IN ('max_connections', 'default_transaction_read_only')".to_string(),
+            pg_settings: "SELECT name, setting FROM pg_settings WHERE name LIKE 'documentdb.%' OR name LIKE 'documentdb\\_gateway.%' OR name IN ('max_connections', 'default_transaction_read_only')".to_string(),
             pg_is_in_recovery: "SELECT pg_is_in_recovery()".to_string(),
 
             // explain/mod.rs

@@ -584,9 +584,6 @@ where
             }
         }
     }
-
-    // Reset auth state on connection close
-    connection_context.auth_state = auth::AuthState::new();
 }
 
 async fn get_response<T>(

@@ -18,6 +18,7 @@ use tokio_postgres::types::Type;
 
 use crate::{
     auth::provider::{AuthProvider, ProviderConfig},
+    auth::get_user_oid,
     auth_legacy::{AuthKind, ScramFirstState},
     context::ConnectionContext,
     error::{DocumentDBError, ErrorCode, Result},
@@ -381,32 +382,6 @@ async fn get_salt_and_iteration(
     Ok((salt.to_string(), iterations))
 }
 
-pub async fn get_user_oid(
-    connection_context: &ConnectionContext,
-    username: &str,
-) -> Result<u32> {
-    let user_oid_rows = connection_context
-        .service_context
-        .connection_pool_manager()
-        .authentication_connection()
-        .await?
-        .query(
-            "SELECT oid from pg_roles WHERE rolname = $1",
-            &[Type::TEXT],
-            &[&username],
-            None,
-            &RequestTracker::new(),
-        )
-        .await?;
-
-    let user_oid = user_oid_rows
-        .first()
-        .ok_or(DocumentDBError::pg_response_empty())?
-        .try_get::<_, tokio_postgres::types::Oid>(0)?;
-
-    Ok(user_oid)
-}
-
 
 #[cfg(test)]
 mod tests {
@@ -570,7 +545,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Error message tests — verify provider name is included (Requirement 1.10)
+    // Error message tests — verify provider name is included
     // -----------------------------------------------------------------------
 
     /// Helper: assert that a DocumentDBError's debug output contains "SCRAM-SHA-256".
