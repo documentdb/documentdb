@@ -138,7 +138,7 @@ fn parse_create_index_error(response: &PgResponse) -> Result<Response> {
         }
     }
     let code = code.ok_or(DocumentDBError::internal_error(
-        "errmsg was missing in create index result".to_string(),
+        "code was missing in create index result".to_string(),
     ))?;
     let errmsg = errmsg.ok_or(DocumentDBError::internal_error(
         "errmsg was missing in create index result".to_string(),

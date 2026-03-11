@@ -26,11 +26,10 @@ pub async fn handle(
     if let Some(request_transaction_info) = &request_info.transaction_info {
         if request_transaction_info.auto_commit {
             if request_info.session_id.is_none() {
-                return Err(DocumentDBError::UntypedDocumentDBError(
-                    50768,
-                    "txnNumber may only be provided for multi-document transactions and retryable write commands. autocommit:false was not provided, and command is not a retryable write command.".to_string(),
-                    String::new(),
-                    std::backtrace::Backtrace::capture(),
+                let error_message = "txnNumber may only be provided for multi-document transactions and retryable write commands. autocommit:false was not provided, and command is not a retryable write command.";
+                return Err(DocumentDBError::documentdb_error(
+                    ErrorCode::NotARetryableWriteCommand,
+                    error_message.to_string(),
                 ));
             }
 
@@ -94,11 +93,10 @@ pub async fn handle(
             }
 
             if collection.starts_with("system.") {
-                return Err(DocumentDBError::UntypedDocumentDBError(
-                    51071,
-                    "Cannot run command against system views in transaction.".to_string(),
-                    String::new(),
-                    std::backtrace::Backtrace::capture(),
+                let error_message = "Cannot run command against system views in transaction.";
+                return Err(DocumentDBError::documentdb_error(
+                    ErrorCode::Location51071,
+                    error_message.to_string(),
                 ));
             }
         }
@@ -159,7 +157,7 @@ pub async fn handle(
                 // Especially allow the transaction to remain unfilled if it is committing a committed transaction
                 (
                     RequestType::CommitTransaction,
-                    DocumentDBError::DocumentDBError(ErrorCode::TransactionCommitted, _, _),
+                    DocumentDBError::DocumentDBError(ErrorCode::TransactionCommitted, _, _, _),
                 ) => Ok(()),
                 _ => Err(e),
             };

@@ -4,6 +4,8 @@
 set -u
 # exit immediately if a command exits with a non-zero status
 set -e
+# ensure pipeline failures are caught
+set -o pipefail
 
 externalErrorMappingsFile=$1
 corePgErrorMappingsFile=$2
@@ -32,23 +34,23 @@ writeIntoFile() {
 
 # TODO: Add column OverriddenUserFacingMessage in external error mappings
 if [[ $(head -n 1 "$externalErrorMappingsFile") != "ErrorName,ErrorCode,ExternalError,ErrorOrdinal" ]]; then
-    echo "ERROR: file "$externalErrorMappingsFile" has invalid header"
+    echo "ERROR: file '${externalErrorMappingsFile}' has invalid header"
     exit 1
 else
-    tail -n +2 "$externalErrorMappingsFile" | while IFS=',' read -ra tokens; do
-        writeIntoFile ${tokens[0]} ${tokens[1]} ${tokens[2]} "null"
-    done
+    while IFS=',' read -ra tokens; do
+        writeIntoFile "${tokens[0]}" "${tokens[1]}" "${tokens[2]}" "null"
+    done < <(tail -n +2 "$externalErrorMappingsFile")
 fi
 
 # TODO: Add column OverriddenUserFacingMessage in core pg error mappings
 if [[ $(head -n 1 "$corePgErrorMappingsFile") != "ErrorName,ErrorCode,ExternalErrorCode" ]]; then
-    echo "ERROR: file "$corePgErrorMappingsFile" has invalid header"
+    echo "ERROR: file '${corePgErrorMappingsFile}' has invalid header"
     exit 1
 else
-    tail -n +2 "$corePgErrorMappingsFile" | while IFS=',' read -ra tokens; do
-        writeIntoFile ${tokens[0]} ${tokens[1]} ${tokens[2]} "null"
-    done
+    while IFS=',' read -ra tokens; do
+        writeIntoFile "${tokens[0]}" "${tokens[1]}" "${tokens[2]}" "null"
+    done < <(tail -n +2 "$corePgErrorMappingsFile")
 fi
 
-echo "ErrorName,ErrorCode,ExternalErrorCode,OverriddenUserFacingMessage" > $targetFile
-sort -t',' -k3,3n $tempFile >> $targetFile
+echo "ErrorName,ErrorCode,ExternalErrorCode,OverriddenUserFacingMessage" > "$targetFile"
+sort -t',' -k3,3n "$tempFile" >> "$targetFile"

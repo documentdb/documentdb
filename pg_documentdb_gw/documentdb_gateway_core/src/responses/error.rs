@@ -6,23 +6,21 @@
  *-------------------------------------------------------------------------
  */
 
-use std::error::Error;
-
 use bson::{raw::ValueAccessErrorKind, RawDocumentBuf};
 use deadpool_postgres::PoolError;
-use serde::{Deserialize, Serialize};
-use tokio_postgres::error::SqlState;
 
 use crate::{
     context::ConnectionContext,
     error::{DocumentDBError, ErrorCode},
     protocol::OK_FAILED,
-    responses::constant::{documentdb_error_message, value_access_error_message},
-    responses::pg::PgResponse,
+    responses::{
+        constant::{generic_internal_error_message, value_access_error_message},
+        pg::PgResponse,
+    },
 };
 
 /// Display and Debug trait are not implemented explicitly to avoid logging PII mistakenly.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct CommandError {
     pub ok: f64,
@@ -31,11 +29,9 @@ pub struct CommandError {
     pub code: i32,
 
     /// The error string, e.g. Internal Error.
-    #[serde(rename = "codeName", default)]
     pub code_name: String,
 
     /// A human-readable description of the error, sent to the client.
-    #[serde(rename = "errmsg", default = "String::new")]
     pub message: String,
 }
 
@@ -82,13 +78,24 @@ impl CommandError {
             }
             DocumentDBError::PostgresDocumentDBError(e, msg, _) => {
                 if let Ok(state) = PgResponse::i32_to_postgres_sqlstate(e) {
-                    if let Some(known_error) =
-                        Self::known_pg_error(connection_context, &state, msg, activity_id)
-                    {
-                        return known_error;
-                    }
+                    let mapped_response = PgResponse::known_pg_error(
+                        connection_context,
+                        &state,
+                        msg.as_str(),
+                        activity_id,
+                    );
+                    return CommandError::new(
+                        mapped_response.error_code(),
+                        mapped_response.code_name().unwrap_or_default().to_string(),
+                        mapped_response.error_message().to_string(),
+                    );
                 }
-                CommandError::new(*e, documentdb_error_message(), msg.to_string())
+
+                tracing::error!(
+                    activity_id = activity_id,
+                    "Unable to parse PostgresDocumentDBError code: {e}, message: {msg}"
+                );
+                CommandError::internal(generic_internal_error_message().to_string())
             }
             DocumentDBError::RawBsonError(e, _) => {
                 CommandError::internal(format!("Raw BSON error: {e}"))
@@ -100,11 +107,8 @@ impl CommandError {
             DocumentDBError::BuildPoolError(e, _) => {
                 CommandError::internal(format!("Build pool error: {e}"))
             }
-            DocumentDBError::DocumentDBError(error_code, msg, _) => {
+            DocumentDBError::DocumentDBError(error_code, msg, _, _) => {
                 CommandError::new(*error_code as i32, error_code.to_string(), msg.to_string())
-            }
-            DocumentDBError::UntypedDocumentDBError(error_code, msg, code, _) => {
-                CommandError::new(*error_code, code.clone(), msg.to_string())
             }
             DocumentDBError::SSLErrorStack(error_stack, _) => {
                 CommandError::internal(format!("SSL error stack: {error_stack}"))
@@ -167,48 +171,20 @@ impl CommandError {
         activity_id: &str,
     ) -> Self {
         if let Some(state) = e.code() {
-            if let Some(known_error) = Self::known_pg_error(
+            let mapped_result = PgResponse::known_pg_error(
                 context,
                 state,
                 e.as_db_error().map_or("", |e| e.message()),
                 activity_id,
-            ) {
-                return known_error;
-            }
+            );
+
             CommandError::new(
-                PgResponse::postgres_sqlstate_to_i32(state),
-                documentdb_error_message(),
-                Self::pg_error_to_msg(e),
+                mapped_result.error_code(),
+                mapped_result.code_name().unwrap_or_default().to_string(),
+                mapped_result.error_message().to_string(),
             )
         } else {
             CommandError::internal(e.to_string())
-        }
-    }
-
-    fn known_pg_error(
-        context: &ConnectionContext,
-        state: &SqlState,
-        msg: &str,
-        activity_id: &str,
-    ) -> Option<Self> {
-        if let Some((code, code_name, error_msg)) =
-            PgResponse::known_pg_error(context, state, msg, activity_id)
-        {
-            Some(CommandError::new(
-                code,
-                code_name.unwrap_or(documentdb_error_message()),
-                error_msg.to_string(),
-            ))
-        } else {
-            None
-        }
-    }
-
-    fn pg_error_to_msg(e: &tokio_postgres::Error) -> String {
-        if let Some(db_error) = e.as_db_error() {
-            db_error.message().to_owned()
-        } else {
-            e.source().map_or("No Cause.".to_owned(), |s| s.to_string())
         }
     }
 }

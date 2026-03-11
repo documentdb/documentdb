@@ -29,3 +29,7 @@ pub fn pg_returned_invalid_response_message<E: Display>(error: E) -> String {
 pub fn duplicate_key_violation_message() -> &'static str {
     "Duplicate key violation on the requested collection."
 }
+
+pub fn generic_internal_error_message() -> &'static str {
+    "An unexpected internal error has occurred."
+}

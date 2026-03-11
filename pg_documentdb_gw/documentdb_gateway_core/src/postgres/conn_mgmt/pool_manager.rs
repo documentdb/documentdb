@@ -546,7 +546,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            DocumentDBError::DocumentDBError(ErrorCode::InternalError, _, _)
+            DocumentDBError::DocumentDBError(ErrorCode::InternalError, _, _, _)
         ));
     }
 

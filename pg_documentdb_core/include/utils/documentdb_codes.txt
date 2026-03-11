@@ -550,3 +550,5 @@ TransactionCommitted,M00F7,548
 TooManyLogicalSessions,M00F8,549
 ReauthenticationRequired,M00F9,550
 Location15948,M00FA,551
+NotARetryableWriteCommand,M00FB,552
+Location51071,M00FC,553

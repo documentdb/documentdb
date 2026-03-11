@@ -456,9 +456,12 @@ pub async fn process_request(
 
     if connection_context.transaction.is_some() {
         match result {
-            Err(DocumentDBError::UntypedDocumentDBError(112, _, _, _))
-            | Err(DocumentDBError::DocumentDBError(ErrorCode::WriteConflict, _, _))
-            | Err(_)
+            // In the case of write conflict, we need to abort the transaction.
+            Err(DocumentDBError::DocumentDBError(ErrorCode::WriteConflict, _, _, _)) => {
+                transaction::process_abort(connection_context).await?;
+            }
+            // In the case of failures with aggregate/find, we need to abort the transaction.
+            Err(_)
                 if request_context.payload.request_type() == &RequestType::Find
                     || request_context.payload.request_type() == &RequestType::Aggregate =>
             {

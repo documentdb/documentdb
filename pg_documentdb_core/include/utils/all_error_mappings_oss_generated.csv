@@ -382,6 +382,7 @@ Location50700,M0095,50700,null
 Location50723,M0096,50723,null
 Location50752,M0097,50752,null
 Location50759,M0098,50759,null
+NotARetryableWriteCommand,M00FB,50768,null
 Location50989,M003U,50989,null
 Location51002,M00ES,51002,null
 Location51003,M00E0,51003,null
@@ -389,6 +390,7 @@ Location51024,M0099,51024,null
 Location51044,M003S,51044,null
 Location51045,M003T,51045,null
 Location51047,M009A,51047,null
+Location51071,M00FC,51071,null
 Location51074,M009B,51074,null
 Location51075,M009C,51075,null
 DollarRoundOverflowInt64,M009D,51080,null

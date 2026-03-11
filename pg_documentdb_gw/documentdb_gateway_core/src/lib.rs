@@ -761,7 +761,7 @@ where
 async fn log_and_write_error<S>(
     connection_context: &ConnectionContext,
     header: &Header,
-    e: &DocumentDBError,
+    error: &DocumentDBError,
     request: Option<&Request<'_>>,
     stream: &mut S,
     collection: Option<String>,
@@ -772,7 +772,7 @@ async fn log_and_write_error<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let command_error = CommandError::from_error(connection_context, e, activity_id);
+    let command_error = CommandError::from_error(connection_context, error, activity_id);
     let response = command_error.to_raw_document_buf();
 
     if let Some(start) = handle_message_start {
@@ -784,7 +784,7 @@ where
     request_tracker.record_duration(RequestIntervalKind::WriteResponse, write_response_start);
 
     // telemetry can block so do it after write and flush.
-    tracing::error!(activity_id = activity_id, "Request failure: {e}");
+    error.log_request_failure(connection_context, activity_id);
 
     if let Some(telemetry) = connection_context.telemetry_provider.as_ref() {
         telemetry

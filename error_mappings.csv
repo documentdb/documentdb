@@ -379,6 +379,7 @@ ErrorMapping,ErrorName
 50723,Location50723
 50752,Location50752
 50759,Location50759
+50768,NotARetryableWriteCommand
 50989,Location50989
 51002,Location51002
 51003,Location51003
@@ -386,6 +387,7 @@ ErrorMapping,ErrorName
 51044,Location51044
 51045,Location51045
 51047,Location51047
+51071,Location51071
 51074,Location51074
 51075,Location51075
 51080,DollarRoundOverflowInt64

@@ -91,13 +91,13 @@ pub async fn validate_cannot_drop_system_users(db: &Database) -> Result<(), Erro
         ("documentdb_bg_worker_role", 2, "Invalid username."),
         (
             "documentdb_admin_role",
-            16909442,
-            "role \"documentdb_admin_role\" cannot be dropped because some objects depend on it",
+            1,
+            "An unexpected internal error has occurred.",
         ),
         (
             "documentdb_readonly_role",
-            16909442,
-            "role \"documentdb_readonly_role\" cannot be dropped because some objects depend on it",
+            1,
+            "An unexpected internal error has occurred.",
         ),
     ];
 
