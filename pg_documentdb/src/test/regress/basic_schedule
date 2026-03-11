@@ -23,6 +23,7 @@ test: bson_aggregation_type_operators_tests bson_shard_exclusion_tests
 test: bson_aggregation_stage_merge_tests
 test: ttl_index_delete_rows
 test: user_crud_commands
+test: rbac_metadata_infrastructure
 test: commands_create_role
 test: commands_roles_info
 test: commands_drop_role

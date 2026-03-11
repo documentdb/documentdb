@@ -1,0 +1,13 @@
+SET documentdb.next_collection_id TO 9973800;
+SET documentdb.next_collection_index_id TO 9973800;
+\set VERBOSITY TERSE
+-- Test RBAC metadata infrastructure for RFC-006 Phase 1
+-- Test 1: Verify metadata tables exist
+SELECT table_name 
+FROM information_schema.tables 
+WHERE table_schema = 'documentdb_api_catalog' 
+AND table_name IN ('user_roles', 'roles', 'metadata_version')
+ORDER BY table_name;
+-- NOTE: This is a placeholder file. Run the regression test to generate the actual expected output.
+-- Command: make installcheck REGRESS=rbac_metadata_infrastructure
+-- Then copy: cp results/rbac_metadata_infrastructure.out expected/rbac_metadata_infrastructure.out

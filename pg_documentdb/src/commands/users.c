@@ -121,6 +121,9 @@ static void ParseCreateUserSpec(pgbson *createUserSpec, CreateUserSpec *spec);
 static void CreateNativeUser(const CreateUserSpec *createUserSpec);
 static char * ParseDropUserSpec(pgbson *dropSpec);
 static void DropNativeUser(const char *dropUser);
+static const char * PgRoleToMongodbRole(const char *pgRole);
+static void UpdateRbacMetadataForGrant(const char *username, const char *pgRole);
+static void UpdateRbacMetadataForRevoke(const char *username);
 static void ParseUpdateUserSpec(pgbson *updateSpec, UpdateUserSpec *spec);
 static Datum UpdateNativeUser(UpdateUserSpec *spec);
 static void ParseGetUserSpec(pgbson *getSpec, GetUserSpec *spec);
@@ -268,6 +271,9 @@ documentdb_extension_create_user(PG_FUNCTION_ARGS)
 	{
 		CreateNativeUser(&createUserSpec);
 	}
+
+	/* Update RBAC metadata BEFORE applying PG grant */
+	UpdateRbacMetadataForGrant(createUserSpec.createUser, createUserSpec.pgRole);
 
 	/* Grant pgRole to user created */
 	readOnly = false;
@@ -687,6 +693,9 @@ DropNativeUser(const char *dropUser)
 						errmsg(
 							"Only native users can create other native users. Authenticate as a built-in native administrative user to perform native user management operations.")));
 	}
+
+	/* Update RBAC metadata BEFORE dropping PG role */
+	UpdateRbacMetadataForRevoke(dropUser);
 
 	StringInfo dropUserInfo = makeStringInfo();
 	appendStringInfo(dropUserInfo, "DROP ROLE %s;", quote_identifier(dropUser));
@@ -1352,6 +1361,102 @@ IsCallingUserExternal()
 {
 	const char *currentUser = GetUserNameFromId(GetUserId(), true);
 	return IsUserExternal(currentUser);
+}
+
+
+/*
+ * PgRoleToMongodbRole maps PostgreSQL role names to DocumentDB role names
+ * for updating the RBAC metadata system.
+ */
+static const char *
+PgRoleToMongodbRole(const char *pgRole)
+{
+	if (strcmp(pgRole, "documentdb_readwrite_role") == 0 ||
+		strcmp(pgRole, ApiReadWriteRole) == 0)
+	{
+		return "readWrite";
+	}
+	else if (strcmp(pgRole, "documentdb_readonly_role") == 0 ||
+			 strcmp(pgRole, ApiReadOnlyRole) == 0)
+	{
+		return "read";
+	}
+	else if (strcmp(pgRole, "documentdb_admin_role") == 0 ||
+			 strcmp(pgRole, ApiAdminRoleV2) == 0)
+	{
+		return "dbAdmin";
+	}
+	else if (strcmp(pgRole, "documentdb_user_admin_role") == 0 ||
+			 strcmp(pgRole, ApiUserAdminRole) == 0)
+	{
+		return "userAdmin";
+	}
+	else if (strcmp(pgRole, "documentdb_root_role") == 0 ||
+			 strcmp(pgRole, ApiRootRole) == 0)
+	{
+		return "root";
+	}
+
+	/* If no match, return NULL to indicate non-DocumentDB role */
+	return NULL;
+}
+
+
+/*
+ * UpdateRbacMetadataForGrant updates the RBAC metadata system with a role grant.
+ * This should be called before granting a PG role to a user.
+ */
+static void
+UpdateRbacMetadataForGrant(const char *username, const char *pgRole)
+{
+	const char *mongoRole = PgRoleToMongodbRole(pgRole);
+
+	/* Only update metadata if this is a DocumentDB role */
+	if (mongoRole == NULL)
+	{
+		return;
+	}
+
+	/* Insert into user_roles table */
+	const char *query = FormatSqlQuery(
+		"INSERT INTO documentdb_api_catalog.user_roles (username, role_name, database_name) "
+		"VALUES (%s, %s, 'admin') "
+		"ON CONFLICT (username, role_name, database_name) DO NOTHING",
+		quote_literal_cstr(username),
+		quote_literal_cstr(mongoRole));
+
+	bool readOnly = false;
+	bool isNull = false;
+	ExtensionExecuteQueryViaSPI(query, readOnly, SPI_OK_INSERT, &isNull);
+
+	/* Increment metadata version for cache invalidation */
+	const char *incrementVersion =
+		"SELECT documentdb_api_catalog.increment_metadata_version()";
+	ExtensionExecuteQueryViaSPI(incrementVersion, readOnly, SPI_OK_SELECT, &isNull);
+}
+
+
+/*
+ * UpdateRbacMetadataForRevoke updates the RBAC metadata system by removing role grants.
+ * This should be called before dropping a user to remove all their role grants.
+ */
+static void
+UpdateRbacMetadataForRevoke(const char *username)
+{
+	/* Delete all role grants for this user */
+	const char *query = FormatSqlQuery(
+		"DELETE FROM documentdb_api_catalog.user_roles "
+		"WHERE username = %s",
+		quote_literal_cstr(username));
+
+	bool readOnly = false;
+	bool isNull = false;
+	ExtensionExecuteQueryViaSPI(query, readOnly, SPI_OK_DELETE, &isNull);
+
+	/* Increment metadata version for cache invalidation */
+	const char *incrementVersion =
+		"SELECT documentdb_api_catalog.increment_metadata_version()";
+	ExtensionExecuteQueryViaSPI(incrementVersion, readOnly, SPI_OK_SELECT, &isNull);
 }
 
 

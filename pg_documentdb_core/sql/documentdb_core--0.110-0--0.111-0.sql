@@ -1,0 +1,4 @@
+-- documentdb_core--0.110-0--0.111-0.sql
+-- Upgrade script from version 0.110-0 to 0.111-0
+-- Version bump to stay in sync with pg_documentdb extension
+-- No functional changes in this release for documentdb_core

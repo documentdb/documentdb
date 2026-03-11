@@ -1,3 +1,6 @@
+### documentdb v0.111-0 (Unreleased) ###
+* Add RBAC metadata infrastructure for RFC-006 Phase 1 *[Feature]*
+
 ### documentdb v0.110-0 (Unreleased) ###
 * Add support for keyword `description` in `$jsonSchema` *[Feature]*
 
