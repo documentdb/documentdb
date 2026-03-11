@@ -18,6 +18,8 @@
 #include "io/bson_core.h"
 #include "operators/bson_expression.h"
 #include "vector/vector_spec.h"
+#include "index_am/index_am_exports.h"
+
 
 #define MAX_INDEX_OPTIONS_LENGTH 1500
 
@@ -47,7 +49,7 @@ typedef struct IndexDefKeyPath
 } IndexDefKeyPath;
 
 
-typedef struct
+typedef struct IndexDefKey
 {
 	/* whether or not it's the _id style index */
 	bool isIdIndex;
@@ -96,8 +98,9 @@ typedef struct
 	MongoIndexKind wildcardIndexKind;
 } IndexDefKey;
 
+typedef struct AmIndexCreationOptions AmIndexCreationOptions;
 
-typedef struct
+typedef struct IndexDef
 {
 	/* represents value of "indexName" field */
 	char *name;
@@ -186,6 +189,12 @@ typedef struct
 
 	/* Feature flag to enable the composite term index */
 	BoolIndexOption enableReducedWildcardTerms;
+
+	/* Index options parsed by the index access method */
+	AmIndexCreationOptions *amIndexOptions;
+
+	/* The index access method delegating the parsing and generating command */
+	const BsonIndexAmEntry *indexDelegateAM;
 
 	/*
 	 * Whether or not this index should be created as a blocking
@@ -290,5 +299,12 @@ IndexSpec MakeIndexSpecForIndexDef(IndexDef *indexDef);
 pgbson * MakeCreateIndexesMsg(CreateIndexesResult *result);
 bool WildcardProjDocsAreEquivalent(const pgbson *leftWPDocument,
 								   const pgbson *rightWPDocument);
+void ValidateIndexName(const bson_value_t *nameValue);
+
+CreateIndexesResult SubmitCreateIndexesRequest(Datum dbNameDatum,
+											   CreateIndexesArg createIndexesArg,
+											   bool *volatile snapshotSet);
+
+Datum ReindexOrCreateCommandCore(PG_FUNCTION_ARGS, char *internalQuery);
 
 #endif

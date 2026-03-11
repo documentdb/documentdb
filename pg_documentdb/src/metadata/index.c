@@ -39,6 +39,7 @@
 #include "utils/hashset_utils.h"
 #include "infrastructure/job_management.h"
 #include "utils/error_utils.h"
+#include "index_am/index_am_extend.h"
 
 extern int MaxNumActiveUsersIndexBuilds;
 extern int IndexBuildScheduleInSec;
@@ -69,7 +70,7 @@ static const MongoIndexSupport MongoIndexSupportedList[] =
 	{ "hashed", true, MongoIndexKind_Hashed },
 	{ "text", true, MongoIndexKind_Text },
 	{ "2dsphere", true, MongoIndexKind_2dsphere },
-	{ "cosmosSearch", true, MongoIndexingKind_CosmosSearch },
+	{ "cosmosSearch", true, MongoIndexKind_CosmosSearch },
 };
 
 static const int NumberOfMongoIndexTypes = sizeof(MongoIndexSupportedList) /
@@ -1646,6 +1647,101 @@ GetRequestFromIndexQueue(uint64 collectionId, MemoryContext mcxt)
 }
 
 
+/*
+ * GetInProgressRequestFromIndexQueue retrieves in-progress
+ * index creation requests from the index_queue for a given collection.
+ *
+ * Returns a List of IndexCmdRequest* for queued or in-progress index creation commands.
+ */
+List *
+GetInProgressRequestFromIndexQueue(uint64 collectionId, MemoryContext mcxt)
+{
+	bool readOnly = false;
+	int numValues = 8;
+	StringInfo cmdStr = makeStringInfo();
+
+	/*
+	 * Query to get in-progress and queued index commands from the index_queue.
+	 * We filter for:
+	 * 1. The index_cmd_status is Queued or Inprogress
+	 * 2. The cmd_type is 'C' (CREATE INDEX)
+	 */
+	appendStringInfo(cmdStr,
+					 "SELECT index_cmd, index_id, index_cmd_status, COALESCE(attempt, 0) AS attempt, comment, update_time, user_oid, cmd_type ");
+	appendStringInfo(cmdStr,
+					 " FROM %s iq ", GetIndexQueueName());
+	appendStringInfo(cmdStr,
+					 " WHERE iq.collection_id = " UINT64_FORMAT, collectionId);
+	appendStringInfo(cmdStr,
+					 " AND %s.index_build_is_in_progress(iq.index_id)",
+					 ApiInternalSchemaName);
+
+	/* Execute query */
+	SPI_connect();
+	int ret = SPI_execute(cmdStr->data, readOnly, 0);
+	if (ret != SPI_OK_SELECT)
+	{
+		ereport(ERROR, (errmsg("Failed to query index_queue for in-progress indexes")));
+	}
+
+	/* Process results */
+	List *indexRequests = NIL;
+	uint64 numRows = SPI_processed;
+	for (uint64 i = 0; i < numRows; i++)
+	{
+		HeapTuple tuple = SPI_tuptable->vals[i];
+		TupleDesc tupdesc = SPI_tuptable->tupdesc;
+
+		bool isNull[8] = { 0 };
+		Datum results[8] = { 0 };
+
+		for (int j = 1; j <= numValues; j++)
+		{
+			results[j - 1] = SPI_getbinval(tuple, tupdesc, j, &isNull[j - 1]);
+		}
+
+		if (!isNull[0])
+		{
+			char *cmd = text_to_cstring(DatumGetTextP(results[0]));
+			int indexId = DatumGetInt32(results[1]);
+			int status = DatumGetInt32(results[2]);
+			int16 attemptCount = DatumGetUInt16(results[3]);
+			pgbson *comment = DatumGetPgBson_MAYBE_NULL(results[4]);
+			TimestampTz updateTime = DatumGetTimestampTz(results[5]);
+			Oid userOid = InvalidOid;
+			if (!isNull[6])
+			{
+				userOid = DatumGetObjectId(results[6]);
+			}
+			BpChar *cmdTypeChar = DatumGetBpCharP(results[7]);
+			char *cmdTypeData = VARDATA_ANY(cmdTypeChar);
+
+			/* Copy to the specified memory context */
+			MemoryContext old = MemoryContextSwitchTo(mcxt);
+			IndexCmdRequest *request = palloc0(sizeof(IndexCmdRequest));
+			request->indexId = indexId;
+			request->collectionId = collectionId;
+			request->attemptCount = attemptCount;
+			request->updateTime = updateTime;
+			request->status = status;
+			request->userOid = userOid;
+			request->comment = NULL;
+			request->cmd = pstrdup(cmd);
+			request->cmdType = cmdTypeData[0];
+			if (comment != NULL)
+			{
+				request->comment = PgbsonCloneFromPgbson(comment);
+			}
+			indexRequests = lappend(indexRequests, request);
+			MemoryContextSwitchTo(old);
+		}
+	}
+
+	SPI_finish();
+	return indexRequests;
+}
+
+
 static ArrayType *
 ConvertUint64ListToArray(List *collectionIdArray)
 {
@@ -2603,6 +2699,11 @@ SerializeIndexSpec(const IndexSpec *indexSpec, bool isGetIndexes,
 					PgbsonWriterAppendBool(&storageEngineOptionsWriter,
 										   "enableOrderedIndex", 18,
 										   value);
+				}
+				else if (StringViewEqualsCString(&keyView,
+												 EXTENDED_INDEX_SPEC_FLAG_FIELD_NAME))
+				{
+					/* Hide this option from GetIndexes output */
 				}
 				else
 				{

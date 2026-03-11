@@ -182,6 +182,10 @@ bool EnableCompositeWildcardSkipEmptyEntries =
 #define DEFAULT_ENABLE_ORDERED_COMPOSITE_OPERATOR_SCAN true
 bool EnableOrderedCompositeOperatorScan = DEFAULT_ENABLE_ORDERED_COMPOSITE_OPERATOR_SCAN;
 
+/* Added in v111, Pending stabilization */
+#define DEFAULT_ENABLE_EXTENDED_INDEXES false
+bool EnableExtendedIndexes = DEFAULT_ENABLE_EXTENDED_INDEXES;
+
 /*
  * SECTION: Planner feature flags
  */
@@ -863,6 +867,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			" which has skip-scan support enabled inherently."),
 		NULL, &EnableOrderedCompositeOperatorScan,
 		DEFAULT_ENABLE_ORDERED_COMPOSITE_OPERATOR_SCAN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableExtendedIndexes", newGucPrefix),
+		gettext_noop(
+			"Whether to enable extended indexes feature."),
+		NULL, &EnableExtendedIndexes,
+		DEFAULT_ENABLE_EXTENDED_INDEXES,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

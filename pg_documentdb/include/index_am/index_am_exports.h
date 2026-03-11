@@ -24,6 +24,8 @@ typedef bool (*GetMultikeyStatusFunc)(Relation indexRelation);
 typedef bool (*GetTruncationStatusFunc)(Relation indexRelation);
 typedef bool (*CanOrderInIndexScan)(struct IndexScanDescData *scan);
 
+typedef struct CreateIndexesSupportFuncs CreateIndexesSupportFuncs;
+
 /*
  * Data structure for an alternative index acess method for indexing bosn.
  * It contains the indexing capability and various utility function.
@@ -69,6 +71,9 @@ typedef struct
 
 	/* Indicates whether the index supports ordered operator scans */
 	bool supports_ordered_operator_scans;
+
+	/* Optional struct including create index support functions */
+	CreateIndexesSupportFuncs *create_indexes_support_funcs;
 } BsonIndexAmEntry;
 
 /*

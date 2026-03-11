@@ -338,6 +338,8 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_CREATE_INDEX_VECTOR_TYPE_DISKANN] = "create_index_vector_type_diskann",
 	[FEATURE_CREATE_INDEX_VECTOR_TYPE_HNSW] = "create_index_vector_type_hnsw",
 	[FEATURE_CREATE_INDEX_VECTOR_TYPE_IVFFLAT] = "create_index_vector_type_ivfflat",
+	[FEATURE_CREATE_SEARCH_INDEX_TYPE_SEARCH] = "create_search_index_type_search",
+	[FEATURE_CREATE_SEARCH_INDEX_TYPE_VECTOR] = "create_search_index_type_vector",
 	[FEATURE_CREATE_UNIQUE_INDEX_WITH_TERM_TRUNCATION] =
 		"create_unique_index_with_term_truncation",
 

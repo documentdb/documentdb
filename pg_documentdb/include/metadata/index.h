@@ -209,8 +209,11 @@ typedef enum MongoIndexKind
 	/* Geospatial 2D index */
 	MongoIndexKind_2dsphere = 0x10,
 
-	/* A CosmosDB Indexing kind */
-	MongoIndexingKind_CosmosSearch = 0x20,
+	/* A vector index kind */
+	MongoIndexKind_CosmosSearch = 0x20,
+
+	/* Preserved for extended index kinds */
+	MongoIndexKind_Extended = 0x100,
 } MongoIndexKind;
 
 typedef struct
@@ -313,6 +316,8 @@ IndexCmdRequest * GetRequestFromIndexQueue(uint64 collectionId,
 IndexCmdRequest * GetSkippableRequestFromIndexQueue(int expireTimeInSeconds,
 													List *skipCollections,
 													MemoryContext mcxt);
+List * GetInProgressRequestFromIndexQueue(uint64 collectionId,
+										  MemoryContext mcxt);
 uint64 * GetCollectionIdsForIndexBuild(List *excludeCollectionIds);
 void AddRequestInIndexQueue(char *createIndexCmd, int indexId, uint64 collectionId, char
 							cmd_type, Oid userOid);

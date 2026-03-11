@@ -65,6 +65,7 @@
 #include "vector/vector_common.h"
 #include "vector/vector_utilities.h"
 #include "index_am/index_am_utils.h"
+#include "index_am/index_am_extend.h"
 
 /* Return value of TryCreateCollectionIndexes */
 typedef struct
@@ -323,14 +324,12 @@ static void SendCreateIndexesResultToClientAsBson(FunctionCallInfo createIndexes
 static void SendReIndexResultToClientAsBson(FunctionCallInfo reIndexesFcinfo,
 											ReIndexResult *result,
 											DestReceiver *destReceiver);
-static void ValidateIndexName(const bson_value_t *nameValue);
 
 static BsonLeafPathNode * CreateIndexesCreateLeafNode(const StringView *fieldPath,
 													  const char *relativePath,
 													  void *state);
 static const char * SerializeWeightedPaths(List *weightedPaths);
 static bool IndexSupportsTruncation(IndexDef *indexDef);
-
 
 /*
  * IsCallCreateIndexesStmt returns true if given node is a CallStmt that runs
@@ -1469,7 +1468,8 @@ ParseIndexDefDocument(const bson_iter_t *indexesArrayIter, bool ignoreUnknownInd
 	IndexDef *indexDef = NULL;
 	PG_TRY();
 	{
-		indexDef = ParseIndexDefDocumentInternal(indexesArrayIter, indexSpecRepr,
+		indexDef = ParseIndexDefDocumentInternal(indexesArrayIter,
+												 indexSpecRepr,
 												 ignoreUnknownIndexOptions,
 												 buildAsUniqueForPrepareUnique);
 	}
@@ -2636,7 +2636,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
  * field that is known to be a part of index definition document that
  * indexesArrayIter holds.
  */
-static void
+void
 EnsureIndexDefDocFieldType(const bson_iter_t *indexDefDocIter,
 						   bson_type_t expectedType)
 {
@@ -2972,7 +2972,7 @@ ParseIndexDefKeyDocument(const bson_iter_t *indexDefDocIter)
 			numHashedIndexes++;
 		}
 
-		if (indexKind == MongoIndexingKind_CosmosSearch)
+		if (indexKind == MongoIndexKind_CosmosSearch)
 		{
 			indexDefKey->hasCosmosIndexes = true;
 		}
@@ -5029,6 +5029,32 @@ MakeIndexSpecForIndexDef(IndexDef *indexDef)
 		PgbsonWriterAppendInt32(&writer, "buildAsUnique", 13, 1);
 	}
 
+	if (EnableExtendedIndexes && indexDef->amIndexOptions != NULL)
+	{
+		/* Append amIndexOptions to index_spec.index_options */
+		if (indexDef->indexDelegateAM != NULL &&
+			indexDef->indexDelegateAM->create_indexes_support_funcs != NULL)
+		{
+			CreateIndexesSupportFuncs *createIndexesSupport =
+				indexDef->indexDelegateAM->create_indexes_support_funcs;
+			createIndexesSupport->append_index_option_to_index_spec_func(
+				&writer, indexDef->amIndexOptions);
+
+			/* flag for entended index options */
+			PgbsonWriterAppendBool(&writer,
+								   EXTENDED_INDEX_SPEC_FLAG_FIELD_NAME,
+								   EXTENDED_INDEX_SPEC_FLAG_FIELD_NAME_LENGTH,
+								   true);
+		}
+		else
+		{
+			/* should not reach here */
+			ereport(ERROR,
+					(errmsg("Index AM options will be ignored since index AM does "
+							"not support appending index options to index spec")));
+		}
+	}
+
 	if (!IsPgbsonWriterEmptyDocument(&writer))
 	{
 		indexSpec.indexOptions = PgbsonWriterGetPgbson(&writer);
@@ -5080,7 +5106,77 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 	bool sparse = indexDef->sparse == BoolIndexOption_True;
 	const BsonIndexAmEntry *indexAm = GetIndexAmHandlerByName(indexDef);
 
-	if (unique)
+	if (EnableExtendedIndexes &&
+		indexDef->amIndexOptions != NULL &&
+		indexDef->indexDelegateAM != NULL)
+	{
+		/* Generate CREATE INDEX command
+		 *
+		 *  CREATE INDEX documents_rum_index_<id> ON documentdb_data.documents_<collectionId>
+		 *  USING <am_name>(
+		 *      <column1_expr>,
+		 *      <column2_expr>,
+		 *      ... )
+		 *  WITH ( <index_option_name> = <index_option_value>, ... )
+		 *  WHERE <partial_index_condition1> AND ...
+		 */
+		CreateIndexesSupportFuncs *createIndexesSupport =
+			indexDef->indexDelegateAM->create_indexes_support_funcs;
+		if (createIndexesSupport != NULL)
+		{
+			appendStringInfo(cmdStr,
+							 "CREATE INDEX %s " DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT
+							 " ON %s." DOCUMENT_DATA_TABLE_NAME_FORMAT
+							 " USING %s( ",
+							 concurrently ? "CONCURRENTLY" : "",
+							 indexId, ApiDataSchemaName, collectionId,
+							 indexDef->indexDelegateAM->am_name);
+
+			/* append the column expressions, mandatory */
+			char *indexExprsStr =
+				createIndexesSupport->generateIndexCreationColumnsFunc(
+					indexDef->amIndexOptions);
+			if (indexExprsStr == NULL)
+			{
+				ereport(ERROR, (errmsg("Index AM %s does not support creating indexes",
+									   indexDef->indexDelegateAM->am_name)));
+			}
+
+			appendStringInfo(cmdStr, "%s ) ", indexExprsStr);
+
+			/* append the index options, optional */
+			if (createIndexesSupport->generateIndexCreationWithOptionsFunc != NULL)
+			{
+				char *indexOptionsStr =
+					createIndexesSupport->generateIndexCreationWithOptionsFunc(
+						indexDef->amIndexOptions);
+				if (indexOptionsStr != NULL && strlen(indexOptionsStr) > 0)
+				{
+					appendStringInfo(cmdStr, " WITH ( %s ) ", indexOptionsStr);
+				}
+			}
+
+			/* append the partial index predicate */
+			if (createIndexesSupport->generateIndexCreationPartialPredicatesFunc != NULL)
+			{
+				char *partialIndexPredicateStr =
+					createIndexesSupport->generateIndexCreationPartialPredicatesFunc(
+						indexDef->amIndexOptions);
+				if (partialIndexPredicateStr != NULL && strlen(partialIndexPredicateStr) >
+					0)
+				{
+					appendStringInfo(cmdStr, " WHERE %s ",
+									 partialIndexPredicateStr);
+				}
+			}
+		}
+		else
+		{
+			ereport(ERROR, (errmsg("Index AM %s does not support creating indexes",
+								   indexDef->indexDelegateAM->am_name)));
+		}
+	}
+	else if (unique)
 	{
 		if (isTempCollection)
 		{
@@ -6692,7 +6788,7 @@ generate_create_index_arg(PG_FUNCTION_ARGS)
 /*
  * Validate index name is not invalid. Constraints on index names can be checked here.
  */
-static void
+void
 ValidateIndexName(const bson_value_t *indexName)
 {
 	if (indexName->value.v_utf8.len == 0)

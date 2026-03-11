@@ -51,6 +51,7 @@
 
 #include "aggregation/bson_aggregation_pipeline_private.h"
 #include "api_hooks.h"
+#include "index_am/index_am_extend.h"
 
 static Query * GenerateBaseListCollectionsQuery(Datum databaseDatum, bool nameOnly,
 												bool addDistributedMetadata,
@@ -473,8 +474,60 @@ GenerateBaseListIndexesQuery(text *databaseDatum, const StringView *collectionNa
 													false, true),
 								 InvalidOid, InvalidOid);
 
-	/* collection_id = <id> AND (index_is_valud OR ApiInternalSchemaName.index_build_is_in_progress) */
-	Expr *andClause = make_andclause(list_make2(opExpr, orClause));
+	/* Filter out extended index info when extended indexes feature is enabled */
+	Expr *andClause;
+	if (EnableExtendedIndexes)
+	{
+		/* NOT (index_spec.index_options #= '{ "isExtendedIndex": true }') */
+		Oid queryOpOid = BsonEqualMatchRuntimeOperatorId();
+
+		FieldSelect *indexOptionsField = makeNode(FieldSelect);
+		indexOptionsField->arg = (Expr *) indexSpecVar;
+		indexOptionsField->fieldnum = 10;                  /* index_options is the 10th attribute */
+		indexOptionsField->resulttype = BsonTypeId();       /* index_options is of type bson */
+		indexOptionsField->resulttypmod = -1;
+		indexOptionsField->resultcollid = InvalidOid;
+
+		pgbson_writer filterWriter;
+		PgbsonWriterInit(&filterWriter);
+		PgbsonWriterAppendBool(&filterWriter,
+							   EXTENDED_INDEX_SPEC_FLAG_FIELD_NAME,
+							   EXTENDED_INDEX_SPEC_FLAG_FIELD_NAME_LENGTH,
+							   true);
+		pgbson *filterBson = PgbsonWriterGetPgbson(&filterWriter);
+		Const *filterConst = MakeBsonConst(filterBson);
+
+		Expr *indexOptionsMatchExpr = make_opclause(queryOpOid, BOOLOID, false,
+													(Expr *) indexOptionsField,
+													(Expr *) filterConst,
+													InvalidOid, InvalidOid);
+
+		Expr *notExtendedExpr = (Expr *) makeBoolExpr(NOT_EXPR,
+													  list_make1(indexOptionsMatchExpr),
+													  -1);
+
+		/* (index_spec).index_options is null */
+		NullTest *indexOptionsIsNullExpr = makeNode(NullTest);
+		indexOptionsIsNullExpr->arg = (Expr *) indexOptionsField;
+		indexOptionsIsNullExpr->nulltesttype = IS_NULL;
+		indexOptionsIsNullExpr->argisrow = false;
+
+		/* ((index_spec).index_options is null) or NOT (index_spec.index_options #= '{ "isExtendedIndex": true }') */
+		Expr *notExtendedOrNullExpr = (Expr *) makeBoolExpr(OR_EXPR,
+															list_make2(
+																indexOptionsIsNullExpr,
+																notExtendedExpr),
+															-1);
+
+		/* collection_id = <id> AND (index_is_valud OR ApiInternalSchemaName.index_build_is_in_progress)
+		 * AND ((index_spec).index_options is null OR NOT (index_spec.index_options #= '{ "isExtendedIndex": true }'))
+		 */
+		andClause = make_andclause(list_make3(opExpr, orClause, notExtendedOrNullExpr));
+	}
+	else
+	{
+		andClause = make_andclause(list_make2(opExpr, orClause));
+	}
 
 	query->jointree = makeFromExpr(list_make1(rtr), (Node *) andClause);
 

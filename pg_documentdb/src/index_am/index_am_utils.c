@@ -13,6 +13,7 @@
 #include "utils/feature_counter.h"
 #include "access/relscan.h"
 #include "index_am/documentdb_rum.h"
+#include "index_am/index_am_extend.h"
 
 #include <miscadmin.h>
 
@@ -24,6 +25,8 @@ static const char * GetRumCatalogSchema(void);
 static const char * GetRumInternalSchemaV2(void);
 
 static bool RumScanOrderedFalse(IndexScanDesc scan);
+static inline void ValidateCreateIndexesSupportFuncs(
+	CreateIndexesSupportFuncs *createIndexSupport);
 
 /* Left non-static for internal use */
 BsonIndexAmEntry RumIndexAmEntry = {
@@ -48,6 +51,7 @@ BsonIndexAmEntry RumIndexAmEntry = {
 	.get_truncation_status = RumGetTruncationStatus,
 	.can_order_in_index_scans = RumScanOrderedFalse,
 	.supports_ordered_operator_scans = false,
+	.create_indexes_support_funcs = NULL,
 };
 
 /*
@@ -72,6 +76,24 @@ RegisterIndexAm(BsonIndexAmEntry indexAmEntry)
 		ereport(ERROR,
 				(errmsg("Only %d alternate index AMs are allowed",
 						MAX_ALTERNATE_INDEX_AMS)));
+	}
+
+	if (indexAmEntry.am_name == NULL ||
+		strlen(indexAmEntry.am_name) == 0)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with NULL or empty am_name")));
+	}
+
+	if (indexAmEntry.get_am_oid == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with NULL get_am_oid function")));
+	}
+
+	if (indexAmEntry.create_indexes_support_funcs != NULL)
+	{
+		ValidateCreateIndexesSupportFuncs(indexAmEntry.create_indexes_support_funcs);
 	}
 
 	BsonAlternateAmRegistry[BsonNumAlternateAmEntries++] = indexAmEntry;
@@ -183,7 +205,68 @@ bool
 IsBsonRegularIndexAm(Oid indexAm)
 {
 	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(indexAm);
-	return amEntry != NULL;
+
+	/* If there are create index support functions,
+	 * we assume it is a MongoIndexKind_Extended index, not a regular bson index.
+	 */
+	return amEntry != NULL && amEntry->create_indexes_support_funcs == NULL;
+}
+
+
+/*
+ * Is the Index Access Method an extended index (not a regular bson index, TEXT, Vector, Points etc)
+ */
+bool
+IsExtendedIndexAm(Oid indexAm)
+{
+	if (!EnableExtendedIndexes)
+	{
+		return false;
+	}
+
+	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(indexAm);
+
+	/* If there are create index support functions,
+	 * we assume it is a MongoIndexKind_Extended index, not a regular bson index.
+	 */
+	return amEntry != NULL && amEntry->create_indexes_support_funcs != NULL;
+}
+
+
+/*
+ * Is the Index Access Method name for an extended index (not a regular bson index).
+ * Extended indexes have create_indexes_support_funcs != NULL.
+ */
+bool
+IsExtendedIndexAmByName(const char *amName)
+{
+	if (!EnableExtendedIndexes)
+	{
+		return false;
+	}
+
+	if (amName == NULL || strlen(amName) == 0)
+	{
+		return false;
+	}
+
+	/* Check if it's the rum AM (which is regular, not extended) */
+	if (strcmp(amName, RumIndexAmEntry.am_name) == 0)
+	{
+		return false;
+	}
+
+	/* Check in the alternate AM registry */
+	for (int i = 0; i < BsonNumAlternateAmEntries; i++)
+	{
+		if (strcmp(BsonAlternateAmRegistry[i].am_name, amName) == 0)
+		{
+			return BsonAlternateAmRegistry[i].create_indexes_support_funcs != NULL;
+		}
+	}
+
+	/* Unknown AM, assume not extended */
+	return false;
 }
 
 
@@ -426,6 +509,58 @@ GetCompositeOpClassWithProps(Relation indexRelation,
 	}
 
 	return false;
+}
+
+
+/*
+ * Validates that all required functions are provided in CreateIndexesSupportFuncs.
+ */
+static inline void
+ValidateCreateIndexesSupportFuncs(CreateIndexesSupportFuncs *createIndexSupport)
+{
+	const char *cmdName = createIndexSupport->create_index_cmd_name;
+	if (cmdName == NULL || strlen(cmdName) == 0)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with create_indexes_support_funcs "
+							"but NULL or empty create_index_cmd_name")));
+	}
+
+	if (strcmp(cmdName, "createIndexes") == 0)
+	{
+		ereport(ERROR, (errmsg(
+							"create_index_cmd_name cannot be 'createIndexes', use a custom command name")));
+	}
+
+	if (strncmp(cmdName, "create", 6) != 0 ||
+		strlen(cmdName) <= 13 ||
+		strcmp(cmdName + strlen(cmdName) - 7, "Indexes") != 0)
+	{
+		ereport(ERROR, (errmsg(
+							"create_index_cmd_name must start with 'create' and end with 'Indexes', "
+							"got '%s'", cmdName)));
+	}
+
+	if (createIndexSupport->generateIndexCreationColumnsFunc == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with create_indexes_support_funcs "
+							"but NULL generateIndexCreationColumnsFunc function")));
+	}
+
+	if (createIndexSupport->append_index_option_to_index_spec_func == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with create_indexes_support_funcs "
+							"but NULL append_index_option_to_index_spec_func function")));
+	}
+
+	if (createIndexSupport->is_extended_am_index_spec_func == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with create_indexes_support_funcs "
+							"but NULL is_extended_am_index_spec_func function")));
+	}
 }
 
 

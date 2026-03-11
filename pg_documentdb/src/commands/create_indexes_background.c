@@ -60,6 +60,7 @@
 #include "utils/version_utils.h"
 #include "utils/query_utils.h"
 #include "vector/vector_utilities.h"
+#include "index_am/index_am_utils.h"
 
 #define FinishKey "finish"
 #define FinishKeyLength 6
@@ -144,9 +145,6 @@ PG_FUNCTION_INFO_V1(setup_index_queue_table);
 
 static pgbson * RunIndexCommandOnMetadataCoordinator(const char *query, int
 													 expectedSpiOk);
-static CreateIndexesResult SubmitCreateIndexesRequest(Datum dbNameDatum,
-													  pgbson *createIndexesMessage,
-													  bool *volatile snapshotSet);
 static IndexJobOpId * GetIndexBuildJobOpId(void);
 static void MarkIndexAsValid(int indexId);
 static bool IsSkippableError(int targetErrorCode, char *errMsg);
@@ -630,7 +628,7 @@ build_index_concurrently_from_indexqueue_core(MemoryContext stableContext)
 }
 
 
-static Datum
+Datum
 ReindexOrCreateCommandCore(PG_FUNCTION_ARGS, char *internalQuery)
 {
 	ThrowIfServerOrTransactionReadOnly();
@@ -913,7 +911,11 @@ command_create_indexes_background_internal(PG_FUNCTION_ARGS)
 	BeginInternalSubTransaction(NULL);
 	PG_TRY();
 	{
-		*result = SubmitCreateIndexesRequest(dbNameDatum, arg, snapshotSet);
+		bool buildAsUniqueForPrepareUnique = false;
+		CreateIndexesArg createIndexesArg = ParseCreateIndexesArg(&dbNameDatum,
+																  arg,
+																  buildAsUniqueForPrepareUnique);
+		*result = SubmitCreateIndexesRequest(dbNameDatum, createIndexesArg, snapshotSet);
 
 		ReleaseCurrentSubTransaction();
 		MemoryContextSwitchTo(savedMemoryContext);
@@ -1141,15 +1143,10 @@ setup_index_queue_table(PG_FUNCTION_ARGS)
  * SubmitCreateIndexesRequest is the function that submits the create index request to local table
  * and submits indexes into metadata as invalid.
  */
-static CreateIndexesResult
+CreateIndexesResult
 SubmitCreateIndexesRequest(Datum dbNameDatum,
-						   pgbson *createIndexesMessage, bool *volatile snapshotSet)
+						   CreateIndexesArg createIndexesArg, bool *volatile snapshotSet)
 {
-	bool buildAsUniqueForPrepareUnique = false;
-	CreateIndexesArg createIndexesArg = ParseCreateIndexesArg(&dbNameDatum,
-															  createIndexesMessage,
-															  buildAsUniqueForPrepareUnique);
-
 	char *collectionName = createIndexesArg.collectionName;
 	Datum collectionNameDatum = CStringGetTextDatum(collectionName);
 

@@ -79,6 +79,7 @@ static BsonIndexAmEntry DocumentDBIndexAmEntry = {
 	.get_truncation_status = RumGetTruncationStatus,
 	.can_order_in_index_scans = can_documentdb_rum_index_scan_ordered,
 	.supports_ordered_operator_scans = true,
+	.create_indexes_support_funcs = NULL,
 };
 static DocumentDBRumOidCacheData Cache = { 0 };
 static bool has_custom_routine = false;

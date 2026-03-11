@@ -15,6 +15,8 @@
 #include <lib/stringinfo.h>
 #include <utils/builtins.h>
 #include <nodes/makefuncs.h>
+#include <utils/ruleutils.h>
+#include <utils/lsyscache.h>
 
 #include "io/bson_core.h"
 #include "api_hooks.h"
@@ -31,6 +33,8 @@
 #include "utils/version_utils.h"
 #include "utils/version_utils.h"
 #include "utils/list_utils.h"
+#include "index_am/index_am_extend.h"
+#include "index_am/index_am_utils.h"
 
 extern bool EnableNativeColocation;
 extern int ShardingMaxChunks;
@@ -144,6 +148,10 @@ static Expr * FindShardKeyValuesExprNew(bson_iter_t *queryDocIter, int
 										bool *isShardKeyValueCollationAware);
 
 static void ShardCollectionCore(ShardCollectionArgs *args);
+static char * ExtractAmNameFromCreateIndexCmd(const char *createIndexCmd);
+static List * GetExtendedIndexCreationCmds(MongoCollection *collection);
+static char * BuildExtendedIndexExclusionPredicate(Datum extendedIndexIdsArray,
+												   List **extendedIndexIdsList);
 static void ShardCollectionLegacy(PG_FUNCTION_ARGS);
 static void ParseShardCollectionRequest(pgbson *args, ShardCollectionArgs *shardArgs);
 static void ParseReshardCollectionRequest(pgbson *args, ShardCollectionArgs *shardArgs);
@@ -1186,6 +1194,192 @@ ShardCollectionLegacy(PG_FUNCTION_ARGS)
 }
 
 
+/*
+ * ExtractAmNameFromCreateIndexCmd extracts the access method name from a
+ * CREATE INDEX SQL command.
+ *
+ * Returns a palloc'd string containing the AM name, or NULL if not found.
+ */
+static char *
+ExtractAmNameFromCreateIndexCmd(const char *createIndexCmd)
+{
+	if (createIndexCmd == NULL)
+	{
+		return NULL;
+	}
+
+	/* Find " USING " clause in the command */
+	char *usingPos = strstr(createIndexCmd, " USING ");
+	if (usingPos == NULL)
+	{
+		return NULL;
+	}
+
+	/* Skip past " USING " and any additional whitespace */
+	char *amNameStart = usingPos + 7; /* strlen(" USING ") = 7 */
+	while (*amNameStart == ' ' || *amNameStart == '\t')
+	{
+		amNameStart++;
+	}
+
+	/* Find the end of the AM name (space, tab, opening parenthesis, or null terminator) */
+	char *amNameEnd = amNameStart;
+	while (*amNameEnd != '\0' && *amNameEnd != ' ' && *amNameEnd != '\t' && *amNameEnd !=
+		   '(')
+	{
+		amNameEnd++;
+	}
+
+	/* Extract AM name */
+	int amNameLen = amNameEnd - amNameStart;
+	if (amNameLen == 0)
+	{
+		return NULL;
+	}
+
+	char *amName = palloc0(amNameLen + 1);
+	strncpy(amName, amNameStart, amNameLen);
+	amName[amNameLen] = '\0';
+
+	return amName;
+}
+
+
+/*
+ * GetExtendedIndexCreationCmds retrieves SQL creation commands for all extended indexes
+ * (both existing and in-progress) on a collection.
+ *
+ * Returns a List of char* strings, each containing a SQL CREATE INDEX command.
+ */
+static List *
+GetExtendedIndexCreationCmds(MongoCollection *collection)
+{
+	List *existingExtendedIndexesCmds = NIL;
+
+	/* Fetch existing extended indexes on the collection to be recreated later */
+	Relation collectionRelation = RelationIdGetRelation(collection->relationId);
+	List *indexIdList = RelationGetIndexList(collectionRelation);
+	RelationClose(collectionRelation);
+
+	ListCell *indexId;
+	foreach(indexId, indexIdList)
+	{
+		Oid indexOid = lfirst_oid(indexId);
+		Relation indexRelation = RelationIdGetRelation(indexOid);
+
+		/* skip regular indexes */
+		if (!IsExtendedIndexAm(indexRelation->rd_rel->relam))
+		{
+			/* skip non-extended indexes */
+			RelationClose(indexRelation);
+			continue;
+		}
+
+		char *indexName = get_rel_name(indexOid);
+		char *indexDefString = pg_get_indexdef_string(indexOid);
+
+		/* Skip the collection_pk_<id> index, we will create it separately */
+		if (strncmp(indexName, "collection_pk_", strlen("collection_pk_")) == 0)
+		{
+			ereport(DEBUG1, (errmsg(
+								 "Skipping primary key index: %s, Oid: %u \ndefinition: %s",
+								 indexName, indexOid, indexDefString)));
+			RelationClose(indexRelation);
+			continue;
+		}
+
+		ereport(DEBUG1, (errmsg(
+							 "Found existing extended index: %s, Oid: %u \ndefinition: %s",
+							 indexName, indexOid, indexDefString)));
+		existingExtendedIndexesCmds = lappend(existingExtendedIndexesCmds,
+											  indexDefString);
+		RelationClose(indexRelation);
+	}
+
+	/* Fetch in-progress extended indexes from the index_queue. */
+	List *inProgressIndexRequests = GetInProgressRequestFromIndexQueue(
+		collection->collectionId, CurrentMemoryContext);
+
+	ListCell *requestCell;
+	foreach(requestCell, inProgressIndexRequests)
+	{
+		IndexCmdRequest *request = (IndexCmdRequest *) lfirst(requestCell);
+
+		/* Extract the AM name from the CREATE INDEX command */
+		char *amName = ExtractAmNameFromCreateIndexCmd(request->cmd);
+		if (amName == NULL)
+		{
+			/* No USING clause found, skip this index */
+			ereport(DEBUG1, (errmsg(
+								 "Skipping in-progress extended index without USING clause: index_id=%d",
+								 request->indexId)));
+			continue;
+		}
+
+		/* Check if this is an extended index AM */
+		if (IsExtendedIndexAmByName(amName))
+		{
+			ereport(DEBUG1, (errmsg(
+								 "Found in-progress extended index: index_id=%d, am=%s \ndefinition: %s",
+								 request->indexId, amName, request->cmd)));
+			existingExtendedIndexesCmds = lappend(existingExtendedIndexesCmds,
+												  request->cmd);
+		}
+		else
+		{
+			ereport(DEBUG1, (errmsg("Skipping non-extended index: index_id=%d, am=%s",
+									request->indexId, amName)));
+		}
+
+		pfree(amName);
+	}
+
+	return existingExtendedIndexesCmds;
+}
+
+
+/*
+ * BuildExtendedIndexExclusionPredicate builds a SQL predicate to exclude extended indexes
+ * from metadata deletion, and extracts the list of extended index IDs.
+ *
+ * Returns the exclusion predicate string (or NULL if no extended indexes),
+ * and populates extendedIndexIdsList with the index IDs.
+ */
+static char *
+BuildExtendedIndexExclusionPredicate(Datum extendedIndexIdsArray,
+									 List **extendedIndexIdsList)
+{
+	if (!extendedIndexIdsArray)
+	{
+		*extendedIndexIdsList = NIL;
+		return NULL;
+	}
+
+	Datum *elems = NULL;
+	int nelems = 0;
+	ArrayExtractDatums(DatumGetArrayTypeP(extendedIndexIdsArray), INT4OID,
+					   &elems, NULL, &nelems);
+
+	StringInfo excludedStrInfo = makeStringInfo();
+	appendStringInfo(excludedStrInfo, "AND (NOT index_id = ANY(ARRAY[");
+
+	*extendedIndexIdsList = NIL;
+	for (int i = 0; i < nelems; i++)
+	{
+		int32_t indexId = DatumGetInt32(elems[i]);
+		if (i > 0)
+		{
+			appendStringInfoChar(excludedStrInfo, ',');
+		}
+		appendStringInfo(excludedStrInfo, "%d", indexId);
+		*extendedIndexIdsList = lappend_int(*extendedIndexIdsList, indexId);
+	}
+	appendStringInfo(excludedStrInfo, "]))");
+
+	return excludedStrInfo->data;
+}
+
+
 static void
 ShardCollectionCore(ShardCollectionArgs *args)
 {
@@ -1254,6 +1448,13 @@ ShardCollectionCore(ShardCollectionArgs *args)
 							args->databaseName, args->collectionName, args->databaseName,
 							args->collectionName,
 							PgbsonToJsonForLogging(args->shardKeyDefinition))));
+	}
+
+	/* Fetch all extended indexes (existing and in-progress) to be recreated later */
+	List *existingExtendedIndexesCmds = NIL;
+	if (EnableExtendedIndexes)
+	{
+		existingExtendedIndexesCmds = GetExtendedIndexCreationCmds(collection);
 	}
 
 	int nargs = 3;
@@ -1461,7 +1662,7 @@ ShardCollectionCore(ShardCollectionArgs *args)
 		appendStringInfo(queryInfo,
 						 " SELECT array_agg((index_spec).index_name)::text[] FROM %s.collection_indexes WHERE "
 						 "(index_is_valid OR %s.index_build_is_in_progress(index_id)) AND collection_id = %lu AND "
-						 "(index_spec).index_options::%s OPERATOR(%s.@@) '{\"prepareUnique\": true}';",
+						 "(index_spec).index_options::%s OPERATOR(%s.#=) '{\"prepareUnique\": true}';",
 						 ApiCatalogSchemaName, ApiInternalSchemaName,
 						 collection->collectionId, FullBsonTypeName,
 						 ApiCatalogSchemaName);
@@ -1471,18 +1672,56 @@ ShardCollectionCore(ShardCollectionArgs *args)
 															  &isPrepareUniqueArrayNull);
 	}
 
+	/* Get extended index ids to be recreated from metadata, including valid and in-progress indexes*/
+	bool isExtendedIndexIdsArrayNull = true;
+	Datum extendedIndexIdsArray = (Datum) 0;
+	List *extendedIndexIdsListFromMetadata = NIL;
+	char *excludedExtendedIndexPredicateStr = NULL;
+
+	if (EnableExtendedIndexes)
+	{
+		resetStringInfo(queryInfo);
+		appendStringInfo(queryInfo,
+						 " SELECT array_agg(index_id) FROM %s.collection_indexes WHERE "
+						 " (index_is_valid OR %s.index_build_is_in_progress(index_id)) AND collection_id = %lu AND "
+						 " ((index_spec).index_options::%s OPERATOR(%s.#=) '{\"%s\": true}')",
+						 ApiCatalogSchemaName, ApiInternalSchemaName,
+						 collection->collectionId, FullBsonTypeName,
+						 ApiCatalogSchemaName,
+						 EXTENDED_INDEX_SPEC_FLAG_FIELD_NAME);
+
+		extendedIndexIdsArray = ExtensionExecuteQueryViaSPI(queryInfo->data, readOnly,
+															SPI_OK_SELECT,
+															&isExtendedIndexIdsArrayNull);
+
+		/* Build the exclusion predicate for extended indexes and extract index IDs */
+		if (!isExtendedIndexIdsArrayNull)
+		{
+			/* eg: AND (NOT index_id = ANY(ARRAY[1,2,3])) */
+			excludedExtendedIndexPredicateStr = BuildExtendedIndexExclusionPredicate(
+				extendedIndexIdsArray,
+				&extendedIndexIdsListFromMetadata);
+		}
+	}
+
 	/* Get all valid or in progress indexes and delete them from metadata entries related to the collection.
 	 * TODO(MX): This really should not be CommutativeWrites for the entire query. Ideally only hte DELETE itself
 	 * is commutative and is separate out from the other queries. This only really becomes a concern wiht MX
 	 * and so for now this is left as-is.
 	 */
+
+	/* We don't delete the metadata of extended indexes and reuse them later. */
 	resetStringInfo(queryInfo);
 	appendStringInfo(queryInfo,
 					 " WITH cte AS ("
-					 " DELETE FROM %s.collection_indexes WHERE collection_id = %lu RETURNING *)"
+					 " DELETE FROM %s.collection_indexes WHERE collection_id = %lu"
+					 " %s" /* exclude extended indexes if any */
+					 " RETURNING *)"
 					 " SELECT array_agg(%s.index_spec_as_bson(index_spec) ORDER BY index_id, '{}') FROM cte"
 					 " WHERE index_is_valid OR %s.index_build_is_in_progress(index_id)",
 					 ApiCatalogSchemaName, collection->collectionId,
+					 excludedExtendedIndexPredicateStr ?
+					 excludedExtendedIndexPredicateStr : "",
 					 ApiInternalSchemaName, ApiInternalSchemaName);
 
 	bool isNullIndexSpecArray = true;
@@ -1529,6 +1768,47 @@ ShardCollectionCore(ShardCollectionArgs *args)
 		/* We call it good if it doesn't throw. */
 		create_indexes_non_concurrently(databaseDatum, createIndexesArg,
 										skipCheckCollectionCreate, uniqueIndexOnly);
+
+		/* recreate extended indexes */
+		if (EnableExtendedIndexes)
+		{
+			ListCell *indexCmdCell;
+			foreach(indexCmdCell, existingExtendedIndexesCmds)
+			{
+				char *indexCreationCmd = (char *) lfirst(indexCmdCell);
+				bool concurrently = false;
+				const Oid userOid = InvalidOid;
+
+				/* useSerialExecution = isUnsharded */
+				bool useSerialExecution = args->shardingMode ==
+										  ShardCollectionMode_Unshard;
+				ereport(DEBUG1,
+						(errmsg("Recreating extended index with command: %s",
+								indexCreationCmd)));
+				ExecuteCreatePostgresIndexCmd(indexCreationCmd, concurrently, userOid,
+											  useSerialExecution);
+			}
+
+			/* Mark the in-progress extended indexes as valid, although some are already valid */
+			int numMarked = MarkIndexesAsValid(collection->collectionId,
+											   extendedIndexIdsListFromMetadata);
+
+			/* Number of cmds should match number of extended index in metadata */
+			if (list_length(existingExtendedIndexesCmds) != numMarked)
+			{
+				/* Currently we have duplicated index creation issues for both regular and extended indexes when sharding/unsharding/resharding a collection with queued index requests,
+				 * During sharding/resharding, we create indexes for the queued index requests but don't remove the requests from the queue.
+				 * After shard/unshard/reshard is done, the queued index requests are still in the queue and will be picked up by the background worker which will try to create the same indexes again, causing duplicated index creation.
+				 * The metadata is correct but we have duplicated indexes on PG table.
+				 * TODO:We will address this in a future PR. For now, we log a warning when the number of recreated extended indexes does not match the number in metadata.
+				 */
+				ereport(WARNING,
+						(errmsg(
+							 "Number of recreated extended indexes (%d) does not match number (%d) in metadata for collection_id=%lu",
+							 list_length(existingExtendedIndexesCmds), numMarked,
+							 collection->collectionId)));
+			}
+		}
 
 		RollbackGUCChange(savedGUCLevel);
 
