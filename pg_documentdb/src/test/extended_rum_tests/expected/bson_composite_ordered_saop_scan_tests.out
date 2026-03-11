@@ -1441,3 +1441,352 @@ WITH r1 AS (SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
   5000
 (1 row)
 
+TRUNCATE documentdb_data.documents_1201;
+TRUNCATE documentdb_data.documents_1202;
+TRUNCATE documentdb_data.documents_1203;
+TRUNCATE documentdb_data.documents_1204;
+TRUNCATE documentdb_data.documents_1205;
+-- drop the indexes and recreate them with 3 paths
+CALL documentdb_api.drop_indexes('ordered_saop_scan_test', '{ "dropIndexes": "ordered_saop_index_coll", "index": "a_1_b_1" }');
+                          retval                          
+----------------------------------------------------------
+ { "ok" : true, "nIndexesWas" : { "$numberLong" : "2" } }
+(1 row)
+
+CALL documentdb_api.drop_indexes('ordered_saop_scan_test', '{ "dropIndexes": "ordered_saop_index_reverse_coll", "index": "a_-1_b_-1" }');
+                          retval                          
+----------------------------------------------------------
+ { "ok" : true, "nIndexesWas" : { "$numberLong" : "2" } }
+(1 row)
+
+CALL documentdb_api.drop_indexes('ordered_saop_scan_test', '{ "dropIndexes": "ordered_saop_index_mixed_coll", "index": "a_-1_b_1" }');
+                          retval                          
+----------------------------------------------------------
+ { "ok" : true, "nIndexesWas" : { "$numberLong" : "2" } }
+(1 row)
+
+CALL documentdb_api.drop_indexes('ordered_saop_scan_test', '{ "dropIndexes": "ordered_saop_index_mixed2_coll", "index": "a_1_b_-1" }');
+                          retval                          
+----------------------------------------------------------
+ { "ok" : true, "nIndexesWas" : { "$numberLong" : "2" } }
+(1 row)
+
+-- create 3 path indexes
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ordered_saop_scan_test',
+    '{ "createIndexes": "ordered_saop_index_coll", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "a_1_b_1_c_1" } ] }'::bson, TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ordered_saop_scan_test',
+    '{ "createIndexes": "ordered_saop_index_reverse_coll", "indexes": [ { "key": { "a": -1, "b": -1, "c": -1 }, "name": "a_-1_b_-1_c_-1" } ] }'::bson, TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ordered_saop_scan_test',
+    '{ "createIndexes": "ordered_saop_index_mixed_coll", "indexes": [ { "key": { "a": -1, "b": 1, "c": -1 }, "name": "a_-1_b_1_c_-1" } ] }'::bson, TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ordered_saop_scan_test',
+    '{ "createIndexes": "ordered_saop_index_mixed2_coll", "indexes": [ { "key": { "a": 1, "b": -1, "c": -1 }, "name": "a_1_b_-1_c_-1" } ] }'::bson, TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- generate the permutation of a: [ 1 - 10], b: [ 1 - 10 ], c: [ 1 - 10 ] for a total of 1000 documents to test the SAOP scan with more paths in the index
+SELECT COUNT(documentdb_api.insert_one('ordered_saop_scan_test', 'ordered_saop_scan_coll', bson_build_document('_id', i + (j - 1) * 10 + (k - 1) * 100, 'a', i, 'b', j, 'c', k))) FROM generate_series(1, 10) AS i, generate_series(1, 10) AS j, generate_series(1, 10) AS k;
+ count 
+-------
+  1000
+(1 row)
+
+INSERT INTO documentdb_data.documents_1202 SELECT 1202, object_id, document FROM documentdb_data.documents_1201;
+INSERT INTO documentdb_data.documents_1203 SELECT 1203, object_id, document FROM documentdb_data.documents_1201;
+INSERT INTO documentdb_data.documents_1204 SELECT 1204, object_id, document FROM documentdb_data.documents_1201;
+INSERT INTO documentdb_data.documents_1205 SELECT 1205, object_id, document FROM documentdb_data.documents_1201;
+-- test the combo of skip scan && $SAOP scans ($lt)
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$lt": 5 } } }'::bson);
+$cmd$);
+                                                                         run_explain_and_trim                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=80 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_index_coll
+   indexName: a_1_b_1_c_1
+   indexKey: {"a": 1,"b": 1,"c": 1}
+   isMultiKey: false
+   startBounds: ["a": [2, 2], "b": (MinKey, MaxKey), "c": [-Infinity, 5)]
+   rawBounds: ["a": [2, 2], [9, 9]], ["c": [-Infinity, 5)]
+   innerScanLoops: 122 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 40)]
+   ->  Index Scan using a_1_b_1_c_1 on documents_1202 collection (actual rows=80 loops=1)
+         Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "2" }, { "$numberInt" : "9" } ] }'::bson) AND (document @< '{ "c" : { "$numberInt" : "5" } }'::bson))
+(12 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_reverse_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$lt": 5 } } }'::bson);
+$cmd$);
+                                                                         run_explain_and_trim                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=80 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_index_reverse_coll
+   indexName: a_-1_b_-1_c_-1
+   indexKey: {"a": -1,"b": -1,"c": -1}
+   isMultiKey: false
+   startBounds: ["a": DESC[9, 9], "b": DESC(MinKey, MaxKey), "c": DESC[-Infinity, 5)]
+   rawBounds: ["a": DESC[9, 9], DESC[2, 2]], ["c": DESC[-Infinity, 5)]
+   innerScanLoops: 123 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 40)]
+   ->  Index Scan using "a_-1_b_-1_c_-1" on documents_1203 collection (actual rows=80 loops=1)
+         Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "2" }, { "$numberInt" : "9" } ] }'::bson) AND (document @< '{ "c" : { "$numberInt" : "5" } }'::bson))
+(12 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_mixed_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$lt": 5 } } }'::bson);
+$cmd$);
+                                                                         run_explain_and_trim                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=80 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_index_mixed_coll
+   indexName: a_-1_b_1_c_-1
+   indexKey: {"a": -1,"b": 1,"c": -1}
+   isMultiKey: false
+   startBounds: ["a": DESC[9, 9], "b": (MinKey, MaxKey), "c": DESC[-Infinity, 5)]
+   rawBounds: ["a": DESC[9, 9], DESC[2, 2]], ["c": DESC[-Infinity, 5)]
+   innerScanLoops: 123 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 40)]
+   ->  Index Scan using "a_-1_b_1_c_-1" on documents_1204 collection (actual rows=80 loops=1)
+         Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "2" }, { "$numberInt" : "9" } ] }'::bson) AND (document @< '{ "c" : { "$numberInt" : "5" } }'::bson))
+(12 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_mixed2_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$lt": 5 } } }'::bson);
+$cmd$);
+                                                                         run_explain_and_trim                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=80 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_index_mixed2_coll
+   indexName: a_1_b_-1_c_-1
+   indexKey: {"a": 1,"b": -1,"c": -1}
+   isMultiKey: false
+   startBounds: ["a": [2, 2], "b": DESC(MinKey, MaxKey), "c": DESC[-Infinity, 5)]
+   rawBounds: ["a": [2, 2], [9, 9]], ["c": DESC[-Infinity, 5)]
+   innerScanLoops: 123 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 40)]
+   ->  Index Scan using "a_1_b_-1_c_-1" on documents_1205 collection (actual rows=80 loops=1)
+         Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "2" }, { "$numberInt" : "9" } ] }'::bson) AND (document @< '{ "c" : { "$numberInt" : "5" } }'::bson))
+(12 rows)
+
+WITH r1 AS (SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
+    '{ "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$lt": 5 } } }'
+)) SELECT COUNT(*) FROM r1;
+ count 
+-------
+    80
+(1 row)
+
+-- test the combo of skip scan && $SAOP scans ($gt)
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 5 } } }'::bson);
+$cmd$);
+                                                                         run_explain_and_trim                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_index_coll
+   indexName: a_1_b_1_c_1
+   indexKey: {"a": 1,"b": 1,"c": 1}
+   isMultiKey: false
+   startBounds: ["a": [2, 2], "b": (MinKey, MaxKey), "c": (5, Infinity]]
+   rawBounds: ["a": [2, 2], [9, 9]], ["c": (5, Infinity]]
+   innerScanLoops: 143 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 45)]
+   ->  Index Scan using a_1_b_1_c_1 on documents_1202 collection (actual rows=100 loops=1)
+         Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "2" }, { "$numberInt" : "9" } ] }'::bson) AND (document @> '{ "c" : { "$numberInt" : "5" } }'::bson))
+(12 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_reverse_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 5 } } }'::bson);
+$cmd$);
+                                                                         run_explain_and_trim                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_index_reverse_coll
+   indexName: a_-1_b_-1_c_-1
+   indexKey: {"a": -1,"b": -1,"c": -1}
+   isMultiKey: false
+   startBounds: ["a": DESC[9, 9], "b": DESC(MinKey, MaxKey), "c": DESC(5, Infinity]]
+   rawBounds: ["a": DESC[9, 9], DESC[2, 2]], ["c": DESC(5, Infinity]]
+   innerScanLoops: 142 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 45)]
+   ->  Index Scan using "a_-1_b_-1_c_-1" on documents_1203 collection (actual rows=100 loops=1)
+         Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "2" }, { "$numberInt" : "9" } ] }'::bson) AND (document @> '{ "c" : { "$numberInt" : "5" } }'::bson))
+(12 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_mixed_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 5 } } }'::bson);
+$cmd$);
+                                                                         run_explain_and_trim                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_index_mixed_coll
+   indexName: a_-1_b_1_c_-1
+   indexKey: {"a": -1,"b": 1,"c": -1}
+   isMultiKey: false
+   startBounds: ["a": DESC[9, 9], "b": (MinKey, MaxKey), "c": DESC(5, Infinity]]
+   rawBounds: ["a": DESC[9, 9], DESC[2, 2]], ["c": DESC(5, Infinity]]
+   innerScanLoops: 142 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 45)]
+   ->  Index Scan using "a_-1_b_1_c_-1" on documents_1204 collection (actual rows=100 loops=1)
+         Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "2" }, { "$numberInt" : "9" } ] }'::bson) AND (document @> '{ "c" : { "$numberInt" : "5" } }'::bson))
+(12 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_mixed2_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 5 } } }'::bson);
+$cmd$);
+                                                                         run_explain_and_trim                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_index_mixed2_coll
+   indexName: a_1_b_-1_c_-1
+   indexKey: {"a": 1,"b": -1,"c": -1}
+   isMultiKey: false
+   startBounds: ["a": [2, 2], "b": DESC(MinKey, MaxKey), "c": DESC(5, Infinity]]
+   rawBounds: ["a": [2, 2], [9, 9]], ["c": DESC(5, Infinity]]
+   innerScanLoops: 142 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 35)]
+   ->  Index Scan using "a_1_b_-1_c_-1" on documents_1205 collection (actual rows=100 loops=1)
+         Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "2" }, { "$numberInt" : "9" } ] }'::bson) AND (document @> '{ "c" : { "$numberInt" : "5" } }'::bson))
+(12 rows)
+
+WITH r1 AS (SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
+    '{ "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 5 } } }'
+)) SELECT COUNT(*) FROM r1;
+ count 
+-------
+   100
+(1 row)
+
+-- test the combo of skip scan && $SAOP scans ($gt with $gt not matching anything)
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 15 } } }'::bson);
+$cmd$);
+                                                                         run_explain_and_trim                                                                          
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_index_coll
+   indexName: a_1_b_1_c_1
+   indexKey: {"a": 1,"b": 1,"c": 1}
+   isMultiKey: false
+   startBounds: ["a": [2, 2], "b": (MinKey, MaxKey), "c": (15, Infinity]]
+   rawBounds: ["a": [2, 2], [9, 9]], ["c": (15, Infinity]]
+   innerScanLoops: 81 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
+   ->  Index Scan using a_1_b_1_c_1 on documents_1202 collection (actual rows=0 loops=1)
+         Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "2" }, { "$numberInt" : "9" } ] }'::bson) AND (document @> '{ "c" : { "$numberInt" : "15" } }'::bson))
+(12 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_reverse_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 15 } } }'::bson);
+$cmd$);
+                                                                         run_explain_and_trim                                                                          
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_index_reverse_coll
+   indexName: a_-1_b_-1_c_-1
+   indexKey: {"a": -1,"b": -1,"c": -1}
+   isMultiKey: false
+   startBounds: ["a": DESC[9, 9], "b": DESC(MinKey, MaxKey), "c": DESC(15, Infinity]]
+   rawBounds: ["a": DESC[9, 9], DESC[2, 2]], ["c": DESC(15, Infinity]]
+   innerScanLoops: 81 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
+   ->  Index Scan using "a_-1_b_-1_c_-1" on documents_1203 collection (actual rows=0 loops=1)
+         Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "2" }, { "$numberInt" : "9" } ] }'::bson) AND (document @> '{ "c" : { "$numberInt" : "15" } }'::bson))
+(12 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_mixed_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 15 } } }'::bson);
+$cmd$);
+                                                                         run_explain_and_trim                                                                          
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_index_mixed_coll
+   indexName: a_-1_b_1_c_-1
+   indexKey: {"a": -1,"b": 1,"c": -1}
+   isMultiKey: false
+   startBounds: ["a": DESC[9, 9], "b": (MinKey, MaxKey), "c": DESC(15, Infinity]]
+   rawBounds: ["a": DESC[9, 9], DESC[2, 2]], ["c": DESC(15, Infinity]]
+   innerScanLoops: 81 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
+   ->  Index Scan using "a_-1_b_1_c_-1" on documents_1204 collection (actual rows=0 loops=1)
+         Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "2" }, { "$numberInt" : "9" } ] }'::bson) AND (document @> '{ "c" : { "$numberInt" : "15" } }'::bson))
+(12 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_mixed2_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 15 } } }'::bson);
+$cmd$);
+                                                                         run_explain_and_trim                                                                          
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_index_mixed2_coll
+   indexName: a_1_b_-1_c_-1
+   indexKey: {"a": 1,"b": -1,"c": -1}
+   isMultiKey: false
+   startBounds: ["a": [2, 2], "b": DESC(MinKey, MaxKey), "c": DESC(15, Infinity]]
+   rawBounds: ["a": [2, 2], [9, 9]], ["c": DESC(15, Infinity]]
+   innerScanLoops: 81 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
+   ->  Index Scan using "a_1_b_-1_c_-1" on documents_1205 collection (actual rows=0 loops=1)
+         Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "2" }, { "$numberInt" : "9" } ] }'::bson) AND (document @> '{ "c" : { "$numberInt" : "15" } }'::bson))
+(12 rows)
+
+WITH r1 AS (SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
+    '{ "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 15 } } }'
+)) SELECT COUNT(*) FROM r1;
+ count 
+-------
+     0
+(1 row)
+

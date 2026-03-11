@@ -645,3 +645,121 @@ SELECT bson_build_document('filter', bson_build_document('a', bson_build_documen
 WITH r1 AS (SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
     :'query_spec'
 )) SELECT COUNT(*) FROM r1;
+
+TRUNCATE documentdb_data.documents_1201;
+TRUNCATE documentdb_data.documents_1202;
+TRUNCATE documentdb_data.documents_1203;
+TRUNCATE documentdb_data.documents_1204;
+TRUNCATE documentdb_data.documents_1205;
+
+-- drop the indexes and recreate them with 3 paths
+CALL documentdb_api.drop_indexes('ordered_saop_scan_test', '{ "dropIndexes": "ordered_saop_index_coll", "index": "a_1_b_1" }');
+CALL documentdb_api.drop_indexes('ordered_saop_scan_test', '{ "dropIndexes": "ordered_saop_index_reverse_coll", "index": "a_-1_b_-1" }');
+CALL documentdb_api.drop_indexes('ordered_saop_scan_test', '{ "dropIndexes": "ordered_saop_index_mixed_coll", "index": "a_-1_b_1" }');
+CALL documentdb_api.drop_indexes('ordered_saop_scan_test', '{ "dropIndexes": "ordered_saop_index_mixed2_coll", "index": "a_1_b_-1" }');
+
+-- create 3 path indexes
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ordered_saop_scan_test',
+    '{ "createIndexes": "ordered_saop_index_coll", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "a_1_b_1_c_1" } ] }'::bson, TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ordered_saop_scan_test',
+    '{ "createIndexes": "ordered_saop_index_reverse_coll", "indexes": [ { "key": { "a": -1, "b": -1, "c": -1 }, "name": "a_-1_b_-1_c_-1" } ] }'::bson, TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ordered_saop_scan_test',
+    '{ "createIndexes": "ordered_saop_index_mixed_coll", "indexes": [ { "key": { "a": -1, "b": 1, "c": -1 }, "name": "a_-1_b_1_c_-1" } ] }'::bson, TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ordered_saop_scan_test',
+    '{ "createIndexes": "ordered_saop_index_mixed2_coll", "indexes": [ { "key": { "a": 1, "b": -1, "c": -1 }, "name": "a_1_b_-1_c_-1" } ] }'::bson, TRUE);
+
+-- generate the permutation of a: [ 1 - 10], b: [ 1 - 10 ], c: [ 1 - 10 ] for a total of 1000 documents to test the SAOP scan with more paths in the index
+SELECT COUNT(documentdb_api.insert_one('ordered_saop_scan_test', 'ordered_saop_scan_coll', bson_build_document('_id', i + (j - 1) * 10 + (k - 1) * 100, 'a', i, 'b', j, 'c', k))) FROM generate_series(1, 10) AS i, generate_series(1, 10) AS j, generate_series(1, 10) AS k;
+
+INSERT INTO documentdb_data.documents_1202 SELECT 1202, object_id, document FROM documentdb_data.documents_1201;
+INSERT INTO documentdb_data.documents_1203 SELECT 1203, object_id, document FROM documentdb_data.documents_1201;
+INSERT INTO documentdb_data.documents_1204 SELECT 1204, object_id, document FROM documentdb_data.documents_1201;
+INSERT INTO documentdb_data.documents_1205 SELECT 1205, object_id, document FROM documentdb_data.documents_1201;
+
+-- test the combo of skip scan && $SAOP scans ($lt)
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$lt": 5 } } }'::bson);
+$cmd$);
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_reverse_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$lt": 5 } } }'::bson);
+$cmd$);
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_mixed_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$lt": 5 } } }'::bson);
+$cmd$);
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_mixed2_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$lt": 5 } } }'::bson);
+$cmd$);
+
+WITH r1 AS (SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
+    '{ "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$lt": 5 } } }'
+)) SELECT COUNT(*) FROM r1;
+
+-- test the combo of skip scan && $SAOP scans ($gt)
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 5 } } }'::bson);
+$cmd$);
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_reverse_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 5 } } }'::bson);
+$cmd$);
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_mixed_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 5 } } }'::bson);
+$cmd$);
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_mixed2_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 5 } } }'::bson);
+$cmd$);
+
+WITH r1 AS (SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
+    '{ "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 5 } } }'
+)) SELECT COUNT(*) FROM r1;
+
+
+-- test the combo of skip scan && $SAOP scans ($gt with $gt not matching anything)
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 15 } } }'::bson);
+$cmd$);
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_reverse_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 15 } } }'::bson);
+$cmd$);
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_mixed_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 15 } } }'::bson);
+$cmd$);
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_index_mixed2_coll", "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 15 } } }'::bson);
+$cmd$);
+
+WITH r1 AS (SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
+    '{ "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 15 } } }'
+)) SELECT COUNT(*) FROM r1;

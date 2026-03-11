@@ -164,8 +164,8 @@ static void ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElem
 									bool *isBackward, bool *supportsOrderedOperatorScans);
 static int32_t RunCompareOnBounds(CompositeIndexBounds *bounds,
 								  const BsonIndexTerm *compareValue,
-								  bool hasEqualityPrefix, bool isBackwardScan, bool
-								  isWildcardMatch,
+								  bool hasEqualityPrefix, bool isBackwardScan,
+								  bool isWildcardMatch, bool allowSkipScanBoundaries,
 								  bool *priorMatchesEquality, bool *hasUnspecifiedPrefix);
 static int AdvanceOrderedScanData(CompositeQueryRunData *runData,
 								  const BsonIndexTerm *currentTermsSet,
@@ -1026,7 +1026,8 @@ static int
 RunCompareOnPathIndex(CompositeQueryRunData *runData,
 					  bytea *serializedTerms[INDEX_MAX_KEYS],
 					  BsonIndexTerm currentTermsSet[INDEX_MAX_KEYS],
-					  bool *priorMatchesEquality, bool *allowSkipScanBoundaries,
+					  bool allowSkipScanBoundaries,
+					  bool *priorMatchesEquality, bool *hasUnspecifiedPrefix,
 					  bool *hasEqualityPrefix, int compareIndex)
 {
 	if (runData->indexBounds[compareIndex].lowerBound.bound.value_type == BSON_TYPE_EOD &&
@@ -1035,7 +1036,7 @@ RunCompareOnPathIndex(CompositeQueryRunData *runData,
 	{
 		/* Skip deserializing and validating */
 		*priorMatchesEquality = false;
-		*allowSkipScanBoundaries = true;
+		*hasUnspecifiedPrefix = true;
 		return 0;
 	}
 
@@ -1047,7 +1048,7 @@ RunCompareOnPathIndex(CompositeQueryRunData *runData,
 		&currentTermsSet[compareIndex],
 		*hasEqualityPrefix,
 		runData->metaInfo->isBackwardScan, runData->wildcardPath != NULL,
-		priorMatchesEquality, allowSkipScanBoundaries);
+		allowSkipScanBoundaries, priorMatchesEquality, hasUnspecifiedPrefix);
 	if (compareInBounds != 0)
 	{
 		return compareInBounds;
@@ -1083,14 +1084,17 @@ RunCompareOnStandardIndexSet(CompositeQueryRunData *runData,
 	for (int32_t compareIndex = 0; compareIndex < runData->metaInfo->numIndexPaths;
 		 compareIndex++)
 	{
-		int cmp = RunCompareOnPathIndex(runData, serializedTerms,
-										currentTermsSet, &priorMatchesEquality,
-										&allowSkipScanBoundaries, &hasEqualityPrefix,
+		bool hasUnspecifiedPrefix = false;
+		int cmp = RunCompareOnPathIndex(runData, serializedTerms, currentTermsSet,
+										allowSkipScanBoundaries, &priorMatchesEquality,
+										&hasUnspecifiedPrefix, &hasEqualityPrefix,
 										compareIndex);
 		if (cmp != 0)
 		{
 			return cmp;
 		}
+
+		allowSkipScanBoundaries = allowSkipScanBoundaries || hasUnspecifiedPrefix;
 	}
 
 	return 0;
@@ -1260,7 +1264,9 @@ RunCompareOnOrderedIndexSet(CompositeQueryRunData *runData,
 		/* Run the compare on the path by itself */
 		bool hasOrderedEqualityPrefix = true;
 		bool priorMatchesEquality = true;
+		bool allowSkipScanBoundaries = true;
 		compareResult = RunCompareOnPathIndex(runData, serializedTerms, currentTermsSet,
+											  allowSkipScanBoundaries,
 											  &priorMatchesEquality,
 											  &hasUnspecifiedPrefix,
 											  &hasOrderedEqualityPrefix, compareIndex);
@@ -1280,7 +1286,7 @@ RunCompareOnOrderedIndexSet(CompositeQueryRunData *runData,
 			}
 			else if (hasNoScalarArrayBounds)
 			{
-				compareResult = -1;
+				compareResult = hasUnspecifiedPrefix ? -2 : -1;
 				break;
 			}
 			else
@@ -1293,7 +1299,7 @@ RunCompareOnOrderedIndexSet(CompositeQueryRunData *runData,
 		}
 		else if (compareResult < 0)
 		{
-			compareResult = hasSkipScanBoundary ? -2 : -1;
+			compareResult = hasSkipScanBoundary ? -2 : compareResult;
 			break;
 		}
 		else
@@ -1476,11 +1482,13 @@ CompareOnBoundsForSearch(const void *a, const void *b, void *arg)
 	bool allowSkipScansOnBoundary = true;
 	bool isEqualityPrefix = true;
 	bool priorMatchesEquality = true;
+	bool hasUnspecifiedPrefix = false;
 	int compareResult = RunCompareOnBounds(
 		bound, term, isEqualityPrefix,
 		metadata->isBackwardScan,
-		metadata->isWildcardScan, &priorMatchesEquality,
-		&allowSkipScansOnBoundary);
+		metadata->isWildcardScan,
+		allowSkipScansOnBoundary, &priorMatchesEquality,
+		&hasUnspecifiedPrefix);
 
 	return compareResult == 0 ? 0 : (compareResult < 0 ? 1 : -1);
 }
@@ -1531,6 +1539,7 @@ advance_ordered_scan_data_start:
 		bool isEqualityPrefixOrdered = true;
 		bool priorMatchesEquality = isEqualityPrefixOrdered;
 		bool allowSkipScansOnBoundary = true;
+		bool hasUnspecifiedPrefix = false;
 		if (entry->currentOperatorIndex >= entry->boundsSet->numBounds)
 		{
 			ereport(ERROR, (errmsg(
@@ -1541,8 +1550,8 @@ advance_ordered_scan_data_start:
 			&entry->boundsSet->bounds[entry->currentOperatorIndex],
 			&currentTermsSet[compareIndex], isEqualityPrefixOrdered,
 			runData->metaInfo->isBackwardScan,
-			entry->boundsSet->wildcardPath != NULL, &priorMatchesEquality,
-			&allowSkipScansOnBoundary);
+			entry->boundsSet->wildcardPath != NULL, allowSkipScansOnBoundary,
+			&priorMatchesEquality, &hasUnspecifiedPrefix);
 		if (compareResult == 1)
 		{
 			/* This particular bound is exhausted - move to the next one
@@ -1694,7 +1703,8 @@ SetBoundaryStoppingValueGreaterThan(bool hasEqualityPrefix, const
 static int32_t
 RunCompareOnBounds(CompositeIndexBounds *bounds, const BsonIndexTerm *compareTerm,
 				   bool hasEqualityPrefix, bool isBackwardScan, bool isWildCardMatch,
-				   bool *priorMatchesEquality, bool *allowSkipScanBoundaries)
+				   bool allowSkipScanBoundaries, bool *priorMatchesEquality,
+				   bool *hasUnspecifiedPrefix)
 {
 	if (bounds->isEqualityBound)
 	{
@@ -1712,14 +1722,14 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, const BsonIndexTerm *compareTer
 		{
 			return SetBoundaryStoppingValueLessThan(hasEqualityPrefix, compareTerm,
 													isBackwardScan,
-													*allowSkipScanBoundaries);
+													allowSkipScanBoundaries);
 		}
 		else if (compareBounds > 0)
 		{
 			/* Stop the search if ascending */
 			return SetBoundaryStoppingValueGreaterThan(hasEqualityPrefix, compareTerm,
 													   isBackwardScan,
-													   *allowSkipScanBoundaries);
+													   allowSkipScanBoundaries);
 		}
 
 		if (isWildCardMatch)
@@ -1762,7 +1772,7 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, const BsonIndexTerm *compareTer
 			 */
 			return SetBoundaryStoppingValueLessThan(hasEqualityPrefix, compareTerm,
 													isBackwardScan,
-													*allowSkipScanBoundaries);
+													allowSkipScanBoundaries);
 		}
 
 
@@ -1794,7 +1804,7 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, const BsonIndexTerm *compareTer
 				/* For inequality matches, we consider subpaths of the path as valid - just not other paths */
 				return SetBoundaryStoppingValueLessThan(hasEqualityPrefix, compareTerm,
 														isBackwardScan,
-														*allowSkipScanBoundaries);
+														allowSkipScanBoundaries);
 			}
 		}
 	}
@@ -1824,7 +1834,7 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, const BsonIndexTerm *compareTer
 			/* Can stop searching for ascending search */
 			return SetBoundaryStoppingValueGreaterThan(hasEqualityPrefix, compareTerm,
 													   isBackwardScan,
-													   *allowSkipScanBoundaries);
+													   allowSkipScanBoundaries);
 		}
 
 		if (isWildCardMatch)
@@ -1855,7 +1865,7 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, const BsonIndexTerm *compareTer
 			{
 				return SetBoundaryStoppingValueGreaterThan(hasEqualityPrefix, compareTerm,
 														   isBackwardScan,
-														   *allowSkipScanBoundaries);
+														   allowSkipScanBoundaries);
 			}
 		}
 	}
@@ -1863,7 +1873,7 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, const BsonIndexTerm *compareTer
 	if (bounds->lowerBound.bound.value_type == BSON_TYPE_EOD &&
 		bounds->upperBound.bound.value_type == BSON_TYPE_EOD)
 	{
-		*allowSkipScanBoundaries = true;
+		*hasUnspecifiedPrefix = true;
 	}
 
 	return 0;
@@ -2188,19 +2198,23 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 	for (; compareIndex < runData->metaInfo->numIndexPaths;
 		 compareIndex++)
 	{
+		bool hasUnspecifiedPrefix = false;
 		hasEqualityPrefix = hasEqualityPrefix && priorMatchesEquality;
 		int32_t compareInBounds = RunCompareOnBounds(
 			&runData->indexBounds[compareIndex],
 			&compareTerm[compareIndex],
 			hasEqualityPrefix,
 			runData->metaInfo->isBackwardScan, runData->wildcardPath != NULL,
-			&priorMatchesEquality, &allowSkipScansOnBoundary);
+			allowSkipScansOnBoundary,
+			&priorMatchesEquality, &hasUnspecifiedPrefix);
 		if (compareInBounds < -1)
 		{
 			foundSkipPath = true;
 			isMinBound = compareInBounds < -2;
 			break;
 		}
+
+		allowSkipScansOnBoundary = allowSkipScansOnBoundary || hasUnspecifiedPrefix;
 	}
 
 	if (!foundSkipPath)
