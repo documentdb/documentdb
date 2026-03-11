@@ -52,7 +52,8 @@ pub async fn run_test_gateway(
         dynamic_configuration,
         connection_pool_manager,
         tls_provider,
-    );
+    )
+    .await;
 
     ready_flag.store(true, Ordering::SeqCst);
     ready_notify.notify_waiters();

@@ -141,6 +141,12 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         self.get_i32("slowQueryLogIntervalInMilliseconds", -1)
     }
 
+    /// Whether to use the new pluggable auth architecture (RFC-0009).
+    /// Default: false (use legacy monolithic handler).
+    fn use_pluggable_auth(&self) -> bool {
+        self.get_bool("documentdb_gateway.use_pluggable_auth", false)
+    }
+
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "")
     }

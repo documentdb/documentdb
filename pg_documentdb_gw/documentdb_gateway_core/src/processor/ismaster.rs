@@ -13,6 +13,8 @@ use std::{
 
 use bson::rawdoc;
 
+use once_cell::sync::Lazy;
+
 use crate::{
     configuration::DynamicConfiguration,
     context::{ConnectionContext, RequestContext},
@@ -20,6 +22,13 @@ use crate::{
     protocol::{MAX_BSON_OBJECT_SIZE, MAX_MESSAGE_SIZE_BYTES, OK_SUCCEEDED},
     responses::{RawResponse, Response},
 };
+
+/// Pre-built BSON array for the legacy (GUC disabled) path.
+static DEFAULT_MECHANISMS: Lazy<bson::RawArrayBuf> = Lazy::new(|| {
+    let mut arr = bson::RawArrayBuf::new();
+    arr.push("SCRAM-SHA-256");
+    arr
+});
 
 pub fn process(
     request_context: &RequestContext<'_>,
@@ -48,6 +57,18 @@ pub fn process(
         connection_context.client_information = Some(client.to_raw_document_buf());
     }
 
+    // saslSupportedMechs: use prebuilt BSON array from registry when GUC
+    // enabled, otherwise use the static default.
+    let mechs = if dynamic_configuration.use_pluggable_auth() {
+        connection_context
+            .service_context
+            .auth_provider_registry()
+            .map(|r| r.mechanisms_bson().clone())
+            .unwrap_or_else(|| DEFAULT_MECHANISMS.clone())
+    } else {
+        DEFAULT_MECHANISMS.clone()
+    };
+
     let mut response_doc = rawdoc! {
         writeable_primary_field: true,
         "msg": "isdbgrid",
@@ -60,7 +81,7 @@ pub fn process(
         "maxWireVersion": dynamic_configuration.server_version().max_wire_protocol(),
         "readOnly": dynamic_configuration.read_only(),
         "connectionId": connection_context.get_connection_id_hash(),
-        "saslSupportedMechs": ["SCRAM-SHA-256"],
+        "saslSupportedMechs": mechs,
         "internal": dynamic_configuration.topology(),
         "ok": OK_SUCCEEDED,
     };
