@@ -130,6 +130,7 @@ extern bool EnableCompositeWildcardIndex;
 extern int MaxWildcardIndexKeySize;
 extern bool EnableCompositeWildcardSkipEmptyEntries;
 extern int MaxNonOrderedTermScanThreshold;
+extern bool EnableOrderedCompositeOperatorScan;
 extern bool EnableBinarySearchForOrderedMove;
 
 static void ValidateCompositePathSpec(const char *prefix);
@@ -490,6 +491,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	 */
 	Datum *entries;
 	if (supportsOrderedOperatorScans &&
+		EnableOrderedCompositeOperatorScan &&
 		MaxNonOrderedTermScanThreshold > 0 &&
 		totalPathTerms > MaxNonOrderedTermScanThreshold)
 	{

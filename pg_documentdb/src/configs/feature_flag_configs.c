@@ -178,6 +178,10 @@ bool EnableCompositeShardDocumentTerms = DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT
 bool EnableCompositeWildcardSkipEmptyEntries =
 	DEFAULT_ENABLE_COMPOSITE_WILDCARD_SKIP_EMPTY_ENTRIES;
 
+/* Added in v111, enabled in v111, remove after v114 */
+#define DEFAULT_ENABLE_ORDERED_COMPOSITE_OPERATOR_SCAN true
+bool EnableOrderedCompositeOperatorScan = DEFAULT_ENABLE_ORDERED_COMPOSITE_OPERATOR_SCAN;
+
 /*
  * SECTION: Planner feature flags
  */
@@ -850,6 +854,15 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable skipping empty entries for composite wildcard indexes."),
 		NULL, &EnableCompositeWildcardSkipEmptyEntries,
 		DEFAULT_ENABLE_COMPOSITE_WILDCARD_SKIP_EMPTY_ENTRIES,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableOrderedCompositeOperatorScan", newGucPrefix),
+		gettext_noop(
+			"Whether to enable using the single ordered scalar array operator scan for ordered indexes"
+			" which has skip-scan support enabled inherently."),
+		NULL, &EnableOrderedCompositeOperatorScan,
+		DEFAULT_ENABLE_ORDERED_COMPOSITE_OPERATOR_SCAN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
