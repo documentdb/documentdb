@@ -40,6 +40,7 @@ where
         OpCode::Msg => write_message(header, response, stream).await,
 
         // Query is responded to with Reply
+        #[allow(deprecated)]
         OpCode::Query => {
             // Write the header
             let header = Header {
@@ -61,6 +62,7 @@ where
         }
 
         // Insert has no response
+        #[allow(deprecated)]
         OpCode::Insert => Ok(()),
         _ => Err(DocumentDBError::internal_error(format!(
             "Unexpected response opcode: {:?}",

@@ -637,8 +637,7 @@ where
 
     let format_request_start = Instant::now();
     let request =
-        protocol::reader::parse_request(&message, &mut connection_context.requires_response)
-            .await?;
+        protocol::reader::parse_request(&message, &mut connection_context.requires_response)?;
     request_tracker.record_duration(RequestIntervalKind::FormatRequest, format_request_start);
 
     let request_info = request.extract_common()?;

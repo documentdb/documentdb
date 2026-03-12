@@ -6,16 +6,24 @@
  *-------------------------------------------------------------------------
  */
 
+/// Wire Protocol OpCodes
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum OpCode {
     Invalid = 0,
+    #[deprecated(note = "OP_REPLY Deprecated")]
     Reply = 1,
+    #[deprecated(note = "OP_UPDATE Deprecated")]
     Update = 2001,
+    #[deprecated(note = "OP_INSERT Deprecated")]
     Insert = 2002,
     Reserved = 2003,
+    #[deprecated(note = "OP_QUERY Deprecated")]
     Query = 2004,
+    #[deprecated(note = "OP_GET_MORE Deprecated")]
     GetMore = 2005,
+    #[deprecated(note = "OP_DELETE Deprecated")]
     Delete = 2006,
+    #[deprecated(note = "OP_KILL_CURSORS Deprecated")]
     KillCursors = 2007,
     Command = 2010,
     CommandReply = 2011,
@@ -24,6 +32,7 @@ pub enum OpCode {
 }
 
 impl OpCode {
+    #[expect(deprecated)]
     pub fn from_value(code: i32) -> OpCode {
         match code {
             1 => OpCode::Reply,

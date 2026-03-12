@@ -3,6 +3,9 @@
  *
  * documentdb_gateway_core/src/protocol/reader.rs
  *
+ * Stream I/O (read_header, read_request) and request dispatch
+ * (parse_request). Per-opcode parsers live in sibling modules.
+ *
  *-------------------------------------------------------------------------
  */
 
@@ -11,18 +14,18 @@ use std::{
     str::FromStr,
 };
 
-use bson::{rawdoc, RawArrayBuf, RawDocument, RawDocumentBuf};
+use bson::RawDocument;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::{
     error::{DocumentDBError, Result},
-    protocol::{extract_database_and_collection_names, opcode::OpCode},
+    protocol::{
+        header::Header,
+        message::{self, Message, MessageSection},
+        op_insert, op_query,
+        opcode::OpCode,
+    },
     requests::{Request, RequestMessage, RequestType},
-};
-
-use super::{
-    header::Header,
-    message::{self, Message, MessageSection},
 };
 
 /// Read a standard message header from the client stream
@@ -69,60 +72,23 @@ where
 }
 
 /// Parse a request message into a typed Request
-pub async fn parse_request<'a>(
+pub fn parse_request<'a>(
     message: &'a RequestMessage,
     requires_response: &mut bool,
 ) -> Result<Request<'a>> {
     // Parse the specific message based on OpCode
     let request = match message.op_code {
-        OpCode::Query => parse_query(&message.request).await?,
         OpCode::Msg => parse_msg(message, requires_response)?,
-        OpCode::Insert => parse_insert(message).await?,
+        #[allow(deprecated)]
+        OpCode::Query => op_query::parse_query(&message.request)?,
+        #[allow(deprecated)]
+        OpCode::Insert => op_insert::parse_insert(message)?,
         _ => Err(DocumentDBError::internal_error(format!(
             "Unimplemented: {:?}",
             message.op_code
         )))?,
     };
     Ok(request)
-}
-
-/// Parse a OP_QUERY message
-async fn parse_query<'a>(message: &'a [u8]) -> Result<Request<'a>> {
-    let mut reader = Cursor::new(message);
-
-    let _flags = reader.read_u32_le().await?;
-
-    // Parse the collection and skip the position to the end of it
-    let (collection_path, endpos) = str_from_u8_nul_utf8(&reader.get_ref()[4..])?;
-
-    reader.set_position(u64::try_from(endpos + 5).map_err(|_| {
-        DocumentDBError::internal_error("Collection length failed to convert to a u64.".to_string())
-    })?);
-
-    let _number_to_skip = reader.read_u32_le().await?;
-    let _number_to_return = reader.read_u32_le().await?;
-
-    // Parse the query into a byte array
-    let query_size = usize::try_from(reader.read_u32_le().await?).map_err(|_| {
-        DocumentDBError::bad_value("Message length could not be converted to a usize".to_string())
-    })?;
-    let pos = usize::try_from(reader.position()).map_err(|_| {
-        DocumentDBError::bad_value("Reader position could not be converted to a usize".to_string())
-    })? - 4;
-    let query_slice = &reader.get_ref()[pos..pos + query_size];
-
-    // Treat the bytes as a raw bson reference
-    let query = RawDocument::from_bytes(query_slice)?;
-    let (_db, collection_name) = extract_database_and_collection_names(collection_path)?;
-
-    // OP_QUERY is only supported for commands currently
-    if collection_name == "$cmd" {
-        return parse_cmd(query, None);
-    }
-
-    Err(DocumentDBError::internal_error(
-        "Unable to parse OpQuery request".to_string(),
-    ))
 }
 
 /// Read from a byte array until a nul terminator, parse using utf-8
@@ -179,11 +145,12 @@ fn parse_msg<'a>(message: &'a RequestMessage, requires_response: &mut bool) -> R
     }
 }
 
-/// Parse a command document
-fn parse_cmd<'a>(command: &'a RawDocument, extra: Option<&'a [u8]>) -> Result<Request<'a>> {
+/// Parse a command document - shared by OP_QUERY and OP_MSG paths.
+pub fn parse_cmd<'a>(command: &'a RawDocument, extra: Option<&'a [u8]>) -> Result<Request<'a>> {
     if let Some(result) = command.into_iter().next() {
         let cmd_name = result?.0;
 
+        // TODO: This operation is expensive and should consider dropping or using alternative approaches if it becomes a bottleneck.
         let explain = command.get_bool("explain").unwrap_or(false);
         if explain {
             return Ok(Request::Raw(RequestType::Explain, command, extra));
@@ -196,45 +163,4 @@ fn parse_cmd<'a>(command: &'a RawDocument, extra: Option<&'a [u8]>) -> Result<Re
             "Admin command received without a command.".to_string(),
         ))
     }
-}
-
-// TODO: Should not need to clone the documents and create a new RawDocumentBuf
-async fn parse_insert<'a>(message: &'a RequestMessage) -> Result<Request<'a>> {
-    let mut reader = Cursor::new(&message.request);
-    let flags = reader.read_i32_le().await?;
-
-    let (collection_path, endpos) = str_from_u8_nul_utf8(&reader.get_ref()[4..])?;
-
-    // Skip the flags and the nul terminator
-    let docs_slice = &reader.get_ref()[endpos + 5..];
-
-    let (db, coll) = extract_database_and_collection_names(collection_path)?;
-
-    Ok(Request::RawBuf(
-        RequestType::Insert,
-        rawdoc! {
-            "insert": coll,
-            "ordered": (flags & 1) == 0,
-            "documents": read_documents(docs_slice)?,
-            "$db": db,
-        },
-    ))
-}
-
-/// Reads a sequence of bson in bytes into an owned bson array
-fn read_documents(bytes: &'_ [u8]) -> Result<RawArrayBuf> {
-    let mut result = RawArrayBuf::new();
-    let mut pos = 0;
-    while pos < bytes.len() {
-        let doc_size = i32::from_le_bytes(
-            bytes[pos..pos + 4]
-                .try_into()
-                .expect("Slice of wrong length"),
-        );
-        result.push(RawDocumentBuf::from_bytes(
-            bytes[pos..pos + (doc_size as usize)].to_vec(),
-        )?);
-        pos += doc_size as usize;
-    }
-    Ok(result)
 }

@@ -12,6 +12,7 @@ async-trait.workspace = true
 base64.workspace = true
 bitflags.workspace = true
 bson.workspace = true
+bytes.workspace = true
 dashmap.workspace = true
 deadpool-postgres.workspace = true
 documentdb_macros.workspace = true
@@ -33,6 +34,13 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 whoami.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "insert_bench"
+harness = false
 
 [lints]
 workspace = true
