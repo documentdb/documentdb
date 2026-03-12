@@ -1,0 +1,7 @@
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
+SET documentdb.next_collection_id TO 1100;
+SET documentdb.next_collection_index_id TO 1100;
+
+-- Test for Github issue #511
+SELECT documentdb_api_catalog.bson_dollar_regex('{ "k": { "$regex": "^abc.*", "$options": "" } }', bson_build_document('k', '^abc.*'::text));
+SELECT documentdb_api_catalog.bson_dollar_regex('{ "k": { "$regex": "^abc.*", "$options": "i" } }', bson_build_document('k', '^abc.*'::text));

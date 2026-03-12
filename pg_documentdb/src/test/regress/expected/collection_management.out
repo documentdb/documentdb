@@ -269,3 +269,8 @@ SELECT document, shard_key_value FROM documentdb_api.collection('db','lagacy_col
 (1 row)
 
 ROLLBACK;
+-- this should fail.
+UPDATE documentdb_api_catalog.collections SET database_name = NULL;
+ERROR:  Database name cannot be NULL
+CONTEXT:  SQL statement "SELECT documentdb_api_internal.validate_dbname(NEW.database_name)"
+PL/pgSQL function documentdb_api_internal.trigger_validate_dbname() line 3 at PERFORM

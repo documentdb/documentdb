@@ -1681,6 +1681,12 @@ ValidateDatabaseCollection(Datum databaseDatum, Datum collectionDatum)
 Datum
 validate_dbname(PG_FUNCTION_ARGS)
 {
+	if (PG_ARGISNULL(0))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
+						errmsg("Database name cannot be NULL")));
+	}
+
 	text *databaseName = PG_GETARG_TEXT_P(0);
 
 	StringView databaseView = {

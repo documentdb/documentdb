@@ -1169,6 +1169,15 @@ SubmitCreateIndexesRequest(Datum dbNameDatum,
 
 		collection = GetMongoCollectionByNameDatum(dbNameDatum, collectionNameDatum,
 												   AccessShareLock);
+
+		if (!collection)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_NAMESPACENOTFOUND),
+							errmsg(
+								"collection %s.%s does not exist and failed to be created",
+								TextDatumGetCString(dbNameDatum),
+								collectionName)));
+		}
 	}
 
 	uint64 collectionId = collection->collectionId;

@@ -3472,7 +3472,7 @@ PopulateRegexFromQuery(RegexData *regexState, pgbsonelement *filterElement)
 	else
 	{
 		regexState->regex = filterElement->bsonValue.value.v_utf8.str;
-		regexState->options = NULL;
+		regexState->options = "";
 	}
 
 	regexState->pcreData = RegexCompile(regexState->regex,

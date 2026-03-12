@@ -269,6 +269,12 @@ GenerateListIndexesQuery(text *databaseDatum, pgbson *listIndexesSpec,
 							"Required field database must be valid")));
 	}
 
+	if (collectionName.length == 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+							"Required field collection must be valid")));
+	}
+
 	Query *query = GenerateBaseListIndexesQuery(databaseDatum, &collectionName, &context);
 	queryData->namespaceName = context.namespaceName;
 	return query;

@@ -134,3 +134,5 @@ SELECT * FROM documentdb_api.collection('db','lagacy_coll');
 SELECT document, shard_key_value FROM documentdb_api.collection('db','lagacy_coll');
 ROLLBACK;
 
+-- this should fail.
+UPDATE documentdb_api_catalog.collections SET database_name = NULL;

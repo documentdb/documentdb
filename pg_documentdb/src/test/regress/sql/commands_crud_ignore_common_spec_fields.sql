@@ -200,5 +200,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_count(NULL,
 SELECT document FROM documentdb_api_catalog.bson_aggregation_find(NULL,
     '{ "find": "ignoreCommonSpec", "filter": {"_id": 4} }');
 
+SELECT * FROM documentdb_api.list_indexes_cursor_first_page('newdb', '{ "Let": "tar" }');
+
 -- cleanup
 SELECT documentdb_api.drop_collection('db', 'ignoreCommonSpec');
