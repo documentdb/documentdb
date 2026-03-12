@@ -149,11 +149,8 @@ ALTER TABLE collections
 
 ### Performance Optimizations
 
-- **Compilation caching**: Validator compiled once per collection, stored in `ExprEvalState`, reused across all validations
-- **Fail-fast**: Exit on first constraint violation (no need to collect all errors)
+- **Compilation caching**: Validator compiled once per collection, stored in `ExprEvalState`, reused across all validations per query
 - **Direct BSON evaluation**: No intermediate conversions or copies
-- **Field path indexing**: O(1) schema node lookup via hash tables
-- **Memory management**: Compiled state in PostgreSQL memory context, shared across sessions, freed on collection drop
 
 ### API Changes
 
