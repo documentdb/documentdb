@@ -79,3 +79,29 @@ pub fn documentdb_error_code_enum(_item: TokenStream) -> TokenStream {
     error_code_enum_entries += &from_primitive;
     error_code_enum_entries.parse().unwrap()
 }
+
+#[proc_macro]
+pub fn documentdb_extensive_log_postgres_errors(_item: TokenStream) -> TokenStream {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("postgres_errors.csv");
+    let csv =
+        std::fs::File::open(&path).unwrap_or_else(|_| panic!("Could not open file: {:?}", path));
+    let reader = std::io::BufReader::new(csv);
+
+    let mut result = String::new();
+    result += "pub fn should_log_on_postgres_error(state: &SqlState) -> bool {
+                match state.code() {";
+
+    for (index, line) in std::io::BufRead::lines(reader).skip(1).enumerate() {
+        let line = line
+            .unwrap_or_else(|_| panic!("Could not read line {} in file: {:?}", index + 2, path));
+        let parts: Vec<&str> = line.split(',').collect();
+        let code = parts[1].trim();
+        let should_log_debug = parts[3].trim();
+        result += &format!("\"{}\" => {},", code, should_log_debug);
+    }
+
+    result += "_ => false
+    }
+    }";
+    result.parse().unwrap()
+}

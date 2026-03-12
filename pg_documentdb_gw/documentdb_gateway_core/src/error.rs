@@ -10,7 +10,7 @@ use std::{backtrace::Backtrace, fmt::Display, io};
 
 use bson::raw::ValueAccessError;
 use deadpool_postgres::{BuildError, CreatePoolError, PoolError};
-use documentdb_macros::documentdb_error_code_enum;
+use documentdb_macros::{documentdb_error_code_enum, documentdb_extensive_log_postgres_errors};
 use openssl::error::ErrorStack;
 use tokio_postgres::error::SqlState;
 
@@ -20,6 +20,7 @@ use crate::{
 };
 
 documentdb_error_code_enum!();
+documentdb_extensive_log_postgres_errors!();
 
 pub enum DocumentDBError {
     IoError(io::Error, Backtrace),
@@ -215,6 +216,14 @@ impl DocumentDBError {
             }
             DocumentDBError::PostgresError(error, backtrace) => {
                 if let Some(dbe) = error.as_db_error() {
+                    if should_log_on_postgres_error(dbe.code()) {
+                        tracing::error!(
+                            activity_id = activity_id,
+                            dbe = ?dbe,
+                            "Postgres error with debug info: {{dbe}}."
+                        );
+                    }
+
                     let error_message_loggable = PgResponse::known_pg_error(
                         connection_context,
                         dbe.code(),
