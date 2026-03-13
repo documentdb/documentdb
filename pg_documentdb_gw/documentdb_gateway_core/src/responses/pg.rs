@@ -14,7 +14,7 @@ use tokio_postgres::{error::SqlState, Row};
 use crate::{
     context::{ConnectionContext, Cursor},
     error::{DocumentDBError, ErrorCode, Result},
-    postgres::PgDocument,
+    postgres::{document::ColumnByteLen, PgDocument},
     responses::constant::{
         duplicate_key_violation_message, generic_internal_error_message,
         pg_returned_invalid_response_message,
@@ -48,6 +48,18 @@ impl PgResponse {
             }
             None => Err(DocumentDBError::pg_response_empty()),
         }
+    }
+
+    /// Returns the total byte length across all columns of the first row,
+    /// or 0 if the response is empty. Extracts raw byte lengths without
+    /// deserializing or validating column data.
+    pub fn response_byte_len(&self) -> usize {
+        let Some(row) = self.rows.first() else {
+            return 0;
+        };
+        (0..row.len())
+            .filter_map(|i| row.try_get::<_, ColumnByteLen>(i).map(|col| col.0).ok())
+            .sum()
     }
 
     pub fn get_cursor(&self) -> Result<Option<(bool, Cursor)>> {

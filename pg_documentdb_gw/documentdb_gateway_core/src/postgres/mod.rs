@@ -8,7 +8,7 @@
 
 pub mod conn_mgmt;
 mod data_client;
-mod document;
+pub(crate) mod document;
 mod documentdb_data_client;
 mod query_catalog;
 mod transaction;

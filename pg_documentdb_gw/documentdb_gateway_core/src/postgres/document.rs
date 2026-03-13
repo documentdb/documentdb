@@ -49,3 +49,20 @@ impl<'a> FromSql<'a> for PgDocument<'a> {
         ty.name() == "bson"
     }
 }
+
+/// Extracts the raw byte length of a column value without any deserialization
+/// or validation. Accepts any column type.
+pub(crate) struct ColumnByteLen(pub usize);
+
+impl<'a> FromSql<'a> for ColumnByteLen {
+    fn from_sql(
+        _ty: &Type,
+        raw: &'a [u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        Ok(ColumnByteLen(raw.len()))
+    }
+
+    fn accepts(_ty: &Type) -> bool {
+        true
+    }
+}

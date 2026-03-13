@@ -18,4 +18,9 @@ impl RawResponse {
     pub fn as_raw_document(&self) -> Result<&RawDocument> {
         Ok(&self.0)
     }
+
+    /// Returns the byte length of the raw BSON document.
+    pub fn response_byte_len(&self) -> usize {
+        self.0.as_bytes().len()
+    }
 }

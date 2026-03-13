@@ -8,6 +8,7 @@
 
 pub mod client_info;
 pub mod event_id;
+mod verbose_latency;
 
 use crate::{
     context::ConnectionContext,
@@ -20,12 +21,13 @@ use async_trait::async_trait;
 use dyn_clone::{clone_trait_object, DynClone};
 use either::Either;
 
-// TelemetryProvider takes care of emitting events and metrics
-// for tracking the gateway.
+pub use verbose_latency::try_log_verbose_latency;
+
+/// `TelemetryProvider` takes care of emitting events and metrics for tracking the gateway.
 #[expect(clippy::too_many_arguments)]
 #[async_trait]
 pub trait TelemetryProvider: Send + Sync + DynClone {
-    // Emits an event for every CRUD request dispatched to backend
+    /// Emits an event for every CRUD request dispatched to backend.
     async fn emit_request_event(
         &self,
         _: &ConnectionContext,
