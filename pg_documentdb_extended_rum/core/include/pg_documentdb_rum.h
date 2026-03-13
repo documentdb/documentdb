@@ -661,6 +661,10 @@ bool entryLocateLeafEntryBounds(RumBtree btree, Page page,
 								OffsetNumber *targetOffset);
 IndexTuple rumEntryGetRightMostTuple(Page page);
 
+IndexTuple RumFormTuple(RumState *rumstate,
+						OffsetNumber attnum, Datum key, RumNullCategory category,
+						RumItem *items, uint32 nipd, bool errorTooBig);
+
 /* rumdatapage.c */
 extern void updateItemIndexes(Page page, OffsetNumber attnum, RumState *rumstate);
 extern int rumCompareItemPointers(const ItemPointerData *a, const ItemPointerData *b);

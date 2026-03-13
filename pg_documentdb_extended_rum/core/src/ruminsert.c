@@ -36,7 +36,9 @@
 #include "utils/backend_status.h"
 #include "access/table.h"
 #include "catalog/pg_collation.h"
+#include "utils/typcache.h"
 #include "utils/wait_event.h"
+#include "utils/builtins.h"
 
 #include "pg_documentdb_rum.h"
 #include "rumbuild_tuplesort.h"
@@ -163,7 +165,9 @@ typedef struct
 	 * only in the leader process.
 	 */
 	RumLeader *bs_leader;
-	int bs_worker_id;
+
+	/* number of participating workers (including leader) */
+	int bs_num_workers;
 
 	/* used to pass information from workers to leader */
 	double bs_numtuples;
@@ -208,10 +212,6 @@ static RumTuple * _rum_build_tuple(OffsetNumber attrnum, unsigned char category,
 								   Datum key, int16 typlen, bool typbyval,
 								   RumItem *items, uint32 nitems,
 								   Size *len);
-
-static IndexTuple RumFormTuple(RumState *rumstate,
-							   OffsetNumber attnum, Datum key, RumNullCategory category,
-							   RumItem *items, uint32 nipd, bool errorTooBig);
 
 /*
  * Adds array of item pointers to tuple's posting list, or
@@ -406,8 +406,6 @@ rumEntryInsert(RumState *rumstate,
 	stack = rumFindLeafPage(&btree, NULL);
 	page = BufferGetPage(stack->buffer);
 
-	CheckForSerializableConflictIn(btree.index, NULL, stack->buffer);
-
 	if (btree.findItem(&btree, stack))
 	{
 		/* found pre-existing entry */
@@ -436,6 +434,9 @@ rumEntryInsert(RumState *rumstate,
 			return;
 		}
 
+		CheckForSerializableConflictIn(rumstate->index, NULL,
+									   BufferGetBlockNumber(stack->buffer));
+
 		/* modify an existing leaf entry */
 		itup = addItemPointersToLeafTuple(rumstate, itup,
 										  items, nitem, buildStats);
@@ -444,6 +445,9 @@ rumEntryInsert(RumState *rumstate,
 	}
 	else
 	{
+		CheckForSerializableConflictIn(rumstate->index, NULL,
+									   BufferGetBlockNumber(stack->buffer));
+
 		/* no match, so construct a new leaf entry */
 		itup = buildFreshLeafTuple(rumstate, attnum, key, category,
 								   items, nitem, buildStats);
@@ -485,7 +489,6 @@ rumHeapTupleBulkInsert(RumBuildState *buildstate, OffsetNumber attnum,
 	Datum *addInfo;
 	bool *addInfoIsNull;
 	int i;
-	Form_pg_attribute attr = buildstate->rumstate.addAttrs[attnum - 1];
 
 	oldCtx = MemoryContextSwitchTo(buildstate->funcCtx);
 	entries = rumExtractEntries(buildstate->accum.rumstate, attnum,
@@ -511,6 +514,7 @@ rumHeapTupleBulkInsert(RumBuildState *buildstate, OffsetNumber attnum,
 		if (!addInfoIsNull[i])
 		{
 			/* Check existance of additional information attribute in index */
+			Form_pg_attribute attr = buildstate->rumstate.addAttrs[attnum - 1];
 			if (!attr)
 			{
 				Form_pg_attribute current_attr = RumTupleDescAttr(
@@ -562,20 +566,20 @@ rumBuildCallback(Relation index, ItemPointer tid, Datum *values,
 	/* If we've maxed out our available memory, dump everything to the index */
 	if (buildstate->accum.allocatedMemory >= maintenance_work_mem * (Size) 1024)
 	{
-		RumItem *items;
+		RumItem *list;
 		Datum key;
 		RumNullCategory category;
 		uint32 nlist;
 		OffsetNumber attnum;
 
 		rumBeginBAScan(&buildstate->accum);
-		while ((items = rumGetBAEntry(&buildstate->accum,
-									  &attnum, &key, &category, &nlist)) != NULL)
+		while ((list = rumGetBAEntry(&buildstate->accum,
+									 &attnum, &key, &category, &nlist)) != NULL)
 		{
 			/* there could be many entries, so be willing to abort here */
 			CHECK_FOR_INTERRUPTS();
 			rumEntryInsert(&buildstate->rumstate, attnum, key, category,
-						   items, nlist, &buildstate->buildStats);
+						   list, nlist, &buildstate->buildStats);
 		}
 
 		MemoryContextReset(buildstate->tmpCtx);
@@ -589,6 +593,15 @@ rumBuildCallback(Relation index, ItemPointer tid, Datum *values,
 /*
  * rumFlushBuildState
  *		Write all data from BuildAccumulator into the tuplesort.
+ *
+ * The number of TIDs written to the tuplesort at once is limited, to reduce
+ * the amount of memory needed when merging the intermediate results later.
+ * The leader will see up to two chunks per worker, so calculate the limit to
+ * not need more than MaxAllocSize overall.
+ *
+ * We don't need to worry about overflowing maintenance_work_mem. We can't
+ * build chunks larger than work_mem, and that limit was set so that workers
+ * produce sufficiently small chunks.
  */
 static void
 rumFlushBuildState(RumBuildState *buildstate, Relation index)
@@ -599,6 +612,11 @@ rumFlushBuildState(RumBuildState *buildstate, Relation index)
 	uint32 nlist;
 	OffsetNumber attnum;
 	TupleDesc tdesc = RelationGetDescr(index);
+	uint32 maxlen;
+
+	/* maximum number of TIDs per chunk (two chunks per worker) */
+	maxlen = MaxAllocSize / sizeof(ItemPointerData);
+	maxlen /= (2 * buildstate->bs_num_workers);
 
 	rumBeginBAScan(&buildstate->accum);
 	while ((list = rumGetBAEntry(&buildstate->accum,
@@ -607,20 +625,31 @@ rumFlushBuildState(RumBuildState *buildstate, Relation index)
 		/* information about the key */
 		Form_pg_attribute attr = TupleDescAttr(tdesc, (attnum - 1));
 
-		/* RUM tuple and tuple length */
-		RumTuple *tup;
-		Size tuplen;
+		/* start of the chunk */
+		uint32 offset = 0;
 
-		/* there could be many entries, so be willing to abort here */
-		CHECK_FOR_INTERRUPTS();
+		/* split the entry into smaller chunk with up to maxlen items */
+		while (offset < nlist)
+		{
+			/* RUM tuple and tuple length */
+			RumTuple *tup;
+			Size tuplen;
+			uint32 len = Min(maxlen, nlist - offset);
 
-		tup = _rum_build_tuple(attnum, category,
-							   key, attr->attlen, attr->attbyval,
-							   list, nlist, &tuplen);
+			/* there could be many entries, so be willing to abort here */
+			CHECK_FOR_INTERRUPTS();
 
-		tuplesort_putrumtuple(buildstate->bs_worker_sort, tup, tuplen);
+			tup = _rum_build_tuple(attnum, category,
+								   key, attr->attlen, attr->attbyval,
+								   &list[offset], len,
+								   &tuplen);
 
-		pfree(tup);
+			offset += len;
+
+			tuplesort_putrumtuple(buildstate->bs_worker_sort, tup, tuplen);
+
+			pfree(tup);
+		}
 	}
 
 	MemoryContextReset(buildstate->tmpCtx);
@@ -1052,29 +1081,38 @@ ruminsert(Relation index, Datum *values, bool *isnull,
 		  bool indexUnchanged,
 		  IndexInfo *indexInfo)
 {
-	RumState rumstate;
+	RumState *rumstate = (RumState *) indexInfo->ii_AmCache;
 	MemoryContext oldCtx;
 	MemoryContext insertCtx;
 	int i;
 	Datum outerAddInfo = (Datum) 0;
 	bool outerAddInfoIsNull = true;
 
-	insertCtx = RumContextCreate(CurrentMemoryContext,
-								 "Rum insert temporary context");
+	/* Initialize RumState cache if first call in this statement */
+	if (rumstate == NULL)
+	{
+		oldCtx = MemoryContextSwitchTo(indexInfo->ii_Context);
+		rumstate = palloc_object(RumState);
+		initRumState(rumstate, index);
+		indexInfo->ii_AmCache = rumstate;
+		MemoryContextSwitchTo(oldCtx);
+	}
+
+	insertCtx = AllocSetContextCreate(CurrentMemoryContext,
+									  "Rum insert temporary context",
+									  ALLOCSET_DEFAULT_SIZES);
 
 	oldCtx = MemoryContextSwitchTo(insertCtx);
 
-	initRumState(&rumstate, index);
-
-	if (AttributeNumberIsValid(rumstate.attrnAttachColumn))
+	if (AttributeNumberIsValid(rumstate->attrnAttachColumn))
 	{
-		outerAddInfo = values[rumstate.attrnAttachColumn - 1];
-		outerAddInfoIsNull = isnull[rumstate.attrnAttachColumn - 1];
+		outerAddInfo = values[rumstate->attrnAttachColumn - 1];
+		outerAddInfoIsNull = isnull[rumstate->attrnAttachColumn - 1];
 	}
 
-	for (i = 0; i < rumstate.origTupdesc->natts; i++)
+	for (i = 0; i < rumstate->origTupdesc->natts; i++)
 	{
-		rumHeapTupleInsert(&rumstate, (OffsetNumber) (i + 1),
+		rumHeapTupleInsert(rumstate, (OffsetNumber) (i + 1),
 						   values[i], isnull[i], ht_ctid,
 						   outerAddInfo, outerAddInfoIsNull);
 	}
@@ -1113,7 +1151,7 @@ _rum_begin_parallel(RumBuildState *buildstate, Relation heap, Relation index,
 	Size estsort;
 	RumBuildShared *rumshared;
 	Sharedsort *sharedsort;
-	RumLeader *rumleader = (RumLeader *) palloc0(sizeof(RumLeader));
+	RumLeader *rumleader = palloc0(sizeof(RumLeader));
 	WalUsage *walusage;
 	BufferUsage *bufferusage;
 	bool leaderparticipates = true;
@@ -1400,7 +1438,7 @@ typedef struct RumBuffer
  * expect it to be).
  */
 static void
-AssertCheckRumItems(RumBuffer *buffer)
+AssertCheckItemPointers(RumBuffer *buffer)
 {
 #ifdef USE_ASSERT_CHECKING
 
@@ -1450,7 +1488,7 @@ AssertCheckRumBuffer(RumBuffer *buffer)
 	}
 
 	/* Make sure the item pointers are valid and sorted. */
-	AssertCheckRumItems(buffer);
+	AssertCheckItemPointers(buffer);
 #endif
 }
 
@@ -1471,6 +1509,7 @@ RumBufferInit(RumState *state)
 	RumBuffer *buffer = palloc0(sizeof(RumBuffer));
 	int i,
 		nKeys;
+	TupleDesc desc = RelationGetDescr(state->index);
 
 	/*
 	 * How many items can we fit into the memory limit? We don't want to end
@@ -1491,6 +1530,7 @@ RumBufferInit(RumState *state)
 	{
 		Oid cmpFunc;
 		SortSupport sortKey = &buffer->ssup[i];
+		Form_pg_attribute att = TupleDescAttr(desc, i);
 
 		sortKey->ssup_cxt = CurrentMemoryContext;
 		sortKey->ssup_collation = state->index->rd_indcollation[i];
@@ -1506,7 +1546,28 @@ RumBufferInit(RumState *state)
 
 		Assert(sortKey->ssup_attno != 0);
 
+		/*
+		 * If the compare proc isn't specified in the opclass definition, look
+		 * up the index key type's default btree comparator.
+		 */
 		cmpFunc = state->compareFn[i].fn_oid;
+		if (cmpFunc == InvalidOid)
+		{
+			TypeCacheEntry *typentry;
+
+			typentry = lookup_type_cache(att->atttypid,
+										 TYPECACHE_CMP_PROC_FINFO);
+			if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_UNDEFINED_FUNCTION),
+						 errmsg("could not identify a comparison function for type %s",
+								format_type_be(att->atttypid))));
+			}
+
+			cmpFunc = typentry->cmp_proc_finfo.fn_oid;
+		}
+
 		PrepareSortSupportComparisonShim(cmpFunc, sortKey);
 	}
 
@@ -1600,10 +1661,50 @@ RumBufferKeyEquals(RumBuffer *buffer, RumTuple *tup)
  * enough TIDs to trim (with values less than "first" TID from the new tuple),
  * we do the trim. By enough we mean at least 128 TIDs (mostly an arbitrary
  * number).
+ *
+ * We try freezing TIDs at the beginning of the list first, before attempting
+ * to trim the buffer. This may allow trimming the data earlier, reducing the
+ * memory usage and excluding it from the mergesort.
  */
 static bool
 RumBufferShouldTrim(RumBuffer *buffer, RumTuple *tup)
 {
+	/*
+	 * Check if the last TID in the current list is frozen. This is the case
+	 * when merging non-overlapping lists, e.g. in each parallel worker.
+	 */
+	if ((buffer->nitems > 0) &&
+		(ItemPointerCompare(&buffer->items[buffer->nitems - 1].iptr,
+							RumTupleGetFirst(tup)) == 0))
+	{
+		buffer->nfrozen = buffer->nitems;
+	}
+
+	/*
+	 * Now find the last TID we know to be frozen, i.e. the last TID right
+	 * before the new GIN tuple.
+	 *
+	 * Start with the first not-yet-frozen tuple, and walk until we find the
+	 * first TID that's higher. If we already know the whole list is frozen
+	 * (i.e. nfrozen == nitems), this does nothing.
+	 *
+	 * XXX This might do a binary search for sufficiently long lists, but it
+	 * does not seem worth the complexity. Overlapping lists should be rare
+	 * common, TID comparisons are cheap, and we should quickly freeze most of
+	 * the list.
+	 */
+	for (int i = buffer->nfrozen; i < buffer->nitems; i++)
+	{
+		/* Is the TID after the first TID of the new tuple? Can't freeze. */
+		if (ItemPointerCompare(&buffer->items[i].iptr,
+							   RumTupleGetFirst(tup)) > 0)
+		{
+			break;
+		}
+
+		buffer->nfrozen++;
+	}
+
 	/* not enough TIDs to trim (1024 is somewhat arbitrary number) */
 	if (buffer->nfrozen < 1024)
 	{
@@ -1678,52 +1779,6 @@ RumBufferStoreTuple(RumBuffer *buffer, RumTuple *tup)
 		}
 	}
 
-	/*
-	 * Try freeze TIDs at the beginning of the list, i.e. exclude them from
-	 * the mergesort. We can do that with TIDs before the first TID in the new
-	 * tuple we're about to add into the buffer.
-	 *
-	 * We do this incrementally when adding data into the in-memory buffer,
-	 * and not later (e.g. when hitting a memory limit), because it allows us
-	 * to skip the frozen data during the mergesort, making it cheaper.
-	 */
-
-	/*
-	 * Check if the last TID in the current list is frozen. This is the case
-	 * when merging non-overlapping lists, e.g. in each parallel worker.
-	 */
-	if ((buffer->nitems > 0) &&
-		(ItemPointerCompare(&buffer->items[buffer->nitems - 1].iptr,
-							RumTupleGetFirst(tup)) == 0))
-	{
-		buffer->nfrozen = buffer->nitems;
-	}
-
-	/*
-	 * Now find the last TID we know to be frozen, i.e. the last TID right
-	 * before the new RUM tuple.
-	 *
-	 * Start with the first not-yet-frozen tuple, and walk until we find the
-	 * first TID that's higher. If we already know the whole list is frozen
-	 * (i.e. nfrozen == nitems), this does nothing.
-	 *
-	 * XXX This might do a binary search for sufficiently long lists, but it
-	 * does not seem worth the complexity. Overlapping lists should be rare
-	 * common, TID comparisons are cheap, and we should quickly freeze most of
-	 * the list.
-	 */
-	for (int i = buffer->nfrozen; i < buffer->nitems; i++)
-	{
-		/* Is the TID after the first TID of the new tuple? Can't freeze. */
-		if (ItemPointerCompare(&buffer->items[i].iptr,
-							   RumTupleGetFirst(tup)) > 0)
-		{
-			break;
-		}
-
-		buffer->nfrozen++;
-	}
-
 	/* add the new TIDs into the buffer, combine using merge-sort */
 	{
 		int nnew;
@@ -1736,12 +1791,14 @@ RumBufferStoreTuple(RumBuffer *buffer, RumTuple *tup)
 		 */
 		if (buffer->items == NULL)
 		{
-			buffer->items = palloc((buffer->nitems + tup->nitems) * sizeof(RumItem));
+			buffer->items = palloc((buffer->nitems + tup->nitems) *
+								   sizeof(RumItem));
 		}
 		else
 		{
 			buffer->items = repalloc(buffer->items,
-									 (buffer->nitems + tup->nitems) * sizeof(RumItem));
+									 (buffer->nitems + tup->nitems) *
+									 sizeof(RumItem));
 		}
 
 		new = rumMergeItemPointers(&buffer->items[buffer->nfrozen], /* first unfrozen */
@@ -1757,7 +1814,7 @@ RumBufferStoreTuple(RumBuffer *buffer, RumTuple *tup)
 
 		buffer->nitems += tup->nitems;
 
-		AssertCheckRumItems(buffer);
+		AssertCheckItemPointers(buffer);
 	}
 
 	/* free the decompressed TID list */
@@ -1951,7 +2008,7 @@ _rum_parallel_merge(RumBuildState *state)
 			 * the data into the insert, and start a new entry for current
 			 * RumTuple.
 			 */
-			AssertCheckRumItems(buffer);
+			AssertCheckItemPointers(buffer);
 
 			oldCtx = MemoryContextSwitchTo(state->tmpCtx);
 
@@ -1982,13 +2039,14 @@ _rum_parallel_merge(RumBuildState *state)
 			 * the data into the insert, and start a new entry for current
 			 * RumTuple.
 			 */
-			AssertCheckRumItems(buffer);
+			AssertCheckItemPointers(buffer);
 
 			oldCtx = MemoryContextSwitchTo(state->tmpCtx);
 
 			rumEntryInsert(&state->rumstate,
 						   buffer->attnum, buffer->key, buffer->category,
 						   buffer->items, buffer->nfrozen, &state->buildStats);
+
 			MemoryContextSwitchTo(oldCtx);
 			MemoryContextReset(state->tmpCtx);
 
@@ -2010,7 +2068,7 @@ _rum_parallel_merge(RumBuildState *state)
 	/* flush data remaining in the buffer (for the last key) */
 	if (!RumBufferIsEmpty(buffer))
 	{
-		AssertCheckRumItems(buffer);
+		AssertCheckItemPointers(buffer);
 
 		rumEntryInsert(&state->rumstate,
 					   buffer->attnum, buffer->key, buffer->category,
@@ -2024,7 +2082,7 @@ _rum_parallel_merge(RumBuildState *state)
 									 ++numtuples);
 	}
 
-	/* relase all the memory */
+	/* release all the memory */
 	RumBufferFree(buffer);
 
 	tuplesort_end(state->bs_sortstate);
@@ -2143,7 +2201,7 @@ _rum_process_worker_data(RumBuildState *state, Tuplesortstate *worker_sort,
 			 * the data into the insert, and start a new entry for current
 			 * RumTuple.
 			 */
-			AssertCheckRumItems(buffer);
+			AssertCheckItemPointers(buffer);
 
 			ntup = _rum_build_tuple(buffer->attnum, buffer->category,
 									buffer->key, buffer->typlen, buffer->typbyval,
@@ -2177,7 +2235,7 @@ _rum_process_worker_data(RumBuildState *state, Tuplesortstate *worker_sort,
 			 * the data into the insert, and start a new entry for current
 			 * RumTuple.
 			 */
-			AssertCheckRumItems(buffer);
+			AssertCheckItemPointers(buffer);
 
 			ntup = _rum_build_tuple(buffer->attnum, buffer->category,
 									buffer->key, buffer->typlen, buffer->typbyval,
@@ -2204,7 +2262,7 @@ _rum_process_worker_data(RumBuildState *state, Tuplesortstate *worker_sort,
 		RumTuple *ntup;
 		Size ntuplen;
 
-		AssertCheckRumItems(buffer);
+		AssertCheckItemPointers(buffer);
 
 		ntup = _rum_build_tuple(buffer->attnum, buffer->category,
 								buffer->key, buffer->typlen, buffer->typbyval,
@@ -2219,7 +2277,7 @@ _rum_process_worker_data(RumBuildState *state, Tuplesortstate *worker_sort,
 		RumBufferReset(buffer);
 	}
 
-	/* relase all the memory */
+	/* release all the memory */
 	RumBufferFree(buffer);
 
 	tuplesort_end(worker_sort);
@@ -2285,6 +2343,9 @@ _rum_parallel_scan_and_build(RumBuildState *state,
 
 	/* remember how much space is allowed for the accumulated entries */
 	state->work_mem = (sortmem / 2);
+
+	/* remember how many workers participate in the build */
+	state->bs_num_workers = rumshared->scantuplesortstates;
 
 	/* Begin "partial" tuplesort */
 	state->bs_sortstate = tuplesort_begin_indexbuild_rum(heap, index,
@@ -2430,10 +2491,8 @@ documentdb_rum_parallel_build_main(dsm_segment *seg, shm_toc *toc)
 	 */
 	sortmem = maintenance_work_mem / rumshared->scantuplesortstates;
 
-	/* Don't update the total number of blocks on progress on the worker */
-	bool progress = false;
 	_rum_parallel_scan_and_build(&buildstate, rumshared, sharedsort,
-								 heapRel, indexRel, sortmem, progress);
+								 heapRel, indexRel, sortmem, false);
 
 	/* Report WAL/buffer usage during parallel execution */
 	bufferusage = shm_toc_lookup(toc, PARALLEL_KEY_BUFFER_USAGE, false);
@@ -2464,9 +2523,12 @@ typedef struct
  *
  * For by-reference data types, we store the actual data. For by-val types
  * we simply copy the whole Datum, so that we don't have to care about stuff
- * like endianess etc. We could make it a little bit smaller, but it's not
+ * like endianness etc. We could make it a little bit smaller, but it's not
  * worth it - it's a tiny fraction of the data, and we need to MAXALIGN the
- * start of the TID list anyway. So we wouldn't save anything.
+ * start of the TID list anyway. So we wouldn't save anything. (This would
+ * not be a good idea for the permanent in-index data, since we'd prefer
+ * that that not depend on sizeof(Datum). But this is just a transient
+ * representation to use while sorting the data.)
  *
  * The TID list is serialized as compressed - it's highly compressible, and
  * we already have rumCompressPostingList for this purpose. The list may be
@@ -2517,7 +2579,7 @@ _rum_build_tuple(OffsetNumber attrnum, unsigned char category,
 	}
 	else if (typlen == -1)
 	{
-		keylen = VARSIZE_ANY(key);
+		keylen = VARSIZE_ANY(DatumGetPointer(key));
 	}
 	else if (typlen == -2)
 	{
@@ -2613,6 +2675,7 @@ _rum_build_tuple(OffsetNumber attrnum, unsigned char category,
 		memcpy(ptr, seginfo->seg, SizeOfRumPostingList(seginfo->seg));
 
 		ptr += SizeOfRumPostingList(seginfo->seg);
+
 		dlist_delete(&seginfo->node);
 
 		pfree(seginfo->seg);
@@ -2678,150 +2741,60 @@ _rum_parse_tuple_items(RumTuple *a)
 
 
 /*
- * Form a tuple for entry tree.
+ * _rum_compare_tuples
+ *		Compare RUM tuples, used by tuplesort during parallel index build.
  *
- * If the tuple would be too big to be stored, function throws a suitable
- * error if errorTooBig is true, or returns NULL if errorTooBig is false.
+ * The scalar fields (attrnum, category) are compared first, the key value is
+ * compared last. The comparisons are done using type-specific sort support
+ * functions.
  *
- * See src/backend/access/gin/README for a description of the index tuple
- * format that is being built here.  We build on the assumption that we
- * are making a leaf-level key entry containing a posting list of nipd items.
- * If the caller is actually trying to make a posting-tree entry, non-leaf
- * entry, or pending-list entry, it should pass nipd = 0 and then overwrite
- * the t_tid fields as necessary.  In any case, items can be NULL to skip
- * copying any itempointers into the posting list; the caller is responsible
- * for filling the posting list afterwards, if items = NULL and nipd > 0.
+ * If the key value matches, we compare the first TID value in the TID list,
+ * which means the tuples are merged in an order in which they are most
+ * likely to be simply concatenated. (This "first" TID will also allow us
+ * to determine a point up to which the list is fully determined and can be
+ * written into the index to enforce a memory limit etc.)
  */
-static IndexTuple
-RumFormTuple(RumState *rumstate,
-			 OffsetNumber attnum, Datum key, RumNullCategory category,
-			 RumItem *items, uint32 nipd, bool errorTooBig)
+int
+_rum_compare_tuples(RumTuple *a, RumTuple *b, SortSupport ssup)
 {
-	Datum datums[3];
-	bool isnull[3];
-	IndexTuple itup;
-	uint32 newsize;
-	int i;
-	ItemPointerData nullItemPointer = { { 0, 0 }, 0 };
+	int r;
+	Datum keya,
+		  keyb;
 
-	/* Build the basic tuple: optional column number, plus key datum */
-	if (rumstate->oneCol)
+	if (a->attrnum < b->attrnum)
 	{
-		datums[0] = key;
-		isnull[0] = (category != RUM_CAT_NORM_KEY);
-		isnull[1] = true;
-	}
-	else
-	{
-		datums[0] = UInt16GetDatum(attnum);
-		isnull[0] = false;
-		datums[1] = key;
-		isnull[1] = (category != RUM_CAT_NORM_KEY);
-		isnull[2] = true;
+		return -1;
 	}
 
-	itup = index_form_tuple(rumstate->tupdesc[attnum - 1], datums, isnull);
-
-	/*
-	 * Determine and store offset to the posting list, making sure there is
-	 * room for the category byte if needed.
-	 *
-	 * Note: because index_form_tuple MAXALIGNs the tuple size, there may well
-	 * be some wasted pad space.  Is it worth recomputing the data length to
-	 * prevent that?  That would also allow us to Assert that the real data
-	 * doesn't overlap the RumNullCategory byte, which this code currently
-	 * takes on faith.
-	 */
-	newsize = IndexTupleSize(itup);
-
-	RumSetPostingOffset(itup, newsize);
-
-	RumSetNPosting(itup, nipd);
-
-	/*
-	 * Add space needed for posting list, if any.  Then check that the tuple
-	 * won't be too big to store.
-	 */
-
-	if (nipd > 0)
+	if (a->attrnum > b->attrnum)
 	{
-		newsize = rumCheckPlaceToDataPageLeaf(attnum, &items[0],
-											  &nullItemPointer,
-											  rumstate, newsize);
-		for (i = 1; i < nipd; i++)
-		{
-			newsize = rumCheckPlaceToDataPageLeaf(attnum, &items[i],
-												  &items[i - 1].iptr,
-												  rumstate, newsize);
-		}
+		return 1;
 	}
 
-
-	if (category != RUM_CAT_NORM_KEY)
+	if (a->category < b->category)
 	{
-		Assert(IndexTupleHasNulls(itup));
-		newsize = newsize + sizeof(RumNullCategory);
-	}
-	newsize = MAXALIGN(newsize);
-
-	if (newsize > RumMaxItemSize)
-	{
-		if (errorTooBig)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-					 errmsg("index row size %lu exceeds maximum %lu for index \"%s\"",
-							(unsigned long) newsize,
-							(unsigned long) RumMaxItemSize,
-							RelationGetRelationName(rumstate->index))));
-		}
-		pfree(itup);
-		return NULL;
+		return -1;
 	}
 
-	/*
-	 * Resize tuple if needed
-	 */
-	if (newsize != IndexTupleSize(itup))
+	if (a->category > b->category)
 	{
-		itup = repalloc(itup, newsize);
-
-		memset((char *) itup + IndexTupleSize(itup),
-			   0, newsize - IndexTupleSize(itup));
-
-		/* set new size in tuple header */
-		itup->t_info &= ~INDEX_SIZE_MASK;
-		itup->t_info |= newsize;
+		return 1;
 	}
 
-	/*
-	 * Copy in the posting list, if provided
-	 */
-	if (nipd > 0)
+	if (a->category == RUM_CAT_NORM_KEY)
 	{
-		char *ptr = RumGetPosting(itup);
+		keya = _rum_parse_tuple_key(a);
+		keyb = _rum_parse_tuple_key(b);
 
-		ptr = rumPlaceToDataPageLeaf(ptr, attnum, &items[0],
-									 &nullItemPointer, rumstate);
-		for (i = 1; i < nipd; i++)
-		{
-			ptr = rumPlaceToDataPageLeaf(ptr, attnum, &items[i],
-										 &items[i - 1].iptr, rumstate);
-		}
+		r = ApplySortComparator(keya, false,
+								keyb, false,
+								&ssup[a->attrnum - 1]);
 
-		Assert(MAXALIGN((ptr - ((char *) itup)) +
-						((category == RUM_CAT_NORM_KEY) ? 0 : sizeof(RumNullCategory))) ==
-			   newsize);
+		/* if the key is the same, consider the first TID in the array */
+		return (r != 0) ? r : ItemPointerCompare(RumTupleGetFirst(a),
+												 RumTupleGetFirst(b));
 	}
 
-	/*
-	 * Insert category byte, if needed
-	 */
-	if (category != RUM_CAT_NORM_KEY)
-	{
-		Assert(IndexTupleHasNulls(itup));
-		RumSetNullCategory(itup, category);
-	}
-
-	return itup;
+	return ItemPointerCompare(RumTupleGetFirst(a),
+							  RumTupleGetFirst(b));
 }

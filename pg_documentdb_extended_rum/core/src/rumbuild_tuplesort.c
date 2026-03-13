@@ -19,6 +19,7 @@
 #include "storage/itemptr.h"
 #include "utils/typcache.h"
 #include "catalog/pg_collation.h"
+#include "utils/builtins.h"
 
 #define MaxHeapTuplesPerPageBits 11
 #define MaxBytesPerInteger 7
@@ -342,52 +343,6 @@ removeabbrev_index_rum(Tuplesortstate *state, SortTuple *stups, int count)
 
 
 static int
-_rum_compare_tuples(RumTuple *a, RumTuple *b, SortSupport ssup)
-{
-	int r;
-	Datum keya,
-		  keyb;
-
-	if (a->attrnum < b->attrnum)
-	{
-		return -1;
-	}
-
-	if (a->attrnum > b->attrnum)
-	{
-		return 1;
-	}
-
-	if (a->category < b->category)
-	{
-		return -1;
-	}
-
-	if (a->category > b->category)
-	{
-		return 1;
-	}
-
-	if (a->category == RUM_CAT_NORM_KEY)
-	{
-		keya = _rum_parse_tuple_key(a);
-		keyb = _rum_parse_tuple_key(b);
-
-		r = ApplySortComparator(keya, false,
-								keyb, false,
-								&ssup[a->attrnum - 1]);
-
-		/* if the key is the same, consider the first TID in the array */
-		return (r != 0) ? r : ItemPointerCompare(RumTupleGetFirst(a),
-												 RumTupleGetFirst(b));
-	}
-
-	return ItemPointerCompare(RumTupleGetFirst(a),
-							  RumTupleGetFirst(b));
-}
-
-
-static int
 comparetup_index_rum(const SortTuple *a, const SortTuple *b,
 					 Tuplesortstate *state)
 {
@@ -476,7 +431,7 @@ tuplesort_begin_indexbuild_rum(Relation heapRel,
 	{
 		SortSupport sortKey = base->sortKeys + i;
 		Form_pg_attribute att = TupleDescAttr(desc, i);
-		TypeCacheEntry *typentry;
+		Oid cmpFunc;
 
 		sortKey->ssup_cxt = CurrentMemoryContext;
 		sortKey->ssup_collation = indexRel->rd_indcollation[i];
@@ -492,11 +447,28 @@ tuplesort_begin_indexbuild_rum(Relation heapRel,
 		}
 
 		/*
-		 * Look for a ordering for the index key data type, and then the sort
-		 * support function.
+		 * If the compare proc isn't specified in the opclass definition, look
+		 * up the index key type's default btree comparator.
 		 */
-		typentry = lookup_type_cache(att->atttypid, TYPECACHE_LT_OPR);
-		PrepareSortSupportFromOrderingOp(typentry->lt_opr, sortKey);
+		cmpFunc = index_getprocid(indexRel, i + 1, GIN_COMPARE_PROC);
+		if (cmpFunc == InvalidOid)
+		{
+			TypeCacheEntry *typentry;
+
+			typentry = lookup_type_cache(att->atttypid,
+										 TYPECACHE_CMP_PROC_FINFO);
+			if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_UNDEFINED_FUNCTION),
+						 errmsg("could not identify a comparison function for type %s",
+								format_type_be(att->atttypid))));
+			}
+
+			cmpFunc = typentry->cmp_proc_finfo.fn_oid;
+		}
+
+		PrepareSortSupportComparisonShim(cmpFunc, sortKey);
 	}
 
 	base->removeabbrev = removeabbrev_index_rum;

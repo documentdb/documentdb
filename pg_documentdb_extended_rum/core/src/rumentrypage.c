@@ -15,6 +15,157 @@
 
 #include "pg_documentdb_rum.h"
 
+
+/*
+ * Form a tuple for entry tree.
+ *
+ * If the tuple would be too big to be stored, function throws a suitable
+ * error if errorTooBig is true, or returns NULL if errorTooBig is false.
+ *
+ * See src/backend/access/gin/README for a description of the index tuple
+ * format that is being built here.  We build on the assumption that we
+ * are making a leaf-level key entry containing a posting list of nipd items.
+ * If the caller is actually trying to make a posting-tree entry, non-leaf
+ * entry, or pending-list entry, it should pass nipd = 0 and then overwrite
+ * the t_tid fields as necessary.  In any case, items can be NULL to skip
+ * copying any itempointers into the posting list; the caller is responsible
+ * for filling the posting list afterwards, if items = NULL and nipd > 0.
+ */
+IndexTuple
+RumFormTuple(RumState *rumstate,
+			 OffsetNumber attnum, Datum key, RumNullCategory category,
+			 RumItem *items, uint32 nipd, bool errorTooBig)
+{
+	Datum datums[3];
+	bool isnull[3];
+	IndexTuple itup;
+	uint32 newsize;
+	int i;
+	ItemPointerData nullItemPointer = { { 0, 0 }, 0 };
+
+	/* Build the basic tuple: optional column number, plus key datum */
+	if (rumstate->oneCol)
+	{
+		datums[0] = key;
+		isnull[0] = (category != RUM_CAT_NORM_KEY);
+		isnull[1] = true;
+	}
+	else
+	{
+		datums[0] = UInt16GetDatum(attnum);
+		isnull[0] = false;
+		datums[1] = key;
+		isnull[1] = (category != RUM_CAT_NORM_KEY);
+		isnull[2] = true;
+	}
+
+	itup = index_form_tuple(rumstate->tupdesc[attnum - 1], datums, isnull);
+
+	/*
+	 * Determine and store offset to the posting list, making sure there is
+	 * room for the category byte if needed.
+	 *
+	 * Note: because index_form_tuple MAXALIGNs the tuple size, there may well
+	 * be some wasted pad space.  Is it worth recomputing the data length to
+	 * prevent that?  That would also allow us to Assert that the real data
+	 * doesn't overlap the RumNullCategory byte, which this code currently
+	 * takes on faith.
+	 */
+	newsize = IndexTupleSize(itup);
+
+	RumSetPostingOffset(itup, newsize);
+
+	RumSetNPosting(itup, nipd);
+
+	/*
+	 * Add space needed for posting list, if any.  Then check that the tuple
+	 * won't be too big to store.
+	 */
+
+	if (nipd > 0)
+	{
+		newsize = rumCheckPlaceToDataPageLeaf(attnum, &items[0],
+											  &nullItemPointer,
+											  rumstate, newsize);
+		for (i = 1; i < nipd; i++)
+		{
+			newsize = rumCheckPlaceToDataPageLeaf(attnum, &items[i],
+												  &items[i - 1].iptr,
+												  rumstate, newsize);
+		}
+	}
+
+
+	if (category != RUM_CAT_NORM_KEY)
+	{
+		Assert(IndexTupleHasNulls(itup));
+		newsize = newsize + sizeof(RumNullCategory);
+	}
+	newsize = MAXALIGN(newsize);
+
+	if (newsize > RumMaxItemSize)
+	{
+		if (errorTooBig)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+					 errmsg("index row size %lu exceeds maximum %lu for index \"%s\"",
+							(unsigned long) newsize,
+							(unsigned long) RumMaxItemSize,
+							RelationGetRelationName(rumstate->index))));
+		}
+		pfree(itup);
+		return NULL;
+	}
+
+	/*
+	 * Resize tuple if needed
+	 */
+	if (newsize != IndexTupleSize(itup))
+	{
+		itup = repalloc(itup, newsize);
+
+		memset((char *) itup + IndexTupleSize(itup),
+			   0, newsize - IndexTupleSize(itup));
+
+		/* set new size in tuple header */
+		itup->t_info &= ~INDEX_SIZE_MASK;
+		itup->t_info |= newsize;
+	}
+
+	/*
+	 * Copy in the posting list, if provided
+	 */
+	if (nipd > 0)
+	{
+		char *ptr = RumGetPosting(itup);
+
+		ptr = rumPlaceToDataPageLeaf(ptr, attnum, &items[0],
+									 &nullItemPointer, rumstate);
+		for (i = 1; i < nipd; i++)
+		{
+			ptr = rumPlaceToDataPageLeaf(ptr, attnum, &items[i],
+										 &items[i - 1].iptr, rumstate);
+		}
+
+		Assert(MAXALIGN((ptr - ((char *) itup)) +
+						((category == RUM_CAT_NORM_KEY) ? 0 : sizeof(RumNullCategory))) ==
+			   newsize);
+	}
+
+	/*
+	 * Insert category byte, if needed
+	 */
+	if (category != RUM_CAT_NORM_KEY)
+	{
+		Assert(IndexTupleHasNulls(itup));
+		RumSetNullCategory(itup, category);
+	}
+
+	return itup;
+}
+
+
 /*
  * Read item pointers with additional information from leaf data page.
  * Information is stored in the same manner as in leaf data pages.

@@ -134,7 +134,11 @@ command_drop_indexes(PG_FUNCTION_ARGS)
 	/* fetch TupleDesc for result, not interested in resultTypeId */
 	Oid *resultTypeId = NULL;
 	TupleDesc resultTupDesc = NULL;
-	get_call_result_type(fcinfo, resultTypeId, &resultTupDesc);
+	if (get_call_result_type(fcinfo, resultTypeId, &resultTupDesc) == TYPEFUNC_SCALAR)
+	{
+		PG_RETURN_DATUM(values[0]);
+	}
+
 	PG_RETURN_DATUM(HeapTupleGetDatum(heap_form_tuple(resultTupDesc, values, isNulls)));
 }
 

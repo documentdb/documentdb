@@ -77,5 +77,8 @@ RumTupleGetFirst(RumTuple *tup)
 }
 
 
+struct SortSupportData;
+extern int _rum_compare_tuples(RumTuple *a, RumTuple *b, struct SortSupportData *ssup);
+
 Datum _rum_parse_tuple_key(RumTuple *a);
 #endif

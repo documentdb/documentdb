@@ -171,12 +171,12 @@ rumVacuumPostingList(RumVacuumState *gvs, OffsetNumber attnum, Pointer src,
  * with additional information.
  */
 static IndexTuple
-RumFormTuple(RumState *rumstate,
-			 OffsetNumber attnum, Datum key, RumNullCategory category,
-			 Pointer data,
-			 Size dataSize,
-			 uint32 nipd,
-			 bool errorTooBig)
+RumVacFormTuple(RumState *rumstate,
+				OffsetNumber attnum, Datum key, RumNullCategory category,
+				Pointer data,
+				Size dataSize,
+				uint32 nipd,
+				bool errorTooBig)
 {
 	Datum datums[3];
 	bool isnull[3];
@@ -1243,8 +1243,8 @@ rumVacuumEntryPage(RumVacuumState *gvs, Buffer buffer, BlockNumber *roots,
 				key = rumtuple_get_key(&gvs->rumstate, itup, &category);
 
 				/* FIXME */
-				itup = RumFormTuple(&gvs->rumstate, attnum, key, category,
-									cleaned, cleanedSize, newN, true);
+				itup = RumVacFormTuple(&gvs->rumstate, attnum, key, category,
+									   cleaned, cleanedSize, newN, true);
 				pfree(cleaned);
 				PageIndexTupleDelete(tmppage, i);
 
