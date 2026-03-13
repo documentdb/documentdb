@@ -9,7 +9,6 @@
 use std::{future::Future, sync::Arc};
 
 use async_trait::async_trait;
-use bson::RawDocument;
 use tokio_postgres::Row;
 
 use crate::{
@@ -204,10 +203,12 @@ pub trait PgDataClient: Send + Sync {
     async fn execute_shard_collection(
         &self,
         request_context: &RequestContext<'_>,
-        db: &str,
-        collection: &str,
-        key: &RawDocument,
-        reshard: bool,
+        connection_context: &ConnectionContext,
+    ) -> Result<()>;
+
+    async fn execute_reshard_collection(
+        &self,
+        request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<()>;
 

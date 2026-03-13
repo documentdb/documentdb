@@ -9,7 +9,6 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use bson::RawDocument;
 use tokio_postgres::{error::SqlState, types::Type, Row};
 
 use crate::{
@@ -747,13 +746,9 @@ impl PgDataClient for DocumentDBDataClient {
     async fn execute_shard_collection(
         &self,
         request_context: &RequestContext<'_>,
-        db: &str,
-        collection: &str,
-        key: &RawDocument,
-        reshard: bool,
         connection_context: &ConnectionContext,
     ) -> Result<()> {
-        let (_, request_info, request_tracker) = request_context.get_components();
+        let (request, request_info, request_tracker) = request_context.get_components();
         self.pull_connection(connection_context)
             .await?
             .query(
@@ -761,13 +756,31 @@ impl PgDataClient for DocumentDBDataClient {
                     .service_context
                     .query_catalog()
                     .shard_collection(),
-                &[Type::TEXT, Type::TEXT, Type::BYTEA, Type::BOOL],
-                &[
-                    &db.to_string(),
-                    &collection.to_string(),
-                    &PgDocument(key),
-                    &reshard,
-                ],
+                &[Type::BYTEA],
+                &[&PgDocument(request.document())],
+                Timeout::transaction(request_info.max_time_ms),
+                request_tracker,
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    async fn execute_reshard_collection(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<()> {
+        let (request, request_info, request_tracker) = request_context.get_components();
+        self.pull_connection(connection_context)
+            .await?
+            .query(
+                connection_context
+                    .service_context
+                    .query_catalog()
+                    .reshard_collection(),
+                &[Type::BYTEA],
+                &[&PgDocument(request.document())],
                 Timeout::transaction(request_info.max_time_ms),
                 request_tracker,
             )

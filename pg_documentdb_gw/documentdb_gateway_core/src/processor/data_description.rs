@@ -13,9 +13,9 @@ use bson::rawdoc;
 use crate::{
     configuration::DynamicConfiguration,
     context::{ConnectionContext, RequestContext},
-    error::{DocumentDBError, Result},
+    error::Result,
     postgres::PgDataClient,
-    protocol::{self, OK_SUCCEEDED},
+    protocol::OK_SUCCEEDED,
     responses::{RawResponse, Response},
 };
 
@@ -121,27 +121,22 @@ pub async fn process_rename_collection(
 pub async fn process_shard_collection(
     request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
-    reshard: bool,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let collection_path = request_context.info.collection()?.to_string();
-    let (db, collection) =
-        protocol::extract_database_and_collection_names(collection_path.as_str())?;
-    let key = request_context
-        .payload
-        .document()
-        .get_document("key")
-        .map_err(DocumentDBError::parse_failure())?;
-
     pg_data_client
-        .execute_shard_collection(
-            request_context,
-            db,
-            collection,
-            key,
-            reshard,
-            connection_context,
-        )
+        .execute_shard_collection(request_context, connection_context)
+        .await?;
+
+    Ok(Response::ok())
+}
+
+pub async fn process_reshard_collection(
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response> {
+    pg_data_client
+        .execute_reshard_collection(request_context, connection_context)
         .await?;
 
     Ok(Response::ok())

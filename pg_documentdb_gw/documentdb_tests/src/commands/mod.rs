@@ -27,6 +27,7 @@ pub mod list_databases;
 pub mod multi_connect;
 pub mod rename_collection;
 pub mod session;
+pub mod shard_collection;
 pub mod text_search;
 pub mod transaction;
 pub mod update;

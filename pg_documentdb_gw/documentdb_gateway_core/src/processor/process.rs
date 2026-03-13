@@ -238,7 +238,6 @@ pub async fn process_request(
                 data_description::process_shard_collection(
                     request_context,
                     connection_context,
-                    false,
                     pg_data_client,
                 )
                 .await
@@ -307,10 +306,9 @@ pub async fn process_request(
                     .await
             }
             RequestType::ReshardCollection => {
-                data_description::process_shard_collection(
+                data_description::process_reshard_collection(
                     request_context,
                     connection_context,
-                    true,
                     pg_data_client,
                 )
                 .await
