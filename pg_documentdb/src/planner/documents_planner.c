@@ -144,6 +144,7 @@ planner_hook_type ExtensionPreviousPlannerHook = NULL;
 set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook = NULL;
 explain_get_index_name_hook_type ExtensionPreviousIndexNameHook = NULL;
 get_relation_info_hook_type ExtensionPreviousGetRelationInfoHook = NULL;
+node_worker_stmt_rewrite_hook_type node_worker_stmt_rewrite_hook = NULL;
 
 
 /*
@@ -1494,6 +1495,13 @@ ProcessWorkerWriteQueryPath(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	if (list_length(funcExpr->args) != 6)
 	{
 		return false;
+	}
+
+	if (node_worker_stmt_rewrite_hook &&
+		node_worker_stmt_rewrite_hook(root, rel, rti, rte, entry))
+	{
+		/* Statement rewritten by other plugin */
+		return true;
 	}
 
 	if (!(funcExpr->funcid == UpdateWorkerFunctionOid() ||

@@ -350,6 +350,20 @@ documentdb_command_move_collection(PG_FUNCTION_ARGS)
 										SPI_OK_SELECT,
 										&resultNullIgnore);
 
+	/*
+	 * After citus_move_shard_placement, the old shard table remains on the
+	 * source node as an orphan until Citus's maintenance daemon cleans it up.
+	 * Invalidate this collection's cache entry so that subsequent operations
+	 * (e.g. insert_one) re-evaluate shard locality via TrySetCollectionShard()
+	 * instead of routing writes to the orphan table.
+	 *
+	 * InvalidateCollectionByRelationId clears the local backend's cache immediately.
+	 * CacheInvalidateRelcacheByRelid sends a relcache invalidation to all other
+	 * backends so they evict their stale entry on next AcceptInvalidationMessages.
+	 */
+	InvalidateCollectionByRelationId(collection->relationId);
+	CacheInvalidateRelcacheByRelid(collection->relationId);
+
 	pgbsonelement okElement = { 0 };
 	okElement.path = "ok";
 	okElement.pathLength = 2;

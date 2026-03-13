@@ -368,9 +368,23 @@ TryGetShardNameForUnshardedCollectionCore(Oid relationId, uint64 collectionId, c
 	/* Construct the shard table name */
 	char *shardTableName = psprintf("%s_%ld", tableName, shardIdValue);
 
-	/* Now that we have a shard table name, try to find it in pg_class without locking it */
-	Oid shardTableOid = get_relname_relid(shardTableName, ApiDataNamespaceOid());
-	if (shardTableOid != InvalidOid)
+	/*
+	 * Verify the shard is actually placed on this node by checking
+	 * pg_dist_placement against the local group id. A simple pg_class
+	 * lookup is not sufficient because after citus_move_shard_placement
+	 * the orphan shard table can still physically exist on the source
+	 * node until Citus's deferred cleanup runs.
+	 */
+	const char *localPlacementQuery =
+		"SELECT 1 FROM pg_dist_placement "
+		"WHERE shardid = $1 AND groupid = (SELECT groupid FROM pg_dist_local_group)";
+	Oid placementArgTypes[1] = { INT8OID };
+	Datum placementArgValues[1] = { Int64GetDatum(shardIdValue) };
+	bool placementIsNull = true;
+	ExtensionExecuteQueryWithArgsViaSPI(
+		localPlacementQuery, 1, placementArgTypes, placementArgValues,
+		argNullNone, readOnly, SPI_OK_SELECT, &placementIsNull);
+	if (!placementIsNull)
 	{
 		return shardTableName;
 	}

@@ -21,6 +21,17 @@
 #include <optimizer/plancat.h>
 
 
+/*
+ * Hook for plugins to rewrite SQL statement on worker once it is identified as a
+ * shard request.
+ */
+typedef bool (*node_worker_stmt_rewrite_hook_type) (PlannerInfo *root,
+													RelOptInfo *rel,
+													Index rti,
+													RangeTblEntry *rte,
+													TargetEntry *entry);
+extern PGDLLIMPORT node_worker_stmt_rewrite_hook_type node_worker_stmt_rewrite_hook;
+
 extern planner_hook_type ExtensionPreviousPlannerHook;
 extern set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook;
 extern explain_get_index_name_hook_type ExtensionPreviousIndexNameHook;
