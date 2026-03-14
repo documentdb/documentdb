@@ -349,8 +349,8 @@ MergeWorkerResults(MongoCollection *collection, List *workerResults,
 	 * nested distributed execution.
 	 */
 	bool enableNestedDistribution = true;
-	List *indexes = CollectionIdGetValidIndexes(collection->collectionId, excludeIdIndex,
-												enableNestedDistribution);
+	List *indexes = CollectionIdGetIndexes(collection->collectionId, excludeIdIndex,
+										   enableNestedDistribution);
 
 	HTAB *bsonElementHash = CreatePgbsonElementHashSet();
 
@@ -424,6 +424,10 @@ MergeWorkerResults(MongoCollection *collection, List *workerResults,
 		PgbsonWriterEndDocument(&writer, &childWriter);
 		PgbsonWriterAppendDocument(&writer, "spec", 4, IndexSpecAsBson(
 									   &details->indexSpec));
+		if (details->isIndexBuildInProgress)
+		{
+			PgbsonWriterAppendBool(&writer, "building", 8, true);
+		}
 
 		/* add the row */
 		Datum tuple[1] = { PointerGetDatum(PgbsonWriterGetPgbson(&writer)) };

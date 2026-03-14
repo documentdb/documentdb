@@ -319,6 +319,9 @@ SELECT * FROM documentdb_api_internal.check_build_index_status('{"indexRequest" 
 -- test multiple scheduled builds drain together.
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
 
+-- Disable cron jobs to prevent them from racing with manual build calls below.
+SELECT change_index_jobs_schema.change_index_jobs_status(false);
+
 -- insert multiple index requests across multiple collections.
 SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backgroundcoll1", "indexes": [ { "key" : { "a": 1 }, "name": "a_1"}] }');
 SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backgroundcoll1", "indexes": [ { "key" : { "b": 1 }, "name": "b_1"}] }');
@@ -333,8 +336,9 @@ SELECT index_cmd, cmd_type, index_id, index_cmd_status, collection_id FROM docum
 SELECT * FROM documentdb_test_helpers.count_collection_indexes('db', 'backgroundcoll1');
 SELECT * FROM documentdb_test_helpers.count_collection_indexes('db', 'backgroundcoll2');
 
--- Disable cron jobs to prevent them from racing with manual build calls below.
-SELECT change_index_jobs_schema.change_index_jobs_status(false);
+-- call index stats: in progress builds should show as building.
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
+  '{ "aggregate": "backgroundcoll1", "pipeline": [ { "$indexStats": {} }, { "$sort": { "name": 1 } }, { "$project": { "accesses": 0 }} ] }');
 
 -- now call build once.
 -- it's okay to call both since exactly one of them will execute with the other NOOP due to the GUC

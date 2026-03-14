@@ -836,9 +836,18 @@ SELECT * FROM documentdb_api_internal.check_build_index_status('{"indexRequest" 
 
 -- test multiple scheduled builds drain together.
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
+-- Disable cron jobs to prevent them from racing with manual build calls below.
+SELECT change_index_jobs_schema.change_index_jobs_status(false);
+psql:sql/create_indexes_background_core.sql:323: NOTICE:  Processing job_id: 2
+psql:sql/create_indexes_background_core.sql:323: NOTICE:  Processing job_id: 3
+ change_index_jobs_status 
+--------------------------
+ 
+(1 row)
+
 -- insert multiple index requests across multiple collections.
 SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backgroundcoll1", "indexes": [ { "key" : { "a": 1 }, "name": "a_1"}] }');
-psql:sql/create_indexes_background_core.sql:323: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:326: NOTICE:  creating collection
                                                                                                                            create_indexes_background                                                                                                                           
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""raw"" : { ""defaultShard"" : { ""numIndexesBefore"" : { ""$numberInt"" : ""1"" }, ""numIndexesAfter"" : { ""$numberInt"" : ""2"" }, ""createdCollectionAutomatically"" : true, ""ok"" : { ""$numberInt"" : ""1"" } } }, ""ok"" : { ""$numberInt"" : ""1"" } }",t,"{ }")
@@ -857,7 +866,7 @@ SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backg
 (1 row)
 
 SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backgroundcoll2", "indexes": [ { "key" : { "a": 1 }, "name": "a_1"}] }');
-psql:sql/create_indexes_background_core.sql:327: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:330: NOTICE:  creating collection
                                                                                                                            create_indexes_background                                                                                                                           
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""raw"" : { ""defaultShard"" : { ""numIndexesBefore"" : { ""$numberInt"" : ""1"" }, ""numIndexesAfter"" : { ""$numberInt"" : ""2"" }, ""createdCollectionAutomatically"" : true, ""ok"" : { ""$numberInt"" : ""1"" } } }, ""ok"" : { ""$numberInt"" : ""1"" } }",t,"{ }")
@@ -899,14 +908,16 @@ SELECT * FROM documentdb_test_helpers.count_collection_indexes('db', 'background
  t                     |                1
 (2 rows)
 
--- Disable cron jobs to prevent them from racing with manual build calls below.
-SELECT change_index_jobs_schema.change_index_jobs_status(false);
-psql:sql/create_indexes_background_core.sql:337: NOTICE:  Processing job_id: 2
-psql:sql/create_indexes_background_core.sql:337: NOTICE:  Processing job_id: 3
- change_index_jobs_status 
---------------------------
- 
-(1 row)
+-- call index stats: in progress builds should show as building.
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
+  '{ "aggregate": "backgroundcoll1", "pipeline": [ { "$indexStats": {} }, { "$sort": { "name": 1 } }, { "$project": { "accesses": 0 }} ] }');
+                                                                                                              document                                                                                                               
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "name" : "_id_", "key" : { "_id" : { "$numberInt" : "1" } }, "spec" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }
+ { "name" : "a_1", "key" : { "a" : { "$numberInt" : "1" } }, "spec" : { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" } }, "name" : "a_1", "enableOrderedIndex" : { "$numberInt" : "1" } } }
+ { "name" : "b_1", "key" : { "b" : { "$numberInt" : "1" } }, "spec" : { "v" : { "$numberInt" : "2" }, "key" : { "b" : { "$numberInt" : "1" } }, "name" : "b_1", "enableOrderedIndex" : { "$numberInt" : "1" } }, "building" : true }
+ { "name" : "c_1", "key" : { "c" : { "$numberInt" : "1" } }, "spec" : { "v" : { "$numberInt" : "2" }, "key" : { "c" : { "$numberInt" : "1" } }, "name" : "c_1", "enableOrderedIndex" : { "$numberInt" : "1" } }, "building" : true }
+(4 rows)
 
 -- now call build once.
 -- it's okay to call both since exactly one of them will execute with the other NOOP due to the GUC
@@ -966,7 +977,7 @@ SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
 -- Test collMod reindex option
 -- Create a collection with an index
 SELECT documentdb_api.insert_one('db', 'collmod_reindex_coll', '{ "_id": 1, "x": 1 }');
-psql:sql/create_indexes_background_core.sql:369: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:373: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -980,13 +991,13 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
 
 -- Error: reindex must be true
 SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "x_1", "reindex": false } }');
-psql:sql/create_indexes_background_core.sql:373: ERROR:  collMod.reindex can only be set to true
+psql:sql/create_indexes_background_core.sql:377: ERROR:  collMod.reindex can only be set to true
 -- Error: index not found
 SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "nonexistent_idx", "reindex": true } }');
-psql:sql/create_indexes_background_core.sql:376: ERROR:  cannot find index nonexistent_idx for ns db.collmod_reindex_coll
+psql:sql/create_indexes_background_core.sql:380: ERROR:  cannot find index nonexistent_idx for ns db.collmod_reindex_coll
 -- Error: reindex cannot be combined with other options
 SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "x_1", "reindex": true, "hidden": true } }');
-psql:sql/create_indexes_background_core.sql:379: ERROR:  reindex cannot be combined with other index options
+psql:sql/create_indexes_background_core.sql:383: ERROR:  reindex cannot be combined with other index options
 -- Queue reindex via collMod
 SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "x_1", "reindex": true } }');
                                     coll_mod                                    
@@ -1032,8 +1043,8 @@ SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
 
 -- Re-enable cron jobs for the schedule_background_index_build_jobs test below.
 SELECT change_index_jobs_schema.change_index_jobs_status(true);
-psql:sql/create_indexes_background_core.sql:402: NOTICE:  Processing job_id: 2
-psql:sql/create_indexes_background_core.sql:402: NOTICE:  Processing job_id: 3
+psql:sql/create_indexes_background_core.sql:406: NOTICE:  Processing job_id: 2
+psql:sql/create_indexes_background_core.sql:406: NOTICE:  Processing job_id: 3
  change_index_jobs_status 
 --------------------------
  
