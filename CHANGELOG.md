@@ -5,6 +5,7 @@
 * Support `$db` field in wire protocol command specs for insert, update, delete, findAndModify, createIndexes, dropIndexes, collMod, and background index commands *[Feature]*
 * Fixes crash that occurs when `enableDebugQueryText` is enabled and certain commands (e.g., `count_query`, `find_cursor_first_page`) operate on queries whose query trees are mutated by the PostgreSQL planner. *[Bugfix]* (#484)
 * Map PostgreSQL `Gather Merge` plan node to `PARALLEL_SORT_MERGE` in explain output *[Bugfix]*
+* Support collation with $min and $max aggregation $group accumulators. Guarded by `EnableNewMinMaxAccumulators` and `EnableCollation`
 * Optimize OP_INSERT and refactor opcode parsers
 
 ### documentdb v0.110-0 (Unreleased) ###

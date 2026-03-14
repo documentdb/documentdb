@@ -263,6 +263,7 @@ pgbson * ParseAndGetTopLevelVariableSpec(const bson_value_t *varSpec,
 
 void ParseBsonExpressionState(BsonExpressionState *state,
 							  const bson_value_t *expressionValue,
-							  pgbson *variableSpec);
+							  pgbson *variableSpec,
+							  const char *collationString);
 
 #endif

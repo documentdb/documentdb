@@ -606,12 +606,13 @@ bson_expression_get(PG_FUNCTION_ARGS)
 		numArgs,
 		ParseBsonExpressionState,
 		&expressionElement.bsonValue,
-		variableSpec);
+		variableSpec,
+		collationString);
 
 	if (state == NULL)
 	{
 		ParseBsonExpressionState(&expressionData, &expressionElement.bsonValue,
-								 variableSpec);
+								 variableSpec, collationString);
 		state = &expressionData;
 	}
 
@@ -677,12 +678,20 @@ bson_expression_partition_get(PG_FUNCTION_ARGS)
 	bool isNullOnEmpty = PG_GETARG_BOOL(2);
 	pgbson *variableSpec = NULL;
 
-	int argPositions[2] = { 1, 3 };
+	int argPositions[3] = { 1, 3, 1 };
 	int numArgs = 1;
 	if (PG_NARGS() > 3)
 	{
 		variableSpec = PG_GETARG_MAYBE_NULL_PGBSON(3);
 		numArgs = 2;
+	}
+
+	char *collationString = NULL;
+	if (EnableCollation && PG_NARGS() > 4)
+	{
+		collationString = PG_ARGISNULL(4) ? NULL : text_to_cstring(PG_GETARG_TEXT_P(4));
+		numArgs = 3;
+		argPositions[2] = 4;
 	}
 
 	pgbsonelement expressionElement;
@@ -701,12 +710,13 @@ bson_expression_partition_get(PG_FUNCTION_ARGS)
 		numArgs,
 		ParseBsonExpressionState,
 		&expressionElement.bsonValue,
-		variableSpec);
+		variableSpec,
+		collationString);
 
 	if (state == NULL)
 	{
 		ParseBsonExpressionState(&expressionData, &expressionElement.bsonValue,
-								 variableSpec);
+								 variableSpec, collationString);
 		state = &expressionData;
 	}
 
@@ -924,13 +934,15 @@ bson_expression_map(PG_FUNCTION_ARGS)
  */
 void
 ParseBsonExpressionState(BsonExpressionState *getState,
-						 const bson_value_t *expressionValue, pgbson *variableSpec)
+						 const bson_value_t *expressionValue, pgbson *variableSpec,
+						 const char *collationString)
 {
 	getState->expressionData = (AggregationExpressionData *) palloc0(
 		sizeof(AggregationExpressionData));
 	getState->variableContext = NULL;
 
 	ParseAggregationExpressionContext context = { 0 };
+	context.collationString = collationString;
 
 	GetTimeSystemVariablesFromVariableSpec(variableSpec,
 										   &context.timeSystemVariables);

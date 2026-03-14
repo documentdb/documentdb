@@ -29,6 +29,7 @@
 #include "aggregation/bson_tree_write.h"
 #include "aggregation/bson_sorted_accumulator.h"
 #include "operators/bson_expression_operators.h"
+#include "collation/collation.h"
 
 extern bool EnableAddToSetAggregationRewrite;
 extern bool BsonTextUseJsonRepresentation;
@@ -92,6 +93,7 @@ typedef struct BsonAggValue
 {
 	int32 vl_len_;          /* PostgreSQL varlena header */
 	bson_value_t value;     /* The aggregate value (pointers valid in current memory context) */
+	char *collationString;  /* Collation string comparison (NULL if none) */
 } BsonAggValue;
 
 /*
@@ -106,6 +108,9 @@ typedef struct CachedExpressionState
 
 	/* The source variable spec pgbson - used to detect if variables changed */
 	pgbson *sourceVariableSpec;
+
+	/* The source collation text datum - used to detect if collation changed via pointer comparison */
+	text *sourceCollationText;
 
 	/* The parsed expression state */
 	BsonExpressionState expressionState;
@@ -2088,12 +2093,14 @@ bson_command_count_final(PG_FUNCTION_ARGS)
  * @param flinfo: The function info containing fn_extra for caching.
  * @param expressionBson: The expression pgbson pointer (used for cache validation and parsing).
  * @param variableSpec: Optional variable specification pgbson.
+ * @param collationText: Optional collation text datum pointer (used for cache validation).
  * @return: Pointer to the cached BsonExpressionState.
  */
 static const BsonExpressionState *
 GetOrCreateCachedExpressionState(FmgrInfo *flinfo,
 								 pgbson *expressionBson,
-								 pgbson *variableSpec)
+								 pgbson *variableSpec,
+								 text *collationText)
 {
 	/*
 	 * Check if we have a cached expression state and if it's still valid.
@@ -2110,8 +2117,9 @@ GetOrCreateCachedExpressionState(FmgrInfo *flinfo,
 		/* Check if the cached expression pointer matches the current one */
 		bool expressionMatches = (cachedState->sourceExpression == expressionBson);
 		bool variableSpecMatches = (cachedState->sourceVariableSpec == variableSpec);
+		bool collationMatches = (cachedState->sourceCollationText == collationText);
 
-		if (expressionMatches && variableSpecMatches)
+		if (expressionMatches && variableSpecMatches && collationMatches)
 		{
 			return &cachedState->expressionState;
 		}
@@ -2132,9 +2140,13 @@ GetOrCreateCachedExpressionState(FmgrInfo *flinfo,
 
 	CachedExpressionState *newCachedState = palloc0(sizeof(CachedExpressionState));
 
-	/* Store the source expression pointers for future comparison */
+	/* Store the source pointers for future comparison */
 	newCachedState->sourceExpression = expressionBson;
 	newCachedState->sourceVariableSpec = variableSpec;
+	newCachedState->sourceCollationText = collationText;
+
+	const char *collationString = collationText != NULL ?
+								  text_to_cstring(collationText) : NULL;
 
 	pgbsonelement expressionElement;
 	PgbsonToSinglePgbsonElement(expressionBson, &expressionElement);
@@ -2142,7 +2154,8 @@ GetOrCreateCachedExpressionState(FmgrInfo *flinfo,
 	/* Parse the expression state */
 	ParseBsonExpressionState(&newCachedState->expressionState,
 							 &expressionElement.bsonValue,
-							 variableSpec);
+							 variableSpec,
+							 collationString);
 
 	flinfo->fn_extra = newCachedState;
 
@@ -2181,12 +2194,19 @@ BsonMinMaxWithExprTransitionCore(PG_FUNCTION_ARGS, bool isMax)
 		variableSpec = PG_GETARG_MAYBE_NULL_PGBSON(3);
 	}
 
-	/* Collation string is optional 5th argument (index = 4) for comparison - unsupported for now. */
+	text *collationText = NULL;
+	const char *collationString = NULL;
+	if (PG_NARGS() > 4 && !PG_ARGISNULL(4))
+	{
+		collationText = PG_GETARG_TEXT_PP(4);
+		collationString = text_to_cstring(collationText);
+	}
 
 	const BsonExpressionState *expressionState = GetOrCreateCachedExpressionState(
 		fcinfo->flinfo,
 		expressionBson,
-		variableSpec);
+		variableSpec,
+		collationText);
 
 	/* Evaluate the expression on the document directly to bson_value_t */
 	ExpressionLifetimeTracker tracker = { 0 };
@@ -2220,6 +2240,8 @@ BsonMinMaxWithExprTransitionCore(PG_FUNCTION_ARGS, bool isMax)
 		BsonAggValue *newState = (BsonAggValue *) palloc0(sizeof(BsonAggValue));
 		SET_VARSIZE(newState, sizeof(BsonAggValue));
 		bson_value_copy(&evaluatedValue, &newState->value);
+		newState->collationString = IsCollationApplicable(collationString) ?
+									pstrdup(collationString) : NULL;
 		MemoryContextSwitchTo(oldContext);
 
 		list_free_deep(tracker.itemsToFree);
@@ -2231,9 +2253,11 @@ BsonMinMaxWithExprTransitionCore(PG_FUNCTION_ARGS, bool isMax)
 
 	/* 'isComparisonValidIgnored' to maintain compatibility with older BSONMAX implementation */
 	bool isComparisonValidIgnored = false;
-	int32_t compResult = CompareBsonValueAndType(&existingState->value,
-												 &evaluatedValue,
-												 &isComparisonValidIgnored);
+	int32_t compResult = CompareBsonValueAndTypeWithCollation(
+		&existingState->value,
+		&evaluatedValue,
+		&isComparisonValidIgnored,
+		collationString);
 
 	/* Older max/min behavior, takes incoming document on equality so preserving same behavior here */
 	bool shouldReplace = isMax ? (compResult <= 0) : (compResult >= 0);
@@ -2285,19 +2309,32 @@ BsonMinMaxWithExprCombineCore(PG_FUNCTION_ARGS, bool isMax)
 		BsonAggValue *leftState = (BsonAggValue *) PG_GETARG_POINTER(0);
 		BsonAggValue *rightState = (BsonAggValue *) PG_GETARG_POINTER(1);
 
+		/* Collation must be same for both left and right, if any */
+		const char *leftCollation = leftState->collationString;
+		Assert((leftCollation == NULL && rightState->collationString == NULL) ||
+			   (leftCollation != NULL && rightState->collationString != NULL &&
+				strcmp(leftCollation, rightState->collationString) == 0));
+
 		/* Compare values directly */
 		bool isComparisonValidIgnored = false;
-		int32_t compResult = CompareBsonValueAndType(&leftState->value,
-													 &rightState->value,
-													 &isComparisonValidIgnored);
+		int32_t compResult = CompareBsonValueAndTypeWithCollation(
+			&leftState->value,
+			&rightState->value,
+			&isComparisonValidIgnored,
+			leftCollation);
+
 		result = isMax ? (compResult >= 0 ? leftState : rightState) :
 				 (compResult <= 0 ? leftState : rightState);
 	}
 
 	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
 	BsonAggValue *finalResult = (BsonAggValue *) palloc0(sizeof(BsonAggValue));
+
 	SET_VARSIZE(finalResult, sizeof(BsonAggValue));
 	bson_value_copy(&result->value, &finalResult->value);
+	finalResult->collationString = IsCollationApplicable(result->collationString) ?
+								   pstrdup(result->collationString) : NULL;
+
 	MemoryContextSwitchTo(oldContext);
 
 	PG_RETURN_POINTER(finalResult);
@@ -2368,7 +2405,8 @@ bson_min_max_with_expr_final(PG_FUNCTION_ARGS)
 
 /*
  * bsonaggvalue_in: Parse text input to BsonAggValue.
- * Accepts both hex (BSONHEX...) and extended JSON formats, wrapped as {"": value}.
+ * Accepts both hex (BSONHEX...) and extended JSON formats, wrapped as {"": value}
+ * with an optional "collation" field.
  */
 Datum
 bsonaggvalue_in(PG_FUNCTION_ARGS)
@@ -2389,13 +2427,17 @@ bsonaggvalue_in(PG_FUNCTION_ARGS)
 	{
 		bson = PgbsonInitFromJson(inputStr);
 	}
-	pgbsonelement element;
-	PgbsonToSinglePgbsonElement(bson, &element);
 
-	/* Allocate BsonAggValue and deep-copy the value */
-	BsonAggValue *state = (BsonAggValue *) palloc(sizeof(BsonAggValue));
+	pgbsonelement element;
+	const char *collationString =
+		PgbsonToSinglePgbsonElementWithCollation(bson, &element);
+
+	/* Allocate BsonAggValue and collation and deep-copy their values */
+	BsonAggValue *state = (BsonAggValue *) palloc0(sizeof(BsonAggValue));
 	SET_VARSIZE(state, sizeof(BsonAggValue));
 	bson_value_copy(&element.bsonValue, &state->value);
+	state->collationString = collationString != NULL ?
+							 pstrdup(collationString) : NULL;
 
 	PG_RETURN_POINTER(state);
 }
@@ -2403,7 +2445,7 @@ bsonaggvalue_in(PG_FUNCTION_ARGS)
 
 /*
  * bsonaggvalue_out: Convert BsonAggValue to text output.
- * Returns the value wrapped as {"": value}.
+ * Returns the value wrapped as {"": value} with an optional "collation" field.
  * Uses hex representation by default, or extended JSON when the GUC is set.
  */
 Datum
@@ -2411,8 +2453,15 @@ bsonaggvalue_out(PG_FUNCTION_ARGS)
 {
 	BsonAggValue *state = (BsonAggValue *) PG_GETARG_POINTER(0);
 
-	/* Wrap value as {"": value} and convert to text */
-	pgbson *bson = BsonValueToDocumentPgbson(&state->value);
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	PgbsonWriterAppendValue(&writer, "", 0, &state->value);
+	if (state->collationString != NULL)
+	{
+		PgbsonWriterAppendUtf8(&writer, "collation", strlen("collation"),
+							   state->collationString);
+	}
+	pgbson *bson = PgbsonWriterGetPgbson(&writer);
 
 	const char *outputString = NULL;
 	if (BsonTextUseJsonRepresentation)
@@ -2430,23 +2479,29 @@ bsonaggvalue_out(PG_FUNCTION_ARGS)
 
 /*
  * bsonaggvalue_send: Serialize BsonAggValue to binary for network transfer.
- * Converts the value to pgbson format for transmission.
+ * Wraps the value as {"": value} with an optional "collation" field.
  */
 Datum
 bsonaggvalue_send(PG_FUNCTION_ARGS)
 {
 	BsonAggValue *state = (BsonAggValue *) PG_GETARG_POINTER(0);
 
-	/* Convert value to pgbson (which is a varlena/bytea-compatible format) */
-	pgbson *bson = BsonValueToDocumentPgbson(&state->value);
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	PgbsonWriterAppendValue(&writer, "", 0, &state->value);
+	if (state->collationString != NULL)
+	{
+		PgbsonWriterAppendUtf8(&writer, "collation", strlen("collation"),
+							   state->collationString);
+	}
 
-	PG_RETURN_POINTER(bson);
+	PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
 }
 
 
 /*
  * bsonaggvalue_recv: Deserialize BsonAggValue from binary network data.
- * Parses pgbson bytes and extracts the value with deep copy.
+ * Parses pgbson bytes, extracts the value and optional collation string.
  */
 Datum
 bsonaggvalue_recv(PG_FUNCTION_ARGS)
@@ -2459,14 +2514,16 @@ bsonaggvalue_recv(PG_FUNCTION_ARGS)
 	/* Mark buffer as consumed */
 	buf->cursor = buf->len;
 
-	/* Extract the value from the pgbson {"": value} wrapper */
 	pgbsonelement element;
-	PgbsonToSinglePgbsonElement(bson, &element);
+	const char *collationString =
+		PgbsonToSinglePgbsonElementWithCollation(bson, &element);
 
-	/* Allocate BsonAggValue and deep-copy the value */
-	BsonAggValue *state = (BsonAggValue *) palloc(sizeof(BsonAggValue));
+	/* Allocate BsonAggValue and collation and deep-copy their values */
+	BsonAggValue *state = (BsonAggValue *) palloc0(sizeof(BsonAggValue));
 	SET_VARSIZE(state, sizeof(BsonAggValue));
 	bson_value_copy(&element.bsonValue, &state->value);
+	state->collationString = collationString != NULL ?
+							 pstrdup(collationString) : NULL;
 
 	PG_RETURN_POINTER(state);
 }

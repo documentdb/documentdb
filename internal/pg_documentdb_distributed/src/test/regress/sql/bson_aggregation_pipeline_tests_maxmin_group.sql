@@ -33,28 +33,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_str
 SET documentdb.enableNewMinMaxAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ] }');
 
--- With collation enabled (case-insensitive)
-SET documentdb_core.enableCollation TO on;
-
--- $max on string field with collation (locale: en, strength: 1 = case-insensitive)
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "maxName": { "$max": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
-SET documentdb.enableNewMinMaxAccumulators TO on;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "maxName": { "$max": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
-
--- $min on string field with collation
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
-SET documentdb.enableNewMinMaxAccumulators TO on;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
-
--- With collation strength 2 (case-insensitive, accent-sensitive)
-SET documentdb.enableNewMinMaxAccumulators TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 2 } }');
-SET documentdb.enableNewMinMaxAccumulators TO on;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 2 } }');
-
-SET documentdb_core.enableCollation TO off;
 
 -- =============================================================================
 -- Test 2: $group + $max/$min on different types
@@ -371,3 +349,128 @@ SET documentdb.enableNewMinMaxAccumulators TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_variable_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$group", "sortBy": { "val": 1 }, "output": { "maxVal": { "$max": "$val", "window": { "documents": ["unbounded", "current"] } }, "minVal": { "$min": "$val", "window": { "documents": ["unbounded", "current"] } } } } } ] }');
 SET documentdb.enableNewMinMaxAccumulators TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_variable_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$group", "sortBy": { "val": 1 }, "output": { "maxVal": { "$max": "$val", "window": { "documents": ["unbounded", "current"] } }, "minVal": { "$min": "$val", "window": { "documents": ["unbounded", "current"] } } } } } ] }');
+
+-- =============================================================================
+-- Test 11: $group + $max/$min collation applies to accumulators, not grouping
+-- Grouping key uses binary comparison (so "A" and "a" stay separate groups),
+-- but $min/$max comparisons within each group respect collation.
+-- =============================================================================
+
+SELECT documentdb_api.insert_one('db','maxmin_collation_test','{ "_id": 1, "group": "A", "name": "cherry" }');
+SELECT documentdb_api.insert_one('db','maxmin_collation_test','{ "_id": 2, "group": "A", "name": "BANANA" }');
+SELECT documentdb_api.insert_one('db','maxmin_collation_test','{ "_id": 3, "group": "A", "name": "Apple" }');
+SELECT documentdb_api.insert_one('db','maxmin_collation_test','{ "_id": 4, "group": "a", "name": "date" }');
+SELECT documentdb_api.insert_one('db','maxmin_collation_test','{ "_id": 5, "group": "a", "name": "FIG" }');
+
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableNewMinMaxAccumulators TO on;
+
+-- $max on string field with collation (locale: en, strength: 1 = case-insensitive)
+-- Uses maxmin_string_test collection from Test 1: apple, BANANA, Cherry (cat A), date, FIG, grape (cat B)
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "maxName": { "$max": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- $min on string field with collation
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- $max and $min together with collation strength 2 (case-insensitive, accent-sensitive)
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_string_test", "pipeline": [ { "$group": { "_id": "$category", "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 2 } }');
+
+-- Case-insensitive collation (strength 1): accumulator comparison is case-insensitive
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_test", "pipeline": [ { "$group": { "_id": "$group", "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_test", "pipeline": [ { "$group": { "_id": "$group", "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- Without collation baseline (binary comparison for both grouping and accumulators)
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_test", "pipeline": [ { "$group": { "_id": "$group", "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ] }');
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_test", "pipeline": [ { "$group": { "_id": "$group", "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ] }');
+
+-- =============================================================================
+-- Test 12: collation with $min/$max on constant group _id (all docs in one group)
+-- =============================================================================
+
+-- With constant _id: null, all documents aggregate into a single group
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_test", "pipeline": [ { "$group": { "_id": null, "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } } ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- Without collation baseline on constant group
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_test", "pipeline": [ { "$group": { "_id": null, "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } } ] }');
+
+-- With constant _id: 1
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_test", "pipeline": [ { "$group": { "_id": 1, "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } } ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- =============================================================================
+-- Test 13: collation with $min/$max on mixed types
+-- =============================================================================
+
+SELECT documentdb_api.insert_one('db','maxmin_collation_mixed','{ "_id": 1, "group": "G", "val": "banana" }');
+SELECT documentdb_api.insert_one('db','maxmin_collation_mixed','{ "_id": 2, "group": "G", "val": "CHERRY" }');
+SELECT documentdb_api.insert_one('db','maxmin_collation_mixed','{ "_id": 3, "group": "G", "val": 42 }');
+SELECT documentdb_api.insert_one('db','maxmin_collation_mixed','{ "_id": 4, "group": "G", "val": null }');
+
+-- With collation: string ordering changes but cross-type ordering follows BSON type order
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_mixed", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } } ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- Without collation baseline
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_mixed", "pipeline": [ { "$group": { "_id": "$group", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } } ] }');
+
+-- =============================================================================
+-- Test 14: collation with numericOrdering on $min/$max
+-- With numericOrdering: "item2" < "item10" (numeric), without: "item10" < "item2" (lexical)
+-- =============================================================================
+
+SELECT documentdb_api.insert_one('db','maxmin_numeric_order','{ "_id": 1, "val": "item1" }');
+SELECT documentdb_api.insert_one('db','maxmin_numeric_order','{ "_id": 2, "val": "item10" }');
+SELECT documentdb_api.insert_one('db','maxmin_numeric_order','{ "_id": 3, "val": "item2" }');
+SELECT documentdb_api.insert_one('db','maxmin_numeric_order','{ "_id": 4, "val": "item20" }');
+SELECT documentdb_api.insert_one('db','maxmin_numeric_order','{ "_id": 5, "val": "item3" }');
+
+-- numericOrdering=true: $max should be "item20", $min should be "item1"
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_numeric_order", "pipeline": [ { "$group": { "_id": null, "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } } ], "collation": { "locale": "en", "numericOrdering": true } }');
+-- numericOrdering=false: $max should be "item3" (lexical), $min should be "item1"
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_numeric_order", "pipeline": [ { "$group": { "_id": null, "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } } ], "collation": { "locale": "en", "numericOrdering": false } }');
+
+-- Without collation baseline (binary/BSON ordering): same as numericOrdering=false
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_numeric_order", "pipeline": [ { "$group": { "_id": null, "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } } ] }');
+
+-- numericOrdering with non-constant group _id
+SELECT documentdb_api.insert_one('db','maxmin_numeric_grp','{ "_id": 1, "cat": "A", "val": "item1" }');
+SELECT documentdb_api.insert_one('db','maxmin_numeric_grp','{ "_id": 2, "cat": "A", "val": "item10" }');
+SELECT documentdb_api.insert_one('db','maxmin_numeric_grp','{ "_id": 3, "cat": "A", "val": "item3" }');
+SELECT documentdb_api.insert_one('db','maxmin_numeric_grp','{ "_id": 4, "cat": "B", "val": "item2" }');
+SELECT documentdb_api.insert_one('db','maxmin_numeric_grp','{ "_id": 5, "cat": "B", "val": "item20" }');
+SELECT documentdb_api.insert_one('db','maxmin_numeric_grp','{ "_id": 6, "cat": "B", "val": "item5" }');
+
+-- numericOrdering=true: A -> max "item10", min "item1"; B -> max "item20", min "item2"
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_numeric_grp", "pipeline": [ { "$group": { "_id": "$cat", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": true } }');
+
+-- Without collation: A -> max "item3" (lexical), min "item1"; B -> max "item5", min "item2"
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_numeric_grp", "pipeline": [ { "$group": { "_id": "$cat", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
+
+-- =============================================================================
+-- Test 15: collation blocked when enableNewMinMaxAccumulators is off
+-- =============================================================================
+
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_test", "pipeline": [ { "$group": { "_id": "$group", "maxName": { "$max": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
+SET documentdb.enableNewMinMaxAccumulators TO on;
+
+-- =============================================================================
+-- Test 16: sharded collection with collation on $min/$max
+-- Exercises the combine function (send/recv) path with collation across shards.
+-- =============================================================================
+
+SELECT documentdb_api.shard_collection('db', 'maxmin_numeric_grp', '{ "_id": "hashed" }', false);
+
+-- Post-sharding numericOrdering=true (should match pre-sharding results)
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_numeric_grp", "pipeline": [ { "$group": { "_id": "$cat", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": true } }');
+
+-- Post-sharding without collation baseline
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_numeric_grp", "pipeline": [ { "$group": { "_id": "$cat", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
+
+SELECT documentdb_api.shard_collection('db', 'maxmin_collation_test', '{ "_id": "hashed" }', false);
+
+-- Post-sharding case-insensitive collation
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_test", "pipeline": [ { "$group": { "_id": "$group", "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- Post-sharding constant group with collation
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_test", "pipeline": [ { "$group": { "_id": null, "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } } ], "collation": { "locale": "en", "strength": 1 } }');
+
+SET documentdb_core.enableCollation TO off;

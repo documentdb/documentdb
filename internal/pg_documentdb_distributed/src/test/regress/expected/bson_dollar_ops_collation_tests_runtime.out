@@ -5365,6 +5365,194 @@ SELECT documentdb_api.drop_collection('db', 'collTest');
  t
 (1 row)
 
+-- bson_expression_get
+-- $eq without and with collation
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$eq": ["$a", "cat"] } }'::bson, false, '{}'::bson, '');
+ bson_expression_get  
+---------------------------------------------------------------------
+ { "result" : false }
+(1 row)
+
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$eq": ["$a", "cat"] } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+                 bson_expression_get                 
+---------------------------------------------------------------------
+ { "result" : true, "collation" : "en-u-ks-level1" }
+(1 row)
+
+-- $ne without and with collation
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$ne": ["$a", "cat"] } }'::bson, false, '{}'::bson, '');
+ bson_expression_get 
+---------------------------------------------------------------------
+ { "result" : true }
+(1 row)
+
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$ne": ["$a", "cat"] } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+                 bson_expression_get                  
+---------------------------------------------------------------------
+ { "result" : false, "collation" : "en-u-ks-level1" }
+(1 row)
+
+-- $cmp without and with collation
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$cmp": ["$a", "cat"] } }'::bson, false, '{}'::bson, '');
+          bson_expression_get           
+---------------------------------------------------------------------
+ { "result" : { "$numberInt" : "-1" } }
+(1 row)
+
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$cmp": ["$a", "cat"] } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+                          bson_expression_get                          
+---------------------------------------------------------------------
+ { "result" : { "$numberInt" : "0" }, "collation" : "en-u-ks-level1" }
+(1 row)
+
+-- $gt without and with collation
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "cat" }'::bson, '{ "result": { "$gt": ["$a", "Cat"] } }'::bson, false, '{}'::bson, '');
+ bson_expression_get 
+---------------------------------------------------------------------
+ { "result" : true }
+(1 row)
+
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "cat" }'::bson, '{ "result": { "$gt": ["$a", "Cat"] } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+                 bson_expression_get                  
+---------------------------------------------------------------------
+ { "result" : false, "collation" : "en-u-ks-level1" }
+(1 row)
+
+-- $gte without and with collation
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$gte": ["$a", "cat"] } }'::bson, false, '{}'::bson, '');
+ bson_expression_get  
+---------------------------------------------------------------------
+ { "result" : false }
+(1 row)
+
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$gte": ["$a", "cat"] } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+                 bson_expression_get                 
+---------------------------------------------------------------------
+ { "result" : true, "collation" : "en-u-ks-level1" }
+(1 row)
+
+-- $lt without and with collation
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$lt": ["$a", "cat"] } }'::bson, false, '{}'::bson, '');
+ bson_expression_get 
+---------------------------------------------------------------------
+ { "result" : true }
+(1 row)
+
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$lt": ["$a", "cat"] } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+                 bson_expression_get                  
+---------------------------------------------------------------------
+ { "result" : false, "collation" : "en-u-ks-level1" }
+(1 row)
+
+-- $lte without and with collation
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "cat" }'::bson, '{ "result": { "$lte": ["$a", "Cat"] } }'::bson, false, '{}'::bson, '');
+ bson_expression_get  
+---------------------------------------------------------------------
+ { "result" : false }
+(1 row)
+
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "cat" }'::bson, '{ "result": { "$lte": ["$a", "Cat"] } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+                 bson_expression_get                 
+---------------------------------------------------------------------
+ { "result" : true, "collation" : "en-u-ks-level1" }
+(1 row)
+
+-- $cond with collation
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$cond": [{ "$eq": ["$a", "cat"] }, "matched", "no_match"] } }'::bson, false, '{}'::bson, '');
+    bson_expression_get    
+---------------------------------------------------------------------
+ { "result" : "no_match" }
+(1 row)
+
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$cond": [{ "$eq": ["$a", "cat"] }, "matched", "no_match"] } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+                   bson_expression_get                    
+---------------------------------------------------------------------
+ { "result" : "matched", "collation" : "en-u-ks-level1" }
+(1 row)
+
+-- $in expression operator with collation
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$in": ["$a", ["cat", "dog"]] } }'::bson, false, '{}'::bson, '');
+ bson_expression_get  
+---------------------------------------------------------------------
+ { "result" : false }
+(1 row)
+
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$in": ["$a", ["cat", "dog"]] } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+                 bson_expression_get                 
+---------------------------------------------------------------------
+ { "result" : true, "collation" : "en-u-ks-level1" }
+(1 row)
+
+-- $and with collation
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat", "b": "Dog" }'::bson, '{ "result": { "$and": [{ "$eq": ["$a", "cat"] }, { "$eq": ["$b", "dog"] }] } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+                 bson_expression_get                 
+---------------------------------------------------------------------
+ { "result" : true, "collation" : "en-u-ks-level1" }
+(1 row)
+
+-- collation strength 2 and 3
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$eq": ["$a", "cat"] } }'::bson, false, '{}'::bson, 'en-u-ks-level2');
+                 bson_expression_get                 
+---------------------------------------------------------------------
+ { "result" : true, "collation" : "en-u-ks-level2" }
+(1 row)
+
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$eq": ["$a", "cat"] } }'::bson, false, '{}'::bson, 'en-u-ks-level3');
+                 bson_expression_get                  
+---------------------------------------------------------------------
+ { "result" : false, "collation" : "en-u-ks-level3" }
+(1 row)
+
+-- bson_expression_partition_get with collation
+SELECT documentdb_api_internal.bson_expression_partition_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$eq": ["$a", "cat"] } }'::bson, false, '{}'::bson, '');
+ bson_expression_partition_get 
+---------------------------------------------------------------------
+ { "result" : false }
+(1 row)
+
+SELECT documentdb_api_internal.bson_expression_partition_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$eq": ["$a", "cat"] } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+ bson_expression_partition_get 
+---------------------------------------------------------------------
+ { "result" : true }
+(1 row)
+
+SELECT documentdb_api_internal.bson_expression_partition_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$cmp": ["$a", "cat"] } }'::bson, false, '{}'::bson, '');
+     bson_expression_partition_get      
+---------------------------------------------------------------------
+ { "result" : { "$numberInt" : "-1" } }
+(1 row)
+
+SELECT documentdb_api_internal.bson_expression_partition_get(
+  '{ "a": "Cat" }'::bson, '{ "result": { "$cmp": ["$a", "cat"] } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+     bson_expression_partition_get     
+---------------------------------------------------------------------
+ { "result" : { "$numberInt" : "0" } }
+(1 row)
+
 ALTER SYSTEM SET documentdb_core.enablecollation='off';
 SELECT pg_reload_conf();
  pg_reload_conf 
