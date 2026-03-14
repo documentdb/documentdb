@@ -19,3 +19,6 @@ CREATE OR REPLACE FUNCTION documentdb_api_internal.documentdb_rum_page_get_entri
 RETURNS SETOF jsonb
 LANGUAGE c
 AS '$libdir/pg_documentdb_extended_rum_core', 'documentdb_rum_page_get_entries';
+
+-- Turn off cron jobs to avoid flakiness in tests.
+UPDATE cron.job set active = false;

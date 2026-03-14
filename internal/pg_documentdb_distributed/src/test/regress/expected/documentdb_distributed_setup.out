@@ -129,3 +129,4 @@ GRANT documentdb_admin_role TO current_user;
 -- install documentdb_extended_rum
 CREATE EXTENSION documentdb_extended_rum;
 GRANT USAGE ON SCHEMA documentdb_extended_rum_catalog TO documentdb_admin_role;
+UPDATE cron.job set active = false;

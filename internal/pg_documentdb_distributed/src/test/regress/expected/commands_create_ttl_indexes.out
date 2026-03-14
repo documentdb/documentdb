@@ -6,7 +6,7 @@ SET search_path TO documentdb_api_catalog, documentdb_core, documentdb_data, pub
 select schedule, command, active from cron.job where jobname like '%ttl_task%';
  schedule  |                       command                       | active 
 ---------------------------------------------------------------------
- * * * * * | CALL documentdb_api_internal.delete_expired_rows(); | t
+ * * * * * | CALL documentdb_api_internal.delete_expired_rows(); | f
 (1 row)
 
 select cron.unschedule(jobid) from cron.job where jobname like '%ttl_task%';
