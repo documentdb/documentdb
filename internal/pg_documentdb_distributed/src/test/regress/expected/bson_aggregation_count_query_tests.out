@@ -223,7 +223,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
                Query: SELECT worker_partial_agg('documentdb_api_internal.bsoncommandcount(integer)'::regprocedure, 1) AS document FROM documentdb_data.documents_58001_58000004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "20" } }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#<) '{ "value" : { "$numberInt" : "150" } }'::documentdb_core.bsonquery))
                Node: host=localhost port=58070 dbname=regression
                ->  Aggregate
-                     Output: coord_combine_agg('xxxx'::oid, 1)
+                     Output: worker_partial_agg('xxxx'::oid, 1)
                      ->  Seq Scan on documentdb_data.documents_58001_58000004 collection
                            Output: shard_key_value, object_id, document
                            Filter: ((collection.document OPERATOR(documentdb_api_catalog.@>) '{ "value" : { "$numberInt" : "20" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@<) '{ "value" : { "$numberInt" : "150" } }'::documentdb_core.bson))
@@ -242,7 +242,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
                Query: SELECT worker_partial_agg('documentdb_api_internal.bsoncount(integer)'::regprocedure, 1) AS document FROM documentdb_data.documents_58001_58000004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "20" } }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#<) '{ "value" : { "$numberInt" : "150" } }'::documentdb_core.bsonquery))
                Node: host=localhost port=58070 dbname=regression
                ->  Aggregate
-                     Output: coord_combine_agg('xxxx'::oid, 1)
+                     Output: worker_partial_agg('xxxx'::oid, 1)
                      ->  Seq Scan on documentdb_data.documents_58001_58000004 collection
                            Output: shard_key_value, object_id, document
                            Filter: ((collection.document OPERATOR(documentdb_api_catalog.@>) '{ "value" : { "$numberInt" : "20" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@<) '{ "value" : { "$numberInt" : "150" } }'::documentdb_core.bson))
@@ -265,7 +265,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
                            Query: SELECT '_id'::text AS c1, '{ "" : null }'::documentdb_core.bson AS c2, 'count'::text AS c3, worker_partial_agg('documentdb_api_internal.bsoncount(integer)'::regprocedure, 1) AS c4 FROM documentdb_data.documents_58001_58000004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "20" } }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#<) '{ "value" : { "$numberInt" : "150" } }'::documentdb_core.bsonquery)) GROUP BY '{ "" : null }'::documentdb_core.bson
                            Node: host=localhost port=58070 dbname=regression
                            ->  GroupAggregate
-                                 Output: '_id'::text, ('{ "" : null }'::documentdb_core.bson), 'count'::text, coord_combine_agg('xxxx'::oid, 1)
+                                 Output: '_id'::text, ('{ "" : null }'::documentdb_core.bson), 'count'::text, worker_partial_agg('xxxx'::oid, 1)
                                  Group Key: '{ "" : null }'::documentdb_core.bson
                                  ->  Seq Scan on documentdb_data.documents_58001_58000004 collection
                                        Output: '{ "" : null }'::documentdb_core.bson
@@ -300,7 +300,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF)
                            Query: SELECT '_id'::text AS c1, '{ "" : "sumEmpty" }'::documentdb_core.bson AS c2, 'cnt'::text AS c3, worker_partial_agg('documentdb_api_catalog.bsonsum(documentdb_core.bson)'::regprocedure, '{ "" : {  } }'::documentdb_core.bson) AS c4 FROM documentdb_data.documents_58001_58000004 collection WHERE (document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bsonquery) GROUP BY '{ "" : "sumEmpty" }'::documentdb_core.bson
                            Node: host=localhost port=58070 dbname=regression
                            ->  GroupAggregate
-                                 Output: '_id'::text, ('{ "" : "sumEmpty" }'::documentdb_core.bson), 'cnt'::text, coord_combine_agg('xxxx'::oid, '{ "" : {  } }'::documentdb_core.bson)
+                                 Output: '_id'::text, ('{ "" : "sumEmpty" }'::documentdb_core.bson), 'cnt'::text, worker_partial_agg('xxxx'::oid, '{ "" : {  } }'::documentdb_core.bson)
                                  Group Key: '{ "" : "sumEmpty" }'::documentdb_core.bson
                                  ->  Seq Scan on documentdb_data.documents_58001_58000004 collection
                                        Output: '{ "" : "sumEmpty" }'::documentdb_core.bson
@@ -340,7 +340,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF)
                            Query: SELECT '_id'::text AS c1, '{ "" : "sumNull" }'::documentdb_core.bson AS c2, 'cnt'::text AS c3, worker_partial_agg('documentdb_api_catalog.bsonsum(documentdb_core.bson)'::regprocedure, '{ "" : null }'::documentdb_core.bson) AS c4 FROM documentdb_data.documents_58001_58000004 collection WHERE (document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bsonquery) GROUP BY '{ "" : "sumNull" }'::documentdb_core.bson
                            Node: host=localhost port=58070 dbname=regression
                            ->  GroupAggregate
-                                 Output: '_id'::text, ('{ "" : "sumNull" }'::documentdb_core.bson), 'cnt'::text, coord_combine_agg('xxxx'::oid, '{ "" : null }'::documentdb_core.bson)
+                                 Output: '_id'::text, ('{ "" : "sumNull" }'::documentdb_core.bson), 'cnt'::text, worker_partial_agg('xxxx'::oid, '{ "" : null }'::documentdb_core.bson)
                                  Group Key: '{ "" : "sumNull" }'::documentdb_core.bson
                                  ->  Seq Scan on documentdb_data.documents_58001_58000004 collection
                                        Output: '{ "" : "sumNull" }'::documentdb_core.bson
@@ -380,7 +380,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF)
                            Query: SELECT '_id'::text AS c1, '{ "" : "sumUtf8" }'::documentdb_core.bson AS c2, 'cnt'::text AS c3, worker_partial_agg('documentdb_api_catalog.bsonsum(documentdb_core.bson)'::regprocedure, '{ "" : "constant-non-numeric" }'::documentdb_core.bson) AS c4 FROM documentdb_data.documents_58001_58000004 collection WHERE (document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bsonquery) GROUP BY '{ "" : "sumUtf8" }'::documentdb_core.bson
                            Node: host=localhost port=58070 dbname=regression
                            ->  GroupAggregate
-                                 Output: '_id'::text, ('{ "" : "sumUtf8" }'::documentdb_core.bson), 'cnt'::text, coord_combine_agg('xxxx'::oid, '{ "" : "constant-non-numeric" }'::documentdb_core.bson)
+                                 Output: '_id'::text, ('{ "" : "sumUtf8" }'::documentdb_core.bson), 'cnt'::text, worker_partial_agg('xxxx'::oid, '{ "" : "constant-non-numeric" }'::documentdb_core.bson)
                                  Group Key: '{ "" : "sumUtf8" }'::documentdb_core.bson
                                  ->  Seq Scan on documentdb_data.documents_58001_58000004 collection
                                        Output: '{ "" : "sumUtf8" }'::documentdb_core.bson

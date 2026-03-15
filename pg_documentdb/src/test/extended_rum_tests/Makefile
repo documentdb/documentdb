@@ -22,14 +22,13 @@ export PG_REGRESS_DIFF_OPTS = -dU10
 .PHONY: check-basic check-minimal
 
 define common_test
-	mkdir -p log && { $(top_builddir)/src/test/regress/pg_regress --encoding=UTF8 --dlpath=$(BASEPATH) $(EXTENSIONLOAD) --temp-instance ./tmp --temp-config ./postgresql.conf --host localhost --port 58070 $(1) $(2) 2>&1; echo $$? > log/.exitcode; } | tee log/summary.out; test $$(cat log/.exitcode) -eq 0 || (cat regression.diffs && false)
+	mkdir -p log && { $(top_builddir)/src/test/regress/pg_regress --encoding=UTF8 --dlpath=$(BASEPATH) $(EXTENSIONLOAD) --temp-instance ./tmp --temp-config ./postgresql.conf --host localhost --port 58060 $(1) $(2) 2>&1; echo $$? > log/.exitcode; } | tee log/summary_$(3).out; test $$(cat log/.exitcode) -eq 0 || (cat regression.diffs && false)
 endef
 
 check-basic: generate_version_schedule
-	$(call common_test,--schedule=./log/basic_schedule_$(pg_major_version))
-
+	$(call common_test,--schedule=./log/basic_schedule_$(pg_major_version),,extended_rum_tests)
 check-minimal:
-	$(call common_test,--schedule=./minimal_schedule, $(EXTRA_TESTS))
+	$(call common_test,--schedule=./minimal_schedule, $(EXTRA_TESTS),extended_rum_tests_minimal)
 
 check-test-output:
 	$(MAKEFILE_DIR)/../regress/validate_test_output.sh $(pg_major_version) $(MAKEFILE_DIR)

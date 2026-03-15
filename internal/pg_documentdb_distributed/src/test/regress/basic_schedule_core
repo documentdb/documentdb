@@ -104,7 +104,7 @@ test: bson_get_indexes_a commands_create_indexes_pfe_a commands_crud_ignore_comm
 test: write_commands_batching conflicting_indexes
 
 # the debug logs around this get flakey with catalog table rehash.
-test: bson_aggregation_count_query_tests!PG16_OR_HIGHER!
+test: bson_aggregation_count_query_tests!PG16_17_OR_HIGHER!
 
 test: bson_aggregation_pipeline_tests_vector_native bson_aggregation_pipeline_tests_vector_hnsw
 test: bson_aggregation_pipeline_tests_vector_ivf list_metadata_cursor_tests bson_aggregation_pipeline_tests_vector_hnsw_planner

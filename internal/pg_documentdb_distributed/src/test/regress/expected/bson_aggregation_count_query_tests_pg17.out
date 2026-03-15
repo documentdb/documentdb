@@ -212,7 +212,7 @@ SELECT documentdb_api.shard_collection('countdb', 'countcoll', '{ "_id": "hashed
 (1 row)
 
 EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_count('countdb', '{ "count": "countcoll", "query": {"value": {"$gt": 20}, "value": {"$lt": 150} } }');
-                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                 
+                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                     
 ---------------------------------------------------------------------
  Aggregate
    Output: coord_combine_agg('xxxx'::oid, remote_scan.document, NULL::bson)
@@ -231,7 +231,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
 (14 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate": "countcoll", "pipeline": [{"$match": {"value": {"$gt": 20}, "value": {"$lt": 150} }}, {"$count": "c"}] }');
-                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                              
+                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                 
 ---------------------------------------------------------------------
  Aggregate
    Output: bson_repath_and_build('c'::text, coord_combine_agg('xxxx'::oid, remote_scan.document, NULL::bson))
@@ -250,7 +250,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
 (14 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate": "countcoll", "pipeline": [{"$match": {"value": {"$gt": 20}, "value": {"$lt": 150} }}, {"$group": {"_id": null, "count": {"$sum": 1}}}] }');
-                                                                                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                                                                                   
+                                                                                                                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                                                                                                                      
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
@@ -284,7 +284,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
 -- $sum: {}
 EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF)
     SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate" : "countcoll", "pipeline" : [{ "$match" : { "value" : { "$gt" : 50 } } }, { "$group" : { "_id" : { "$literal" : "sumEmpty" }, "cnt" : { "$sum" : {} } } }] }');
-                                                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                                                  
+                                                                                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                                                                                      
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
@@ -323,7 +323,7 @@ SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate" : "coun
 -- $sum: null
 EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF)
     SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate" : "countcoll", "pipeline" : [{ "$match" : { "value" : { "$gt" : 50 } } }, { "$group" : { "_id" : { "$literal" : "sumNull" }, "cnt" : { "$sum" : null } } }] }');
-                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                 
+                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                     
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
@@ -362,7 +362,7 @@ SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate" : "coun
 -- $sum: <constant non-numeric>
 EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF)
     SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate" : "countcoll", "pipeline" : [{ "$match" : { "value" : { "$gt" : 50 } } }, { "$group" : { "_id" : { "$literal" : "sumUtf8" }, "cnt" : { "$sum" : "constant-non-numeric" } } }] }');
-                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                          
+                                                                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document

@@ -27,7 +27,7 @@ export PGISOLATIONTIMEOUT = 60
 # Helper to run a multinode test suite: start cluster -> run tests -> stop cluster
 define run_multinode_test
 	$(OSS_SRC_DIR)scripts/start_oss_server.sh -c -x -r -n 1 -w 5808 -p 58070 -d ./tmp/multinode/data -f $(CURDIR)/regression_opts.conf -l $(CURDIR)/log/pglog_multinode.log
-	{ $(top_builddir)/src/test/regress/pg_regress --port 58070 --encoding=UTF8 --dlpath=$(BASEPATH) --use-existing --dbname=postgres $(1) $(2) 2>&1; echo $$? > log/.exitcode; } | tee log/summary.out;
+	{ $(top_builddir)/src/test/regress/pg_regress --port 58070 --encoding=UTF8 --dlpath=$(BASEPATH) --use-existing --dbname=postgres $(1) $(2) 2>&1; echo $$? > log/.exitcode; } | tee log/summary_$(3).out;
 	exitcode=$$(cat log/.exitcode); \
 	if test $$exitcode -ne 0; then \
 		$(OSS_SRC_DIR)scripts/start_oss_server.sh -s -x -r -n 1 -w 5808 -p 58070 -d ./tmp/multinode/data; \
@@ -39,31 +39,31 @@ define run_multinode_test
 endef
 
 define common_test
-	mkdir -p log && { $(top_builddir)/src/test/regress/pg_regress --encoding=UTF8 --dlpath=$(BASEPATH) $(EXTENSIONLOAD) --temp-instance ./tmp --temp-config ./postgresql.conf --host localhost --port 58070 $(1) $(2) 2>&1; echo $$? > log/.exitcode; } | tee log/summary.out; test $$(cat log/.exitcode) -eq 0 || (cat regression.diffs && false)
+	mkdir -p log && { $(top_builddir)/src/test/regress/pg_regress --encoding=UTF8 --dlpath=$(BASEPATH) $(EXTENSIONLOAD) --temp-instance ./tmp --temp-config ./postgresql.conf --host localhost --port 58070 $(1) $(2) 2>&1; echo $$? > log/.exitcode; } | tee log/summary_$(3).out; test $$(cat log/.exitcode) -eq 0 || (cat regression.diffs && false)
 endef
 
 define isolation_test
-	mkdir -p log && { $(top_builddir)/src/test/isolation/pg_isolation_regress --encoding=UTF8 --dlpath=$(BASEPATH) $(EXTENSIONLOAD) --temp-instance ./tmp --temp-config ./isolation_postgresql.conf --host localhost --port 58071 $(1) $(2) 2>&1; echo $$? > log/.exitcode; } | tee log/summary.out; test $$(cat log/.exitcode) -eq 0 || (cat regression.diffs && false)
+	mkdir -p log && { $(top_builddir)/src/test/isolation/pg_isolation_regress --encoding=UTF8 --dlpath=$(BASEPATH) $(EXTENSIONLOAD) --temp-instance ./tmp --temp-config ./isolation_postgresql.conf --host localhost --port 58071 $(1) $(2) 2>&1; echo $$? > log/.exitcode; } | tee log/summary_$(3).out; test $$(cat log/.exitcode) -eq 0 || (cat regression.diffs && false)
 endef
 
 define rbac_test
-	$(top_builddir)/src/test/regress/pg_regress --encoding=UTF8 --dlpath=$(BASEPATH) $(EXTENSIONLOAD) --temp-instance ./tmp --temp-config=./postgresql.conf --temp-config=./rbac_postgresql.conf --host localhost --port 58080 $(1) $(2) || (cat regression.diffs && false)
+	mkdir -p log && { $(top_builddir)/src/test/regress/pg_regress --encoding=UTF8 --dlpath=$(BASEPATH) $(EXTENSIONLOAD) --temp-instance ./tmp --temp-config=./postgresql.conf --temp-config=./rbac_postgresql.conf --host localhost --port 58072 $(1) $(2)  2>&1; echo $$? > log/.exitcode; } | tee log/summary_$(3).out; test $$(cat log/.exitcode) -eq 0 || (cat regression.diffs && false)
 endef
 
 check-basic: generate_version_schedule
-	$(call common_test,--schedule=./basic_schedule --schedule=./log/basic_schedule_$(pg_major_version))
+	$(call common_test,--schedule=./basic_schedule --schedule=./log/basic_schedule_$(pg_major_version),,documentdb_distributed_tests)
 
 check-dist-minimal:
-	$(call common_test,--schedule=./minimal_schedule, $(EXTRA_TESTS))
+	$(call common_test,--schedule=./minimal_schedule, $(EXTRA_TESTS),documentdb_distributed_tests_minimal)
 
 check-test-output:
 	./validate_test_output.sh $(pg_major_version)
 
 check-rbac-minimal:
-	$(call rbac_test,--schedule=./rbac_minimal_schedule, $(EXTRA_TESTS),)
+	$(call rbac_test,--schedule=./rbac_minimal_schedule,$(EXTRA_TESTS),rbac_compat_minimal)
 
 check-rbac:
-	$(call rbac_test,--schedule=./rbac_minimal_schedule --schedule=./rbac_tests_schedule,,)
+	$(call rbac_test,--schedule=./rbac_minimal_schedule --schedule=./rbac_tests_schedule,,rbac_compat)
 
 generate_version_schedule:
 	@mkdir -p log
@@ -91,9 +91,9 @@ installcheck-minimal:
 	$(call install_check_common,--schedule=./install_schedule, $(EXTRA_TESTS))
 
 check-multinode: prepare_multinode_dirs generate_version_schedule
-	$(call run_multinode_test,--schedule=./multinode_install_schedule --schedule=./log/basic_multinode_schedule_$(pg_major_version))
+	$(call run_multinode_test,--schedule=./multinode_install_schedule --schedule=./log/basic_multinode_schedule_$(pg_major_version),,multinode_tests)
 
 check-multinode-minimal: prepare_multinode_dirs
-	$(call run_multinode_test,--schedule=./multinode_install_schedule, $(EXTRA_TESTS))
+	$(call run_multinode_test,--schedule=./multinode_install_schedule, $(EXTRA_TESTS),multinode_minimal)
 
 all: check-basic check-rbac check-multinode check-test-output

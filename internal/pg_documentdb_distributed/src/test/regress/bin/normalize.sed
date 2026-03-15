@@ -27,7 +27,9 @@ s/documentdb_api_internal.generate_unique_shard_document/generate_unique_shard_d
 s/documentdb_core.bson/bson/g
 s/TTL job elapsed time: [+-]?[0-9]*\.?[0-9]+([eE][+-]?[0-9]+)?ms,/TTL job elapsed time:<redacted>/g
 s/expiry_cutoff=[0-9]*,/expiry_cutoff=<redacted>/g
+s/coord_binary_combine_agg/coord_combine_agg/g
+s/worker_binary_partial_agg/worker_partial_agg/g
 s/coord_combine_agg\('[0-9]+'/coord_combine_agg\('xxxx'/g
-s/worker_partial_agg\('[0-9]+'/coord_combine_agg\('xxxx'/g
+s/worker_partial_agg\('[0-9]+'/worker_partial_agg\('xxxx'/g
 s/Node: host=localhost port=[0-9]+ dbname=[a-zA-Z]+/Node: host=localhost port=xxx dbname=yyy/g
 s/Vacuum\[index=[0-9]+,vacuumCleanup=/Vacuum\[index=xxx,vacuumCleanup=/g

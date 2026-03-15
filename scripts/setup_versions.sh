@@ -20,13 +20,10 @@ POSTGRES_16_REF="REL_16_10"
 # This maps to REL_15_14:0ab43b548237b3791261480d6a023f6b95b53942
 POSTGRES_15_REF="REL_15_14"
 
-# this is commit c569f8321f4cbd431f8fa36417df4a3ae025a417
-# This contains the fix for crashes for ASAN on version handling.
-CITUS_VERSION=c569f8321f4cbd431f8fa36417df4a3ae025a417
-# This is commit 9aa1384d9d0fcecc326b6c48919d774ad8389e0f
-CITUS_13_VERSION=9aa1384d9d0fcecc326b6c48919d774ad8389e0f
-# For pg18 use an unstable main version for now
-CITUS_14_VERSION=824d8c062997fa3f8be7ae36abce664fd551a514
+# This contains the fix for supporting extended stats on expressions.
+CITUS_12_VERSION=ea7e5fc860b0693e19fb172f55c8b4303803c4cd
+CITUS_14_VERSION=fe25f68a96c2d76bffce246b4ce0306f765332b4
+
 # This is commit 6a065fd8dfb280680304991aa30d7f72787fdb04
 RUM_VERSION=1.3.14
 # This is commit 465b38c737f584d520229f5a1d69d1d44649e4e5
@@ -62,14 +59,12 @@ function GetCitusVersion()
   if [ "$PGVERSION" == "18" ]; then
     echo $CITUS_14_VERSION
   elif [ "$PGVERSION" == "17" ]; then
-    echo $CITUS_13_VERSION
-  elif [ "$citusVersion" == "13" ] || [ "$citusVersion" == "v13.0" ] || [ "$citusVersion" == "$CITUS_13_VERSION" ]; then
-    echo $CITUS_13_VERSION
+    echo $CITUS_14_VERSION
   # allow the caller to specify the version as 12 or v12.1 or v12.1.6
-  elif [ "$citusVersion" == "12" ] || [ "$citusVersion" == "v12.1" ] || [ "$citusVersion" == "$CITUS_VERSION" ]; then
-    echo $CITUS_VERSION
+  elif [ "$citusVersion" == "12" ] || [ "$citusVersion" == "v12.1" ] || [ "$citusVersion" == "$CITUS_12_VERSION" ]; then
+    echo $CITUS_12_VERSION
   else
-    echo "Invalid Citus version specified $citusVersion. Please use $CITUS_VERSION'."
+    echo "Invalid Citus version specified $citusVersion. Please use $CITUS_12_VERSION'."
     exit 1  
   fi
 }
