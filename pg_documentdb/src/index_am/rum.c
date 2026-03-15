@@ -1547,6 +1547,11 @@ GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum, bool hasOr
 	{
 		bytea *entry = DatumGetByteaPP(entryRes[i]);
 
+		if (IsSerializedRootTruncationTerm(entry))
+		{
+			continue;
+		}
+
 		List *rawPathBoundsInner = NIL;
 		char *serializedBound = SerializeBoundsStringForExplain(entry,
 																extraData[i],

@@ -42,6 +42,10 @@
  #include "collation/collation.h"
  #include "query/bson_dollar_operators.h"
  #include "opclass/bson_gin_composite_private.h"
+ #include "utils/string_view.h"
+ #include "utils/utf8_utils.h"
+
+extern bool EnableRegexPrefixIndexBounds;
 
 /* --------------------------------------------------------- */
 /* Data-types */
@@ -171,16 +175,17 @@ BuildLowerBoundTermFromIndexBounds(CompositeQueryRunData *runData,
 {
 	bytea *lowerBoundDatums[INDEX_MAX_KEYS] = { 0 };
 
-	bool hasTruncation = false;
 	for (int i = 0; i < runData->metaInfo->numIndexPaths; i++)
 	{
 		runData->metaInfo->requiresRuntimeRecheck =
 			runData->metaInfo->requiresRuntimeRecheck ||
 			runData->indexBounds[i].
 			requiresRuntimeRecheck;
-		hasTruncation = hasTruncation ||
-						IsIndexTermTruncated(
-			&runData->indexBounds[i].lowerBound.indexTermValue);
+
+		runData->metaInfo->requiresRecheckOnTruncatedIndex =
+			runData->metaInfo->requiresRecheckOnTruncatedIndex ||
+			runData->indexBounds[i].
+			requiresRecheckOnTruncatedIndex;
 
 		/* If both lower and upper bound match it's equality */
 		if (runData->indexBounds[i].lowerBound.bound.value_type != BSON_TYPE_EOD &&
@@ -361,6 +366,10 @@ UpdateRunDataForVariableBounds(CompositeQueryRunData *runData,
 		runData->metaInfo->requiresRuntimeRecheck =
 			runData->metaInfo->requiresRuntimeRecheck ||
 			bound->requiresRuntimeRecheck;
+
+		runData->metaInfo->requiresRecheckOnTruncatedIndex =
+			runData->metaInfo->requiresRecheckOnTruncatedIndex ||
+			bound->requiresRecheckOnTruncatedIndex;
 	}
 }
 
@@ -401,6 +410,7 @@ UpdateRunDataForOrderedBounds(CompositeQueryRunData *runData,
 		/* Reset rundata before starting with the new bounds */
 		runData->indexBounds[i].requiresRuntimeRecheck = false;
 		runData->indexBounds[i].isEqualityBound = false;
+		runData->indexBounds[i].requiresRecheckOnTruncatedIndex = false;
 
 		/* Free if we have a dupe */
 		if (runData->indexBounds[i].indexRecheckFunctions !=
@@ -478,6 +488,12 @@ UpdateRunDataForOrderedBounds(CompositeQueryRunData *runData,
 					entry->boundsSet->bounds[entry
 											 ->currentOperatorIndex].
 					requiresRuntimeRecheck;
+				runData->indexBounds[i].requiresRecheckOnTruncatedIndex =
+					runData->indexBounds[i].requiresRecheckOnTruncatedIndex ||
+					entry->boundsSet->bounds[entry->
+											 currentOperatorIndex].
+					requiresRecheckOnTruncatedIndex;
+
 				if (entry->boundsSet->bounds[entry->currentOperatorIndex].
 					indexRecheckFunctions != NIL)
 				{
@@ -1718,19 +1734,241 @@ SetBoundsForNotEqual(const bson_value_t *queryValue,
 }
 
 
+/*
+ * Regex meta characters outside a character class for PCRE are:
+ \      general escape character with several uses
+ \ ^      assert start of string (or line, in multiline mode)
+ \ $      assert end of string (or line, in multiline mode)
+ \ .      match any character except newline (by default)
+ \ [      start character class definition
+ |      start of alternative branch
+ | (      start subpattern
+ | )      end subpattern
+ | ?      extends the meaning of (
+ |       also 0 or 1 quantifier
+ |       also quantifier minimizer
+ *      0 or more quantifier
+ +      1 or more quantifier
+ +       also "possessive quantifier"
+ + {      start min/max quantifier
+ */
+static bool
+IsRegexMetaCharacter(char c)
+{
+	switch (c)
+	{
+		case '\\':
+		case '^':
+		case '$':
+		case '.':
+		case '[':
+		case ']':
+		case '|':
+		case '(':
+		case ')':
+		case '?':
+		case '*':
+		case '+':
+		case '{':
+		case '}':
+		{
+			return true;
+		}
+
+		default:
+			return false;
+	}
+}
+
+
+/* Builds the strict upper boundary by incrementing only the final UTF-8 codepoint. */
+static bool
+TryBuildNextUtf8PrefixBoundary(char *prefix, uint32_t codePointStart,
+							   char **upperBoundary, uint32_t *upperBoundaryLength)
+{
+	const unsigned char *utf8Sequence = (const unsigned char *) (prefix + codePointStart);
+	pg_wchar lastCodepoint = utf8_to_unicode(utf8Sequence);
+
+	/* If we got the max utf8 codepoint or an invalid codepoint then we can't build a valid upper boundary by incrementing the last codepoint. */
+	if (!is_valid_unicode_codepoint(lastCodepoint) || lastCodepoint == UTF8_MAX_CODEPOINT)
+	{
+		return false;
+	}
+
+	/* Increment the last codepoint to get the next possible UTF-8 prefix.
+	 * If it falls within the UTF-16 surrogate range, skip them and set it to the
+	 * first valid scalar value after the UTF-16 only surrogates. */
+	pg_wchar nextCodepoint = lastCodepoint + 1;
+	if (is_utf16_surrogate_first(nextCodepoint) ||
+		is_utf16_surrogate_second(nextCodepoint))
+	{
+		/* First valid scalar value after the UTF-16 only surrogates. */
+		nextCodepoint = UTF8_AFTER_UTF16_SURROGATE;
+	}
+
+	unsigned char encodedNextCodepoint[4] = { 0 };
+	uint32_t encodedLength = 0;
+
+	/* After we increment the last codepoint we need to try and encode it back into individual byte form
+	 * in order to write it to the final string. */
+	unicode_to_utf8(nextCodepoint, encodedNextCodepoint);
+	encodedLength = unicode_utf8len(nextCodepoint);
+
+	/* First we copy the prefix until the original codepointStart.
+	 * Then we append the new next codepoint. */
+	uint32_t outputLength = codePointStart + encodedLength;
+	char *outputBuffer = palloc(outputLength + 1);
+	if (codePointStart > 0)
+	{
+		memcpy(outputBuffer, prefix, codePointStart);
+	}
+
+	memcpy(outputBuffer + codePointStart, encodedNextCodepoint, encodedLength);
+	outputBuffer[outputLength] = '\0';
+	*upperBoundary = outputBuffer;
+	*upperBoundaryLength = outputLength;
+	return true;
+}
+
+
+static void
+OptimizeBoundaryForRegexExpression(RegexData *regexData,
+								   CompositeIndexBounds *queryBounds)
+{
+	StringView strView = regexData->regex != NULL ? CreateStringViewFromString(
+		regexData->regex) : CreateStringViewFromString("");
+
+	/* We can only optimize if we have no options and the regex starts with ^ */
+	if (!EnableRegexPrefixIndexBounds ||
+		strcmp(regexData->options, "") != 0 ||
+		!StringViewStartsWith(&strView, '^'))
+	{
+		/* Set the bounds to be all strings since we can't optimize based on the regex expression */
+		CompositeSingleBound bounds = GetTypeLowerBound(BSON_TYPE_UTF8);
+		SetLowerBound(&queryBounds->lowerBound, &bounds);
+
+		bounds = GetTypeUpperBound(BSON_TYPE_UTF8);
+		SetUpperBound(&queryBounds->upperBound, &bounds);
+		return;
+	}
+
+	strView = StringViewSubstring(&strView, 1); /* skip the '^' character */
+	char *anchorPrefixBuffer = palloc0(sizeof(char) * (strView.length + 1));
+	uint32_t prefixLength = 0;
+	int32_t firstNonAsciiByteIndex = -1;
+
+	uint32_t i = 0;
+	for (; i < strView.length; i++)
+	{
+		char currentChar = strView.string[i];
+
+		if (currentChar == '\\')
+		{
+			/* Escaped literals like \. can contribute to prefix, but
+			 * escaped regex classes like \d cannot be safely range-bounded. */
+			if (i + 1 >= strView.length)
+			{
+				break;
+			}
+
+			char escapedChar = strView.string[i + 1];
+			if (!IsRegexMetaCharacter(escapedChar))
+			{
+				break;
+			}
+
+			anchorPrefixBuffer[prefixLength++] = escapedChar;
+			i++;
+			continue;
+		}
+
+		if (currentChar == '|')
+		{
+			/* We can't optimize this since the anchor has an OR so the boundary is not stable. */
+			prefixLength = 0;
+			break;
+		}
+
+		if (IsRegexMetaCharacter(currentChar))
+		{
+			break;
+		}
+
+		/* Record the first non-ASCII byte index in the prefix, in case the last codepoint in the prefix is non-ASCII.
+		 * If we find an ASCII character after a non-ASCII character, reset the index. */
+		if (firstNonAsciiByteIndex == -1 && !isascii(currentChar))
+		{
+			firstNonAsciiByteIndex = i;
+		}
+		else if (firstNonAsciiByteIndex >= 0 && isascii(currentChar))
+		{
+			firstNonAsciiByteIndex = -1;
+		}
+
+		anchorPrefixBuffer[prefixLength++] = currentChar;
+	}
+
+	if (prefixLength > 0)
+	{
+		/* Keep lower-bound storage stable since upper-bound generation may rewrite the work buffer. */
+		char *lowerBoundary = pnstrdup(anchorPrefixBuffer, prefixLength);
+
+		CompositeSingleBound bounds = { 0 };
+		bounds.bound.value_type = BSON_TYPE_UTF8;
+		bounds.bound.value.v_utf8.str = lowerBoundary;
+		bounds.bound.value.v_utf8.len = prefixLength;
+		bounds.isBoundInclusive = true;
+		SetLowerBound(&queryBounds->lowerBound, &bounds);
+
+		char *upperBoundary = NULL;
+		uint32_t upperBoundaryLength = 0;
+		bool hasUpperBoundary = false;
+		if (firstNonAsciiByteIndex >= 0)
+		{
+			hasUpperBoundary = TryBuildNextUtf8PrefixBoundary(anchorPrefixBuffer,
+															  firstNonAsciiByteIndex,
+															  &upperBoundary,
+															  &upperBoundaryLength);
+		}
+		else
+		{
+			upperBoundary = pnstrdup(anchorPrefixBuffer, prefixLength);
+			upperBoundary[prefixLength - 1]++;
+			upperBoundaryLength = prefixLength;
+			hasUpperBoundary = true;
+		}
+
+		if (hasUpperBoundary)
+		{
+			bounds.bound.value.v_utf8.str = upperBoundary;
+			bounds.bound.value.v_utf8.len = upperBoundaryLength;
+			bounds.isBoundInclusive = false;
+			SetUpperBound(&queryBounds->upperBound, &bounds);
+		}
+		else
+		{
+			/* Invalid/increment-exhausted UTF-8 prefixes fall back to full UTF-8 type bounds. */
+			bounds = GetTypeUpperBound(BSON_TYPE_UTF8);
+			SetUpperBound(&queryBounds->upperBound, &bounds);
+		}
+
+		pfree(anchorPrefixBuffer);
+		return;
+	}
+
+	/* If we can't optimize based on the regex expression, set the bounds to be all strings. */
+	CompositeSingleBound bounds = GetTypeLowerBound(BSON_TYPE_UTF8);
+	SetLowerBound(&queryBounds->lowerBound, &bounds);
+	bounds = GetTypeUpperBound(BSON_TYPE_UTF8);
+	SetUpperBound(&queryBounds->upperBound, &bounds);
+}
+
+
 static void
 SetSingleBoundsDollarRegex(const bson_value_t *queryValue,
 						   CompositeIndexBounds *queryBounds,
 						   bool isNegationOp)
 {
-	CompositeSingleBound bounds = GetTypeLowerBound(isNegationOp ?
-													BSON_TYPE_MINKEY :
-													BSON_TYPE_UTF8);
-	SetLowerBound(&queryBounds->lowerBound, &bounds);
-
-	bounds = GetTypeUpperBound(isNegationOp ? BSON_TYPE_MAXKEY : BSON_TYPE_UTF8);
-	SetUpperBound(&queryBounds->upperBound, &bounds);
-
 	RegexData *regexData = (RegexData *) palloc0(sizeof(RegexData));
 	CompositeRegexData *compositeRegexData = (CompositeRegexData *) palloc0(
 		sizeof(CompositeRegexData));
@@ -1742,7 +1980,21 @@ SetSingleBoundsDollarRegex(const bson_value_t *queryValue,
 	else
 	{
 		regexData->regex = queryValue->value.v_utf8.str;
-		regexData->options = NULL;
+		regexData->options = "";
+	}
+
+	/* If it is not negation and we have no options we can try to optimize the boundaries based on the regex expression so that we don't scan all the strings in the index. */
+	if (!isNegationOp)
+	{
+		OptimizeBoundaryForRegexExpression(regexData, queryBounds);
+	}
+	else
+	{
+		CompositeSingleBound bounds = GetTypeLowerBound(BSON_TYPE_MINKEY);
+		SetLowerBound(&queryBounds->lowerBound, &bounds);
+
+		bounds = GetTypeUpperBound(BSON_TYPE_MAXKEY);
+		SetUpperBound(&queryBounds->upperBound, &bounds);
 	}
 
 	regexData->pcreData = RegexCompile(regexData->regex,
@@ -1756,6 +2008,8 @@ SetSingleBoundsDollarRegex(const bson_value_t *queryValue,
 	args->queryStrategy = BSON_INDEX_STRATEGY_DOLLAR_REGEX;
 	queryBounds->indexRecheckFunctions =
 		lappend(queryBounds->indexRecheckFunctions, args);
+	queryBounds->requiresRuntimeRecheck = isNegationOp;
+	queryBounds->requiresRecheckOnTruncatedIndex = !isNegationOp;
 }
 
 
@@ -2007,7 +2261,6 @@ AddMultiBoundaryForDollarRegex(int32_t indexAttribute, const char *wildcardPath,
 
 	/* For not operator we need to recheck because of array terms. ["ab", "ca"] we would match a
 	 * regex like "c*.*" for the second term however for the first we wouldn't, so we need to go to the runtime. */
-	set->bounds[0].requiresRuntimeRecheck = isNegationOp;
 	set->bounds[1].requiresRuntimeRecheck = isNegationOp;
 
 	/* The second bound is an exact match on the $regex itself */
@@ -2057,6 +2310,8 @@ AddMultiBoundaryForBitwiseOperator(BsonIndexStrategy strategy,
 	SetUpperBound(&set->bounds[1].upperBound, &bound);
 	set->bounds[1].indexRecheckFunctions =
 		lappend(set->bounds[1].indexRecheckFunctions, args);
+
+	set->bounds[1].requiresRecheckOnTruncatedIndex = true;
 
 	indexBounds->variableBoundsList = lappend(indexBounds->variableBoundsList, set);
 }

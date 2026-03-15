@@ -534,7 +534,8 @@ freeScanKeys(RumScanOpaque so)
 
 
 static void
-initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch, bool hasOrdering,
+initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch, bool
+			requiresOrderedScan,
 			bool hasParallel)
 {
 	Datum *queryValues;
@@ -549,7 +550,7 @@ initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch, bool hasOrder
 								 4;
 
 	/* Only apply the search mode when it's safe */
-	if ((hasOrdering || RumForceOrderedIndexScan || so->projectIndexTupleData ||
+	if ((requiresOrderedScan || RumForceOrderedIndexScan ||
 		 hasParallel) && indexSupportsOrdering)
 	{
 		/* Let extractQuery know we're doing an ordered scan */
@@ -823,7 +824,7 @@ rumNewScanKey(IndexScanDesc scan)
 	int i;
 	bool checkEmptyEntry = false;
 	bool hasPartialMatch = false;
-	bool hasOrderBy = scan->numberOfOrderBys > 0;
+	bool requiresOrderedScan = scan->numberOfOrderBys > 0 || scan->xs_want_itup;
 	bool hasParallel = scan->parallel_scan != NULL;
 	MemoryContext oldCtx;
 	enum
@@ -861,7 +862,8 @@ rumNewScanKey(IndexScanDesc scan)
 
 	for (i = 0; i < scan->numberOfKeys; i++)
 	{
-		initScanKey(so, &scan->keyData[i], &hasPartialMatch, hasOrderBy, hasParallel);
+		initScanKey(so, &scan->keyData[i], &hasPartialMatch, requiresOrderedScan,
+					hasParallel);
 		if (so->isVoidRes)
 		{
 			break;
@@ -889,7 +891,8 @@ rumNewScanKey(IndexScanDesc scan)
 		so->orderByKeyIndex = so->nkeys;
 		for (i = 0; i < scan->numberOfOrderBys; i++)
 		{
-			initScanKey(so, &scan->orderByData[i], NULL, hasOrderBy, hasParallel);
+			initScanKey(so, &scan->orderByData[i], NULL, requiresOrderedScan,
+						hasParallel);
 		}
 	}
 

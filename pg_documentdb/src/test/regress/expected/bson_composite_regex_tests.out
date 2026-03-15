@@ -1,0 +1,1118 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+SET documentdb.next_collection_id TO 1200;
+SET documentdb.next_collection_index_id TO 1200;
+set documentdb.forceDisableSeqScan to on;
+-- Create collection with a composite index for regex prefix bound testing
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'regex_db', '{ "createIndexes": "regex_coll", "indexes": [ { "name": "idx_a_1_b_1", "key": { "a": 1, "b": 1 } } ] }', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Insert test data with various string prefixes
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 1, "a": "string1", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 2, "a": "string2", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 3, "a": "string123", "b": false }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 4, "a": "strong", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 5, "a": "abc", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 6, "a": "abcd", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 7, "a": "abce", "b": false }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 8, "a": "xyz", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 9, "a": 123, "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 10, "a": true, "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- === Result verification tests ===
+-- regex prefix: ^string should match string1, string2, string123
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string" } } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+(3 rows)
+
+-- regex prefix: ^string1 should match string1, string123
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string1" } } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+(2 rows)
+
+-- regex prefix with compound filter: ^str with b=true
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^str" }, "b": true } }');
+                            document                             
+-----------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "4" }, "a" : "strong", "b" : true }
+(3 rows)
+
+-- regex without anchor (no optimization, but same correct results)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "string" } } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+(3 rows)
+
+-- regex with anchor only, no literal prefix to extract: matches all strings
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^" } } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+ { "_id" : { "$numberInt" : "4" }, "a" : "strong", "b" : true }
+ { "_id" : { "$numberInt" : "5" }, "a" : "abc", "b" : true }
+ { "_id" : { "$numberInt" : "6" }, "a" : "abcd", "b" : true }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abce", "b" : false }
+ { "_id" : { "$numberInt" : "8" }, "a" : "xyz", "b" : true }
+(8 rows)
+
+-- regex with meta character immediately after anchor (no prefix extraction)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^.*string" } } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+(3 rows)
+
+-- regex with prefix before meta: ^abc. extracts prefix "abc"
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^abc." } } }');
+                           document                            
+---------------------------------------------------------------
+ { "_id" : { "$numberInt" : "6" }, "a" : "abcd", "b" : true }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abce", "b" : false }
+(2 rows)
+
+-- regex with empty options string: optimization should still apply
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^abc", "$options": "" } } }');
+                           document                            
+---------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "abc", "b" : true }
+ { "_id" : { "$numberInt" : "6" }, "a" : "abcd", "b" : true }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abce", "b" : false }
+(3 rows)
+
+-- regex with options "i": optimization disabled due to case-insensitive flag
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string", "$options": "i" } } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+(3 rows)
+
+-- regex with single char prefix: ^s matches all s-prefixed strings
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^s" } } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+ { "_id" : { "$numberInt" : "4" }, "a" : "strong", "b" : true }
+(4 rows)
+
+-- negation via $nin with regex: should return non-matching docs (including non-string types)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$nin": [{ "$regularExpression": { "pattern": "^string", "options": "" } }] } } }');
+                                    document                                    
+--------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : "strong", "b" : true }
+ { "_id" : { "$numberInt" : "5" }, "a" : "abc", "b" : true }
+ { "_id" : { "$numberInt" : "6" }, "a" : "abcd", "b" : true }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abce", "b" : false }
+ { "_id" : { "$numberInt" : "8" }, "a" : "xyz", "b" : true }
+ { "_id" : { "$numberInt" : "9" }, "a" : { "$numberInt" : "123" }, "b" : true }
+ { "_id" : { "$numberInt" : "10" }, "a" : true, "b" : true }
+(7 rows)
+
+-- regex with backslash escape: ^abc\\ stops prefix extraction at backslash
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^abc\\\\.d" } } }');
+ document 
+----------
+(0 rows)
+
+-- regex with character class after prefix: ^str[io] extracts prefix "str"
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^str[io]" } } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+ { "_id" : { "$numberInt" : "4" }, "a" : "strong", "b" : true }
+(4 rows)
+
+-- regex with quantifier after prefix: ^string+ extracts prefix "string" (+ is the meta char)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string+" } } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+(3 rows)
+
+-- Add values for escape and alternation-specific behavior
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 15, "a": "abc|def", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 16, "a": "abc\\dog", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 17, "a": "abd123", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 18, "a": "ab5", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- regex alternation after prefix: ^abc|xyz has unstable prefix due to unescaped |
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^abc|xyz" } } }');
+                             document                              
+-------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "abc", "b" : true }
+ { "_id" : { "$numberInt" : "6" }, "a" : "abcd", "b" : true }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abce", "b" : false }
+ { "_id" : { "$numberInt" : "8" }, "a" : "xyz", "b" : true }
+ { "_id" : { "$numberInt" : "15" }, "a" : "abc|def", "b" : true }
+ { "_id" : { "$numberInt" : "16" }, "a" : "abc\\dog", "b" : true }
+(6 rows)
+
+-- escaped pipe is a literal and can contribute to the extracted prefix
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^abc\\|d" } } }');
+                             document                             
+------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "15" }, "a" : "abc|def", "b" : true }
+(1 row)
+
+-- escaped backslash literal should not break prefix extraction
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^abc\\\\d" } } }');
+                             document                              
+-------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "16" }, "a" : "abc\\dog", "b" : true }
+(1 row)
+
+-- escaped class token like \d should not be treated as literal d in extracted prefix
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^ab\\d" } } }');
+                           document                           
+--------------------------------------------------------------
+ { "_id" : { "$numberInt" : "18" }, "a" : "ab5", "b" : true }
+(1 row)
+
+-- regex prefix: ^xyz exact single match
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^xyz" } } }');
+                          document                           
+-------------------------------------------------------------
+ { "_id" : { "$numberInt" : "8" }, "a" : "xyz", "b" : true }
+(1 row)
+
+-- regex prefix: ^nonexistent should return no results
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^nonexistent" } } }');
+ document 
+----------
+(0 rows)
+
+-- === Edge case tests ===
+-- ^$ (end anchor immediately after start): no literal prefix extracted
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^$" } } }');
+ document 
+----------
+(0 rows)
+
+-- ^| (alternation right after anchor): no literal prefix
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^|abc" } } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+ { "_id" : { "$numberInt" : "4" }, "a" : "strong", "b" : true }
+ { "_id" : { "$numberInt" : "5" }, "a" : "abc", "b" : true }
+ { "_id" : { "$numberInt" : "6" }, "a" : "abcd", "b" : true }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abce", "b" : false }
+ { "_id" : { "$numberInt" : "8" }, "a" : "xyz", "b" : true }
+ { "_id" : { "$numberInt" : "15" }, "a" : "abc|def", "b" : true }
+ { "_id" : { "$numberInt" : "16" }, "a" : "abc\\dog", "b" : true }
+ { "_id" : { "$numberInt" : "17" }, "a" : "abd123", "b" : true }
+ { "_id" : { "$numberInt" : "18" }, "a" : "ab5", "b" : true }
+(12 rows)
+
+-- ^( (group start right after anchor): no literal prefix
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^(string)" } } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+(3 rows)
+
+-- Insert data with tilde (~, 0x7E) for boundary testing
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 11, "a": "~hello", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- prefix ending with ~ (0x7E): upper bound increments to DEL (0x7F)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^~" } } }');
+                            document                             
+-----------------------------------------------------------------
+ { "_id" : { "$numberInt" : "11" }, "a" : "~hello", "b" : true }
+(1 row)
+
+-- Insert data with DEL character (0x7F) for boundary testing
+SELECT FORMAT('{ "_id": 12, "a": "abc%sdef", "b": true }', chr(127)) AS q1 \gset
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', :'q1'::bson);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- prefix ending with 0x7F (DEL): upper bound increments to 0x80
+SELECT FORMAT('{ "find": "regex_coll", "filter": { "a": { "$regex": "^abc%s" } } }', chr(127)) AS q1 \gset
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', :'q1'::bson);
+                              document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "12" }, "a" : "abc\x7Fdef", "b" : true }
+(1 row)
+
+-- Insert data with multi-byte UTF-8 character for boundary testing
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 13, "a": "cafébar", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 14, "a": "cafêbar", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 19, "a": "mañana", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 20, "a": "maño", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT FORMAT('{ "_id": 21, "a": "e%suro", "b": true }', chr(8364)) AS q1 \gset
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', :'q1'::bson);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT FORMAT('{ "_id": 22, "a": "smile%s", "b": true }', chr(128512)) AS q1 \gset
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', :'q1'::bson);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- multi-byte UTF-8 prefix: ^café - verifies byte-level increment handles multi-byte chars
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^café" } } }');
+                             document                             
+------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "13" }, "a" : "cafébar", "b" : true }
+(1 row)
+
+-- multi-byte UTF-8 inside prefix: ^mañan - verifies matching correctness with non-ASCII in prefix body
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^mañan" } } }');
+                            document                             
+-----------------------------------------------------------------
+ { "_id" : { "$numberInt" : "19" }, "a" : "mañana", "b" : true }
+(1 row)
+
+-- multi-byte UTF-8 ending prefix: ^mañ - verifies continuation-byte ending prefix handling
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^mañ" } } }');
+                            document                             
+-----------------------------------------------------------------
+ { "_id" : { "$numberInt" : "19" }, "a" : "mañana", "b" : true }
+ { "_id" : { "$numberInt" : "20" }, "a" : "maño", "b" : true }
+(2 rows)
+
+-- multi-byte UTF-8 inside prefix with compound filter on b
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^mañan" }, "b": true } }');
+                            document                             
+-----------------------------------------------------------------
+ { "_id" : { "$numberInt" : "19" }, "a" : "mañana", "b" : true }
+(1 row)
+
+-- 3-byte UTF-8 codepoint in prefix end: ^e€
+SELECT FORMAT('{ "find": "regex_coll", "filter": { "a": { "$regex": "^e%s" } } }', chr(8364)) AS q1 \gset
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', :'q1'::bson);
+                            document                            
+----------------------------------------------------------------
+ { "_id" : { "$numberInt" : "21" }, "a" : "e€uro", "b" : true }
+(1 row)
+
+-- 4-byte UTF-8 codepoint in prefix end: ^smile😀
+SELECT FORMAT('{ "find": "regex_coll", "filter": { "a": { "$regex": "^smile%s" } } }', chr(128512)) AS q1 \gset
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', :'q1'::bson);
+                             document                             
+------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "22" }, "a" : "smile😀", "b" : true }
+(1 row)
+
+-- Insert long values to exercise index-term truncation behavior (~2.8KB term cap)
+SELECT FORMAT('{ "_id": 23, "a": "%s", "b": true }', repeat('q', 3000) || 'bX') AS q1 \gset
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', :'q1'::bson);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT FORMAT('{ "_id": 24, "a": "%s", "b": true }', repeat('q', 3000) || 'cX') AS q1 \gset
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', :'q1'::bson);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- string truncation case: short regex prefix over long indexed strings (prefix not truncated)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find(
+    'regex_db',
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "^q+" } }, "projection": { "_id": 1 } }');
+              document               
+-------------------------------------
+ { "_id" : { "$numberInt" : "23" } }
+ { "_id" : { "$numberInt" : "24" } }
+(2 rows)
+
+-- regex truncation case: long anchored prefix (>2.8KB) with quantifier after the final byte
+-- TODO: currently not supported using $regex type, should be supported with string as the argument. We currently don't support regex truncation.
+SELECT FORMAT(
+    '{ "find": "regex_coll", "filter": { "a": { "$regex": "^%sb+" } }, "projection": { "_id": 1 } }',
+    repeat('q', 3000)) AS q1 \gset
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', :'q1'::bson);
+ERROR:  Truncation size limit specified 1340, but index term with type regex was larger 3012 - isTruncated 0
+SELECT FORMAT('^%sb+', repeat('q', 3000)) AS large_regex1 \gset
+SELECT FORMAT('^abc|%s', repeat('q', 3000)) AS large_regex2 \gset
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', bson_build_document('find', 'regex_coll'::text, 'filter', bson_build_document('a', bson_build_document('$regex', :'large_regex1'::text))::bson)::bson);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      document                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "23" }, "a" : "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqbX", "b" : true }
+(1 row)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', bson_build_document('find', 'regex_coll'::text, 'filter', bson_build_document('a', bson_build_document('$regex', :'large_regex2'::text))::bson)::bson);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      document                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "abc", "b" : true }
+ { "_id" : { "$numberInt" : "6" }, "a" : "abcd", "b" : true }
+ { "_id" : { "$numberInt" : "7" }, "a" : "abce", "b" : false }
+ { "_id" : { "$numberInt" : "15" }, "a" : "abc|def", "b" : true }
+ { "_id" : { "$numberInt" : "16" }, "a" : "abc\\dog", "b" : true }
+ { "_id" : { "$numberInt" : "12" }, "a" : "abc\x7Fdef", "b" : true }
+ { "_id" : { "$numberInt" : "23" }, "a" : "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqbX", "b" : true }
+ { "_id" : { "$numberInt" : "24" }, "a" : "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqcX", "b" : true }
+(8 rows)
+
+-- === EXPLAIN plan tests showing index bounds ===
+set documentdb.enableExtendedExplainPlans to on;
+-- optimized: ^string should show tight bounds [string, strinh)
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string" } } }')
+$cmd$);
+                                                                                                             run_explain_and_trim                                                                                                              
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["string", "strinh"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^string", "options" : "" } }, { "$regularExpression" : { "pattern" : "^string", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=3 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^string", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=5 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^string", "options" : "" } } }'::bson)
+(13 rows)
+
+-- optimized: ^abc should show tight bounds [abc, abd)
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^abc" } } }')
+$cmd$);
+                                                                                                       run_explain_and_trim                                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["abc", "abd"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=6 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=8 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
+(13 rows)
+
+-- optimized: ^s single char prefix bounds [s, t)
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^s" } } }')
+$cmd$);
+                                                                                                   run_explain_and_trim                                                                                                    
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["s", "t"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^s", "options" : "" } }, { "$regularExpression" : { "pattern" : "^s", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=5 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^s", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=7 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^s", "options" : "" } } }'::bson)
+(13 rows)
+
+-- optimized: ^xyz tight bounds [xyz, xy{) (z+1={)
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^xyz" } } }')
+$cmd$);
+                                                                                                       run_explain_and_trim                                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["xyz", "xy{"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^xyz", "options" : "" } }, { "$regularExpression" : { "pattern" : "^xyz", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=1 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^xyz", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=3 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^xyz", "options" : "" } } }'::bson)
+(13 rows)
+
+-- optimized with meta after prefix: ^str[io] should show bounds for "str"
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^str[io]" } } }')
+$cmd$);
+                                                                                                           run_explain_and_trim                                                                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["str", "sts"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^str[io]", "options" : "" } }, { "$regularExpression" : { "pattern" : "^str[io]", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=4 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^str[io]", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=6 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^str[io]", "options" : "" } } }'::bson)
+(13 rows)
+
+-- not optimized: no anchor, should show full UTF8 type bounds
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "string" } } }')
+$cmd$);
+                                                                                                       run_explain_and_trim                                                                                                       
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "string", "options" : "" } }, { "$regularExpression" : { "pattern" : "string", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=3 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "string", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=5 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "string", "options" : "" } } }'::bson)
+(13 rows)
+
+-- not optimized: options "i", should show full UTF8 type bounds
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string", "$options": "i" } } }')
+$cmd$);
+                                                                                                         run_explain_and_trim                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^string", "options" : "i" } }, { "$regularExpression" : { "pattern" : "^string", "options" : "i" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=3 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^string", "options" : "i" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=5 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^string", "options" : "i" } } }'::bson)
+(13 rows)
+
+-- not optimized: anchor only ^, should show full UTF8 type bounds
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^" } } }')
+$cmd$);
+                                                                                                  run_explain_and_trim                                                                                                  
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^", "options" : "" } }, { "$regularExpression" : { "pattern" : "^", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=22 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^", "options" : "" } } }'::bson)
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=22 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^", "options" : "" } } }'::bson)
+(12 rows)
+
+-- not optimized: meta right after anchor ^.*, should show full UTF8 type bounds
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^.*" } } }')
+$cmd$);
+                                                                                                    run_explain_and_trim                                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^.*", "options" : "" } }, { "$regularExpression" : { "pattern" : "^.*", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=22 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^.*", "options" : "" } } }'::bson)
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=22 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^.*", "options" : "" } } }'::bson)
+(12 rows)
+
+-- not optimized: ^$ (end anchor is meta), no prefix extracted
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^$" } } }')
+$cmd$);
+                                                                                                   run_explain_and_trim                                                                                                   
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^$", "options" : "" } }, { "$regularExpression" : { "pattern" : "^$", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=0 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^$", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=2 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^$", "options" : "" } } }'::bson)
+(13 rows)
+
+-- not optimized: ^| (alternation is meta), no prefix extracted
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^|abc" } } }')
+$cmd$);
+                                                                                                      run_explain_and_trim                                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^|abc", "options" : "" } }, { "$regularExpression" : { "pattern" : "^|abc", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=22 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^|abc", "options" : "" } } }'::bson)
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=22 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^|abc", "options" : "" } } }'::bson)
+(12 rows)
+
+-- not optimized: ^( (group start is meta), no prefix extracted
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^(string)" } } }')
+$cmd$);
+                                                                                                          run_explain_and_trim                                                                                                          
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^(string)", "options" : "" } }, { "$regularExpression" : { "pattern" : "^(string)", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=3 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^(string)", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=5 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^(string)", "options" : "" } } }'::bson)
+(13 rows)
+
+-- not optimized: unescaped alternation after prefix prevents stable bounds
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^abc|xyz" } } }')
+$cmd$);
+                                                                                                         run_explain_and_trim                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc|xyz", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc|xyz", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=7 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^abc|xyz", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=9 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^abc|xyz", "options" : "" } } }'::bson)
+(13 rows)
+
+-- optimized: escaped pipe contributes to the prefix
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^abc\\|d" } } }')
+$cmd$);
+                                                                                                             run_explain_and_trim                                                                                                              
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["abc|d", "abc|e"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\\|d", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\|d", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=1 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^abc\\|d", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=3 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^abc\\|d", "options" : "" } } }'::bson)
+(13 rows)
+
+-- optimized: escaped backslash contributes to the prefix
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^abc\\\\\\\\d" } } }')
+$cmd$);
+                                                                                                                     run_explain_and_trim                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["abc\\\\d", "abc\\\\e"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\\\\\\\\d", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\\\\\\\\d", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=0 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^abc\\\\\\\\d", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=2 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^abc\\\\\\\\d", "options" : "" } } }'::bson)
+(13 rows)
+
+-- escaped class token like \d keeps only the stable prefix before it
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^ab\\d" } } }')
+$cmd$);
+                                                                                                        run_explain_and_trim                                                                                                         
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["ab", "ac"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^ab\\d", "options" : "" } }, { "$regularExpression" : { "pattern" : "^ab\\d", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=1 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^ab\\d", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=3 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^ab\\d", "options" : "" } } }'::bson)
+(13 rows)
+
+-- optimized: ^~ prefix ending with 0x7E, upper bound increments to DEL (0x7F)
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^~" } } }')
+$cmd$);
+                                                                                                     run_explain_and_trim                                                                                                     
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["~", "\x7F"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^~", "options" : "" } }, { "$regularExpression" : { "pattern" : "^~", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=1 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^~", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=3 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^~", "options" : "" } } }'::bson)
+(13 rows)
+
+-- optimized: prefix ending with 0x7F (DEL), upper bound increments to U+0080
+SELECT FORMAT('{ "find": "regex_coll", "filter": { "a": { "$regex": "^abc%s" } } }', chr(127)) AS q1 \gset
+SELECT documentdb_test_helpers.run_explain_and_trim(FORMAT($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '%s')
+$cmd$, :'q1'::text));
+                                                                                                             run_explain_and_trim                                                                                                              
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["abc\x7F", "abc"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\x7F", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\x7F", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=1 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^abc\x7F", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=3 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^abc\x7F", "options" : "" } } }'::bson)
+(13 rows)
+
+-- optimized: multi-byte UTF-8 prefix ^café with codepoint-aware upper bound
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^café" } } }')
+$cmd$);
+                                                                                                         run_explain_and_trim                                                                                                          
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["café", "cafê"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^café", "options" : "" } }, { "$regularExpression" : { "pattern" : "^café", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=1 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^café", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=3 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^café", "options" : "" } } }'::bson)
+(13 rows)
+
+-- optimized: multi-byte UTF-8 ending prefix ^mañ with codepoint-aware upper bound
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^mañ" } } }')
+$cmd$);
+                                                                                                       run_explain_and_trim                                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["mañ", "maò"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^mañ", "options" : "" } }, { "$regularExpression" : { "pattern" : "^mañ", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=2 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^mañ", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=4 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^mañ", "options" : "" } } }'::bson)
+(13 rows)
+
+-- optimized: multi-byte UTF-8 inside prefix ^mañan with compound filter on b
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^mañan" }, "b": true } }')
+$cmd$);
+                                                                                                       run_explain_and_trim                                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["mañan", "mañao"), "b": [true, true]], ["a": [{ "$regularExpression" : { "pattern" : "^mañan", "options" : "" } }, { "$regularExpression" : { "pattern" : "^mañan", "options" : "" } }], "b": [true, true]]
+   ->  Index Scan using idx_a_1_b_1 on documents_1201 collection (actual rows=1 loops=1)
+         Index Cond: ((document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^mañan", "options" : "" } } }'::bson) AND (document @= '{ "b" : true }'::bson))
+         Rows Removed by Index Recheck: 2
+(10 rows)
+
+-- optimized: 3-byte UTF-8 codepoint in prefix end ^e€
+SELECT FORMAT('{ "find": "regex_coll", "filter": { "a": { "$regex": "^e%s" } } }', chr(8364)) AS q1 \gset
+SELECT documentdb_test_helpers.run_explain_and_trim(FORMAT($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '%s')
+$cmd$, :'q1'::text));
+                                                                                                     run_explain_and_trim                                                                                                      
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["e€", "e₭"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^e€", "options" : "" } }, { "$regularExpression" : { "pattern" : "^e€", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=1 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^e€", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=3 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^e€", "options" : "" } } }'::bson)
+(13 rows)
+
+-- optimized: 4-byte UTF-8 codepoint in prefix end ^smile😀
+SELECT FORMAT('{ "find": "regex_coll", "filter": { "a": { "$regex": "^smile%s" } } }', chr(128512)) AS q1 \gset
+SELECT documentdb_test_helpers.run_explain_and_trim(FORMAT($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '%s')
+$cmd$, :'q1'::text));
+                                                                                                               run_explain_and_trim                                                                                                                
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["smile😀", "smile😁"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^smile😀", "options" : "" } }, { "$regularExpression" : { "pattern" : "^smile😀", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=1 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^smile😀", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=3 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^smile😀", "options" : "" } } }'::bson)
+(13 rows)
+
+-- string truncation case: short regex prefix still uses tight ASCII bounds
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'regex_db',
+        '{ "find": "regex_coll", "filter": { "a": { "$regex": "^q+" } }, "projection": { "_id": 1 } }')
+$cmd$);
+                                                                                                    run_explain_and_trim                                                                                                     
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["q", "r"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^q+", "options" : "" } }, { "$regularExpression" : { "pattern" : "^q+", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=2 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^q+", "options" : "" } } }'::bson)
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=2 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^q+", "options" : "" } } }'::bson)
+(12 rows)
+
+-- negation via $nin: should show MINKEY/MAXKEY bounds
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$nin": [{ "$regularExpression": { "pattern": "^string", "options": "" } }] } } }')
+$cmd$);
+                                                                                                           run_explain_and_trim                                                                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=21 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": [MinKey, MaxKey], "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^string", "options" : "" } }, { "$regularExpression" : { "pattern" : "^string", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=21 loops=1)
+         Recheck Cond: (document @!*= '{ "a" : [ { "$regularExpression" : { "pattern" : "^string", "options" : "" } } ] }'::bson)
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=21 loops=1)
+               Index Cond: (document @!*= '{ "a" : [ { "$regularExpression" : { "pattern" : "^string", "options" : "" } } ] }'::bson)
+(12 rows)
+
+-- feature flag off: should revert to full UTF8 type bounds even with ^
+set documentdb.enableRegexPrefixIndexBounds to off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string" } } }')
+$cmd$);
+                                                                                                        run_explain_and_trim                                                                                                        
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^string", "options" : "" } }, { "$regularExpression" : { "pattern" : "^string", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=3 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^string", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=5 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^string", "options" : "" } } }'::bson)
+(13 rows)
+
+-- feature flag off result verification: same correct results regardless of flag
+set documentdb.enableRegexPrefixIndexBounds to off;
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string" } } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+(3 rows)
+
+set documentdb.enableRegexPrefixIndexBounds to on;
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string" } } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
+ { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
+ { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
+(3 rows)
+
+-- regex truncation case: long anchored prefix
+PREPARE large_prepare_regex1 AS
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', bson_build_document('find', 'regex_coll'::text, 'filter', bson_build_document('a', bson_build_document('$regex', :'large_regex1'::text))::bson)::bson);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    EXECUTE large_prepare_regex1
+$cmd$);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqb", "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqc"), "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=1 loops=1)
+         Recheck Cond: (document @~ '{ "a" : "^qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqb+" }'::bson)
+         Rows Removed by Index Recheck: 1
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=2 loops=1)
+               Index Cond: (document @~ '{ "a" : "^qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqb+" }'::bson)
+(13 rows)
+
+PREPARE large_prepare_regex2 AS
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', bson_build_document('find', 'regex_coll'::text, 'filter', bson_build_document('a', bson_build_document('$regex', :'large_regex2'::text))::bson)::bson);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    EXECUTE large_prepare_regex2
+$cmd$);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=8 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=8 loops=1)
+         Recheck Cond: (document @~ '{ "a" : "^abc|qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq" }'::bson)
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=8 loops=1)
+               Index Cond: (document @~ '{ "a" : "^abc|qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq" }'::bson)
+(12 rows)
+
+reset documentdb.enableExtendedExplainPlans;
+reset documentdb.forceDisableSeqScan;

@@ -7,6 +7,8 @@
 * Map PostgreSQL `Gather Merge` plan node to `PARALLEL_SORT_MERGE` in explain output *[Bugfix]*
 * Support collation with $min and $max aggregation $group accumulators. Guarded by `EnableNewMinMaxAccumulators` and `EnableCollation`
 * Optimize OP_INSERT and refactor opcode parsers
+* Enable index only scan by default and move to the cost estimate function *[Feature]*
+* Optimize index boundaries for $regex when there is an anchored prefix *[Perf]*
 
 ### documentdb v0.110-0 (Unreleased) ###
 * Add support for keyword `description` in `$jsonSchema` *[Feature]*

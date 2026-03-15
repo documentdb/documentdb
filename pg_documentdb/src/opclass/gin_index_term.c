@@ -933,6 +933,20 @@ IsSerializedIndexTermMetadata(bytea *indexTermSerialized)
 
 
 bool
+IsSerializedRootTruncationTerm(bytea *term)
+{
+	if (!IsSerializedIndexTermTruncated(term))
+	{
+		return false;
+	}
+
+	BsonIndexTerm indexTerm;
+	InitializeBsonIndexTerm(term, &indexTerm);
+	return IsRootTruncationTerm(&indexTerm);
+}
+
+
+bool
 IsIndexTermTruncated(const BsonIndexTerm *indexTerm)
 {
 	return IsIndexTermMetadataTruncated(indexTerm->termMetadata);

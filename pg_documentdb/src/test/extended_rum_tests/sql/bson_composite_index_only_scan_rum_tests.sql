@@ -82,6 +82,12 @@ set documentdb.enableIndexOnlyScan to off;
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
 set documentdb.enableIndexOnlyScan to on;
 
+-- indexonly scan with a truncated scan key should work fine
+SELECT FORMAT('{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "%s"}} }, { "$count": "count" }]}', repeat('a', 5000))::bson large_scan_key \gset
+PREPARE large_prepare_query AS
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum', :'large_scan_key'::bson);
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) EXECUTE large_prepare_query $$, p_ignore_heap_fetches => true);
+
 -- force index only scan via GUC
 set documentdb.forceIndexOnlyScanIfAvailable to on;
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);

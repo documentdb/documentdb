@@ -370,11 +370,11 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	bool hasArrayPaths = true;
 
 	/* key that we're doing an ordered scan based off of search mode */
-	bool isOrderedScan = (*searchMode != GIN_SEARCH_MODE_DEFAULT);
+	metaInfo->isOrderedScan = (*searchMode != GIN_SEARCH_MODE_DEFAULT);
 	metaInfo->isBackwardScan = (*searchMode == RUM_SEARCH_MODE_ORDERED_REVERSE);
 	bool isCorrelatedReducedScan = false;
 	bool supportsOrderedOperatorScans = false;
-	if (isOrderedScan)
+	if (metaInfo->isOrderedScan)
 	{
 		*searchMode = GIN_SEARCH_MODE_DEFAULT;
 	}
@@ -407,7 +407,8 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	else
 	{
 		pgbsonelement singleElement;
-		ParseCompositeQuerySpec(query, &singleElement, &hasArrayPaths, &isOrderedScan,
+		ParseCompositeQuerySpec(query, &singleElement, &hasArrayPaths,
+								&metaInfo->isOrderedScan,
 								&isCorrelatedReducedScan,
 								&metaInfo->isBackwardScan, &supportsOrderedOperatorScans);
 		ParseBoundsForCompositeOperator(&singleElement, indexPaths, indexPathLengths,
@@ -421,7 +422,8 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	 * If we don't have arrays, and there's exactly 1 boundary,
 	 * We can apply it to the global bounds, and skip this key
 	 */
-	OptimizeVariableBoundsForQuery(runData, &variableBounds, hasArrayPaths, isOrderedScan,
+	OptimizeVariableBoundsForQuery(runData, &variableBounds, hasArrayPaths,
+								   metaInfo->isOrderedScan,
 								   isCorrelatedReducedScan, options);
 
 	/* Tally up the total variable bound counts - this is the permutation of all variable terms
@@ -501,7 +503,8 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 													  runData, &variableBounds,
 													  indexPaths,
 													  indexPathLengths, sortOrders,
-													  hasArrayPaths, isOrderedScan,
+													  hasArrayPaths,
+													  metaInfo->isOrderedScan,
 													  searchMode);
 	}
 	else
@@ -514,7 +517,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 													   runData, &variableBounds,
 													   indexPaths,
 													   indexPathLengths, sortOrders,
-													   isOrderedScan);
+													   metaInfo->isOrderedScan);
 	}
 
 	PG_RETURN_POINTER(entries);
@@ -571,7 +574,9 @@ ProcessStandardCompositeQueryEntries(int32_t totalPathTerms,
 		}
 	}
 
-	if (runData->metaInfo->hasTruncation && !isOrderedScan)
+	if ((runData->metaInfo->hasTruncation ||
+		 runData->metaInfo->requiresRecheckOnTruncatedIndex) &&
+		!isOrderedScan)
 	{
 		*nentries = totalPathTerms + 1;
 		runData->metaInfo->truncationTermIndex = totalPathTerms;
@@ -853,20 +858,6 @@ OptimizeVariableBoundsForQuery(CompositeQueryRunData *runData,
 	{
 		OptimizeVariableBoundsForOrderedScans(runData, variableBounds, hasArrayPaths);
 	}
-}
-
-
-static bool
-IsSerializedRootTruncationTerm(bytea *term)
-{
-	if (!IsSerializedIndexTermTruncated(term))
-	{
-		return false;
-	}
-
-	BsonIndexTerm indexTerm;
-	InitializeBsonIndexTerm(term, &indexTerm);
-	return IsRootTruncationTerm(&indexTerm);
 }
 
 
@@ -1936,7 +1927,8 @@ gin_bson_composite_path_consistent(PG_FUNCTION_ARGS)
 	/* If operators specifically required runtime recheck honor it */
 	*recheck = runData->metaInfo->requiresRuntimeRecheck;
 
-	if (runData->metaInfo->orderedScanEntryData != NULL)
+	if (runData->metaInfo->orderedScanEntryData != NULL ||
+		runData->metaInfo->isOrderedScan)
 	{
 		/* For ordered scans, we can also return early since the scan keys
 		 * are already guaranteed to be in order and satisfy the query
@@ -1944,7 +1936,8 @@ gin_bson_composite_path_consistent(PG_FUNCTION_ARGS)
 		PG_RETURN_BOOL(true);
 	}
 
-	if (runData->metaInfo->hasTruncation &&
+	if ((runData->metaInfo->hasTruncation ||
+		 runData->metaInfo->requiresRecheckOnTruncatedIndex) &&
 		check[runData->metaInfo->truncationTermIndex])
 	{
 		*recheck = true;
@@ -3114,6 +3107,11 @@ char *
 SerializeBoundsStringForExplain(bytea *entry, void *extraData, PG_FUNCTION_ARGS,
 								List **rawBounds)
 {
+	if (extraData == NULL)
+	{
+		return "";
+	}
+
 	CompositeQueryRunData *runData = (CompositeQueryRunData *) extraData;
 
 	BsonGinCompositePathOptions *options =

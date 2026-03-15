@@ -39,6 +39,7 @@ typedef struct CompositeIndexBounds
 	bool isEqualityBound;
 
 	bool requiresRuntimeRecheck;
+	bool requiresRecheckOnTruncatedIndex;
 
 	/* A list of IndexRecheckArgs that need recheck */
 	List *indexRecheckFunctions;
@@ -146,12 +147,14 @@ typedef struct CompositeQueryMetaInfo
 	bool hasTruncation;
 	int32_t truncationTermIndex;
 	bool requiresRuntimeRecheck;
+	bool requiresRecheckOnTruncatedIndex;
 	int32_t numScanKeys;
 	bool hasMultipleScanKeysPerPath;
 	bool isBackwardScan;
 	PathScanKeyMap *scanKeyMap;
 	int32_t wildcardPathIndex;
 	CompositeOrderedScanEntryData *orderedScanEntryData;
+	bool isOrderedScan;
 } CompositeQueryMetaInfo;
 
 typedef struct CompositeQueryRunData

@@ -182,6 +182,10 @@ bool EnableCompositeWildcardSkipEmptyEntries =
 #define DEFAULT_ENABLE_ORDERED_COMPOSITE_OPERATOR_SCAN true
 bool EnableOrderedCompositeOperatorScan = DEFAULT_ENABLE_ORDERED_COMPOSITE_OPERATOR_SCAN;
 
+/* Added in v111, enabled in v111, remove after v114 */
+#define DEFAULT_ENABLE_REGEX_PREFIX_INDEX_BOUNDS true
+bool EnableRegexPrefixIndexBounds = DEFAULT_ENABLE_REGEX_PREFIX_INDEX_BOUNDS;
+
 /* Added in v111, Pending stabilization */
 #define DEFAULT_ENABLE_EXTENDED_INDEXES false
 bool EnableExtendedIndexes = DEFAULT_ENABLE_EXTENDED_INDEXES;
@@ -867,6 +871,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			" which has skip-scan support enabled inherently."),
 		NULL, &EnableOrderedCompositeOperatorScan,
 		DEFAULT_ENABLE_ORDERED_COMPOSITE_OPERATOR_SCAN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableRegexPrefixIndexBounds", newGucPrefix),
+		gettext_noop(
+			"Whether to enable the optimized regex prefix index bounds."),
+		NULL, &EnableRegexPrefixIndexBounds,
+		DEFAULT_ENABLE_REGEX_PREFIX_INDEX_BOUNDS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

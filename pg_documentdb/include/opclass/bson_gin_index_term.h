@@ -102,6 +102,7 @@ bool IsIndexTermValueDescending(const BsonIndexTerm *indexTerm);
 bool IsSerializedIndexTermComposite(bytea *indexTermSerialized);
 bool IsSerializedIndexTermTruncated(bytea *indexTermSerialized);
 bool IsSerializedIndexTermMetadata(bytea *indexTermSerialized);
+bool IsSerializedRootTruncationTerm(bytea *indexTermSerialized);
 
 void InitializeBsonIndexTerm(bytea *indexTermSerialized, BsonIndexTerm *indexTerm);
 
