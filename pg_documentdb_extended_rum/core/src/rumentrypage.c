@@ -635,10 +635,8 @@ static Page
 entrySplitPage(RumBtree btree, Buffer lbuf, Buffer rbuf,
 			   Page lPage, Page rPage, OffsetNumber off)
 {
-	OffsetNumber i,
-				 maxoff,
-				 separator = InvalidOffsetNumber;
-	Size totalsize = 0;
+	OffsetNumber i, maxoff, maxoffOrig;
+	Size totalsize = 0, splitPointSize = 0;
 	Size lsize = 0,
 		 size;
 	char *ptr;
@@ -695,22 +693,35 @@ entrySplitPage(RumBtree btree, Buffer lbuf, Buffer rbuf,
 		RumPageGetCycleId(rPage) = RumPageGetCycleId(newlPage);
 	}
 
+	/* By default we split in half by size */
+	splitPointSize = totalsize / 2;
+
+	/* For now we consider split scenarios on tail insertions of the leaf to be
+	 * the case where we consider fillfactor. This can be improved in the future.
+	 */
+	if (RumEnablePageFillFactor && btree->rumstate->fillFactor != 50 &&
+		RumPageIsLeaf(lPage) && RumPageRightMost(lPage))
+	{
+		splitPointSize = totalsize * btree->rumstate->fillFactor / 100;
+	}
+
 	ptr = tupstore;
+	maxoffOrig = maxoff;
 	maxoff++;
 	lsize = 0;
-
 	page = newlPage;
 	for (i = FirstOffsetNumber; i <= maxoff; i++)
 	{
 		PG_USED_FOR_ASSERTS_ONLY OffsetNumber writtenoffset = InvalidOffsetNumber;
 		itup = (IndexTuple) ptr;
 
-		if (lsize > totalsize / 2)
+		/*
+		 * If the size exceeds the split point, move to the new page.
+		 * Don't go over the original max on the left page since we know that the sum total
+		 * of the original offset + the new item exceeds the size of 1 page.
+		 */
+		if (lsize > splitPointSize || i > maxoffOrig)
 		{
-			if (separator == InvalidOffsetNumber)
-			{
-				separator = i - 1;
-			}
 			page = rPage;
 		}
 		else
