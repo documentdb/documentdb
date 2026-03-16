@@ -10,7 +10,7 @@ use crate::{
     context::{ConnectionContext, RequestContext},
     error::{DocumentDBError, ErrorCode, Result},
     postgres::PgDataClient,
-    requests::{read_concern::ReadConcern, RequestType},
+    requests::RequestType,
     responses::Response,
 };
 
@@ -23,119 +23,10 @@ pub async fn handle(
     let (request, request_info, _) = request_context.get_components();
 
     connection_context.transaction = None;
+
     if let Some(request_transaction_info) = &request_info.transaction_info {
         if request_transaction_info.auto_commit {
-            if request_info.session_id.is_none() {
-                let error_message = "txnNumber may only be provided for multi-document transactions and retryable write commands. autocommit:false was not provided, and command is not a retryable write command.";
-                return Err(DocumentDBError::documentdb_error(
-                    ErrorCode::NotARetryableWriteCommand,
-                    error_message.to_string(),
-                ));
-            }
-
             return Ok(());
-        }
-
-        if (matches!(request.request_type(), RequestType::KillCursors)
-            && request_transaction_info.start_transaction
-            && !request_transaction_info.auto_commit)
-        {
-            return Err(DocumentDBError::documentdb_error(
-                ErrorCode::OperationNotSupportedInTransaction,
-                "Cannot run command KillCursors at the start of a transaction".to_string(),
-            ));
-        };
-
-        if matches!(
-            request.request_type(),
-            RequestType::ReIndex
-                | RequestType::CreateIndex
-                | RequestType::CreateIndexes
-                | RequestType::DropIndexes
-        ) {
-            return Err(DocumentDBError::documentdb_error(
-                ErrorCode::OperationNotSupportedInTransaction,
-                "Cannot run command in transaction.".to_string(),
-            ));
-        }
-
-        if matches!(
-            request.request_type(),
-            RequestType::Aggregate
-                | RequestType::FindAndModify
-                | RequestType::Update
-                | RequestType::Insert
-                | RequestType::Count
-                | RequestType::Distinct
-                | RequestType::Find
-                | RequestType::GetMore
-        ) {
-            if matches!(request.db()?, "config" | "admin" | "local") {
-                return Err(DocumentDBError::documentdb_error(
-                    ErrorCode::OperationNotSupportedInTransaction,
-                    format!(
-                        "Cannot perform data operation against database {} inside a transaction",
-                        request.db()?
-                    ),
-                ));
-            }
-
-            let collection: &str = match request_info.collection() {
-                Ok(c) if !c.is_empty() => c,
-                _ => "",
-            };
-
-            if collection == "system.profile" {
-                return Err(DocumentDBError::documentdb_error(
-                    ErrorCode::OperationNotSupportedInTransaction,
-                    "Cannot run command against system collections in transaction.".to_string(),
-                ));
-            }
-
-            if collection.starts_with("system.") {
-                let error_message = "Cannot run command against system views in transaction.";
-                return Err(DocumentDBError::documentdb_error(
-                    ErrorCode::Location51071,
-                    error_message.to_string(),
-                ));
-            }
-        }
-
-        if !request_transaction_info.start_transaction
-            && *request_info.read_concern() != ReadConcern::Unspecified
-        {
-            return Err(DocumentDBError::documentdb_error(
-                ErrorCode::InvalidOptions,
-                "Read concern cannot be defined after transaction has started".to_string(),
-            ));
-        }
-
-        if request_info.read_concern() == &ReadConcern::Snapshot
-            && !(connection_context
-                .service_context
-                .dynamic_configuration()
-                .allow_transaction_snapshot())
-        {
-            return Err(DocumentDBError::documentdb_error(
-                ErrorCode::CommandNotSupported,
-                format!(
-                    "'{:?}' read concern is not supported",
-                    &ReadConcern::Snapshot
-                ),
-            ));
-        }
-
-        if matches!(
-            request_info.read_concern(),
-            ReadConcern::Available | ReadConcern::Linearizable
-        ) {
-            return Err(DocumentDBError::documentdb_error(
-                ErrorCode::CommandNotSupported,
-                format!(
-                    "'{:?}' read concern is not supported",
-                    request_info.read_concern()
-                ),
-            ));
         }
 
         let session_id = request_info
