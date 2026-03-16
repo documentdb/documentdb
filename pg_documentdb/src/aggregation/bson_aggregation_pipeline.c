@@ -5881,8 +5881,10 @@ Query *
 HandleGroup(const bson_value_t *existingValue, Query *query,
 			AggregationPipelineBuildContext *context)
 {
-	/* We only support collation with $min/max accumulators */
-	if (IsCollationApplicable(context->collationString) && !CanUseWithExprAggregates())
+	/* Collation is only supported for the new WithExpr accumulators,
+	 * not for the grouping key itself. */
+	if (IsCollationApplicable(context->collationString) &&
+		!(EnableCollationWithNewGroupAccumulators && CanUseWithExprAggregates()))
 	{
 		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						errmsg("collation is not supported in $group stage yet.")));

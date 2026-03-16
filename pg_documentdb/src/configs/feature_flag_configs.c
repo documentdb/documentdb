@@ -353,6 +353,11 @@ bool EnableLookupIdJoinOptimizationOnCollation =
 #define DEFAULT_ENABLE_COLLATION_WITH_INDEXES false
 bool EnableCollationWithIndexes = DEFAULT_ENABLE_COLLATION_WITH_INDEXES;
 
+/* Added in v110, Pending stabilization */
+#define DEFAULT_ENABLE_COLLATION_WITH_NEW_GROUP_ACCUMULATORS false
+bool EnableCollationWithNewGroupAccumulators =
+	DEFAULT_ENABLE_COLLATION_WITH_NEW_GROUP_ACCUMULATORS;
+
 
 /*
  * SECTION: DML & Write path feature flags
@@ -504,6 +509,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Determines whether collation is supported for indexes."),
 		NULL, &EnableCollationWithIndexes,
 		DEFAULT_ENABLE_COLLATION_WITH_INDEXES,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCollationWithNewGroupAccumulators", newGucPrefix),
+		gettext_noop(
+			"Determines whether collation is enabled with the new group accumulators."),
+		NULL, &EnableCollationWithNewGroupAccumulators,
+		DEFAULT_ENABLE_COLLATION_WITH_NEW_GROUP_ACCUMULATORS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 
