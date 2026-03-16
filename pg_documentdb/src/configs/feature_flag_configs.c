@@ -399,6 +399,14 @@ bool EnableDropInvalidIndexesOnReadOnly = DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ON
 #define DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER false
 bool IndexBuildsScheduledOnBgWorker = DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER;
 
+/*
+ * SECTION: Gateway-Extension compatibility flags
+ */
+
+/* Added in v111, Pending stabilization */
+#define DEFAULT_ENABLE_BSON_PASSTHROUGH_COMMANDS false
+bool EnableBsonPassthroughCommands = DEFAULT_ENABLE_BSON_PASSTHROUGH_COMMANDS;
+
 /* FEATURE FLAGS END */
 
 void
@@ -1007,5 +1015,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable dropping invalid indexes on read only database state."),
 		NULL, &EnableDropInvalidIndexesOnReadOnly,
 		DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableBsonPassthroughCommands", newGucPrefix),
+		gettext_noop(
+			"Enables BSON passthrough mode for gateway commands that depend on newer extension versions."),
+		NULL,
+		&EnableBsonPassthroughCommands,
+		DEFAULT_ENABLE_BSON_PASSTHROUGH_COMMANDS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }

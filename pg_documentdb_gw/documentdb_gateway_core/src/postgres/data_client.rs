@@ -258,6 +258,16 @@ pub trait PgDataClient: Send + Sync {
         connection_context: &ConnectionContext,
     ) -> Result<Vec<Row>>;
 
+    async fn execute_rename_collection_legacy(
+        &self,
+        request_context: &RequestContext<'_>,
+        source_db: &str,
+        source_coll: &str,
+        target_coll: &str,
+        drop_target: bool,
+        connection_context: &ConnectionContext,
+    ) -> Result<Vec<Row>>;
+
     async fn execute_create_user(
         &self,
         request_context: &RequestContext<'_>,

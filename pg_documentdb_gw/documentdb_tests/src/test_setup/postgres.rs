@@ -61,6 +61,30 @@ pub fn get_pool_manager() -> Arc<PoolManager> {
     }))
 }
 
+pub async fn is_bson_passthrough_enabled() -> bool {
+    let pool_manager = get_pool_manager();
+    let conn = match pool_manager.system_requests_connection().await {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let rows = match conn
+        .query(
+            "SELECT setting FROM pg_settings WHERE name = 'documentdb.enableBsonPassthroughCommands'",
+            &[],
+            &[],
+            None,
+            &RequestTracker::new(),
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+    rows.first()
+        .map(|row| row.get::<_, String>(0) == "on")
+        .unwrap_or(false)
+}
+
 pub async fn create_user(user: &str, pass: &str) -> Result<()> {
     let pool_manager = get_pool_manager();
 

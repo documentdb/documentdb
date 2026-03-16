@@ -14,6 +14,15 @@ use crate::{configuration::Version, postgres::conn_mgmt};
 
 pub const POSTGRES_RECOVERY_KEY: &str = "IsPostgresInRecovery";
 
+/// Parses "major.minor-patch" or "major.minor.patch" format into (major, minor).
+pub fn parse_extension_version(version_str: &str) -> Option<(u32, u32)> {
+    let (major_str, rest) = version_str.split_once('.')?;
+    let major = major_str.parse().ok()?;
+    let minor_str = rest.split(['-', '.']).next()?;
+    let minor = minor_str.parse().ok()?;
+    Some((major, minor))
+}
+
 /// Used for configurations which can change during runtime.
 pub trait DynamicConfiguration: Send + Sync + Debug {
     fn get_str(&self, key: &str) -> Option<String>;
@@ -143,5 +152,33 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
 
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "")
+    }
+
+    /// Returns true if the GUC enableBsonPassthroughCommands is ON and the Extension
+    /// version is >= 0.110 (the version where BSON command signatures were introduced).
+    fn extension_supports_bson_passthrough(&self) -> bool {
+        if !self.get_bool("enableBsonPassthroughCommands", false) {
+            return false;
+        }
+        let topology = self.topology();
+        let raw_doc = match topology.as_document() {
+            Some(d) => d,
+            None => return false,
+        };
+        let versions = match raw_doc.get_array("documentdb_versions") {
+            Ok(arr) => arr,
+            Err(_) => return false,
+        };
+        let version_str = match versions.into_iter().next() {
+            Some(Ok(v)) => match v.as_str() {
+                Some(s) => s,
+                None => return false,
+            },
+            _ => return false,
+        };
+        match parse_extension_version(version_str) {
+            Some((major, minor)) => major > 0 || (major == 0 && minor >= 110),
+            None => false,
+        }
     }
 }

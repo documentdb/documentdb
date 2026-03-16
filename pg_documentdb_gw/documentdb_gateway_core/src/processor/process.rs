@@ -291,12 +291,21 @@ pub async fn process_request(
                 .await
             }
             RequestType::RenameCollection => {
-                data_description::process_rename_collection(
-                    request_context,
-                    connection_context,
-                    pg_data_client,
-                )
-                .await
+                if dynamic_config.extension_supports_bson_passthrough() {
+                    data_description::process_rename_collection(
+                        request_context,
+                        connection_context,
+                        pg_data_client,
+                    )
+                    .await
+                } else {
+                    data_description::process_rename_collection_legacy(
+                        request_context,
+                        connection_context,
+                        pg_data_client,
+                    )
+                    .await
+                }
             }
             RequestType::PrepareTransaction => constant::process_prepare_transaction(),
             RequestType::CommitTransaction => transaction::process_commit(connection_context).await,

@@ -13,7 +13,7 @@ use bson::rawdoc;
 use crate::{
     configuration::DynamicConfiguration,
     context::{ConnectionContext, RequestContext},
-    error::{DocumentDBError, Result},
+    error::{DocumentDBError, ErrorCode, Result},
     postgres::PgDataClient,
     protocol::{self, OK_SUCCEEDED},
     responses::{RawResponse, Response},
@@ -114,6 +114,71 @@ pub async fn process_rename_collection(
 ) -> Result<Response> {
     pg_data_client
         .execute_rename_collection(request_context, connection_context)
+        .await?;
+    Ok(Response::ok())
+}
+
+pub async fn process_rename_collection_legacy(
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response> {
+    let request = request_context.payload;
+    let mut source: Option<String> = None;
+    let mut target: Option<String> = None;
+    let mut drop_target = false;
+    request.extract_fields(|k, v| {
+        match k {
+            "renameCollection" => {
+                source = Some(
+                    v.as_str()
+                        .ok_or(DocumentDBError::bad_value(
+                            "renameCollection was not a string".to_string(),
+                        ))?
+                        .to_string(),
+                )
+            }
+            "to" => {
+                target = Some(
+                    v.as_str()
+                        .ok_or(DocumentDBError::bad_value(
+                            "to was not a string".to_string(),
+                        ))?
+                        .to_string(),
+                )
+            }
+            "dropTarget" => {
+                drop_target = v.as_bool().unwrap_or(false);
+            }
+            _ => {}
+        };
+        Ok(())
+    })?;
+
+    let source = source.ok_or(DocumentDBError::bad_value(
+        "'renameCollection' missing".to_string(),
+    ))?;
+    let target = target.ok_or(DocumentDBError::bad_value("'to' missing".to_string()))?;
+
+    let (source_db, source_coll) = protocol::extract_database_and_collection_names(&source)?;
+    let (target_db, target_coll) = protocol::extract_database_and_collection_names(&target)?;
+
+    if source_db != target_db {
+        return Err(DocumentDBError::documentdb_error(
+            ErrorCode::CommandNotSupported,
+            "renameCollection cannot change databases".to_string(),
+        ));
+    }
+
+    pg_data_client
+        .execute_rename_collection_legacy(
+            request_context,
+            source_db,
+            source_coll,
+            target_coll,
+            drop_target,
+            connection_context,
+        )
         .await?;
     Ok(Response::ok())
 }

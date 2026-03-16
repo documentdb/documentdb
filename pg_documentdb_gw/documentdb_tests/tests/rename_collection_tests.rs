@@ -6,7 +6,10 @@
  *-------------------------------------------------------------------------
  */
 
-use documentdb_tests::{commands::rename_collection, test_setup::initialize};
+use documentdb_tests::{
+    commands::rename_collection,
+    test_setup::{initialize, postgres},
+};
 use mongodb::error::Error;
 
 #[tokio::test]
@@ -49,6 +52,11 @@ async fn validate_rename_collection_not_found_error() -> Result<(), Error> {
 
 #[tokio::test]
 async fn validate_rename_collection_unknown_field_error() -> Result<(), Error> {
+    if !postgres::is_bson_passthrough_enabled().await {
+        // Unknown field validation is only enforced on the BSON path (GUC=on).
+        // On the legacy path, unknown fields are silently ignored by design.
+        return Ok(());
+    }
     let db = initialize::initialize_with_db("rename_tests_unknown_field").await?;
 
     rename_collection::validate_rename_collection_unknown_field_error(&db).await;

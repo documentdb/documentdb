@@ -953,6 +953,34 @@ impl PgDataClient for DocumentDBDataClient {
         Ok(rename_collection_rows)
     }
 
+    async fn execute_rename_collection_legacy(
+        &self,
+        request_context: &RequestContext<'_>,
+        source_db: &str,
+        source_coll: &str,
+        target_coll: &str,
+        drop_target: bool,
+        connection_context: &ConnectionContext,
+    ) -> Result<Vec<Row>> {
+        let (_, request_info, request_tracker) = request_context.get_components();
+        let rename_collection_rows = self
+            .pull_connection(connection_context)
+            .await?
+            .query(
+                connection_context
+                    .service_context
+                    .query_catalog()
+                    .rename_collection_legacy(),
+                &[Type::TEXT, Type::TEXT, Type::TEXT, Type::BOOL],
+                &[&source_db, &source_coll, &target_coll, &drop_target],
+                Timeout::transaction(request_info.max_time_ms),
+                request_tracker,
+            )
+            .await?;
+
+        Ok(rename_collection_rows)
+    }
+
     async fn execute_create_user(
         &self,
         request_context: &RequestContext<'_>,

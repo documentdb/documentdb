@@ -61,6 +61,7 @@ pub struct QueryCatalog {
     pub set_allow_write: String,
     pub shard_collection: String,
     pub rename_collection: String,
+    pub rename_collection_legacy: String,
     pub coll_mod: String,
     pub unshard_collection: String,
     pub get_shard_map: String,
@@ -356,6 +357,10 @@ impl QueryCatalog {
         &self.rename_collection
     }
 
+    pub fn rename_collection_legacy(&self) -> &str {
+        &self.rename_collection_legacy
+    }
+
     pub fn current_op(&self) -> &str {
         &self.current_op
     }
@@ -500,6 +505,7 @@ pub fn create_query_catalog() -> QueryCatalog {
             create_collection_view: "SELECT documentdb_api.create_collection_view($1, $2)".to_string(),
             shard_collection: "SELECT documentdb_api.shard_collection($1, $2, $3, $4)".to_string(),
             rename_collection: "SELECT documentdb_api.rename_collection($1)".to_string(),
+            rename_collection_legacy: "SELECT documentdb_api.rename_collection($1, $2, $3, $4)".to_string(),
             coll_mod: "SELECT documentdb_api.coll_mod($1, $2, $3)".to_string(),
             unshard_collection: "SELECT documentdb_api.unshard_collection($1)".to_string(),
 
