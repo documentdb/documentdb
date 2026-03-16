@@ -3,3 +3,6 @@
 
 #include "udfs/query/bson_orderby--0.111-0.sql"
 #include "operators/bson_dollar_operators--0.111-0.sql"
+
+#include "udfs/schema_mgmt/drop_collection--0.111-0.sql"
+#include "udfs/schema_mgmt/drop_database--0.111-0.sql"

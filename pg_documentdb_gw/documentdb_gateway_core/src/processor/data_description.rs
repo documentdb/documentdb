@@ -59,6 +59,35 @@ pub async fn process_drop_database(
     pg_data_client
         .execute_drop_database(
             request_context,
+            is_read_only_for_disk_full,
+            connection_context,
+        )
+        .await?;
+
+    Ok(Response::Raw(RawResponse(rawdoc! {
+        "ok": OK_SUCCEEDED,
+        "dropped": db,
+    })))
+}
+
+pub async fn process_drop_database_legacy(
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    dynamic_config: &Arc<dyn DynamicConfiguration>,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response> {
+    let request_info = request_context.info;
+    let db = request_info.db()?.to_string();
+
+    connection_context
+        .service_context
+        .cursor_store()
+        .invalidate_cursors_by_database(&db);
+
+    let is_read_only_for_disk_full = dynamic_config.is_read_only_for_disk_full();
+    pg_data_client
+        .execute_drop_database_legacy(
+            request_context,
             db.as_str(),
             is_read_only_for_disk_full,
             connection_context,
@@ -93,6 +122,39 @@ pub async fn process_drop_collection(
     let is_read_only_for_disk_full = dynamic_config.is_read_only_for_disk_full();
     pg_data_client
         .execute_drop_collection(
+            request_context,
+            is_read_only_for_disk_full,
+            connection_context,
+        )
+        .await?;
+
+    Ok(Response::Raw(RawResponse(rawdoc! {
+        "ok": OK_SUCCEEDED,
+        "dropped": coll,
+    })))
+}
+
+pub async fn process_drop_collection_legacy(
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    dynamic_config: &Arc<dyn DynamicConfiguration>,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response> {
+    let request_info = request_context.info;
+
+    let coll = request_info.collection()?.to_string();
+    let coll_str = coll.as_str();
+    let db = request_info.db()?.to_string();
+    let db_str = db.as_str();
+
+    connection_context
+        .service_context
+        .cursor_store()
+        .invalidate_cursors_by_collection(db_str, coll_str);
+
+    let is_read_only_for_disk_full = dynamic_config.is_read_only_for_disk_full();
+    pg_data_client
+        .execute_drop_collection_legacy(
             request_context,
             db_str,
             coll_str,

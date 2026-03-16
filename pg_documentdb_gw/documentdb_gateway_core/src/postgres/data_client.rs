@@ -110,6 +110,13 @@ pub trait PgDataClient: Send + Sync {
     async fn execute_drop_collection(
         &self,
         request_context: &RequestContext<'_>,
+        is_read_only_for_disk_full: bool,
+        connection_context: &ConnectionContext,
+    ) -> Result<()>;
+
+    async fn execute_drop_collection_legacy(
+        &self,
+        request_context: &RequestContext<'_>,
         db: &str,
         collection: &str,
         is_read_only_for_disk_full: bool,
@@ -117,6 +124,13 @@ pub trait PgDataClient: Send + Sync {
     ) -> Result<()>;
 
     async fn execute_drop_database(
+        &self,
+        request_context: &RequestContext<'_>,
+        is_read_only_for_disk_full: bool,
+        connection_context: &ConnectionContext,
+    ) -> Result<()>;
+
+    async fn execute_drop_database_legacy(
         &self,
         request_context: &RequestContext<'_>,
         db: &str,

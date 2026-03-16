@@ -58,6 +58,8 @@ pub struct QueryCatalog {
     pub create_collection_view: String,
     pub drop_database: String,
     pub drop_collection: String,
+    pub drop_database_legacy: String,
+    pub drop_collection_legacy: String,
     pub set_allow_write: String,
     pub shard_collection: String,
     pub rename_collection: String,
@@ -247,6 +249,14 @@ impl QueryCatalog {
 
     pub fn drop_collection(&self) -> &str {
         &self.drop_collection
+    }
+
+    pub fn drop_database_legacy(&self) -> &str {
+        &self.drop_database_legacy
+    }
+
+    pub fn drop_collection_legacy(&self) -> &str {
+        &self.drop_collection_legacy
     }
 
     pub fn delete(&self) -> &str {
@@ -495,7 +505,9 @@ pub fn create_query_catalog() -> QueryCatalog {
 
             // data_description.rs
             drop_database: "SELECT documentdb_api.drop_database($1)".to_string(),
-            drop_collection: "SELECT documentdb_api.drop_collection($1, $2)".to_string(),
+            drop_collection: "SELECT documentdb_api.drop_collection($1)".to_string(),
+            drop_database_legacy: "SELECT documentdb_api.drop_database($1)".to_string(),
+            drop_collection_legacy: "SELECT documentdb_api.drop_collection($1, $2)".to_string(),
             set_allow_write: "SET LOCAL documentdb.IsPgReadOnlyForDiskFull to false; SET transaction read write".to_string(),
             create_collection_view: "SELECT documentdb_api.create_collection_view($1, $2)".to_string(),
             shard_collection: "SELECT documentdb_api.shard_collection($1, $2, $3, $4)".to_string(),

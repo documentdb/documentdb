@@ -287,6 +287,68 @@ impl PgDataClient for DocumentDBDataClient {
     async fn execute_drop_collection(
         &self,
         request_context: &RequestContext<'_>,
+        is_read_only_for_disk_full: bool,
+        connection_context: &ConnectionContext,
+    ) -> Result<()> {
+        let (request, request_info, request_tracker) = request_context.get_components();
+        let query_catalog = connection_context.service_context.query_catalog();
+
+        let _ = self
+            .run_readonly_if_needed(
+                is_read_only_for_disk_full,
+                self.pull_connection(connection_context).await?,
+                query_catalog,
+                move |connection| async move {
+                    connection
+                        .query(
+                            query_catalog.drop_collection(),
+                            &[Type::BYTEA],
+                            &[&PgDocument(request.document())],
+                            Timeout::transaction(request_info.max_time_ms),
+                            request_tracker,
+                        )
+                        .await
+                },
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    async fn execute_drop_database(
+        &self,
+        request_context: &RequestContext<'_>,
+        is_read_only_for_disk_full: bool,
+        connection_context: &ConnectionContext,
+    ) -> Result<()> {
+        let (request, request_info, request_tracker) = request_context.get_components();
+        let query_catalog = connection_context.service_context.query_catalog();
+
+        let _ = self
+            .run_readonly_if_needed(
+                is_read_only_for_disk_full,
+                self.pull_connection(connection_context).await?,
+                query_catalog,
+                move |connection| async move {
+                    connection
+                        .query(
+                            query_catalog.drop_database(),
+                            &[Type::BYTEA],
+                            &[&PgDocument(request.document())],
+                            Timeout::transaction(request_info.max_time_ms),
+                            request_tracker,
+                        )
+                        .await
+                },
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    async fn execute_drop_collection_legacy(
+        &self,
+        request_context: &RequestContext<'_>,
         db: &str,
         collection: &str,
         is_read_only_for_disk_full: bool,
@@ -303,7 +365,7 @@ impl PgDataClient for DocumentDBDataClient {
                 move |connection| async move {
                     connection
                         .query(
-                            query_catalog.drop_collection(),
+                            query_catalog.drop_collection_legacy(),
                             &[Type::TEXT, Type::TEXT],
                             &[&db, &collection],
                             Timeout::transaction(request_info.max_time_ms),
@@ -317,7 +379,7 @@ impl PgDataClient for DocumentDBDataClient {
         Ok(())
     }
 
-    async fn execute_drop_database(
+    async fn execute_drop_database_legacy(
         &self,
         request_context: &RequestContext<'_>,
         db: &str,
@@ -335,7 +397,7 @@ impl PgDataClient for DocumentDBDataClient {
                 move |connection| async move {
                     connection
                         .query(
-                            query_catalog.drop_database(),
+                            query_catalog.drop_database_legacy(),
                             &[Type::TEXT],
                             &[&db],
                             Timeout::transaction(request_info.max_time_ms),

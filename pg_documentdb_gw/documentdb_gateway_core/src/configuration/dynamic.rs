@@ -29,6 +29,12 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     // Needed to downcast to concrete type
     fn as_any(&self) -> &dyn std::any::Any;
 
+    /// Temporary stub . Remove after PR#514 merges —
+    /// PR#514 provides the real implementation in PgConfiguration.
+    fn extension_supports_bson_passthrough(&self) -> bool {
+        true
+    }
+
     fn enable_change_streams(&self) -> bool {
         self.get_bool("enableChangeStreams", false)
     }

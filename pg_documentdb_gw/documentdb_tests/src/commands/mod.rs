@@ -16,6 +16,8 @@ pub mod current_op;
 pub mod cursor;
 pub mod delete;
 pub mod distinct;
+pub mod drop_collection;
+pub mod drop_database;
 pub mod explain;
 pub mod find;
 pub mod find_and_modify;

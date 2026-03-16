@@ -121,22 +121,42 @@ pub async fn process_request(
                 .await
             }
             RequestType::Drop => {
-                data_description::process_drop_collection(
-                    request_context,
-                    connection_context,
-                    &dynamic_config,
-                    pg_data_client,
-                )
-                .await
+                if dynamic_config.extension_supports_bson_passthrough() {
+                    data_description::process_drop_collection(
+                        request_context,
+                        connection_context,
+                        &dynamic_config,
+                        pg_data_client,
+                    )
+                    .await
+                } else {
+                    data_description::process_drop_collection_legacy(
+                        request_context,
+                        connection_context,
+                        &dynamic_config,
+                        pg_data_client,
+                    )
+                    .await
+                }
             }
             RequestType::DropDatabase => {
-                data_description::process_drop_database(
-                    request_context,
-                    connection_context,
-                    &dynamic_config,
-                    pg_data_client,
-                )
-                .await
+                if dynamic_config.extension_supports_bson_passthrough() {
+                    data_description::process_drop_database(
+                        request_context,
+                        connection_context,
+                        &dynamic_config,
+                        pg_data_client,
+                    )
+                    .await
+                } else {
+                    data_description::process_drop_database_legacy(
+                        request_context,
+                        connection_context,
+                        &dynamic_config,
+                        pg_data_client,
+                    )
+                    .await
+                }
             }
             RequestType::Explain => {
                 explain::process_explain(request_context, None, connection_context, pg_data_client)
