@@ -433,6 +433,7 @@ typedef struct RumOptions
 	bool useAlternativeOrder;
 	int attachColumn;
 	int addToColumn;
+	int fillFactor;
 }   RumOptions;
 
 #define ALT_ADD_INFO_NULL_FLAG (0x8000)
@@ -467,6 +468,7 @@ typedef struct RumState
 	bool useAlternativeOrder;
 	AttrNumber attrnAttachColumn;
 	AttrNumber attrnAddToColumn;
+	int fillFactor;
 
 	/*
 	 * origTupDesc is the nominal tuple descriptor of the index, ie, the i'th
@@ -1125,6 +1127,8 @@ extern PGDLLIMPORT bool RumVacuumSkipPrunePostingTreePages;
 extern PGDLLIMPORT bool RumEnableSupportDeadIndexItems;
 extern PGDLLIMPORT bool RumSkipResetOnDeadEntryPage;
 extern PGDLLIMPORT bool RumEnableOrderedOperatorScans;
+extern PGDLLIMPORT int RumDefaultPageFillFactor;
+extern PGDLLIMPORT bool RumEnablePageFillFactor;
 
 /*
  * Functions for reading ItemPointers with additional information. Used in
