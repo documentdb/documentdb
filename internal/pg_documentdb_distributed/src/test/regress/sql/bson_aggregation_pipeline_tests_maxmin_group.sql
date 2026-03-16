@@ -364,6 +364,7 @@ SELECT documentdb_api.insert_one('db','maxmin_collation_test','{ "_id": 5, "grou
 
 SET documentdb_core.enableCollation TO on;
 SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 
 -- $max on string field with collation (locale: en, strength: 1 = case-insensitive)
 -- Uses maxmin_string_test collection from Test 1: apple, BANANA, Cherry (cat A), date, FIG, grape (cat B)
@@ -449,8 +450,10 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_num
 -- =============================================================================
 
 SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_test", "pipeline": [ { "$group": { "_id": "$group", "maxName": { "$max": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 
 -- =============================================================================
 -- Test 16: sharded collection with collation on $min/$max
@@ -473,4 +476,5 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_col
 -- Post-sharding constant group with collation
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_test", "pipeline": [ { "$group": { "_id": null, "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } } ], "collation": { "locale": "en", "strength": 1 } }');
 
+SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb_core.enableCollation TO off;

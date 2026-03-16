@@ -45,7 +45,7 @@ test: bson_dollar_operators_negation_tests_runtime
 test: bson_dollar_operators_negation_tests_index
 test: bson_dollar_operators_negation_tests_explain_index
 test: bson_dollar_operators_negation_tests_explain_runtime
-test: bson_dollar_ops_collation_tests_runtime
+test: bson_collation_runtime_tests
 # we want to test BsonAggValue type I/O functions (which uses _send/_receive with pg18+citus14)
 test: bson_aggregation_pipeline_tests_maxmin_group 
 

@@ -155,6 +155,7 @@ GenerateFirstPageQueryData(void)
  * Used by both $group accumulators and $setWindowFields window operators.
  */
 extern bool EnableNewMinMaxAccumulators;
+extern bool EnableCollationWithNewGroupAccumulators;
 
 inline static bool
 CanUseWithExprAggregates(void)
