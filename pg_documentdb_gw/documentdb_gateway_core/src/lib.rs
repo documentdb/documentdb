@@ -41,7 +41,7 @@ use crate::{
     error::{DocumentDBError, ErrorCode, Result},
     postgres::PgDataClient,
     protocol::header::Header,
-    requests::{request_tracker::RequestTracker, Request, RequestIntervalKind},
+    requests::{request_tracker::RequestTracker, validation, Request, RequestIntervalKind},
     responses::{CommandError, Response},
     telemetry::{client_info::parse_client_info, TelemetryProvider},
 };
@@ -638,6 +638,8 @@ where
     request_tracker.record_duration(RequestIntervalKind::FormatRequest, format_request_start);
 
     let request_info = request.extract_common()?;
+    validation::validate_request(connection_context, &request_info, &request)?;
+
     let request_context = RequestContext {
         activity_id,
         payload: &request,
