@@ -7,6 +7,9 @@ pub(crate) static PG_DOCUMENTDB_GATEWAY_DATABASE: GucSetting<Option<CString>> =
 pub(crate) static PG_DOCUMENTDB_SETUP_CONFIGURATION: GucSetting<Option<CString>> =
     GucSetting::<Option<CString>>::new(None);
 
+pub(crate) static PG_DOCUMENTDB_USE_PLUGGABLE_AUTH: GucSetting<bool> =
+    GucSetting::<bool>::new(false);
+
 pub fn init() {
     GucRegistry::define_string_guc(
         c"documentdb_gateway.database",
@@ -21,6 +24,14 @@ pub fn init() {
         c"The setup configuration file for the pg_documentdb_gateway BGWorker",
         c"This should be the path to the setup configuration file",
         &PG_DOCUMENTDB_SETUP_CONFIGURATION,
+        GucContext::Postmaster,
+        GucFlags::SUPERUSER_ONLY,
+    );
+    GucRegistry::define_bool_guc(
+        c"documentdb_gateway.use_pluggable_auth",
+        c"Enable the pluggable authentication architecture (RFC-0009)",
+        c"When true, authentication requests are routed through the AuthProviderRegistry. Requires restart.",
+        &PG_DOCUMENTDB_USE_PLUGGABLE_AUTH,
         GucContext::Postmaster,
         GucFlags::SUPERUSER_ONLY,
     );

@@ -123,7 +123,8 @@ async fn run_docdb_gateway(setup_configuration_file: &str) {
         dynamic_configuration,
         connection_pool_manager,
         tls_provider,
-    );
+    )
+    .await;
 
     run_gateway::<DocumentDBDataClient>(service_context, None, shutdown_token)
         .await
