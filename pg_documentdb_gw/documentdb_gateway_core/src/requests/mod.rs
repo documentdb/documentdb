@@ -9,6 +9,7 @@
 pub mod read_concern;
 pub mod read_preference;
 pub mod request_tracker;
+pub mod validation;
 
 use std::{
     fmt::{self, Debug},
@@ -167,6 +168,23 @@ impl RequestType {
         matches!(
             &self,
             RequestType::IsMaster | RequestType::Hello | RequestType::Ping | RequestType::BuildInfo
+        )
+    }
+
+    /// Returns `true` if this command is unconditionally blocked inside
+    /// a multi-document transaction.
+    pub fn is_blocked_in_transaction(&self) -> bool {
+        matches!(
+            self,
+            RequestType::ReIndex
+                | RequestType::CreateIndex
+                | RequestType::CreateIndexes
+                | RequestType::DropIndexes
+                | RequestType::RenameCollection
+                | RequestType::ListCollections
+                | RequestType::Drop
+                | RequestType::CurrentOp
+                | RequestType::KillOp
         )
     }
 }
