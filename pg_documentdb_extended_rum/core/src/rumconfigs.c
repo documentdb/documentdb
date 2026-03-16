@@ -43,6 +43,10 @@ PGDLLEXPORT bool RumFixIncompleteSplit = RUM_DEFAULT_FIX_INCOMPLETE_SPLIT;
 PGDLLEXPORT bool RumInjectPageSplitIncomplete =
 	RUM_DEFAULT_ENABLE_INJECT_PAGE_SPLIT_INCOMPLETE;
 
+/* rumentrypage.c */
+#define RUM_DEFAULT_FILL_FACTOR 50
+PGDLLEXPORT int RumDefaultPageFillFactor = RUM_DEFAULT_FILL_FACTOR;
+
 /* rumdatapage.c */
 PGDLLEXPORT int RumDataPageIntermediateSplitSize = -1;
 
@@ -109,6 +113,10 @@ PGDLLEXPORT bool RumEnableSupportDeadIndexItems =
 #define RUM_DEFAULT_ENABLE_ORDERED_OPERATOR_SCANS true
 PGDLLEXPORT bool RumEnableOrderedOperatorScans =
 	RUM_DEFAULT_ENABLE_ORDERED_OPERATOR_SCANS;
+
+#define RUM_DEFAULT_ENABLE_PAGE_FILL_FACTOR true
+PGDLLEXPORT bool RumEnablePageFillFactor =
+	RUM_DEFAULT_ENABLE_PAGE_FILL_FACTOR;
 
 PGDLLEXPORT rum_format_log_hook rum_unredacted_log_emit_hook = NULL;
 
@@ -338,29 +346,39 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_page_fill_factor", documentDBRumGucPrefix),
+		"Sets whether or not to enable honoring the page fill factor ",
+		NULL,
+		&RumEnablePageFillFactor,
+		RUM_DEFAULT_ENABLE_PAGE_FILL_FACTOR,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.rum_default_page_fill_factor", documentDBRumGucPrefix),
+		"Sets the default page fill factor for RUM indexes",
+		NULL,
+		&RumDefaultPageFillFactor,
+		RUM_DEFAULT_FILL_FACTOR, 10, 100,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
 	rum_relopt_kind = add_reloption_kind();
 
 	add_string_reloption(rum_relopt_kind, "attach",
 						 "Column name to attach as additional info",
-						 NULL, NULL
-#if PG_VERSION_NUM >= 130000
-						 , AccessExclusiveLock
-#endif
-						 );
+						 NULL, NULL, AccessExclusiveLock);
 	add_string_reloption(rum_relopt_kind, "to",
 						 "Column name to add a order by column",
-						 NULL, NULL
-#if PG_VERSION_NUM >= 130000
-						 , AccessExclusiveLock
-#endif
-						 );
+						 NULL, NULL, AccessExclusiveLock);
 	add_bool_reloption(rum_relopt_kind, "order_by_attach",
 					   "Use (addinfo, itempointer) order instead of just itempointer",
-					   false
-#if PG_VERSION_NUM >= 130000
-					   , AccessExclusiveLock
-#endif
-					   );
+					   false, AccessExclusiveLock);
+	add_int_reloption(rum_relopt_kind, "fill_factor",
+					  "Page fill factor for RUM index",
+					  RUM_DEFAULT_FILL_FACTOR, 10, 100,
+					  AccessExclusiveLock);
 }
 
 
@@ -374,13 +392,17 @@ documentdb_rumoptions(Datum reloptions, bool validate)
 		  offsetIfDefault },
 		{ "to", RELOPT_TYPE_STRING, offsetof(RumOptions, addToColumn), offsetIfDefault },
 		{ "order_by_attach", RELOPT_TYPE_BOOL, offsetof(RumOptions, useAlternativeOrder),
+		  offsetIfDefault },
+		{ "fill_factor", RELOPT_TYPE_INT, offsetof(RumOptions, fillFactor),
 		  offsetIfDefault }
 	};
 #else
 	static const relopt_parse_elt tab[] = {
 		{ "attach", RELOPT_TYPE_STRING, offsetof(RumOptions, attachColumn) },
 		{ "to", RELOPT_TYPE_STRING, offsetof(RumOptions, addToColumn) },
-		{ "order_by_attach", RELOPT_TYPE_BOOL, offsetof(RumOptions, useAlternativeOrder) }
+		{ "order_by_attach", RELOPT_TYPE_BOOL, offsetof(RumOptions,
+														useAlternativeOrder) },
+		{ "fill_factor", RELOPT_TYPE_INT, offsetof(RumOptions, fillFactor) }
 	};
 #endif
 

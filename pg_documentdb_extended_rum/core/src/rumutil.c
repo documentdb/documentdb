@@ -126,6 +126,7 @@ initRumState(RumState *state, Relation index)
 
 	state->attrnAttachColumn = InvalidAttrNumber;
 	state->attrnAddToColumn = InvalidAttrNumber;
+	state->fillFactor = RumDefaultPageFillFactor;
 	if (index->rd_options)
 	{
 		RumOptions *options = (RumOptions *) index->rd_options;
@@ -176,10 +177,14 @@ initRumState(RumState *state, Relation index)
 			}
 		}
 
-		if (!(AttributeNumberIsValid(state->attrnAttachColumn) &&
-			  AttributeNumberIsValid(state->attrnAddToColumn)))
+		if (AttributeNumberIsValid(state->attrnAttachColumn) ||
+			AttributeNumberIsValid(state->attrnAddToColumn))
 		{
-			elog(ERROR, "AddTo and OrderBy columns should be defined both");
+			if (!(AttributeNumberIsValid(state->attrnAttachColumn) &&
+				  AttributeNumberIsValid(state->attrnAddToColumn)))
+			{
+				elog(ERROR, "AddTo and OrderBy columns should be defined both");
+			}
 		}
 
 		if (options->useAlternativeOrder)
@@ -192,6 +197,12 @@ initRumState(RumState *state, Relation index)
 			}
 
 			state->useAlternativeOrder = true;
+		}
+
+		if (RumEnablePageFillFactor)
+		{
+			/* If rd_options is set, always use the fill factor from the options */
+			state->fillFactor = options->fillFactor;
 		}
 	}
 

@@ -204,6 +204,9 @@ static void _rum_parallel_scan_and_build(RumBuildState *state,
 										 Sharedsort *sharedsort,
 										 Relation heap, Relation index,
 										 int sortmem, bool progress);
+static double _rum_serial_scan_and_build(RumBuildState *state,
+										 Relation heap, Relation index);
+static double _rum_merge_index_core(double reltuples, RumBuildState *state);
 
 static RumItem * _rum_parse_tuple_items(RumTuple *a);
 extern Datum _rum_parse_tuple_key(RumTuple *a);
@@ -741,7 +744,7 @@ rumbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 	uint32 nlist;
 	MemoryContext oldCtx;
 	OffsetNumber attnum;
-	bool isParallelIndexCapable = true;
+	bool isSortedIndexBuildCapable = true;
 	int i = 0;
 
 	if (RelationGetNumberOfBlocks(index) != 0)
@@ -751,7 +754,7 @@ rumbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 	}
 
 #if PG_VERSION_NUM < 160000
-	isParallelIndexCapable = false;
+	isSortedIndexBuildCapable = false;
 #endif
 
 	initRumState(&buildstate.rumstate, index);
@@ -805,24 +808,24 @@ rumbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 	rumInitBA(&buildstate.accum);
 
 	/* Scenarios that have addinfo need to skip parallel build */
-	for (i = 0; i < INDEX_MAX_KEYS && isParallelIndexCapable; i++)
+	for (i = 0; i < INDEX_MAX_KEYS && isSortedIndexBuildCapable; i++)
 	{
 		if (buildstate.rumstate.addAttrs[i] != NULL)
 		{
-			isParallelIndexCapable = false;
+			isSortedIndexBuildCapable = false;
 			break;
 		}
 
 		if (buildstate.rumstate.canJoinAddInfo[i])
 		{
-			isParallelIndexCapable = false;
+			isSortedIndexBuildCapable = false;
 			break;
 		}
 	}
 
 	if (buildstate.rumstate.attrnAddToColumn != InvalidAttrNumber)
 	{
-		isParallelIndexCapable = false;
+		isSortedIndexBuildCapable = false;
 	}
 
 	/* Report table scan phase started */
@@ -839,7 +842,7 @@ rumbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 	 * but there is no way to communicate that to plan_create_index_workers.
 	 */
 #if PG_VERSION_NUM >= 160000
-	if (RumParallelIndexWorkersOverride > 0 && isParallelIndexCapable)
+	if (RumParallelIndexWorkersOverride > 0 && isSortedIndexBuildCapable)
 	{
 		int parallel_workers = RumParallelIndexWorkersOverride;
 		parallel_workers = Min(parallel_workers,
@@ -858,7 +861,7 @@ rumbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 
 	if (indexInfo->ii_ParallelWorkers > 0 &&
 		RumParallelIndexWorkersOverride > 0 &&
-		isParallelIndexCapable)
+		isSortedIndexBuildCapable)
 	{
 		ereport(DEBUG1, (errmsg("parallel index build requested with %d workers",
 								indexInfo->ii_ParallelWorkers)));
@@ -916,6 +919,14 @@ rumbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 		reltuples = _rum_parallel_merge(state);
 
 		_rum_end_parallel(state->bs_leader, state);
+	}
+	else if (RumEnablePageFillFactor && state->rumstate.fillFactor > 0 &&
+			 state->rumstate.fillFactor != 50 && isSortedIndexBuildCapable)
+	{
+		/* Custom fill factor - we need to respect that during build with a serial
+		 * build that mimics the parallel build.
+		 */
+		reltuples = _rum_serial_scan_and_build(state, heap, index);
 	}
 	else                        /* no parallel index build */
 	{
@@ -1929,21 +1940,29 @@ RumBufferCanAddKey(RumBuffer *buffer, RumTuple *tup)
 static double
 _rum_parallel_merge(RumBuildState *state)
 {
+	double reltuples = 0;
+
+	/* wait for workers to scan table and produce partial results */
+	reltuples = _rum_parallel_heapscan(state);
+
+	return _rum_merge_index_core(reltuples, state);
+}
+
+
+static double
+_rum_merge_index_core(double reltuples, RumBuildState *state)
+{
 	RumTuple *tup;
 	Size tuplen;
-	double reltuples = 0;
 	RumBuffer *buffer;
 
 	/* RUM tuples from workers, merged by leader */
 	double numtuples = 0;
 
-	/* wait for workers to scan table and produce partial results */
-	reltuples = _rum_parallel_heapscan(state);
-
-	/* If at least one tuple got parallel then log it */
+	/* If at least one tuple got sorted then log it */
 	if (reltuples >= 1.0)
 	{
-		elog(LOG, "Rum performing parallel merge on %f tuples.", reltuples);
+		ereport(LOG, errmsg("Rum performing merge on %f tuples.", reltuples));
 	}
 
 	/* Execute the sort */
@@ -2108,8 +2127,8 @@ _rum_parallel_estimate_shared(Relation heap, Snapshot snapshot)
  * Within leader, participate as a parallel worker.
  */
 static void
-_rum_leader_participate_as_worker(RumBuildState *buildstate, Relation heap, Relation
-								  index)
+_rum_leader_participate_as_worker(RumBuildState *buildstate, Relation heap,
+								  Relation index)
 {
 	RumLeader *rumleader = buildstate->bs_leader;
 	int sortmem;
@@ -2454,6 +2473,7 @@ documentdb_rum_parallel_build_main(dsm_segment *seg, shm_toc *toc)
 	/* initialize the RUM build state */
 	initRumState(&buildstate.rumstate, indexRel);
 	buildstate.indtuples = 0;
+	buildstate.bs_reltuples = 0;
 	memset(&buildstate.buildStats, 0, sizeof(RumStatsData));
 	memset(&buildstate.tid, 0, sizeof(ItemPointerData));
 
@@ -2797,4 +2817,44 @@ _rum_compare_tuples(RumTuple *a, RumTuple *b, SortSupport ssup)
 
 	return ItemPointerCompare(RumTupleGetFirst(a),
 							  RumTupleGetFirst(b));
+}
+
+
+/* Similar to rum_parallel_scan_and_build, but for serial execution */
+static double
+_rum_serial_scan_and_build(RumBuildState *state,
+						   Relation heap, Relation index)
+{
+	double reltuples;
+	IndexInfo *indexInfo;
+
+	/* remember how much space is allowed for the accumulated entries */
+	state->work_mem = (maintenance_work_mem / 2);
+
+	/* remember how many workers participate in the build */
+	state->bs_num_workers = 1;
+
+	/* Local per-worker sort of raw-data */
+	state->bs_worker_sort = tuplesort_begin_indexbuild_rum(heap, index,
+														   state->work_mem,
+														   NULL,
+														   TUPLESORT_NONE);
+
+	/* start table scan */
+	indexInfo = BuildIndexInfo(index);
+	indexInfo->ii_Concurrent = false;
+
+	reltuples = table_index_build_scan(heap, index, indexInfo, true, true,
+									   rumBuildCallbackParallel, state, NULL);
+
+	/* write remaining accumulated entries */
+	rumFlushBuildState(state, index);
+
+	/* Promote the worker sort to the shared sort */
+	state->bs_sortstate = state->bs_worker_sort;
+	state->bs_numtuples = reltuples;
+	state->bs_worker_sort = NULL;
+
+	reltuples = _rum_merge_index_core(reltuples, state);
+	return reltuples;
 }
