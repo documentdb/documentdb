@@ -29,6 +29,7 @@ pub mod rename_collection;
 pub mod session;
 pub mod text_search;
 pub mod transaction;
+pub mod unsupported_commands;
 pub mod update;
 pub mod users;
 pub mod validate_cmd;

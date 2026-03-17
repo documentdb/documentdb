@@ -178,7 +178,7 @@ pub async fn process_request(
                 )
                 .await
             }
-            RequestType::IsDBGrid => constant::process_is_db_grid(connection_context),
+            RequestType::Isdbgrid => constant::process_is_db_grid(connection_context),
             RequestType::IsMaster => ismaster::process(
                 request_context,
                 "ismaster",
@@ -400,6 +400,13 @@ pub async fn process_request(
                 )
                 .await
             }
+            _ => Err(DocumentDBError::documentdb_error(
+                ErrorCode::CommandNotSupported,
+                format!(
+                    "Command '{}' not supported.",
+                    request_context.payload.request_type().to_command_str()
+                ),
+            )),
         };
 
         if response.is_ok()
