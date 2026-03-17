@@ -12,7 +12,7 @@ use crate::configuration::DynamicConfiguration;
 
 pub const CONN_PRUNE_INTERVAL_SECS: u64 = 10;
 pub const CONN_IDLE_LIFETIME_SECS: u64 = 300;
-pub const CONN_LIFETIME_SECS: u64 = 7200;
+pub const CONN_LIFETIME_SECS: u64 = 3600;
 
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PgPoolSettings {
