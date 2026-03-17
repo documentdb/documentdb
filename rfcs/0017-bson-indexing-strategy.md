@@ -98,10 +98,20 @@ This is the index type supported by the OSS DocumentDB project (pg_documentdb_ex
 
 Create an Extended RUM index when you need:
 
-* **Array/multikey indexing** - Native support for indexing all array elements (B-tree will also support this with custom logic, but performance comparison TBD)
-* **Full-text search** - Search text content within documents, especially with ordering (B-tree cannot do this)
+* **Full-text search** - Required for text search capabilities. Extended RUM's inverted index structure (term → document list) is essential for efficient text search. B-tree cannot provide this functionality.
+
+* **Low-cardinality fields** - For fields with many duplicate values (e.g., status codes, categories, tags), Extended RUM's posting list structure can be efficient. Each unique value requires only one entry in the index tree, with all matching document IDs stored in a compressed posting list. This approach is more space-efficient than storing separate (key, TID) pairs for each document when keys are frequently repeated.
+
+* **Array/multikey indexing** - Native support for indexing all array elements. Extended RUM's inverted index naturally handles the one-to-many relationship between terms and documents, making it well-suited for array fields where a single document can have multiple indexed values. B-tree will also support this with custom logic, but performance comparison requires benchmarking.
+
 * **Compound indexes with arrays** - Index both scalar and array fields together (B-tree will support with custom logic, performance TBD)
-* **Text search + ordering** - Need both capabilities in a single efficient index
+
+* **Text search + ordering** - Need both full-text search and ordering capabilities in a single efficient index
+
+**Architectural characteristics:**
+* Inverted index structure optimized for term-to-documents mapping
+* Compressed posting lists reduce storage for duplicate keys
+* Two-level structure (entry tree + posting lists) adds indirection but enables text search
 
 **Important considerations:**
 * Slower writes, larger index size, and longer build times compared to B-tree
@@ -112,16 +122,28 @@ Create an Extended RUM index when you need:
 
 Create a B-tree index when you need:
 
-* **Range queries** - Efficient filtering with >, <, >=, <=, BETWEEN on dates or numbers (expected better performance - benchmarking TBD)
-* **Sorting** - ORDER BY operations on non-text fields (expected better performance - benchmarking TBD)
-* **Exact value lookups** - Lookups with exact value (performance comparison TBD)
-* **Fast writes** - Write-heavy workloads where index maintenance speed matters
-* **Low replication lag** - Lower WAL generation compared to Extended RUM
+* **High-cardinality fields** - For fields with mostly unique values (e.g., user IDs, email addresses, timestamps), B-tree's inline storage of (key, TID) pairs avoids the indirection overhead of Extended RUM's entry-plus-posting-list structure. Each lookup accesses TIDs directly from leaf pages without additional pointer dereferencing, potentially reducing memory accesses.
+
+* **Range queries** - For range scans (>, <, >=, <=, BETWEEN), B-tree provides a simpler access pattern with TIDs stored directly in sequential leaf pages. While both indexes traverse ordered tree structures with O(log N + k) complexity, B-tree's inline storage may benefit from better cache locality during sequential access (benchmarking recommended to validate).
+
+* **Sorting** - ORDER BY operations on non-text fields. B-tree's inline (key, TID) storage in ordered leaf pages provides a cache-friendly memory layout for sorted access, potentially benefiting from modern CPU prefetching (performance comparison TBD).
+
+* **Exact value lookups** - Point queries on high-selectivity fields. B-tree's direct TID access from leaf pages avoids the entry → posting list indirection present in Extended RUM (performance comparison TBD).
+
+* **Fast writes** - Write-heavy workloads benefit from B-tree's simpler index maintenance. Direct (key, TID) updates are less complex than maintaining inverted index posting lists.
+
+* **Low replication lag** - Lower WAL generation compared to Extended RUM due to simpler index structure
+
 * **Array fields** - Will be supported with custom logic (performance comparison with Extended RUM TBD)
 
+**Architectural characteristics:**
+* Direct (key, TID) storage in leaf pages - no indirection
+* Sequential leaf page layout optimized for range scans
+* Simpler structure generates less WAL during updates
+
 **Important considerations:**
+* For low-cardinality fields with many duplicates, B-tree stores separate (key, TID) entries for each document, which may be less space-efficient than Extended RUM's compressed posting lists
 * Faster index builds compared to Extended RUM
-* Lower storage overhead
 * Both index types support CONCURRENTLY builds to avoid blocking concurrent writes during index creation
 
 **Not suitable for:** Full-text search
