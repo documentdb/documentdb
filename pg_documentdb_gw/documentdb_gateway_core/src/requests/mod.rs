@@ -9,12 +9,10 @@
 pub mod read_concern;
 pub mod read_preference;
 pub mod request_tracker;
+pub mod request_type;
 pub mod validation;
 
-use std::{
-    fmt::{self, Debug},
-    str::FromStr,
-};
+use std::{fmt::Debug, str::FromStr};
 
 use bson::{spec::ElementType, Document, RawBsonRef, RawDocument, RawDocumentBuf};
 use read_concern::ReadConcern;
@@ -29,6 +27,7 @@ use crate::{
 };
 
 pub use request_tracker::RequestIntervalKind;
+pub use request_type::RequestType;
 
 /// The RequestMessage holds ownership to the whole client message
 /// Other objects, like the Request will only hold references to it
@@ -82,205 +81,6 @@ impl RequestInfo<'_> {
 
     pub fn read_concern(&self) -> &ReadConcern {
         &self.read_concern
-    }
-}
-
-#[derive(PartialEq, Debug)]
-pub enum RequestType {
-    AbortTransaction,
-    Aggregate,
-    BalancerStart,
-    BalancerStatus,
-    BalancerStop,
-    BuildInfo,
-    CollMod,
-    CollStats,
-    CommitTransaction,
-    Compact,
-    ConnectionStatus,
-    Count,
-    Create,
-    CreateIndex,
-    CreateIndexes,
-    CreateRole,
-    CreateUser,
-    CurrentOp,
-    DbStats,
-    Delete,
-    Distinct,
-    Drop,
-    DropDatabase,
-    DropIndexes,
-    DropRole,
-    DropUser,
-    EndSessions,
-    Explain,
-    Find,
-    FindAndModify,
-    GetCmdLineOpts,
-    GetDefaultRWConcern,
-    GetLog,
-    GetMore,
-    GetParameter,
-    GetShardMap,
-    Hello,
-    HostInfo,
-    Insert,
-    IsDBGrid,
-    IsMaster,
-    KillCursors,
-    KillOp,
-    KillSessions,
-    ListCollections,
-    ListCommands,
-    ListDatabases,
-    ListIndexes,
-    ListShards,
-    Logout,
-    MoveCollection,
-    Ping,
-    PrepareTransaction,
-    ReIndex,
-    RenameCollection,
-    ReshardCollection,
-    RolesInfo,
-    SaslContinue,
-    SaslStart,
-    ShardCollection,
-    UnshardCollection,
-    Update,
-    UpdateRole,
-    UpdateUser,
-    UsersInfo,
-    Validate,
-    WhatsMyUri,
-}
-
-impl RequestType {
-    pub fn handle_with_auth(&self) -> bool {
-        matches!(
-            &self,
-            RequestType::Logout | RequestType::SaslContinue | RequestType::SaslStart
-        )
-    }
-
-    pub fn allowed_unauthorized(&self) -> bool {
-        matches!(
-            &self,
-            RequestType::IsMaster | RequestType::Hello | RequestType::Ping | RequestType::BuildInfo
-        )
-    }
-
-    /// Returns `true` if this command is unconditionally blocked inside
-    /// a multi-document transaction.
-    pub fn is_blocked_in_transaction(&self) -> bool {
-        matches!(
-            self,
-            RequestType::ReIndex
-                | RequestType::CreateIndex
-                | RequestType::CreateIndexes
-                | RequestType::DropIndexes
-                | RequestType::RenameCollection
-                | RequestType::ListCollections
-                | RequestType::Drop
-                | RequestType::CurrentOp
-                | RequestType::KillOp
-        )
-    }
-}
-
-impl FromStr for RequestType {
-    type Err = DocumentDBError;
-
-    fn from_str(cmd_name: &str) -> Result<Self> {
-        match cmd_name {
-            "abortTransaction" => Ok(RequestType::AbortTransaction),
-            "aggregate" => Ok(RequestType::Aggregate),
-            "balancerStart" => Ok(RequestType::BalancerStart),
-            "balancerStatus" => Ok(RequestType::BalancerStatus),
-            "balancerStop" => Ok(RequestType::BalancerStop),
-            "buildinfo" => Ok(RequestType::BuildInfo),
-            "buildInfo" => Ok(RequestType::BuildInfo),
-            "collMod" => Ok(RequestType::CollMod),
-            "collStats" => Ok(RequestType::CollStats),
-            "commitTransaction" => Ok(RequestType::CommitTransaction),
-            "compact" => Ok(RequestType::Compact),
-            "connectionStatus" => Ok(RequestType::ConnectionStatus),
-            "count" => Ok(RequestType::Count),
-            "create" => Ok(RequestType::Create),
-            "createIndex" => Ok(RequestType::CreateIndex),
-            "createIndexes" => Ok(RequestType::CreateIndexes),
-            "createRole" => Ok(RequestType::CreateRole),
-            "createUser" => Ok(RequestType::CreateUser),
-            "currentOp" => Ok(RequestType::CurrentOp),
-            "dbstats" => Ok(RequestType::DbStats),
-            "dbStats" => Ok(RequestType::DbStats),
-            "delete" => Ok(RequestType::Delete),
-            "distinct" => Ok(RequestType::Distinct),
-            "drop" => Ok(RequestType::Drop),
-            "dropDatabase" => Ok(RequestType::DropDatabase),
-            "dropIndexes" => Ok(RequestType::DropIndexes),
-            "dropRole" => Ok(RequestType::DropRole),
-            "dropUser" => Ok(RequestType::DropUser),
-            "endSessions" => Ok(RequestType::EndSessions),
-            "explain" => Ok(RequestType::Explain),
-            "find" => Ok(RequestType::Find),
-            "findandmodify" => Ok(RequestType::FindAndModify),
-            "findAndModify" => Ok(RequestType::FindAndModify),
-            "getCmdLineOpts" => Ok(RequestType::GetCmdLineOpts),
-            "getDefaultRWConcern" => Ok(RequestType::GetDefaultRWConcern),
-            "getLog" => Ok(RequestType::GetLog),
-            "getMore" => Ok(RequestType::GetMore),
-            "getParameter" => Ok(RequestType::GetParameter),
-            "getShardMap" => Ok(RequestType::GetShardMap),
-            "hello" => Ok(RequestType::Hello),
-            "hostInfo" => Ok(RequestType::HostInfo),
-            "insert" => Ok(RequestType::Insert),
-            "isdbgrid" => Ok(RequestType::IsDBGrid),
-            "ismaster" => Ok(RequestType::IsMaster),
-            "isMaster" => Ok(RequestType::IsMaster),
-            "killCursors" => Ok(RequestType::KillCursors),
-            "killOp" => Ok(RequestType::KillOp),
-            "killSessions" => Ok(RequestType::KillSessions),
-            "listCollections" => Ok(RequestType::ListCollections),
-            "listCommands" => Ok(RequestType::ListCommands),
-            "listDatabases" => Ok(RequestType::ListDatabases),
-            "listIndexes" => Ok(RequestType::ListIndexes),
-            "listShards" => Ok(RequestType::ListShards),
-            "logout" => Ok(RequestType::Logout),
-            "moveCollection" => Ok(RequestType::MoveCollection),
-            "ping" => Ok(RequestType::Ping),
-            "prepareTransaction" => Ok(RequestType::PrepareTransaction),
-            "reindex" => Ok(RequestType::ReIndex),
-            "reIndex" => Ok(RequestType::ReIndex),
-            "renameCollection" => Ok(RequestType::RenameCollection),
-            "reshardCollection" => Ok(RequestType::ReshardCollection),
-            "rolesInfo" => Ok(RequestType::RolesInfo),
-            "saslContinue" => Ok(RequestType::SaslContinue),
-            "saslStart" => Ok(RequestType::SaslStart),
-            "shardCollection" => Ok(RequestType::ShardCollection),
-            "unshardCollection" => Ok(RequestType::UnshardCollection),
-            "update" => Ok(RequestType::Update),
-            "updateRole" => Ok(RequestType::UpdateRole),
-            "updateUser" => Ok(RequestType::UpdateUser),
-            "usersInfo" => Ok(RequestType::UsersInfo),
-            "validate" => Ok(RequestType::Validate),
-            "whatsmyuri" => Ok(RequestType::WhatsMyUri),
-            "atlasVersion" => Err(DocumentDBError::documentdb_error(
-                ErrorCode::CommandNotFound,
-                format!("Command '{cmd_name}' not found."),
-            )),
-            _ => Err(DocumentDBError::documentdb_error(
-                ErrorCode::CommandNotSupported,
-                format!("Unknown request received: {cmd_name}"),
-            )),
-        }
-    }
-}
-
-impl fmt::Display for RequestType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{self:?}")
     }
 }
 
