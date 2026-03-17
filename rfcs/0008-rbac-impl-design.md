@@ -4,7 +4,7 @@
 
 As described in the RFC we are planning on doing the validation in the DocumentDb extension, leaving the Gateway as a pass through. We’ve discussed 3 possible locations where the RBAC code could be implemented and used within the DocumentDB extension. 
 
-* RBAC is implemented into the separate Postgres extension the 
+* RBAC is implemented into a separate Postgres extension
 * Core logic is extracted into a separate C library
 * All code in the main DocumentDB code base
 
@@ -33,7 +33,7 @@ Sample Entry:
 | admin     | {roles: [{"test":"write"}, {"admin":"readAnyDatabase"}]}
 ```
 
-The users table references the Postgres role associated with the user, and stores the relevant user data in a bson object. The user_data object will store the roles associated with the user in a list of database/role name pairs (e.g. `roles``:`` ``[{``"test"``:``"write"``},`` ``{``"admin"``:``"readAnyDatabase"``}]`). Additional fields associated with the user can be added in the future, such as custom data, command, authenticationRestrictions (see: https://www.mongodb.com/docs/manual/reference/command/usersInfo/#output)
+The users table references the Postgres role associated with the user, and stores the relevant user data in a bson object. The user_data object will store the roles associated with the user in a list of database/role name pairs (e.g. `roles: [{"test":"write"}, {"admin":"readAnyDatabase"}]`). Additional fields associated with the user can be added in the future, such as custom data, command, authenticationRestrictions (see: https://www.mongodb.com/docs/manual/reference/command/usersInfo/#output)
 
 ### Roles Table
 
@@ -95,9 +95,9 @@ Built in roles that are scoped to a database, such as “read”, are stored wit
 
 Built in roles are written to the table as part of the install SQL files.
 
-## In Memory Structors
+## In Memory Structs
 
-We will create the following constants and in memory structors.
+We will create the following constants and in memory structs.
 
 ### PrivilegeAction Enum
 
@@ -137,8 +137,8 @@ typedef struct PrivilegeSet {
 
 typedef struct Role{
     char database[MAX_DATABASE_NAME_LEN];
-    char role[MAX_COLLECTION_NAME_LEN];
-} Resource;
+    char role[MAX_ROLE_NAME_LEN];
+} Role;
 ```
 
 ### Resource
