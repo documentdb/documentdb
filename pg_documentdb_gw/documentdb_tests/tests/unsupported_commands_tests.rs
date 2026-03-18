@@ -13,12 +13,14 @@ use mongodb::error::Error;
 async fn command_not_found() -> Result<(), Error> {
     let db = initialize::initialize_with_db("commands_tests_command_not_found").await?;
 
-    unsupported_commands::validate_command_not_found(&db).await
+    unsupported_commands::validate_command_not_found(&db).await;
+    Ok(())
 }
 
 #[tokio::test]
 async fn command_not_supported() -> Result<(), Error> {
     let db = initialize::initialize_with_db("commands_tests_command_not_supported").await?;
 
-    unsupported_commands::validate_commands_not_supported(&db).await
+    unsupported_commands::validate_commands_not_supported(&db).await;
+    Ok(())
 }

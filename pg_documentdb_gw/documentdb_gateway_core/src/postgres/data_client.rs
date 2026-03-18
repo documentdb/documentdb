@@ -23,6 +23,8 @@ use crate::{
 
 #[async_trait]
 pub trait PgDataClient: Send + Sync {
+    /// # Errors
+    /// Returns error if the operation fails.
     fn new_authorized(
         service_context: &Arc<ServiceContext>,
         authorization: &AuthState,
@@ -30,6 +32,8 @@ pub trait PgDataClient: Send + Sync {
     where
         Self: Sized;
 
+    /// # Errors
+    /// Returns error if the operation fails.
     fn new_unauthorized(service_context: &Arc<ServiceContext>) -> Result<Self>
     where
         Self: Sized;
@@ -358,6 +362,8 @@ pub trait PgDataClient: Send + Sync {
     // TODO: This is a temporary solution to get the index build ID from the create indexes response.
     // it's a processing logic, not a data client logic, but for sake of simplicity, we put it here.
     // It should be refactored later to a more appropriate place related to the processing
+    /// # Errors
+    /// Returns error if the operation fails.
     fn get_index_build_id<'a>(&self, index_response: &'a PgResponse) -> Result<PgDocument<'a>>;
 
     async fn execute_unshard_collection(

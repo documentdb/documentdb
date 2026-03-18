@@ -11,7 +11,7 @@ use mongodb::error::Error;
 
 #[tokio::test]
 async fn ssl_connection() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     constant::validate_connectivity(&client).await
 }

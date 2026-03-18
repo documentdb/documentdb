@@ -6,6 +6,19 @@
  *-------------------------------------------------------------------------
  */
 
+#![expect(
+    clippy::missing_panics_doc,
+    reason = "Test helper functions - panics are expected test failures"
+)]
+#![expect(
+    clippy::missing_errors_doc,
+    reason = "Test helper functions - error conditions are self-explanatory"
+)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "Test helper functions - unwrap failures indicate test failures"
+)]
+
 use bson::{doc, Document};
 use mongodb::{error::Error, Database};
 
@@ -71,7 +84,7 @@ pub async fn validate_text_query_exceed_max_depth(db: &Database) -> Result<(), E
     // 32 levels of nested $text, should work
     let suc_filter = doc! { "$text": { "$search": "--------------------------------dummy" } };
     let suc_result = collection.find(suc_filter).await;
-    assert!(suc_result.is_ok());
+    suc_result.unwrap();
 
     // 33 levels of nested $text, exceeding the max depth of 32
     let filter = doc! { "$text": { "$search": "---------------------------------dummy" } };

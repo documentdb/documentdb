@@ -9,7 +9,7 @@
 use bson::Document;
 use mongodb::Database;
 
-pub(crate) async fn execute_command_and_validate_error(
+pub async fn execute_command_and_validate_error(
     db: &Database,
     command: Document,
     expected_error_code: i32,

@@ -27,30 +27,30 @@ pub fn ok_response() -> Response {
     }))
 }
 
-pub fn process_build_info(dynamic_config: &Arc<dyn DynamicConfiguration>) -> Result<Response> {
+pub fn process_build_info(dynamic_config: &Arc<dyn DynamicConfiguration>) -> Response {
     let version = dynamic_config.server_version();
-    Ok(Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse(rawdoc! {
         "version": version.as_str(),
         "versionArray": version.as_bson_array(),
         "bits": 64,
         "maxBsonObjectSize": protocol::MAX_BSON_OBJECT_SIZE,
         "ok":OK_SUCCEEDED,
-    })))
+    }))
 }
 
-pub fn process_get_cmd_line_opts() -> Result<Response> {
-    Ok(Response::Raw(RawResponse(rawdoc! {
+pub fn process_get_cmd_line_opts() -> Response {
+    Response::Raw(RawResponse(rawdoc! {
         "argv": [],
         "ok":OK_SUCCEEDED,
-    })))
+    }))
 }
 
-pub fn process_is_db_grid(context: &ConnectionContext) -> Result<Response> {
-    Ok(Response::Raw(RawResponse(rawdoc! {
+pub fn process_is_db_grid(context: &ConnectionContext) -> Response {
+    Response::Raw(RawResponse(rawdoc! {
         "isdbgrid":1.0,
         "hostname":context.service_context.setup_configuration().node_host_name(),
         "ok":OK_SUCCEEDED,
-    })))
+    }))
 }
 
 pub fn process_get_rw_concern(request_context: &RequestContext<'_>) -> Result<Response> {
@@ -68,7 +68,7 @@ pub fn process_get_rw_concern(request_context: &RequestContext<'_>) -> Result<Re
     if request_info.db()? != "admin" {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::Unauthorized,
-            "Only the admin database can process getDefaultRWConcern.".to_string(),
+            "Only the admin database can process getDefaultRWConcern.".to_owned(),
         ));
     }
 
@@ -86,35 +86,39 @@ pub fn process_get_rw_concern(request_context: &RequestContext<'_>) -> Result<Re
     })))
 }
 
-pub fn process_get_log() -> Result<Response> {
-    Ok(Response::Raw(RawResponse(rawdoc! {
+pub fn process_get_log() -> Response {
+    Response::Raw(RawResponse(rawdoc! {
         "log":[],
         "totalLinesWritten":0,
         "ok":OK_SUCCEEDED,
-    })))
+    }))
 }
 
-pub fn process_connection_status() -> Result<Response> {
-    Ok(Response::Raw(RawResponse(rawdoc! {
+pub fn process_connection_status() -> Response {
+    Response::Raw(RawResponse(rawdoc! {
         "authInfo": {
             "authenticatedUsers": [],
             "authenticatedUserRoles": [],
             "authenticatedUserPrivileges": [],
         },
         "ok":OK_SUCCEEDED,
-    })))
+    }))
 }
 
 fn local_time() -> Result<u32> {
     u32::try_from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|_| {
-                DocumentDBError::internal_error("Failed to get the current time".to_string())
+            .map_err(|error| {
+                tracing::error!("Failed to get the current time: {error}");
+                DocumentDBError::internal_error("Failed to get the current time".to_owned())
             })?
             .as_secs(),
     )
-    .map_err(|_| DocumentDBError::internal_error("Current time exceeded an u32".to_string()))
+    .map_err(|error| {
+        tracing::error!("Current time exceeded an u32: {error}");
+        DocumentDBError::internal_error("Current time exceeded an u32".to_owned())
+    })
 }
 
 pub fn process_host_info() -> Result<Response> {
@@ -141,10 +145,10 @@ pub fn process_prepare_transaction() -> Result<Response> {
     })))
 }
 
-pub fn process_whats_my_uri() -> Result<Response> {
-    Ok(Response::Raw(RawResponse(rawdoc! {
+pub fn process_whats_my_uri() -> Response {
+    Response::Raw(RawResponse(rawdoc! {
         "ok": OK_SUCCEEDED,
-    })))
+    }))
 }
 
 struct CommandInfo {
@@ -655,7 +659,7 @@ static SUPPORTED_COMMANDS : [CommandInfo; 62] = [
 	}
 ];
 
-pub fn list_commands() -> Result<Response> {
+pub fn list_commands() -> Response {
     let mut commands_doc = RawDocumentBuf::new();
     for command in &SUPPORTED_COMMANDS {
         let mut doc = rawdoc! {
@@ -667,13 +671,13 @@ pub fn list_commands() -> Result<Response> {
             "requiresAuth": command.requires_auth,
         };
         if let Some(secondary_override) = command.secondary_override_ok {
-            doc.append("secondaryOverrideOk", secondary_override)
+            doc.append("secondaryOverrideOk", secondary_override);
         }
         commands_doc.append(command.command_name, doc);
     }
 
-    Ok(Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse(rawdoc! {
         "commands": commands_doc,
         "ok": OK_SUCCEEDED,
-    })))
+    }))
 }

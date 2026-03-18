@@ -6,6 +6,19 @@
  *-------------------------------------------------------------------------
  */
 
+#![expect(
+    clippy::missing_panics_doc,
+    reason = "Test helper functions - panics are expected test failures"
+)]
+#![expect(
+    clippy::missing_errors_doc,
+    reason = "Test helper functions - error conditions are self-explanatory"
+)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "Test helper functions - unwrap failures indicate test failures"
+)]
+
 use bson::doc;
 use mongodb::{error::Error, Client, Database};
 use uuid::Uuid;
@@ -15,8 +28,8 @@ use crate::utils::{commands, users};
 pub async fn validate_create_user(client: &Client) -> Result<(), Error> {
     let db_name = "admin";
     let db = client.database(db_name);
-    let username = format!("user_{}", Uuid::new_v4().to_string().replace("-", ""));
-    let user_id = format!("{}.{}", db_name, username);
+    let username = format!("user_{}", Uuid::new_v4().simple());
+    let user_id = format!("{db_name}.{username}");
     let role = "readAnyDatabase";
 
     db.run_command(doc! {
@@ -32,7 +45,7 @@ pub async fn validate_create_user(client: &Client) -> Result<(), Error> {
         })
         .await?;
 
-    users::validate_user(&users, &user_id, &username, db_name, role);
+    users::validate_user(&users, &user_id, &username, db_name, role).unwrap();
 
     db.run_command(doc! {
         "dropUser": &username
@@ -45,8 +58,8 @@ pub async fn validate_create_user(client: &Client) -> Result<(), Error> {
 pub async fn validate_drop_user(client: &Client) -> Result<(), Error> {
     let db_name = "admin";
     let db = client.database(db_name);
-    let username = format!("user_{}", Uuid::new_v4().to_string().replace("-", ""));
-    let user_id = format!("{}.{}", db_name, username);
+    let username = format!("user_{}", Uuid::new_v4().simple());
+    let user_id = format!("{db_name}.{username}");
     let role = "readAnyDatabase";
 
     db.run_command(doc! {
@@ -119,8 +132,8 @@ pub async fn validate_cannot_drop_system_users(db: &Database) -> Result<(), Erro
 pub async fn validate_update_user_password(client: &Client) -> Result<(), Error> {
     let db_name = "admin";
     let db = client.database(db_name);
-    let username = format!("user_{}", Uuid::new_v4().to_string().replace("-", ""));
-    let user_id = format!("{}.{}", db_name, username);
+    let username = format!("user_{}", Uuid::new_v4().simple());
+    let user_id = format!("{db_name}.{username}");
     let role = "readAnyDatabase";
 
     db.run_command(doc! {
@@ -150,7 +163,7 @@ pub async fn validate_update_user_password(client: &Client) -> Result<(), Error>
         })
         .await?;
 
-    users::validate_user(&users_after, &user_id, &username, db_name, role);
+    users::validate_user(&users_after, &user_id, &username, db_name, role).unwrap();
 
     db.run_command(doc! {
         "dropUser": &username
@@ -163,8 +176,8 @@ pub async fn validate_update_user_password(client: &Client) -> Result<(), Error>
 pub async fn validate_users_info(client: &Client) -> Result<(), Error> {
     let db_name = "admin";
     let db = client.database(db_name);
-    let username = format!("user_{}", Uuid::new_v4().to_string().replace("-", ""));
-    let user_id = format!("{}.{}", db_name, username);
+    let username = format!("user_{}", Uuid::new_v4().simple());
+    let user_id = format!("{db_name}.{username}");
     let role = "readAnyDatabase";
 
     db.run_command(doc! {

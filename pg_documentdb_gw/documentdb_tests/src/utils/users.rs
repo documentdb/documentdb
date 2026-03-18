@@ -8,7 +8,7 @@
 
 use bson::{Bson, Document};
 
-pub(crate) fn user_exists(doc: &Document, expected_user_id: &str) -> bool {
+pub fn user_exists(doc: &Document, expected_user_id: &str) -> bool {
     if let Ok(users) = doc.get_array("users") {
         for user in users {
             if let Some(user_doc) = user.as_document() {
@@ -23,14 +23,14 @@ pub(crate) fn user_exists(doc: &Document, expected_user_id: &str) -> bool {
     false
 }
 
-pub(crate) fn validate_user(
+pub fn validate_user(
     doc: &Document,
     expected_user_id: &str,
     expected_user: &str,
     expected_db: &str,
     expected_role: &str,
-) {
-    let users = doc.get_array("users").expect("users array should exist");
+) -> std::result::Result<(), bson::document::ValueAccessError> {
+    let users = doc.get_array("users")?;
 
     let mut user_found = false;
     for user in users {
@@ -39,21 +39,19 @@ pub(crate) fn validate_user(
                 if id == expected_user_id {
                     user_found = true;
 
-                    let user_name = user_doc
-                        .get("user")
-                        .and_then(Bson::as_str)
-                        .expect("user field should exist");
-                    assert_eq!(user_name, expected_user, "user name mismatch");
+                    match user_doc.get("user").and_then(Bson::as_str) {
+                        Some(user_name) => {
+                            assert_eq!(user_name, expected_user, "user name mismatch");
+                        }
+                        None => panic!("Expected 'user' field is missing or not a string"),
+                    }
 
-                    let db = user_doc
-                        .get("db")
-                        .and_then(Bson::as_str)
-                        .expect("db field should exist");
-                    assert_eq!(db, expected_db, "database name mismatch");
+                    match user_doc.get("db").and_then(Bson::as_str) {
+                        Some(db_name) => assert_eq!(db_name, expected_db, "database name mismatch"),
+                        None => panic!("Expected 'db' field is missing or not a string"),
+                    }
 
-                    let roles = user_doc
-                        .get_array("roles")
-                        .expect("roles array should exist");
+                    let roles = user_doc.get_array("roles")?;
                     let mut role_found = false;
 
                     for role in roles {
@@ -76,4 +74,6 @@ pub(crate) fn validate_user(
         }
     }
     assert!(user_found, "user with id '{expected_user_id}' not found");
+
+    Ok(())
 }

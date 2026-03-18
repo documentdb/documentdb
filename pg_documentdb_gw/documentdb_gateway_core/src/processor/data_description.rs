@@ -47,7 +47,7 @@ pub async fn process_drop_database(
 ) -> Result<Response> {
     let request_info = request_context.info;
 
-    let db = request_info.db()?.to_string();
+    let db = request_info.db()?.to_owned();
 
     // Invalidate cursors
     connection_context
@@ -79,9 +79,9 @@ pub async fn process_drop_collection(
 ) -> Result<Response> {
     let request_info = request_context.info;
 
-    let coll = request_info.collection()?.to_string();
+    let coll = request_info.collection()?.to_owned();
     let coll_str = coll.as_str();
-    let db = request_info.db()?.to_string();
+    let db = request_info.db()?.to_owned();
     let db_str = db.as_str();
 
     // Invalidate cursors
@@ -124,7 +124,7 @@ pub async fn process_shard_collection(
     reshard: bool,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let collection_path = request_context.info.collection()?.to_string();
+    let collection_path = request_context.info.collection()?.to_owned();
     let (db, collection) =
         protocol::extract_database_and_collection_names(collection_path.as_str())?;
     let key = request_context

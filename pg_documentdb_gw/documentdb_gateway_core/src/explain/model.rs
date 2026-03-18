@@ -122,7 +122,7 @@ pub struct ExplainPlan {
     pub plan_rows: Option<serde_json::value::Number>,
 
     #[serde(rename = "Plans")]
-    pub inner_plans: Option<Vec<ExplainPlan>>,
+    pub inner_plans: Option<Vec<Self>>,
 
     #[serde(rename = "Parent Relationship")]
     pub parent_relationship: Option<String>,

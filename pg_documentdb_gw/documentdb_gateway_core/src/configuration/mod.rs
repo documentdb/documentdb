@@ -22,6 +22,7 @@ use dyn_clone::{clone_trait_object, DynClone};
 use std::fmt::Debug;
 
 /// These are the required configuration fields.
+///
 /// A trait that defines the configuration setup for the application.
 /// Implementors of this trait are expected to provide various configuration
 /// parameters required for the application to function correctly.
@@ -35,22 +36,22 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
     /// Returns the polling interval (in milliseconds) for watching host config file changes.
     fn host_configuration_watch_interval_ms(&self) -> u64;
 
-    /// Returns the name of the backend PostgreSQL database.
+    /// Returns the name of the backend `PostgreSQL` database.
     fn postgres_database(&self) -> &str;
 
-    /// Returns the hostname of the backend PostgreSQL server.
+    /// Returns the hostname of the backend `PostgreSQL` server.
     fn postgres_host_name(&self) -> &str;
 
-    /// Returns the port number of the backend PostgreSQL server.
+    /// Returns the port number of the backend `PostgreSQL` server.
     fn postgres_port(&self) -> u16;
 
-    /// Returns the system user for connecting to the backend PostgreSQL server.
+    /// Returns the system user for connecting to the backend `PostgreSQL` server.
     fn postgres_system_user(&self) -> &str;
 
-    /// Returns the data user for connecting to the backend PostgreSQL server.
+    /// Returns the data user for connecting to the backend `PostgreSQL` server.
     fn postgres_data_user(&self) -> &str;
 
-    /// Returns the password for the data user to connect to the backend PostgreSQL server.
+    /// Returns the password for the data user to connect to the backend `PostgreSQL` server.
     fn postgres_data_user_password(&self) -> Option<&str>;
 
     /// Returns the timeout duration (in seconds) for transactions.
@@ -66,10 +67,10 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
     /// Returns a list of role prefixes that are blocked.
     fn blocked_role_prefixes(&self) -> &[String];
 
-    /// Returns the timeout duration (in seconds) for PostgreSQL commands.
+    /// Returns the timeout duration (in seconds) for `PostgreSQL` commands.
     fn postgres_command_timeout_secs(&self) -> u64;
 
-    /// Returns the hostname of the current node for the purposes of the IsDBGrid command.
+    /// Returns the hostname of the current node for the purposes of the `IsDBGrid` command.
     fn node_host_name(&self) -> &str;
 
     /// Returns the certificate options for SSL/TLS connections.
@@ -78,7 +79,7 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
     /// Returns the name of the Gateway application.
     fn application_name(&self) -> &str;
 
-    /// Returns the time to wait for PostgreSQL to start up before giving up.
+    /// Returns the time to wait for `PostgreSQL` to start up before giving up.
     fn postgres_startup_wait_time_seconds(&self) -> u64;
 
     /// Returns the number of worker threads for the async runtime.
@@ -94,7 +95,7 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
     /// Returns None if Unix socket is disabled.
     fn unix_socket_path(&self) -> Option<&str>;
 
-    /// Returns the timeout duration (in minutes) for PostgreSQL connections
+    /// Returns the timeout duration (in minutes) for `PostgreSQL` connections
     fn postgres_idle_connection_timeout_minutes(&self) -> u64;
 
     /// Returns whether TLS should be enforced for all connections.

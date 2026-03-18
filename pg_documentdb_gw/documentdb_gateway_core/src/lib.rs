@@ -29,7 +29,7 @@ use openssl::ssl::Ssl;
 use socket2::TcpKeepalive;
 use tokio::{
     io::{AsyncRead, AsyncWrite, BufStream},
-    net::{TcpListener, TcpStream, UnixListener, UnixStream},
+    net::{unix::SocketAddr as UnixSocketAddr, TcpListener, TcpStream, UnixListener, UnixStream},
     time::{Duration, Instant},
 };
 use tokio_openssl::SslStream;
@@ -118,7 +118,7 @@ fn create_unix_socket_listener(socket_path: &str, permissions: u32) -> Result<Un
     Ok(listener)
 }
 
-/// Runs the DocumentDB gateway server, accepting and handling incoming connections.
+/// Runs the `DocumentDB` gateway server, accepting and handling incoming connections.
 ///
 /// This function sets up a TCP listener and SSL context, then continuously accepts
 /// new connections until the cancellation token is triggered. Each connection is
@@ -260,7 +260,7 @@ async fn detect_tls_handshake(tcp_stream: &TcpStream, connection_id: Uuid) -> Re
         match tokio::time::timeout(time_remaining, tcp_stream.peek(&mut peek_buf)).await {
             Ok(Ok(0)) => {
                 return Err(DocumentDBError::internal_error(
-                    "Connection closed".to_string(),
+                    "Connection closed".to_owned(),
                 ));
             }
             Ok(Ok(n)) => {
@@ -292,7 +292,7 @@ async fn detect_tls_handshake(tcp_stream: &TcpStream, connection_id: Uuid) -> Re
                     TLS_PEEK_TIMEOUT_SECS
                 );
                 return Err(DocumentDBError::internal_error(
-                    "Timeout reading from stream".to_string(),
+                    "Timeout reading from stream".to_owned(),
                 ));
             }
         }
@@ -310,7 +310,7 @@ async fn detect_tls_handshake(tcp_stream: &TcpStream, connection_id: Uuid) -> Re
 ///
 /// # Arguments
 ///
-/// * `stream_and_address` - Result containing the TCP stream and peer address from accept()
+/// * `stream_and_address` - Result containing the TCP stream and peer address from `accept()`
 /// * `service_context` - Service configuration and shared state
 /// * `telemetry` - Optional telemetry provider for metrics collection
 ///
@@ -389,7 +389,7 @@ where
             ip_address.to_string(),
             Some(tls_stream.ssl()),
             connection_id,
-            "TCP".to_string(),
+            "TCP".to_owned(),
         );
 
         let setup_configuration = conn_ctx.service_context.setup_configuration();
@@ -414,7 +414,7 @@ where
             ip_address.to_string(),
             None,
             connection_id,
-            "TCP".to_string(),
+            "TCP".to_owned(),
         );
 
         let setup_configuration = conn_ctx.service_context.setup_configuration();
@@ -443,7 +443,7 @@ where
 ///
 /// # Arguments
 ///
-/// * `stream_result` - Result containing the Unix stream from accept()
+/// * `stream_result` - Result containing the Unix stream from `accept()`
 /// * `service_context` - Service configuration and shared state
 /// * `telemetry` - Optional telemetry provider for metrics collection
 ///
@@ -452,7 +452,7 @@ where
 /// Returns `Ok(())` on successful connection handling, or an error if connection
 /// setup fails.
 async fn handle_unix_connection<T>(
-    stream_result: std::result::Result<(UnixStream, tokio::net::unix::SocketAddr), std::io::Error>,
+    stream_result: std::result::Result<(UnixStream, UnixSocketAddr), std::io::Error>,
     service_context: ServiceContext,
     telemetry: Option<Box<dyn TelemetryProvider>>,
 ) -> Result<()>
@@ -472,10 +472,10 @@ where
     let connection_context = ConnectionContext::new(
         service_context,
         telemetry,
-        "localhost".to_string(),
+        "localhost".to_owned(),
         None, // No TLS for Unix sockets
         connection_id,
-        "UnixSocket".to_string(),
+        "UnixSocket".to_owned(),
     );
 
     let setup_configuration = connection_context.service_context.setup_configuration();
@@ -580,14 +580,13 @@ where
     }
 
     if !*connection_context.auth_state.is_authorized().read().await {
-        if *connection_context.auth_state.auth_kind() == Some(auth::AuthKind::ExternalIdentity) {
+        if connection_context.auth_state.auth_kind() == Some(&auth::AuthKind::ExternalIdentity) {
             return Err(DocumentDBError::reauthentication_required(
-                "External identity token has expired.".to_string(),
+                "External identity token has expired.".to_owned(),
             ));
-        } else {
-            let response = auth::process::<T>(connection_context, request_context).await?;
-            return Ok(response);
         }
+        let response = auth::process::<T>(connection_context, request_context).await?;
+        return Ok(response);
     }
 
     let service_context = Arc::clone(&connection_context.service_context);
@@ -628,7 +627,7 @@ where
     {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::ShutdownInProgress,
-            "Graceful shutdown requested".to_string(),
+            "Graceful shutdown requested".to_owned(),
         ));
     }
 
@@ -659,7 +658,7 @@ where
     // Errors in request handling are handled explicitly so that telemetry can have access to the request
     // Returns Ok afterwards so that higher level error telemetry is not invoked.
     if let Err(e) = request_result {
-        let collection = request_context.info.collection().unwrap_or("").to_string();
+        let collection = request_context.info.collection().unwrap_or("").to_owned();
         match log_and_write_error::<S>(
             connection_context,
             header,
@@ -673,7 +672,7 @@ where
         )
         .await
         {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(write_err) => {
                 tracing::error!(
                     activity_id = activity_id,
@@ -726,7 +725,7 @@ where
     }
 
     if let Some(telemetry) = connection_context.telemetry_provider.as_ref() {
-        let collection = request_context.info.collection().unwrap_or("").to_string();
+        let collection = request_context.info.collection().unwrap_or("").to_owned();
         telemetry
             .emit_request_event(
                 connection_context,
@@ -744,7 +743,10 @@ where
     Ok(())
 }
 
-#[expect(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "error handling function needs all these parameters"
+)]
 async fn log_and_write_error<S>(
     connection_context: &ConnectionContext,
     header: &Header,

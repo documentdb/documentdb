@@ -32,9 +32,9 @@ pub enum CertInputType {
 pub struct CertificateOptions {
     /// The type of certificate input (PEM files or auto-generation)
     pub cert_type: CertInputType,
-    /// Path to the certificate file (required for PemFile type)
+    /// Path to the certificate file (required for `PemFile` type)
     pub file_path: Option<String>,
-    /// Path to the private key file (required for PemFile type)
+    /// Path to the private key file (required for `PemFile` type)
     pub key_file_path: Option<String>,
     /// Path to the CA certificate chain file (optional)
     pub ca_path: Option<String>,

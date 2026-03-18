@@ -26,7 +26,7 @@ pub async fn save_cursor(
     request_info: &RequestInfo<'_>,
 ) -> Result<()> {
     if let Some((persist, cursor)) = response.get_cursor()? {
-        let connection = if persist { Some(connection) } else { None };
+        let connection = persist.then_some(connection);
         let dynamic_config = connection_context.service_context.dynamic_configuration();
         let cursor_timeout =
             if dynamic_config.enable_stateless_cursor_timeout() && connection.is_none() {
@@ -41,7 +41,7 @@ pub async fn save_cursor(
             request_info.db()?,
             request_info.collection()?,
             cursor_timeout,
-            request_info.session_id.map(|v| v.to_vec()),
+            request_info.session_id.map(<[u8]>::to_vec),
         );
     }
     Ok(())
@@ -63,28 +63,25 @@ pub async fn process_kill_cursors(
         .document()
         .get("cursors")?
         .ok_or(DocumentDBError::bad_value(
-            "cursors was missing in killCursors request".to_string(),
+            "cursors was missing in killCursors request".to_owned(),
         ))?
         .as_array()
         .ok_or(DocumentDBError::documentdb_error(
             ErrorCode::TypeMismatch,
-            "killCursors cursors should be an array".to_string(),
+            "killCursors cursors should be an array".to_owned(),
         ))?;
 
     let mut cursor_ids = Vec::new();
     for value in cursors {
         let cursor = value?.as_i64().ok_or(DocumentDBError::bad_value(
-            "Cursor was not a valid i64".to_string(),
+            "Cursor was not a valid i64".to_owned(),
         ))?;
         cursor_ids.push(cursor);
     }
     let (removed_cursors, missing_cursors) = connection_context
         .service_context
         .cursor_store()
-        .kill_cursors(
-            connection_context.auth_state.username()?.to_string(),
-            &cursor_ids,
-        );
+        .kill_cursors(connection_context.auth_state.username()?, &cursor_ids);
 
     if !removed_cursors.is_empty() {
         pg_data_client
@@ -121,13 +118,13 @@ pub async fn process_get_more(
     request.extract_fields(|k, v| {
         if k == "getMore" {
             id = Some(v.as_i64().ok_or(DocumentDBError::bad_value(
-                "getMore value should be an i64".to_string(),
-            ))?)
+                "getMore value should be an i64".to_owned(),
+            ))?);
         }
         Ok(())
     })?;
     let id = id.ok_or(DocumentDBError::bad_value(
-        "getMore not present in document".to_string(),
+        "getMore not present in document".to_owned(),
     ))?;
     let CursorStoreEntry {
         conn: cursor_connection,
@@ -141,7 +138,7 @@ pub async fn process_get_more(
         .get_cursor(id, connection_context.auth_state.username()?)
         .ok_or(DocumentDBError::documentdb_error(
             ErrorCode::CursorNotFound,
-            "Provided cursor was not found.".to_string(),
+            "Provided cursor was not found.".to_owned(),
         ))?;
 
     let results = pg_data_client

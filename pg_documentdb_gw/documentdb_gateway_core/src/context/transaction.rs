@@ -31,14 +31,18 @@ pub struct RequestTransactionInfo {
     pub isolation_level: Option<IsolationLevel>,
 }
 
-pub struct Transaction {
+#[derive(Debug)]
+pub struct GatewayTransaction {
     pub session_id: Vec<u8>,
     pub transaction_number: i64,
     pub cursors: CursorStore,
-    transaction: Option<postgres::Transaction>,
+    pg_transaction: Option<postgres::Transaction>,
 }
 
-impl Transaction {
+impl GatewayTransaction {
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
     pub async fn start(
         config: Arc<dyn DynamicConfiguration>,
         request: &RequestTransactionInfo,
@@ -46,59 +50,74 @@ impl Transaction {
         isolation_level: IsolationLevel,
         session_id: Vec<u8>,
     ) -> Result<Self> {
-        Ok(Transaction {
+        Ok(Self {
             session_id,
             transaction_number: request.transaction_number,
-            transaction: Some(postgres::Transaction::start(conn, isolation_level).await?),
+            pg_transaction: Some(postgres::Transaction::start(conn, isolation_level).await?),
             cursors: CursorStore::new(config, false),
         })
     }
 
+    #[must_use]
     pub fn get_connection(&self) -> Option<Arc<Connection>> {
-        self.transaction.as_ref().map(|t| t.get_connection())
+        self.pg_transaction
+            .as_ref()
+            .map(postgres::Transaction::get_connection)
     }
 
+    #[must_use]
     pub fn get_session_id(&self) -> &[u8] {
         &self.session_id
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
     pub async fn commit(&mut self) -> Result<()> {
-        self.transaction
+        self.pg_transaction
             .as_mut()
-            .ok_or(DocumentDBError::documentdb_error(
-                ErrorCode::NoSuchTransaction,
-                "No transaction found to commit".to_string(),
-            ))?
+            .ok_or_else(|| {
+                DocumentDBError::documentdb_error(
+                    ErrorCode::NoSuchTransaction,
+                    "No transaction found to commit".to_owned(),
+                )
+            })?
             .commit()
             .await
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
     pub async fn abort(&mut self) -> Result<()> {
-        self.transaction
+        self.pg_transaction
             .as_mut()
-            .ok_or(DocumentDBError::documentdb_error(
-                ErrorCode::NoSuchTransaction,
-                "No transaction found to abort".to_string(),
-            ))?
+            .ok_or_else(|| {
+                DocumentDBError::documentdb_error(
+                    ErrorCode::NoSuchTransaction,
+                    "No transaction found to abort".to_owned(),
+                )
+            })?
             .abort()
             .await
     }
 
-    pub fn transaction_number(&self) -> i64 {
+    #[must_use]
+    pub const fn transaction_number(&self) -> i64 {
         self.transaction_number
     }
 }
 
-impl Drop for Transaction {
+impl Drop for GatewayTransaction {
     fn drop(&mut self) {
-        if let Some(inner) = &self.transaction {
+        if let Some(inner) = &self.pg_transaction {
             if !inner.committed {
                 let mut this = None;
-                std::mem::swap(&mut this, &mut self.transaction);
+                std::mem::swap(&mut this, &mut self.pg_transaction);
                 tokio::spawn(async move {
                     if let Some(mut t) = this {
                         if let Err(e) = t.abort().await {
-                            tracing::error!("Failed to drop a transaction: {e}")
+                            tracing::error!("Failed to drop a transaction: {e}");
                         }
                     }
                 });
@@ -121,16 +140,17 @@ struct LastSeenTransaction {
 }
 
 impl LastSeenTransaction {
-    pub fn new(transaction_number: i64) -> Self {
-        LastSeenTransaction {
+    pub const fn new(transaction_number: i64) -> Self {
+        Self {
             transaction_number,
             state: TransactionState::Started,
         }
     }
 }
 
-type TransactionEntry = (Instant, Transaction);
+type TransactionEntry = (Instant, GatewayTransaction);
 
+#[derive(Debug)]
 pub struct TransactionStore {
     pub transactions: Arc<DashMap<Vec<u8>, TransactionEntry>>,
     last_seen_transactions: DashMap<Vec<u8>, LastSeenTransaction>,
@@ -138,27 +158,33 @@ pub struct TransactionStore {
 }
 
 impl TransactionStore {
+    #[must_use]
     pub fn new(expiration: Duration) -> Self {
         let transactions = Arc::new(DashMap::new());
-        TransactionStore {
-            transactions: transactions.clone(),
+        Self {
+            transactions: Arc::clone(&transactions),
             last_seen_transactions: DashMap::new(),
             _reaper: tokio::spawn(async move {
                 let mut interval = tokio::time::interval(expiration / 2);
                 loop {
                     interval.tick().await;
-                    transactions.retain(|_, (time, _)| time.elapsed() < expiration)
+                    transactions.retain(|_, (time, _)| time.elapsed() < expiration);
                 }
             }),
         }
     }
 
+    #[must_use]
     pub fn get_connection(&self, session_id: &[u8]) -> Option<Arc<Connection>> {
         self.transactions
             .get(session_id)
             .and_then(|entry| entry.value().1.get_connection())
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
+    #[expect(clippy::too_many_lines, reason = "complex transaction logic")]
     pub async fn create(
         &self,
         connection_context: &ConnectionContext,
@@ -170,7 +196,7 @@ impl TransactionStore {
             if transaction_number > &transaction_info.transaction_number {
                 return Err(DocumentDBError::documentdb_error(
                     ErrorCode::TransactionTooOld,
-                    "Transaction number is lower than last seen transaction".to_string(),
+                    "Transaction number is lower than last seen transaction".to_owned(),
                 ));
             }
         }
@@ -203,14 +229,14 @@ impl TransactionStore {
                 if old_transaction.1.transaction_number == transaction_info.transaction_number {
                     return Err(DocumentDBError::documentdb_error(
                         ErrorCode::ConflictingOperationInProgress,
-                        "This transaction is already started.".to_string(),
+                        "This transaction is already started.".to_owned(),
                     ));
                 }
 
                 old_transaction.1.abort().await?;
             }
 
-            let transaction = Transaction::start(
+            let transaction = GatewayTransaction::start(
                 connection_context.service_context.dynamic_configuration(),
                 transaction_info,
                 Arc::new(
@@ -237,7 +263,9 @@ impl TransactionStore {
 
         if let Some(transaction_entry) = self.transactions.get(&session_id) {
             let transaction = &transaction_entry.value().1;
-            return if transaction.transaction_number() != transaction_info.transaction_number {
+            return if transaction.transaction_number() == transaction_info.transaction_number {
+                Ok(())
+            } else {
                 Err(DocumentDBError::documentdb_error(
                     ErrorCode::NoSuchTransaction,
                     format!(
@@ -245,8 +273,6 @@ impl TransactionStore {
                         transaction_info.transaction_number
                     ),
                 ))
-            } else {
-                Ok(())
             };
         }
 
@@ -303,7 +329,7 @@ impl TransactionStore {
                 DocumentDBError::documentdb_error(
                     ErrorCode::NoSuchTransaction,
                     "Last seen transaction should always exist for an existing transaction"
-                        .to_string(),
+                        .to_owned(),
                 )
             })?;
 
@@ -316,6 +342,9 @@ impl TransactionStore {
     ///
     /// Returns `ErrorCode::NoSuchTransaction` when there is no active
     /// transaction for the session or when the removal fails.
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
     pub async fn abort(&self, session_id: &[u8]) -> Result<()> {
         self.remove_transaction_by_session(session_id)
             .await?
@@ -323,11 +352,16 @@ impl TransactionStore {
             .ok_or_else(|| {
                 DocumentDBError::documentdb_error(
                     ErrorCode::NoSuchTransaction,
-                    "No such transaction to abort".to_string(),
+                    "No such transaction to abort".to_owned(),
                 )
             })
     }
 
+    /// Commits a transaction
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
     pub async fn commit(&self, session_id: &[u8]) -> Result<()> {
         if let Some((_, (_, mut transaction))) = self.transactions.remove(session_id) {
             transaction.commit().await?;
@@ -337,14 +371,14 @@ impl TransactionStore {
                 return Err(DocumentDBError::documentdb_error(
                     ErrorCode::NoSuchTransaction,
                     "Last seen transaction should always exist for an existing transaction"
-                        .to_string(),
+                        .to_owned(),
                 ));
             }
             Ok(())
         } else {
             Err(DocumentDBError::documentdb_error(
                 ErrorCode::NoSuchTransaction,
-                "No such transaction to commit".to_string(),
+                "No such transaction to commit".to_owned(),
             ))
         }
     }

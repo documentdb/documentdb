@@ -18,12 +18,17 @@ pub mod reader;
 pub mod util;
 
 pub const MAX_BSON_OBJECT_SIZE: i32 = 16 * 1024 * 1024;
-pub const MAX_MESSAGE_SIZE_BYTES: i32 = 48000000;
+pub const MAX_MESSAGE_SIZE_BYTES: i32 = 48_000_000;
 pub const LOGICAL_SESSION_TIMEOUT_MINUTES: u8 = 30;
 
 pub const OK_SUCCEEDED: f64 = 1.0;
 pub const OK_FAILED: f64 = 0.0;
 
+/// # Errors
+///
+/// Returns an error if the operation fails.
+/// # Errors
+/// Returns error if the operation fails.
 pub fn extract_database_and_collection_names(path: &str) -> Result<(&str, &str)> {
     let pos = path.find('.').ok_or(DocumentDBError::bad_value(format!(
         "Collection path {path} does not contain a '.'"

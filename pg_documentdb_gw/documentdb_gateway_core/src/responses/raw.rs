@@ -8,18 +8,19 @@
 
 use bson::{RawDocument, RawDocumentBuf};
 
-use crate::error::Result;
-
 /// Response constructed by the gateway from a raw BSON document.
 #[derive(Debug)]
 pub struct RawResponse(pub RawDocumentBuf);
 
 impl RawResponse {
-    pub fn as_raw_document(&self) -> Result<&RawDocument> {
-        Ok(&self.0)
+    /// Returns the raw document
+    #[must_use]
+    pub fn as_raw_document(&self) -> &RawDocument {
+        &self.0
     }
 
     /// Returns the byte length of the raw BSON document.
+    #[must_use]
     pub fn response_byte_len(&self) -> usize {
         self.0.as_bytes().len()
     }

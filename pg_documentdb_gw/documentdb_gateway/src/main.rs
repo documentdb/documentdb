@@ -6,6 +6,14 @@
  *-------------------------------------------------------------------------
  */
 
+#![expect(
+    clippy::expect_used,
+    reason = "Main binary uses expect for initialization failures that should crash the process"
+)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "Main binary uses unwrap for failures that should crash the process"
+)]
 use std::{env, path::PathBuf, sync::Arc};
 
 use documentdb_gateway_core::{
@@ -84,7 +92,7 @@ async fn start_gateway(setup_configuration: DocumentDBSetupConfiguration) {
             PgConfiguration::new(
                 &setup_configuration,
                 Arc::clone(&connection_pool_manager),
-                vec!["documentdb.".to_string()],
+                vec!["documentdb.".to_owned()],
             )
             .await
         },

@@ -19,9 +19,9 @@ use crate::{
 fn parse_session_ids(sessions_field: &RawArray) -> Result<Vec<&[u8]>> {
     let mut session_ids = Vec::new();
     for session in sessions_field {
-        let session_doc = session?.as_document().ok_or_else(|| {
-            DocumentDBError::bad_value("Session should be a document".to_string())
-        })?;
+        let session_doc = session?
+            .as_document()
+            .ok_or_else(|| DocumentDBError::bad_value("Session should be a document".to_owned()))?;
 
         let session_id = session_doc
             .get_binary("id")
@@ -75,7 +75,7 @@ pub async fn end_or_kill_sessions(
 ) -> Result<Response> {
     let request = request_context.payload;
 
-    let key = if request_context.payload.request_type() == &RequestType::KillSessions {
+    let key = if request_context.payload.request_type() == RequestType::KillSessions {
         "killSessions"
     } else {
         "endSessions"

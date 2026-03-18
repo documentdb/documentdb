@@ -6,6 +6,19 @@
  *-------------------------------------------------------------------------
  */
 
+#![expect(
+    clippy::missing_panics_doc,
+    reason = "Test helper functions - panics are expected test failures"
+)]
+#![expect(
+    clippy::missing_errors_doc,
+    reason = "Test helper functions - error conditions are self-explanatory"
+)]
+#![expect(
+    clippy::float_cmp,
+    reason = "Test assertions compare exact float values returned from database"
+)]
+
 use bson::doc;
 use mongodb::{error::Error, Client};
 

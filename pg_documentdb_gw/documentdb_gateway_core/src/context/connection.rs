@@ -25,6 +25,7 @@ use crate::{
     telemetry::TelemetryProvider,
 };
 
+#[derive(Debug)]
 pub struct ConnectionContext {
     pub start_time: Instant,
     pub connection_id: Uuid,
@@ -42,6 +43,7 @@ pub struct ConnectionContext {
 }
 
 impl ConnectionContext {
+    #[must_use]
     pub fn new(
         service_context: ServiceContext,
         telemetry_provider: Option<Box<dyn TelemetryProvider>>,
@@ -59,10 +61,10 @@ impl ConnectionContext {
         };
 
         let ssl_protocol = tls_config
-            .map(|tls| tls.version_str().to_string())
+            .map(|tls| tls.version_str().to_owned())
             .unwrap_or_default();
 
-        ConnectionContext {
+        Self {
             start_time: Instant::now(),
             connection_id,
             service_context: Arc::new(service_context),
@@ -79,22 +81,26 @@ impl ConnectionContext {
         }
     }
 
+    #[must_use]
     pub fn get_cursor(&self, id: i64, username: &str) -> Option<CursorStoreEntry> {
         // If there is a transaction, get the cursor to its store
         if let Some((session_id, _)) = self.transaction.as_ref() {
             let transaction_store = self.service_context.transaction_store();
             if let Some(entry) = transaction_store.transactions.get(session_id) {
                 let (_, transaction) = entry.value();
-                return transaction.cursors.get_cursor((id, username.to_string()));
+                return transaction.cursors.get_cursor(&(id, username.to_owned()));
             }
         }
 
         self.service_context
             .cursor_store()
-            .get_cursor((id, username.to_string()))
+            .get_cursor(&(id, username.to_owned()))
     }
 
-    #[expect(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "cursor creation requires multiple parameters"
+    )]
     pub fn add_cursor(
         &self,
         conn: Option<Arc<Connection>>,
@@ -105,12 +111,12 @@ impl ConnectionContext {
         cursor_timeout: Duration,
         session_id: Option<Vec<u8>>,
     ) {
-        let key = (cursor.cursor_id, username.to_string());
+        let key = (cursor.cursor_id, username.to_owned());
         let value = CursorStoreEntry {
             conn,
             cursor,
-            db: db.to_string(),
-            collection: collection.to_string(),
+            db: db.to_owned(),
+            collection: collection.to_owned(),
             timestamp: Instant::now(),
             cursor_timeout,
             session_id,
@@ -127,9 +133,12 @@ impl ConnectionContext {
         }
 
         // Otherwise add it to the service context
-        self.service_context.cursor_store().add_cursor(key, value)
+        self.service_context.cursor_store().add_cursor(key, value);
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
     pub fn allocate_data_pool(&self, password: &str) -> Result<()> {
         let username = self.auth_state.username()?;
 
@@ -142,6 +151,7 @@ impl ConnectionContext {
             )
     }
 
+    #[must_use]
     pub fn dynamic_configuration(&self) -> Arc<dyn DynamicConfiguration> {
         self.service_context.dynamic_configuration()
     }
@@ -159,6 +169,7 @@ impl ConnectionContext {
     ///
     /// # Returns
     /// A `String` containing the new UUID, e.g. `"550e8400-e29b-41d4-a716-446655440000"`.
+    #[must_use]
     pub fn generate_request_activity_id(&self, request_id: i32) -> String {
         let mut activity_id_bytes = *self.connection_id.as_bytes();
         activity_id_bytes[12..].copy_from_slice(&request_id.to_be_bytes());
@@ -167,11 +178,13 @@ impl ConnectionContext {
             .to_string()
     }
 
+    #[must_use]
     pub fn transport_protocol(&self) -> &str {
         &self.transport_protocol
     }
 
-    pub fn get_connection_id_hash(&self) -> i32 {
+    #[must_use]
+    pub const fn get_connection_id_hash(&self) -> i32 {
         self.connection_id_hash
     }
 
@@ -179,7 +192,7 @@ impl ConnectionContext {
     ///
     /// Implementation details:
     /// - Hashes `connection_id` with `DefaultHasher` to a 64-bit value.
-    /// - Folds to 32 bits by XORing high and low halves.
+    /// - Folds to 32 bits by `XORing` high and low halves.
     /// - Masks off the sign bit (`& 0x7fff_ffff`) so the result fits in `0..=i31::MAX`.
     fn get_uuid_hash(connection_id: Uuid) -> i32 {
         let mut hasher = DefaultHasher::new();

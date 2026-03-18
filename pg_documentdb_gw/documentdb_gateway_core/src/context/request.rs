@@ -8,6 +8,7 @@
 
 use crate::requests::{request_tracker::RequestTracker, Request, RequestInfo};
 
+#[derive(Debug)]
 pub struct RequestContext<'a> {
     pub activity_id: &'a str,
     pub payload: &'a Request<'a>,
@@ -16,7 +17,8 @@ pub struct RequestContext<'a> {
 }
 
 impl<'a> RequestContext<'a> {
-    pub fn get_components(&self) -> (&Request<'a>, &RequestInfo<'a>, &RequestTracker) {
+    #[must_use]
+    pub const fn get_components(&self) -> (&Request<'a>, &RequestInfo<'a>, &RequestTracker) {
         (self.payload, self.info, self.tracker)
     }
 }

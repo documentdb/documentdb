@@ -15,12 +15,15 @@ use crate::{
     postgres::{conn_mgmt::Connection, QueryCatalog},
 };
 
+#[derive(Debug)]
 pub struct Transaction {
     conn: Arc<Connection>,
     pub committed: bool,
 }
 
 impl Transaction {
+    /// # Errors
+    /// Returns error if the operation fails.
     pub async fn start(conn: Arc<Connection>, isolation_level: IsolationLevel) -> Result<Self> {
         let isolation = match isolation_level {
             IsolationLevel::RepeatableRead => "REPEATABLE READ",
@@ -38,28 +41,39 @@ impl Transaction {
             ))
             .await?;
 
-        Ok(Transaction {
+        Ok(Self {
             conn,
             committed: false,
         })
     }
 
+    #[must_use]
     pub fn get_connection(&self) -> Arc<Connection> {
         Arc::clone(&self.conn)
     }
 
+    /// # Errors
+    /// Returns error if the operation fails.
     pub async fn commit(&mut self) -> Result<()> {
         self.conn.batch_execute("COMMIT").await?;
         self.committed = true;
         Ok(())
     }
 
+    /// # Errors
+    /// Returns error if the operation fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
     pub async fn abort(&mut self) -> Result<()> {
         self.conn.batch_execute("ROLLBACK").await?;
         self.committed = true;
         Ok(())
     }
 
+    /// # Errors
+    /// Returns error if the operation fails.
     pub async fn allow_writes_in_readonly(&self, query_catalog: &QueryCatalog) -> Result<()> {
         self.conn
             .batch_execute(query_catalog.set_allow_write())

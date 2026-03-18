@@ -67,6 +67,9 @@ pub struct DocumentDBSetupConfiguration {
 }
 
 impl DocumentDBSetupConfiguration {
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
     pub fn new(config_path: &Path) -> Result<Self> {
         let config_file = File::open(config_path)?;
         let config: Self = serde_json::from_reader(config_file).map_err(|e| {
@@ -77,7 +80,7 @@ impl DocumentDBSetupConfiguration {
         if let Some(path) = &config.unix_socket_path {
             if path.trim().is_empty() {
                 return Err(DocumentDBError::internal_error(
-                    "UnixSocketPath cannot be empty. Either provide a valid path or omit the field to disable Unix sockets.".to_string()
+                    "UnixSocketPath cannot be empty. Either provide a valid path or omit the field to disable Unix sockets.".to_owned()
                 ));
             }
         }
@@ -183,7 +186,7 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
     fn async_runtime_worker_threads(&self) -> usize {
         self.async_runtime_worker_threads.unwrap_or_else(|| {
             std::thread::available_parallelism()
-                .map(|p| p.get())
+                .map(std::num::NonZero::get)
                 .unwrap_or(1)
         })
     }
@@ -208,6 +211,7 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
         self.enforce_tls.unwrap_or(true)
     }
 
+    #[expect(clippy::unwrap_used, reason = "validated octal string")]
     fn unix_socket_file_permissions(&self) -> u32 {
         match &self.unix_socket_file_permissions {
             None => 0o660, // Default when not provided

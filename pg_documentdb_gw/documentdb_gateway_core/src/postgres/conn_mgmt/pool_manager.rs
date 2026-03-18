@@ -54,7 +54,7 @@ impl PoolManager {
         system_requests_pool: ConnectionPool,
         system_auth_pool: ConnectionPool,
     ) -> Self {
-        PoolManager {
+        Self {
             query_catalog,
             setup_configuration,
             system_requests_pool,
@@ -64,6 +64,8 @@ impl PoolManager {
         }
     }
 
+    /// # Errors
+    /// Returns error if the operation fails.
     pub async fn system_requests_connection(&self) -> Result<Connection> {
         Ok(Connection::new(
             self.system_requests_pool.acquire_connection().await?,
@@ -71,6 +73,8 @@ impl PoolManager {
         ))
     }
 
+    /// # Errors
+    /// Returns error if the operation fails.
     pub async fn authentication_connection(&self) -> Result<Connection> {
         Ok(Connection::new(
             self.system_auth_pool.acquire_connection().await?,
@@ -78,6 +82,8 @@ impl PoolManager {
         ))
     }
 
+    /// # Errors
+    /// Returns error if the operation fails.
     pub fn allocate_data_pool(
         &self,
         username: &str,
@@ -85,14 +91,14 @@ impl PoolManager {
         dynamic_configuration: &dyn DynamicConfiguration,
     ) -> Result<()> {
         let settings = PgPoolSettings::from_configuration(dynamic_configuration);
-        let key = (username.to_string(), settings);
+        let key = (username.to_owned(), settings);
 
         let user_data_pool = Arc::new(ConnectionPool::new_with_user(
             self.setup_configuration.as_ref(),
             &self.query_catalog,
             username,
             Some(password),
-            format!("{}-UserData", self.setup_configuration.application_name()),
+            &format!("{}-UserData", self.setup_configuration.application_name()),
             settings,
         )?);
 
@@ -101,6 +107,8 @@ impl PoolManager {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns error if the operation fails.
     pub fn get_data_pool(
         &self,
         username: &str,
@@ -108,14 +116,16 @@ impl PoolManager {
     ) -> Result<Arc<ConnectionPool>> {
         let settings = PgPoolSettings::from_configuration(dynamic_configuration);
 
-        match self.user_data_pools.get(&(username.to_string(), settings)) {
+        match self.user_data_pools.get(&(username.to_owned(), settings)) {
             None => Err(DocumentDBError::internal_error(
-                "Connection pool missing for user.".to_string(),
+                "Connection pool missing for user.".to_owned(),
             )),
             Some(pool_ref) => Ok(Arc::clone(pool_ref.value())),
         }
     }
 
+    /// # Errors
+    /// Returns error if the operation fails.
     pub fn get_system_shared_pool(
         &self,
         dynamic_configuration: &dyn DynamicConfiguration,
@@ -130,7 +140,7 @@ impl PoolManager {
                     &self.query_catalog,
                     self.setup_configuration.postgres_data_user(),
                     self.setup_configuration.postgres_data_user_password(),
-                    format!("{}-SharedData", self.setup_configuration.application_name()),
+                    &format!("{}-SharedData", self.setup_configuration.application_name()),
                     settings,
                 )?);
 
@@ -141,6 +151,7 @@ impl PoolManager {
     }
 
     pub async fn clean_unused_pools(&self, max_age: Duration) {
+        #[expect(clippy::future_not_send, reason = "generic K may not be Send")]
         async fn clean<K>(map: &DashMap<K, Arc<ConnectionPool>>, max_age: Duration)
         where
             K: Clone + Eq + Hash,
@@ -166,8 +177,8 @@ impl PoolManager {
         where
             K: Eq + Hash,
         {
-            for entry in map.iter() {
-                reports.push(entry.value().status())
+            for entry in map {
+                reports.push(entry.value().status());
             }
         }
 
@@ -182,7 +193,8 @@ impl PoolManager {
         pool_stats
     }
 
-    pub fn query_catalog(&self) -> &QueryCatalog {
+    #[must_use]
+    pub const fn query_catalog(&self) -> &QueryCatalog {
         &self.query_catalog
     }
 }
@@ -227,7 +239,7 @@ async fn get_system_connection_pool(
                 query_catalog,
                 postgres_system_user,
                 None,
-                full_pool_name.clone(),
+                &full_pool_name,
                 PgPoolSettings::system_pool_settings(max_connections),
             )
         },
@@ -272,19 +284,13 @@ pub async fn create_connection_pool_manager(
 mod tests {
     use super::*;
     use crate::{
-        configuration::{
-            CertInputType, CertificateOptions, DocumentDBSetupConfiguration, DynamicConfiguration,
-            SetupConfiguration,
-        },
-        error::{DocumentDBError, ErrorCode},
-        postgres::{conn_mgmt::ConnectionPool, create_query_catalog},
+        configuration::{CertInputType, CertificateOptions, DocumentDBSetupConfiguration},
+        error::ErrorCode,
+        postgres::create_query_catalog,
     };
     use bson::{rawbson, RawBson};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use tokio::{
-        task::yield_now,
-        time::{sleep, Duration},
-    };
+    use tokio::{task::yield_now, time::sleep};
 
     #[derive(Debug)]
     struct MaxConnectionConfig {
@@ -298,7 +304,7 @@ mod tests {
         }
 
         fn set_max_conn(&self, value: usize) {
-            self.max_conn.store(value, Ordering::Relaxed)
+            self.max_conn.store(value, Ordering::Relaxed);
         }
     }
 
@@ -353,7 +359,7 @@ mod tests {
         let system_user = std::env::var("PostgresSystemUser").unwrap_or(whoami::username());
 
         DocumentDBSetupConfiguration {
-            node_host_name: "localhost".to_string(),
+            node_host_name: "localhost".to_owned(),
             blocked_role_prefixes: Vec::new(),
             gateway_listen_port: Some(10260),
             allow_transaction_snapshot: Some(false),
@@ -377,7 +383,7 @@ mod tests {
             &query_catalog,
             postgres_system_user,
             None,
-            format!("{}-SystemRequests", setup_config.application_name()),
+            &format!("{}-SystemRequests", setup_config.application_name()),
             PgPoolSettings::system_pool_settings(SYSTEM_REQUESTS_MAX_CONNECTIONS),
         )
         .expect("Failed to create system requests pool");
@@ -387,7 +393,7 @@ mod tests {
             &query_catalog,
             postgres_system_user,
             None,
-            format!("{}-PreAuthRequests", setup_config.application_name()),
+            &format!("{}-PreAuthRequests", setup_config.application_name()),
             PgPoolSettings::system_pool_settings(AUTHENTICATION_MAX_CONNECTIONS),
         )
         .expect("Failed to create authentication pool");
@@ -437,7 +443,7 @@ mod tests {
                 3,
                 pool_manager.report_pool_stats().len(),
                 "2 system pools + 1 shared pool"
-            )
+            );
         }
     }
 

@@ -14,7 +14,7 @@ mod transaction;
 
 pub use cursor::{Cursor, CursorStore, CursorStoreEntry};
 
-pub use transaction::{RequestTransactionInfo, Transaction, TransactionStore};
+pub use transaction::{GatewayTransaction, RequestTransactionInfo, TransactionStore};
 
 pub use connection::ConnectionContext;
 pub use request::RequestContext;

@@ -1,8 +1,13 @@
 [package]
 name = "documentdb_macros"
+description = "Compile-time proc macros for DocumentDB gateway error code generation."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [lib]
 name = "documentdb_macros"

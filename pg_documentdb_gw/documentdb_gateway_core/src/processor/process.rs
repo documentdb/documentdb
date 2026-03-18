@@ -32,6 +32,13 @@ enum Retry {
     None,
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "complex logic that would lose clarity if split"
+)]
+/// # Errors
+///
+/// Returns an error if the operation fails.
 pub async fn process_request(
     request_context: &RequestContext<'_>,
     connection_context: &mut ConnectionContext,
@@ -53,7 +60,7 @@ pub async fn process_request(
                 )
                 .await
             }
-            RequestType::BuildInfo => constant::process_build_info(&dynamic_config),
+            RequestType::BuildInfo => Ok(constant::process_build_info(&dynamic_config)),
             RequestType::CollStats => {
                 data_management::process_coll_stats(
                     request_context,
@@ -79,7 +86,7 @@ pub async fn process_request(
                     )
                     .await
                 } else {
-                    constant::process_connection_status()
+                    Ok(constant::process_connection_status())
                 }
             }
             RequestType::Count => {
@@ -154,9 +161,9 @@ pub async fn process_request(
                 )
                 .await
             }
-            RequestType::GetCmdLineOpts => constant::process_get_cmd_line_opts(),
+            RequestType::GetCmdLineOpts => Ok(constant::process_get_cmd_line_opts()),
             RequestType::GetDefaultRWConcern => constant::process_get_rw_concern(request_context),
-            RequestType::GetLog => constant::process_get_log(),
+            RequestType::GetLog => Ok(constant::process_get_log()),
             RequestType::GetMore => {
                 cursor::process_get_more(request_context, connection_context, pg_data_client).await
             }
@@ -178,7 +185,7 @@ pub async fn process_request(
                 )
                 .await
             }
-            RequestType::Isdbgrid => constant::process_is_db_grid(connection_context),
+            RequestType::Isdbgrid => Ok(constant::process_is_db_grid(connection_context)),
             RequestType::IsMaster => ismaster::process(
                 request_context,
                 "ismaster",
@@ -208,7 +215,7 @@ pub async fn process_request(
             RequestType::Ping => Ok(constant::ok_response()),
             RequestType::SaslContinue | RequestType::SaslStart | RequestType::Logout => {
                 Err(DocumentDBError::internal_error(
-                    "Command should have been handled by Auth".to_string(),
+                    "Command should have been handled by Auth".to_owned(),
                 ))
             }
             RequestType::Update => {
@@ -301,7 +308,7 @@ pub async fn process_request(
             RequestType::PrepareTransaction => constant::process_prepare_transaction(),
             RequestType::CommitTransaction => transaction::process_commit(connection_context).await,
             RequestType::AbortTransaction => transaction::process_abort(connection_context).await,
-            RequestType::ListCommands => constant::list_commands(),
+            RequestType::ListCommands => Ok(constant::list_commands()),
             RequestType::EndSessions | RequestType::KillSessions => {
                 session::end_or_kill_sessions(request_context, connection_context, pg_data_client)
                     .await
@@ -315,7 +322,7 @@ pub async fn process_request(
                 )
                 .await
             }
-            RequestType::WhatsMyUri => constant::process_whats_my_uri(),
+            RequestType::WhatsMyUri => Ok(constant::process_whats_my_uri()),
             RequestType::CreateUser => {
                 users::process_create_user(request_context, connection_context, pg_data_client)
                     .await
@@ -352,7 +359,7 @@ pub async fn process_request(
                 )
                 .await
             }
-            &RequestType::GetShardMap => {
+            RequestType::GetShardMap => {
                 data_description::process_get_shard_map(
                     request_context,
                     connection_context,
@@ -360,7 +367,7 @@ pub async fn process_request(
                 )
                 .await
             }
-            &RequestType::ListShards => {
+            RequestType::ListShards => {
                 data_description::process_list_shards(
                     request_context,
                     connection_context,
@@ -368,7 +375,7 @@ pub async fn process_request(
                 )
                 .await
             }
-            &RequestType::BalancerStart => {
+            RequestType::BalancerStart => {
                 data_description::process_balancer_start(
                     request_context,
                     connection_context,
@@ -376,7 +383,7 @@ pub async fn process_request(
                 )
                 .await
             }
-            &RequestType::BalancerStatus => {
+            RequestType::BalancerStatus => {
                 data_description::process_balancer_status(
                     request_context,
                     connection_context,
@@ -384,7 +391,7 @@ pub async fn process_request(
                 )
                 .await
             }
-            &RequestType::BalancerStop => {
+            RequestType::BalancerStop => {
                 data_description::process_balancer_stop(
                     request_context,
                     connection_context,
@@ -392,7 +399,7 @@ pub async fn process_request(
                 )
                 .await
             }
-            &RequestType::MoveCollection => {
+            RequestType::MoveCollection => {
                 data_description::process_move_collection(
                     request_context,
                     connection_context,
@@ -423,20 +430,14 @@ pub async fn process_request(
 
         let retry = match &response {
             // in the case of write conflict, we need to remove the transaction.
-            Err(DocumentDBError::PostgresError(error, _)) => retry_policy(
-                &dynamic_config,
-                error,
-                request_context.payload.request_type(),
-            ),
-            Err(DocumentDBError::PoolError(
-                PoolError::PostCreateHook(HookError::Backend(error)),
-                _,
-            )) => retry_policy(
-                &dynamic_config,
-                error,
-                request_context.payload.request_type(),
-            ),
-            Err(DocumentDBError::PoolError(PoolError::Backend(error), _)) => retry_policy(
+            Err(
+                DocumentDBError::PostgresError(error, _)
+                | DocumentDBError::PoolError(
+                    PoolError::PostCreateHook(HookError::Backend(error))
+                    | PoolError::Backend(error),
+                    _,
+                ),
+            ) => retry_policy(
                 &dynamic_config,
                 error,
                 request_context.payload.request_type(),
@@ -469,8 +470,8 @@ pub async fn process_request(
             }
             // In the case of failures with aggregate/find, we need to abort the transaction.
             Err(_)
-                if request_context.payload.request_type() == &RequestType::Find
-                    || request_context.payload.request_type() == &RequestType::Aggregate =>
+                if request_context.payload.request_type() == RequestType::Find
+                    || request_context.payload.request_type() == RequestType::Aggregate =>
             {
                 transaction::process_abort(connection_context).await?;
             }
@@ -484,9 +485,9 @@ pub async fn process_request(
 fn retry_policy(
     dynamic_config: &Arc<dyn DynamicConfiguration>,
     error: &tokio_postgres::Error,
-    request_type: &RequestType,
+    request_type: RequestType,
 ) -> Retry {
-    if (request_type == &RequestType::Insert || request_type == &RequestType::Update)
+    if (request_type == RequestType::Insert || request_type == RequestType::Update)
         && dynamic_config.enable_write_procedures_with_batch_commit()
     {
         // When batch commit are enabled, do not retry on any errors.
@@ -500,10 +501,12 @@ fn retry_policy(
         Some(&SqlState::READ_ONLY_SQL_TRANSACTION) if dynamic_config.is_replica_cluster() => {
             Retry::None
         }
-        Some(&SqlState::READ_ONLY_SQL_TRANSACTION) => Retry::Long,
-        Some(&SqlState::CONNECTION_FAILURE) => Retry::Long,
-        Some(&SqlState::INVALID_AUTHORIZATION_SPECIFICATION) => Retry::Long,
-        Some(&SqlState::T_R_DEADLOCK_DETECTED) if request_type == &RequestType::Update => {
+        Some(
+            &SqlState::READ_ONLY_SQL_TRANSACTION
+            | &SqlState::CONNECTION_FAILURE
+            | &SqlState::INVALID_AUTHORIZATION_SPECIFICATION,
+        ) => Retry::Long,
+        Some(&SqlState::T_R_DEADLOCK_DETECTED) if request_type == RequestType::Update => {
             Retry::Long
         }
         _ => Retry::None,
