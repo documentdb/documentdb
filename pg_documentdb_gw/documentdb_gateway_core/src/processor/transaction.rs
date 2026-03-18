@@ -15,6 +15,7 @@ use crate::{
 };
 
 // Create the transaction if required, and populate the context information with the transaction info
+#[expect(clippy::expect_used, reason = "session must exist during transaction")]
 pub async fn handle(
     request_context: &RequestContext<'_>,
     connection_context: &mut ConnectionContext,
@@ -73,7 +74,7 @@ pub async fn process_abort(context: &ConnectionContext) -> Result<Response> {
         .transaction
         .as_ref()
         .ok_or(DocumentDBError::internal_error(
-            "Transaction information was not populated for abort.".to_string(),
+            "Transaction information was not populated for abort.".to_owned(),
         ))?;
 
     let store = context.service_context.transaction_store();

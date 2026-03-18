@@ -18,7 +18,7 @@ use super::{reader::str_from_u8_nul_utf8, util::SyncLittleEndianRead};
 #[derive(Debug)]
 pub struct Message<'a> {
     pub(crate) _response_to: i32,
-    pub(crate) _flags: MessageFlags,
+    pub(crate) flags: MessageFlags,
     pub(crate) sections: Vec<MessageSection<'a>>,
     pub(crate) _checksum: Option<u32>,
     pub(crate) _request_id: Option<i32>,
@@ -27,10 +27,12 @@ pub struct Message<'a> {
 const _DEFAULT_MAX_MESSAGE_SIZE_BYTES: i32 = 48 * 1024 * 1024;
 
 impl Message<'_> {
-    pub fn read_from_op_msg<'a>(
-        mut reader: Cursor<&'a [u8]>,
+    /// # Errors
+    /// Returns error if the operation fails.
+    pub fn read_from_op_msg(
+        mut reader: Cursor<&[u8]>,
         response_to: i32,
-    ) -> Result<Message<'a>, DocumentDBError> {
+    ) -> Result<Message<'_>, DocumentDBError> {
         let mut length_remaining = reader.get_ref().len();
         let flags = MessageFlags::from_bits_truncate(reader.read_u32_sync()?);
         length_remaining -= std::mem::size_of::<u32>();
@@ -57,11 +59,11 @@ impl Message<'_> {
         }
 
         // Some drivers don't put the command document first.
-        sections.sort_by_key(|a| a.payload_type());
+        sections.sort_by_key(MessageSection::payload_type);
 
         Ok(Message {
             _response_to: response_to,
-            _flags: flags,
+            flags,
             sections,
             _checksum: checksum,
             _request_id: None,
@@ -69,7 +71,7 @@ impl Message<'_> {
     }
 }
 
-/// Represents a section as defined by the OP_MSG definition in the driver.
+/// Represents a section as defined by the `OP_MSG` definition in the driver.
 #[derive(Debug)]
 pub(crate) enum MessageSection<'a> {
     Document(&'a RawDocument),
@@ -81,6 +83,10 @@ pub(crate) enum MessageSection<'a> {
 }
 
 impl MessageSection<'_> {
+    #[expect(
+        clippy::cast_sign_loss,
+        reason = "size is validated positive by protocol spec"
+    )]
     fn length(&self) -> usize {
         match self {
             Self::Document(r) => r.as_bytes().len(),
@@ -88,7 +94,22 @@ impl MessageSection<'_> {
         }
     }
 
-    /// Reads bytes from `reader` and deserializes them into a MessageSection.
+    /// Reads bytes from `reader` and deserializes them into a `MessageSection`.
+    ///
+    /// # Errors
+    /// Returns error if the operation fails.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "protocol sizes fit in i32/usize"
+    )]
+    #[expect(
+        clippy::cast_sign_loss,
+        reason = "sizes are validated positive by protocol spec"
+    )]
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "protocol message sizes fit in i32"
+    )]
     fn read<'b>(reader: &mut Cursor<&'b [u8]>) -> Result<MessageSection<'b>, DocumentDBError> {
         let payload_type = reader.read_u8_sync()?;
 
@@ -115,20 +136,16 @@ impl MessageSection<'_> {
         })
     }
 
-    fn payload_type(&self) -> i32 {
+    const fn payload_type(&self) -> i32 {
         match self {
-            MessageSection::Document(_) => 0,
-            MessageSection::Sequence {
-                size: _,
-                _identifier: _,
-                documents: _,
-            } => 1,
+            Self::Document(_) => 0,
+            Self::Sequence { .. } => 1,
         }
     }
 }
 
 bitflags! {
-    /// Represents the bitwise flags for an OP_MSG as defined in the c driver.
+    /// Represents the bitwise flags for an `OP_MSG` as defined in the c driver.
     pub(crate) struct MessageFlags: u32 {
         const NONE             = 0b_0000_0000_0000_0000_0000_0000_0000_0000;
         const CHECKSUM_PRESENT = 0b_0000_0000_0000_0000_0000_0000_0000_0001;

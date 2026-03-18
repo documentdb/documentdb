@@ -6,6 +6,19 @@
  *-------------------------------------------------------------------------
  */
 
+#![expect(
+    clippy::missing_panics_doc,
+    reason = "Test helper functions - panics are expected test failures"
+)]
+#![expect(
+    clippy::missing_errors_doc,
+    reason = "Test helper functions - error conditions are self-explanatory"
+)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "Test helper functions - unwrap failures indicate test failures"
+)]
+
 use bson::{doc, Document};
 use mongodb::{error::Error, Collection, Database};
 
@@ -173,7 +186,7 @@ pub async fn validate_cursor_kill_multiple_cursors(db: &Database) -> Result<(), 
     assert_ne!(cursor_id2, 0, "Second cursor ID should not be 0");
 
     // Kill multiple cursors at once, including a non-existent cursor ID in the middle
-    let invalid_cursor_id: i64 = 9999999;
+    let invalid_cursor_id: i64 = 9_999_999;
     let kill_cursors_result1 = db
         .run_command(doc! {
             "killCursors": "test",

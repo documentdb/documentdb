@@ -16,7 +16,7 @@ use tokio_postgres::error::SqlState;
 
 use crate::{
     context::ConnectionContext,
-    responses::{constant::pg_returned_invalid_response_message, PgResponse},
+    responses::{self, constant::pg_returned_invalid_response_message},
 };
 
 documentdb_error_code_enum!();
@@ -24,7 +24,7 @@ documentdb_extensive_log_postgres_errors!();
 
 pub enum DocumentDBError {
     IoError(io::Error, Backtrace),
-    #[expect(clippy::enum_variant_names)]
+    #[expect(clippy::enum_variant_names, reason = "variant name should be changed")]
     DocumentDBError(
         ErrorCode,
         String, // Error message shown to user. This should not be logged as it may contain PII.
@@ -32,7 +32,10 @@ pub enum DocumentDBError {
         Backtrace,
     ),
     PostgresError(tokio_postgres::Error, Backtrace),
-    #[expect(clippy::enum_variant_names)]
+    #[expect(
+        clippy::enum_variant_names,
+        reason = "variant name matches type name for clarity"
+    )]
     PostgresDocumentDBError(i32, String, Backtrace),
     PoolError(PoolError, Backtrace),
     CreatePoolError(CreatePoolError, Backtrace),
@@ -45,23 +48,27 @@ pub enum DocumentDBError {
 
 impl DocumentDBError {
     pub fn parse_failure<'a, E: std::fmt::Display>() -> impl Fn(E) -> Self + 'a {
-        move |e| DocumentDBError::bad_value(format!("Failed to parse: {e}"))
+        move |e| Self::bad_value(format!("Failed to parse: {e}"))
     }
 
+    #[must_use]
     pub fn pg_response_empty() -> Self {
-        DocumentDBError::internal_error("PG returned no rows in response".to_string())
+        Self::internal_error("PG returned no rows in response".to_owned())
     }
 
+    #[must_use]
     pub fn pg_response_invalid(e: ValueAccessError) -> Self {
-        DocumentDBError::internal_error(pg_returned_invalid_response_message(e))
+        Self::internal_error(pg_returned_invalid_response_message(e))
     }
 
+    #[must_use]
     pub fn sasl_payload_invalid() -> Self {
-        DocumentDBError::authentication_failed("Sasl payload invalid.".to_string())
+        Self::authentication_failed("Sasl payload invalid.".to_owned())
     }
 
+    #[must_use]
     pub fn unauthorized(msg: String) -> Self {
-        DocumentDBError::DocumentDBError(
+        Self::DocumentDBError(
             ErrorCode::Unauthorized,
             msg.clone(),
             msg.into(),
@@ -69,8 +76,9 @@ impl DocumentDBError {
         )
     }
 
+    #[must_use]
     pub fn authentication_failed(msg: String) -> Self {
-        DocumentDBError::DocumentDBError(
+        Self::DocumentDBError(
             ErrorCode::AuthenticationFailed,
             msg.clone(),
             msg.into(),
@@ -78,8 +86,9 @@ impl DocumentDBError {
         )
     }
 
+    #[must_use]
     pub fn bad_value(msg: String) -> Self {
-        DocumentDBError::DocumentDBError(
+        Self::DocumentDBError(
             ErrorCode::BadValue,
             msg.clone(),
             msg.into(),
@@ -87,8 +96,9 @@ impl DocumentDBError {
         )
     }
 
+    #[must_use]
     pub fn internal_error(msg: String) -> Self {
-        DocumentDBError::DocumentDBError(
+        Self::DocumentDBError(
             ErrorCode::InternalError,
             msg.clone(),
             msg.into(),
@@ -96,8 +106,9 @@ impl DocumentDBError {
         )
     }
 
+    #[must_use]
     pub fn type_mismatch(msg: String) -> Self {
-        DocumentDBError::DocumentDBError(
+        Self::DocumentDBError(
             ErrorCode::TypeMismatch,
             msg.clone(),
             msg.into(),
@@ -105,8 +116,9 @@ impl DocumentDBError {
         )
     }
 
+    #[must_use]
     pub fn user_not_found(msg: String) -> Self {
-        DocumentDBError::DocumentDBError(
+        Self::DocumentDBError(
             ErrorCode::UserNotFound,
             msg.clone(),
             msg.into(),
@@ -114,8 +126,9 @@ impl DocumentDBError {
         )
     }
 
+    #[must_use]
     pub fn role_not_found(msg: String) -> Self {
-        DocumentDBError::DocumentDBError(
+        Self::DocumentDBError(
             ErrorCode::RoleNotFound,
             msg.clone(),
             msg.into(),
@@ -123,8 +136,9 @@ impl DocumentDBError {
         )
     }
 
+    #[must_use]
     pub fn duplicate_user(msg: String) -> Self {
-        DocumentDBError::DocumentDBError(
+        Self::DocumentDBError(
             ErrorCode::Location51003,
             msg.clone(),
             msg.into(),
@@ -132,8 +146,9 @@ impl DocumentDBError {
         )
     }
 
+    #[must_use]
     pub fn duplicate_role(msg: String) -> Self {
-        DocumentDBError::DocumentDBError(
+        Self::DocumentDBError(
             ErrorCode::Location51002,
             msg.clone(),
             msg.into(),
@@ -141,8 +156,9 @@ impl DocumentDBError {
         )
     }
 
+    #[must_use]
     pub fn reauthentication_required(msg: String) -> Self {
-        DocumentDBError::DocumentDBError(
+        Self::DocumentDBError(
             ErrorCode::ReauthenticationRequired,
             msg.clone(),
             msg.into(),
@@ -150,9 +166,13 @@ impl DocumentDBError {
         )
     }
 
-    #[expect(clippy::self_named_constructors)]
+    #[expect(
+        clippy::self_named_constructors,
+        reason = "need to refactor as a separate change"
+    )]
+    #[must_use]
     pub fn documentdb_error(error_code: ErrorCode, error_message: String) -> Self {
-        DocumentDBError::DocumentDBError(
+        Self::DocumentDBError(
             error_code,
             error_message.clone(),
             error_message.into(),
@@ -160,28 +180,30 @@ impl DocumentDBError {
         )
     }
 
+    #[must_use]
     pub fn error_with_loggable_message(
         code: ErrorCode,
         message: &str,
         error_message_loggable: &str,
     ) -> Self {
-        DocumentDBError::DocumentDBError(
+        Self::DocumentDBError(
             code,
-            message.to_string(),
-            Some(error_message_loggable.to_string()),
+            message.to_owned(),
+            Some(error_message_loggable.to_owned()),
             Backtrace::capture(),
         )
     }
 
-    pub fn error_code_enum(&self) -> Option<ErrorCode> {
+    pub const fn error_code_enum(&self) -> Option<ErrorCode> {
         match self {
-            DocumentDBError::DocumentDBError(code, _, _, _) => Some(*code),
+            Self::DocumentDBError(code, _, _, _) => Some(*code),
             _ => None,
         }
     }
 
+    #[must_use]
     pub fn command_not_supported(msg: String) -> Self {
-        DocumentDBError::DocumentDBError(
+        Self::DocumentDBError(
             ErrorCode::CommandNotSupported,
             msg.clone(),
             msg.into(),
@@ -191,30 +213,34 @@ impl DocumentDBError {
 
     // Logs error with common format for all DocumentDBErrors on request failure.
     // The logged output here must be PII free and is used for telemetry and logging.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "complex logic that would lose clarity if split"
+    )]
     pub fn log_request_failure(&self, connection_context: &ConnectionContext, activity_id: &str) {
         match self {
-            DocumentDBError::IoError(error, backtrace) => {
+            Self::IoError(error, backtrace) => {
                 let error_message_loggable = error.to_string();
-                log_request_failure_inner(RequestFailureLogFields {
+                log_request_failure_inner(&RequestFailureLogFields {
                     activity_id,
                     error_source: "IoError",
                     backtrace: Some(backtrace),
                     error_message_loggable: Some(error_message_loggable.as_str()),
                     ..Default::default()
-                })
+                });
             }
-            DocumentDBError::DocumentDBError(code, _msg, error_message_loggable, backtrace) => {
+            Self::DocumentDBError(code, _msg, error_message_loggable, backtrace) => {
                 let error_code = *code as i32;
-                log_request_failure_inner(RequestFailureLogFields {
+                log_request_failure_inner(&RequestFailureLogFields {
                     activity_id,
                     error_source: "DocumentDBError",
                     backtrace: Some(backtrace),
                     error_message_loggable: error_message_loggable.as_deref(),
                     error_code: Some(&error_code),
                     ..Default::default()
-                })
+                });
             }
-            DocumentDBError::PostgresError(error, backtrace) => {
+            Self::PostgresError(error, backtrace) => {
                 if let Some(dbe) = error.as_db_error() {
                     if should_log_on_postgres_error(dbe.code()) {
                         tracing::error!(
@@ -224,7 +250,7 @@ impl DocumentDBError {
                         );
                     }
 
-                    let error_message_loggable = PgResponse::known_pg_error(
+                    let error_message_loggable = responses::known_pg_error(
                         connection_context,
                         dbe.code(),
                         dbe.message(),
@@ -232,34 +258,34 @@ impl DocumentDBError {
                     )
                     .internal_note();
 
-                    log_request_failure_inner(RequestFailureLogFields {
+                    log_request_failure_inner(&RequestFailureLogFields {
                         activity_id,
                         error_source: "PostgresError",
                         backtrace: Some(backtrace),
                         error_message_loggable,
                         sub_status: Some(dbe.code().code()),
-                        sub_status_code: Some(&PgResponse::postgres_sqlstate_to_i32(dbe.code())),
+                        sub_status_code: Some(&responses::postgres_sqlstate_to_i32(dbe.code())),
                         error_hint: dbe.hint(),
                         error_file_name: dbe.file(),
                         error_file_line_num: dbe.line().as_ref(),
                         ..Default::default()
-                    })
+                    });
                 } else {
                     let error_message_loggable = error.to_string();
-                    log_request_failure_inner(RequestFailureLogFields {
+                    log_request_failure_inner(&RequestFailureLogFields {
                         activity_id,
                         error_source: "PostgresError",
                         backtrace: Some(backtrace),
                         error_message_loggable: Some(error_message_loggable.as_str()),
                         ..Default::default()
-                    })
+                    });
                 }
             }
-            DocumentDBError::PostgresDocumentDBError(pg_code, msg, backtrace) => {
+            Self::PostgresDocumentDBError(pg_code, msg, backtrace) => {
                 let (sql_state, error_message_loggable): (Option<SqlState>, Option<String>) =
-                    match PgResponse::i32_to_postgres_sqlstate(pg_code) {
+                    match responses::i32_to_postgres_sqlstate(*pg_code) {
                         Ok(state) => {
-                            let mapped_response = PgResponse::known_pg_error(
+                            let mapped_response = responses::known_pg_error(
                                 connection_context,
                                 &state,
                                 msg.as_str(),
@@ -267,7 +293,9 @@ impl DocumentDBError {
                             );
                             (
                                 Some(state.clone()),
-                                mapped_response.internal_note().map(|s| s.to_string()),
+                                mapped_response
+                                    .internal_note()
+                                    .map(std::borrow::ToOwned::to_owned),
                             )
                         }
                         Err(_) => (
@@ -278,81 +306,83 @@ impl DocumentDBError {
                         ),
                     };
 
-                log_request_failure_inner(RequestFailureLogFields {
+                log_request_failure_inner(&RequestFailureLogFields {
                     activity_id,
                     error_source: "PostgresDocumentDBError",
                     backtrace: Some(backtrace),
                     error_message_loggable: error_message_loggable.as_deref(),
-                    sub_status: sql_state.as_ref().map(|s| s.code()),
+                    sub_status: sql_state
+                        .as_ref()
+                        .map(tokio_postgres::error::SqlState::code),
                     sub_status_code: Some(pg_code),
                     ..Default::default()
-                })
+                });
             }
-            DocumentDBError::PoolError(error, backtrace) => {
+            Self::PoolError(error, backtrace) => {
                 let error_message_loggable = error.to_string();
-                log_request_failure_inner(RequestFailureLogFields {
+                log_request_failure_inner(&RequestFailureLogFields {
                     activity_id,
                     error_source: "PoolError",
                     backtrace: Some(backtrace),
                     error_message_loggable: Some(error_message_loggable.as_str()),
                     ..Default::default()
-                })
+                });
             }
-            DocumentDBError::CreatePoolError(error, backtrace) => {
+            Self::CreatePoolError(error, backtrace) => {
                 let error_message_loggable = error.to_string();
-                log_request_failure_inner(RequestFailureLogFields {
+                log_request_failure_inner(&RequestFailureLogFields {
                     activity_id,
                     error_source: "CreatePoolError",
                     backtrace: Some(backtrace),
                     error_message_loggable: Some(error_message_loggable.as_str()),
                     ..Default::default()
-                })
+                });
             }
-            DocumentDBError::BuildPoolError(error, backtrace) => {
+            Self::BuildPoolError(error, backtrace) => {
                 let error_message_loggable = error.to_string();
-                log_request_failure_inner(RequestFailureLogFields {
+                log_request_failure_inner(&RequestFailureLogFields {
                     activity_id,
                     error_source: "BuildPoolError",
                     backtrace: Some(backtrace),
                     error_message_loggable: Some(error_message_loggable.as_str()),
                     ..Default::default()
-                })
+                });
             }
-            DocumentDBError::RawBsonError(_error, backtrace) => {
-                log_request_failure_inner(RequestFailureLogFields {
+            Self::RawBsonError(_error, backtrace) => {
+                log_request_failure_inner(&RequestFailureLogFields {
                     activity_id,
                     error_source: "RawBsonError",
                     backtrace: Some(backtrace),
                     ..Default::default()
-                })
+                });
             }
-            DocumentDBError::SSLError(error, backtrace) => {
+            Self::SSLError(error, backtrace) => {
                 let error_message_loggable = error.to_string();
-                log_request_failure_inner(RequestFailureLogFields {
+                log_request_failure_inner(&RequestFailureLogFields {
                     activity_id,
                     error_source: "SSLError",
                     backtrace: Some(backtrace),
                     error_message_loggable: Some(error_message_loggable.as_str()),
                     ..Default::default()
-                })
+                });
             }
-            DocumentDBError::SSLErrorStack(error, backtrace) => {
+            Self::SSLErrorStack(error, backtrace) => {
                 let error_message_loggable = error.to_string();
-                log_request_failure_inner(RequestFailureLogFields {
+                log_request_failure_inner(&RequestFailureLogFields {
                     activity_id,
                     error_source: "SSLErrorStack",
                     backtrace: Some(backtrace),
                     error_message_loggable: Some(error_message_loggable.as_str()),
                     ..Default::default()
-                })
+                });
             }
-            DocumentDBError::ValueAccessError(_error, backtrace) => {
-                log_request_failure_inner(RequestFailureLogFields {
+            Self::ValueAccessError(_error, backtrace) => {
+                log_request_failure_inner(&RequestFailureLogFields {
                     activity_id,
                     error_source: "ValueAccessError",
                     backtrace: Some(backtrace),
                     ..Default::default()
-                })
+                });
             }
         }
     }
@@ -373,7 +403,7 @@ struct RequestFailureLogFields<'a> {
 }
 
 // Function here helps in picking consistent field names for different error variants.
-fn log_request_failure_inner(request_failure: RequestFailureLogFields<'_>) {
+fn log_request_failure_inner(request_failure: &RequestFailureLogFields<'_>) {
     tracing::error!(
         activity_id = request_failure.activity_id,
         error_source = request_failure.error_source,
@@ -389,7 +419,7 @@ fn log_request_failure_inner(request_failure: RequestFailureLogFields<'_>) {
         sub_status={{sub_status}}, sub_status_code={{sub_status_code}}, \
         error_hint={{error_hint}}, error_file_name={{error_file_name}}, error_file_line_num={{error_file_line_num}} \
         backtrace={{backtrace}}.",
-    )
+    );
 }
 
 /// The result type for all methods that can return an error
@@ -397,58 +427,62 @@ pub type Result<T> = std::result::Result<T, DocumentDBError>;
 
 impl From<io::Error> for DocumentDBError {
     fn from(error: io::Error) -> Self {
-        DocumentDBError::IoError(error, Backtrace::capture())
+        Self::IoError(error, Backtrace::capture())
     }
 }
 
 impl From<tokio_postgres::Error> for DocumentDBError {
     fn from(error: tokio_postgres::Error) -> Self {
-        DocumentDBError::PostgresError(error, Backtrace::capture())
+        Self::PostgresError(error, Backtrace::capture())
     }
 }
 
 impl From<bson::raw::Error> for DocumentDBError {
     fn from(error: bson::raw::Error) -> Self {
-        DocumentDBError::RawBsonError(error, Backtrace::capture())
+        Self::RawBsonError(error, Backtrace::capture())
     }
 }
 
 impl From<PoolError> for DocumentDBError {
     fn from(error: PoolError) -> Self {
-        DocumentDBError::PoolError(error, Backtrace::capture())
+        Self::PoolError(error, Backtrace::capture())
     }
 }
 
 impl From<CreatePoolError> for DocumentDBError {
     fn from(error: CreatePoolError) -> Self {
-        DocumentDBError::CreatePoolError(error, Backtrace::capture())
+        Self::CreatePoolError(error, Backtrace::capture())
     }
 }
 
 impl From<BuildError> for DocumentDBError {
     fn from(error: BuildError) -> Self {
-        DocumentDBError::BuildPoolError(error, Backtrace::capture())
+        Self::BuildPoolError(error, Backtrace::capture())
     }
 }
 
 impl From<ErrorStack> for DocumentDBError {
     fn from(error: ErrorStack) -> Self {
-        DocumentDBError::SSLErrorStack(error, Backtrace::capture())
+        Self::SSLErrorStack(error, Backtrace::capture())
     }
 }
 
 impl From<openssl::ssl::Error> for DocumentDBError {
     fn from(error: openssl::ssl::Error) -> Self {
-        DocumentDBError::SSLError(error, Backtrace::capture())
+        Self::SSLError(error, Backtrace::capture())
     }
 }
 
 impl From<ValueAccessError> for DocumentDBError {
     fn from(error: ValueAccessError) -> Self {
-        DocumentDBError::ValueAccessError(error, Backtrace::capture())
+        Self::ValueAccessError(error, Backtrace::capture())
     }
 }
 
+#[expect(
+    clippy::use_debug,
+    reason = "debug formatting for Display implementation"
+)]
 impl Display for ErrorCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
@@ -459,47 +493,48 @@ impl Display for ErrorCode {
 impl Display for DocumentDBError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DocumentDBError::IoError(e, _) => {
+            Self::IoError(e, _) => {
                 let error_message = e.to_string();
                 write!(f, "I/O error while processing request: {error_message}")
             }
-            DocumentDBError::DocumentDBError(code, _, error_message_loggable, _) => {
+            Self::DocumentDBError(code, _, error_message_loggable, _) => {
+                let msg = error_message_loggable.as_deref().unwrap_or("None");
                 write!(
                     f,
-                    "Request failed with error code {code}, error_message_loggable: {error_message_loggable:?}."
+                    "Request failed with error code {code}, error_message_loggable: {msg}."
                 )
             }
-            DocumentDBError::PostgresError(e, _) => {
+            Self::PostgresError(e, _) => {
                 let error_message = e.to_string();
                 write!(f, "Postgres operation failed: {error_message}")
             }
-            DocumentDBError::PostgresDocumentDBError(code, _, _) => {
+            Self::PostgresDocumentDBError(code, _, _) => {
                 write!(f, "Postgres operation failed with error code {code}")
             }
-            DocumentDBError::PoolError(e, _) => {
+            Self::PoolError(e, _) => {
                 let error_message = e.to_string();
                 write!(f, "Connection pool error: {error_message}")
             }
-            DocumentDBError::CreatePoolError(e, _) => {
+            Self::CreatePoolError(e, _) => {
                 let error_message = e.to_string();
                 write!(f, "Unable to create connection pool: {error_message}")
             }
-            DocumentDBError::BuildPoolError(e, _) => {
+            Self::BuildPoolError(e, _) => {
                 let error_message = e.to_string();
                 write!(f, "Unable to build connection pool: {error_message}")
             }
-            DocumentDBError::RawBsonError(_, _) => {
+            Self::RawBsonError(_, _) => {
                 write!(f, "Invalid BSON error.")
             }
-            DocumentDBError::SSLError(e, _) => {
+            Self::SSLError(e, _) => {
                 let error_message = e.to_string();
                 write!(f, "TLS/SSL error: {error_message}")
             }
-            DocumentDBError::SSLErrorStack(e, _) => {
+            Self::SSLErrorStack(e, _) => {
                 let error_message = e.to_string();
                 write!(f, "TLS/SSL error: {error_message}")
             }
-            DocumentDBError::ValueAccessError(_, _) => {
+            Self::ValueAccessError(_, _) => {
                 write!(f, "value access error.")
             }
         }

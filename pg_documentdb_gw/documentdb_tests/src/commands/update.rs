@@ -6,6 +6,19 @@
  *-------------------------------------------------------------------------
  */
 
+#![expect(
+    clippy::missing_panics_doc,
+    reason = "Test helper functions - panics are expected test failures"
+)]
+#![expect(
+    clippy::missing_errors_doc,
+    reason = "Test helper functions - error conditions are self-explanatory"
+)]
+#![expect(
+    clippy::expect_used,
+    reason = "Test helper functions - expect failures indicate test failures"
+)]
+
 use bson::{doc, Document};
 use futures::StreamExt;
 use mongodb::{error::Error, options::UpdateOptions, results::UpdateResult, Database};

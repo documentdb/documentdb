@@ -1,10 +1,9 @@
-use pgrx::ffi::CString;
-use pgrx::{GucContext, GucFlags, GucRegistry, GucSetting};
+use pgrx::{ffi::CString, GucContext, GucFlags, GucRegistry, GucSetting};
 
-pub(crate) static PG_DOCUMENTDB_GATEWAY_DATABASE: GucSetting<Option<CString>> =
+pub static PG_DOCUMENTDB_GATEWAY_DATABASE: GucSetting<Option<CString>> =
     GucSetting::<Option<CString>>::new(None);
 
-pub(crate) static PG_DOCUMENTDB_SETUP_CONFIGURATION: GucSetting<Option<CString>> =
+pub static PG_DOCUMENTDB_SETUP_CONFIGURATION: GucSetting<Option<CString>> =
     GucSetting::<Option<CString>>::new(None);
 
 pub fn init() {

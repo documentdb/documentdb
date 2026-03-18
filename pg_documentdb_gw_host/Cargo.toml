@@ -2,6 +2,12 @@
 name = "pg_documentdb_gw_host"
 version = "0.1.0"
 edition = "2021"
+description = "PGRX background worker hosting the DocumentDB gateway inside PostgreSQL."
+license = "MIT"
+repository = "https://github.com/documentdb/documentdb"
+readme = "../README.md"
+keywords = ["documentdb", "gateway", "pgrx"]
+categories = ["database"]
 
 [lib]
 crate-type = ["cdylib", "lib"]
@@ -25,17 +31,69 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-[profile.dev]
-panic = "unwind"
+[lints.rust]
+ambiguous_negative_literals = "warn"
+missing_debug_implementations = "warn"
+redundant_imports = "warn"
+redundant_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_lifetimes = "warn"
 
 [lints.clippy]
+cargo = { level = "warn", priority = -1 }
 complexity = { level = "warn", priority = -1 }
 correctness = { level = "warn", priority = -1 }
-suspicious = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
 perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
 
-needless_pass_by_ref_mut = "warn"
-unused_async = "warn"
+# These lints are from the `restriction` lint group and prevent specific
+# constructs being used in source code in order to drive up consistency,
+# quality, and brevity
+absolute_paths = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+as_pointer_underscore = "warn"
+assertions_on_result_states = "warn"
+clone_on_ref_ptr = "warn"
+deref_by_slicing = "warn"
+disallowed_script_idents = "warn"
+expect_used = "warn"
+empty_drop = "warn"
+empty_enum_variants_with_brackets = "warn"
+empty_structs_with_brackets = "warn"
+fn_to_numeric_cast_any = "warn"
+get_unwrap = "warn"
+if_then_some_else_none = "warn"
+map_err_ignore = "warn"
+redundant_type_annotations = "warn"
+renamed_function_params = "warn"
+semicolon_outside_block = "warn"
+str_to_string = "warn"
+undocumented_unsafe_blocks = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+unneeded_field_pattern = "warn"
+unused_result_ok = "warn"
+unwrap_in_result = "warn"
+unwrap_used = "warn"
+use_debug = "warn"
+
+# Define custom opt outs here
+# TODO: tackle this issue down in the separate PR
+multiple_crate_versions = "allow"
+# May cause issues with structured logging otherwise.
+literal_string_with_formatting_args = "allow"
+# If the function has side-effects, not calling it will change the semantic of the program
+or_fun_call = "allow"
+# Convolutes code
+option_if_let_else = "allow"
+
+[profile.dev]
+panic = "unwind"
 
 [profile.release-with-symbols]
 inherits = "release"

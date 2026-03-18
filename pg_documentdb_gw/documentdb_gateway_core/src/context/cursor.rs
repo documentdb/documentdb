@@ -23,6 +23,7 @@ pub struct Cursor {
     pub cursor_id: i64,
 }
 
+#[derive(Debug)]
 pub struct CursorStoreEntry {
     pub conn: Option<Arc<Connection>>,
     pub cursor: Cursor,
@@ -34,6 +35,7 @@ pub struct CursorStoreEntry {
 }
 
 // Maps CursorId, Username -> Connection, Cursor
+#[derive(Debug)]
 pub struct CursorStore {
     cursors: Arc<DashMap<(i64, String), CursorStoreEntry>>,
     _reaper: Option<JoinHandle<()>>,
@@ -42,9 +44,9 @@ pub struct CursorStore {
 impl CursorStore {
     pub fn new(config: Arc<dyn DynamicConfiguration>, use_reaper: bool) -> Self {
         let cursors: Arc<DashMap<(i64, String), CursorStoreEntry>> = Arc::new(DashMap::new());
-        let cursors_clone = cursors.clone();
-        let reaper = if use_reaper {
-            Some(tokio::spawn(async move {
+        let cursors_clone = Arc::clone(&cursors);
+        let reaper = use_reaper.then(|| {
+            tokio::spawn(async move {
                 let mut cursor_timeout_resolution =
                     Duration::from_secs(config.cursor_resolution_interval());
                 let mut interval = tokio::time::interval(cursor_timeout_resolution);
@@ -59,12 +61,10 @@ impl CursorStore {
                         interval = tokio::time::interval(cursor_timeout_resolution);
                     }
                 }
-            }))
-        } else {
-            None
-        };
+            })
+        });
 
-        CursorStore {
+        Self {
             cursors,
             _reaper: reaper,
         }
@@ -74,19 +74,21 @@ impl CursorStore {
         self.cursors.insert(k, v);
     }
 
-    pub fn get_cursor(&self, k: (i64, String)) -> Option<CursorStoreEntry> {
-        self.cursors.remove(&k).map(|(_, v)| v)
+    #[must_use]
+    pub fn get_cursor(&self, k: &(i64, String)) -> Option<CursorStoreEntry> {
+        self.cursors.remove(k).map(|(_, v)| v)
     }
 
     pub fn invalidate_cursors_by_collection(&self, db: &str, collection: &str) {
         self.cursors
-            .retain(|_, v| !(v.collection == collection && v.db == db))
+            .retain(|_, v| !(v.collection == collection && v.db == db));
     }
 
     pub fn invalidate_cursors_by_database(&self, db: &str) {
-        self.cursors.retain(|_, v| v.db != db)
+        self.cursors.retain(|_, v| v.db != db);
     }
 
+    #[must_use]
     pub fn invalidate_cursors_by_session(&self, session: &[u8]) -> Vec<i64> {
         let mut invalidated_cursor_ids = Vec::new();
         self.cursors.retain(|&(cursor_id, _), v| {
@@ -99,12 +101,13 @@ impl CursorStore {
         invalidated_cursor_ids
     }
 
-    pub fn kill_cursors(&self, user: String, cursors: &[i64]) -> (Vec<i64>, Vec<i64>) {
+    #[must_use]
+    pub fn kill_cursors(&self, user: &str, cursors: &[i64]) -> (Vec<i64>, Vec<i64>) {
         let mut removed_cursors = Vec::new();
         let mut missing_cursors = Vec::new();
 
-        for cursor in cursors.iter() {
-            if self.cursors.remove(&(*cursor, user.clone())).is_some() {
+        for cursor in cursors {
+            if self.cursors.remove(&(*cursor, user.to_owned())).is_some() {
                 removed_cursors.push(*cursor);
             } else {
                 missing_cursors.push(*cursor);

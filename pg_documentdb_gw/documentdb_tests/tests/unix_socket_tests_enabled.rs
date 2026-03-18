@@ -6,15 +6,16 @@
  *-------------------------------------------------------------------------
  */
 
-use bson::doc;
-use documentdb_tests::test_setup::initialize;
 use std::path::Path;
 
+use bson::doc;
+use documentdb_tests::test_setup::initialize;
+
 #[tokio::test]
-async fn test_unix_socket_enabled() {
+async fn test_unix_socket_enabled() -> Result<(), mongodb::error::Error> {
     let socket_path = "/tmp/osddb.sock";
     let (_tcp, unix) =
-        initialize::initialize_with_config_and_unix(Some(socket_path.to_string())).await;
+        initialize::initialize_with_config_and_unix(Some(socket_path.to_owned())).await?;
 
     // Verify socket file exists
     assert!(Path::new(socket_path).exists());
@@ -24,14 +25,15 @@ async fn test_unix_socket_enabled() {
 
     // Verify we can connect and make requests
     let db_names = unix_client.list_database_names().await;
-    assert!(db_names.is_ok());
+    db_names.unwrap();
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_tcp_and_unix_both_work() {
+async fn test_tcp_and_unix_both_work() -> Result<(), mongodb::error::Error> {
     let socket_path = "/tmp/osddb.sock";
     let (tcp, unix) =
-        initialize::initialize_with_config_and_unix(Some(socket_path.to_string())).await;
+        initialize::initialize_with_config_and_unix(Some(socket_path.to_owned())).await?;
 
     let unix_client = unix.expect("Unix client should exist");
     let tcp_db = tcp.database("test_both");
@@ -65,4 +67,6 @@ async fn test_tcp_and_unix_both_work() {
         tcp_count, unix_count,
         "Both clients should see the same count"
     );
+
+    Ok(())
 }

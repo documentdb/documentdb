@@ -15,12 +15,22 @@ use mongodb::{
 pub const TEST_USERNAME: &str = "test";
 pub const TEST_PASSWORD: &str = "test";
 
-pub fn get_client() -> Client {
-    let credential = Credential::builder()
-        .username(TEST_USERNAME.to_string())
-        .password(TEST_PASSWORD.to_string())
+fn test_credentials(user: &str, password: &str) -> Credential {
+    Credential::builder()
+        .username(user.to_owned())
+        .password(password.to_owned())
         .mechanism(AuthMechanism::ScramSha256)
-        .build();
+        .build()
+}
+
+/// Creates a `MongoDB` test client with TLS and SCRAM-SHA-256 authentication.
+///
+/// # Errors
+///
+/// Returns an error if the server address cannot be parsed or the client
+/// cannot be constructed with the given options.
+pub fn get_client() -> std::result::Result<Client, Error> {
+    let credential = test_credentials(TEST_USERNAME, TEST_PASSWORD);
 
     let client_options = ClientOptions::builder()
         .credential(credential)
@@ -29,43 +39,54 @@ pub fn get_client() -> Client {
                 .allow_invalid_certificates(true)
                 .build(),
         ))
-        .hosts(vec![ServerAddress::parse("127.0.0.1:10260").unwrap()])
+        .hosts(vec![ServerAddress::parse("127.0.0.1:10260")?])
         .build();
-    Client::with_options(client_options).unwrap()
+
+    Client::with_options(client_options)
 }
 
-pub fn get_client_insecure() -> Client {
-    let credential = Credential::builder()
-        .username(TEST_USERNAME.to_string())
-        .password(TEST_PASSWORD.to_string())
-        .mechanism(AuthMechanism::ScramSha256)
-        .build();
+/// Creates a `MongoDB` test client without TLS.
+///
+/// # Errors
+///
+/// Returns an error if the server address cannot be parsed or the client
+/// cannot be constructed with the given options.
+pub fn get_client_insecure() -> std::result::Result<Client, Error> {
+    let credential = test_credentials(TEST_USERNAME, TEST_PASSWORD);
 
     let client_options = ClientOptions::builder()
         .credential(credential)
-        .hosts(vec![ServerAddress::parse("127.0.0.1:10260").unwrap()])
+        .hosts(vec![ServerAddress::parse("127.0.0.1:10260")?])
         .build();
-    Client::with_options(client_options).unwrap()
+    Client::with_options(client_options)
 }
 
-pub fn get_client_unix_socket(path: &str) -> Client {
+/// Creates a `MongoDB` test client that connects via a Unix domain socket.
+///
+/// # Errors
+///
+/// Returns an error if the socket address cannot be parsed or the client
+/// cannot be constructed with the given options.
+pub fn get_client_unix_socket(path: &str) -> std::result::Result<Client, Error> {
     use std::time::Duration;
 
-    let credential = Credential::builder()
-        .username(TEST_USERNAME.to_string())
-        .password(TEST_PASSWORD.to_string())
-        .mechanism(AuthMechanism::ScramSha256)
-        .build();
+    let credential = test_credentials(TEST_USERNAME, TEST_PASSWORD);
 
     let client_options = ClientOptions::builder()
         .credential(credential)
-        .hosts(vec![ServerAddress::parse(path).unwrap()])
+        .hosts(vec![ServerAddress::parse(path)?])
         .connect_timeout(Duration::from_millis(100))
         .server_selection_timeout(Duration::from_millis(100))
         .build();
-    Client::with_options(client_options).unwrap()
+
+    Client::with_options(client_options)
 }
 
+/// Drops and returns a fresh database handle for the given name.
+///
+/// # Errors
+///
+/// Returns an error if the database cannot be dropped.
 pub async fn setup_db(client: &Client, db: &str) -> Result<Database, Error> {
     let db = client.database(db);
 

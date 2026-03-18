@@ -24,6 +24,7 @@ use crate::{
     responses::{PgResponse, Response},
 };
 
+#[derive(Debug)]
 pub struct DocumentDBDataClient {
     connection_pool: Option<Arc<ConnectionPool>>,
 }
@@ -33,7 +34,7 @@ impl DocumentDBDataClient {
         self.connection_pool
             .as_ref()
             .ok_or(DocumentDBError::internal_error(
-                "Acquiring connection to postgres on unauthorized data client".to_string(),
+                "Acquiring connection to postgres on unauthorized data client".to_owned(),
             ))?
             .acquire_connection()
             .await
@@ -55,11 +56,11 @@ impl PgDataClient for DocumentDBDataClient {
                 .get_data_pool(user, dynamic_configuration.as_ref())?,
         );
 
-        Ok(DocumentDBDataClient { connection_pool })
+        Ok(Self { connection_pool })
     }
 
     fn new_unauthorized(_: &Arc<ServiceContext>) -> Result<Self> {
-        Ok(DocumentDBDataClient {
+        Ok(Self {
             connection_pool: None,
         })
     }
@@ -112,8 +113,8 @@ impl PgDataClient for DocumentDBDataClient {
                     .coll_stats(),
                 &[Type::TEXT, Type::TEXT, Type::FLOAT8],
                 &[
-                    &request_info.db()?.to_string(),
-                    &request_info.collection()?.to_string(),
+                    &request_info.db()?.to_owned(),
+                    &request_info.collection()?.to_owned(),
                     &scale,
                 ],
                 Timeout::transaction(request_info.max_time_ms),
@@ -244,7 +245,7 @@ impl PgDataClient for DocumentDBDataClient {
                             query_catalog.delete(),
                             &[Type::TEXT, Type::BYTEA, Type::BYTEA],
                             &[
-                                &request_info.db()?.to_string(),
+                                &request_info.db()?.to_owned(),
                                 &PgDocument(request.document()),
                                 &request.extra(),
                             ],
@@ -357,13 +358,13 @@ impl PgDataClient for DocumentDBDataClient {
         connection_context: &ConnectionContext,
     ) -> Result<(Option<serde_json::Value>, String)> {
         let (request, request_info, request_tracker) = request_context.get_components();
-        let analyze = if !matches!(
+        let analyze = if matches!(
             verbosity,
             Verbosity::QueryPlanner | Verbosity::AllShardsQueryPlan
         ) {
-            "True"
-        } else {
             "False"
+        } else {
+            "True"
         };
         let explain_query = connection_context
             .service_context
@@ -541,7 +542,7 @@ impl PgDataClient for DocumentDBDataClient {
                 query_str,
                 &[Type::TEXT, Type::BYTEA, Type::BYTEA],
                 &[
-                    &request_info.db()?.to_string(),
+                    &request_info.db()?.to_owned(),
                     &PgDocument(request.document()),
                     &request.extra(),
                 ],
@@ -682,7 +683,7 @@ impl PgDataClient for DocumentDBDataClient {
                 query_str,
                 &[Type::TEXT, Type::BYTEA, Type::BYTEA],
                 &[
-                    &request_info.db()?.to_string(),
+                    &request_info.db()?.to_owned(),
                     &PgDocument(request.document()),
                     &request.extra(),
                 ],
@@ -763,8 +764,8 @@ impl PgDataClient for DocumentDBDataClient {
                     .shard_collection(),
                 &[Type::TEXT, Type::TEXT, Type::BYTEA, Type::BOOL],
                 &[
-                    &db.to_string(),
-                    &collection.to_string(),
+                    &db.to_owned(),
+                    &collection.to_owned(),
                     &PgDocument(key),
                     &reshard,
                 ],
@@ -792,8 +793,8 @@ impl PgDataClient for DocumentDBDataClient {
                     .re_index(),
                 &[Type::TEXT, Type::TEXT],
                 &[
-                    &request_info.db()?.to_string(),
-                    &request_info.collection()?.to_string(),
+                    &request_info.db()?.to_owned(),
+                    &request_info.collection()?.to_owned(),
                 ],
                 Timeout::command(request_info.max_time_ms),
                 request_tracker,
@@ -865,8 +866,8 @@ impl PgDataClient for DocumentDBDataClient {
                     .coll_mod(),
                 &[Type::TEXT, Type::TEXT, Type::BYTEA],
                 &[
-                    &request_info.db()?.to_string(),
-                    &request_info.collection()?.to_string(),
+                    &request_info.db()?.to_owned(),
+                    &request_info.collection()?.to_owned(),
                     &PgDocument(request.document()),
                 ],
                 Timeout::transaction(request_info.max_time_ms),
@@ -920,7 +921,7 @@ impl PgDataClient for DocumentDBDataClient {
                     .query_catalog()
                     .db_stats(),
                 &[Type::TEXT, Type::FLOAT8, Type::BOOL],
-                &[&request_info.db()?.to_string(), &scale, &false],
+                &[&request_info.db()?.to_owned(), &scale, &false],
                 Timeout::transaction(request_info.max_time_ms),
                 request_tracker,
             )
@@ -932,9 +933,13 @@ impl PgDataClient for DocumentDBDataClient {
     async fn execute_rename_collection(
         &self,
         request_context: &RequestContext<'_>,
+        source_db: &str,
+        source_collection: &str,
+        target_collection: &str,
+        drop_target: bool,
         connection_context: &ConnectionContext,
     ) -> Result<Vec<Row>> {
-        let (request, request_info, request_tracker) = request_context.get_components();
+        let (_, request_info, request_tracker) = request_context.get_components();
         let rename_collection_rows = self
             .pull_connection(connection_context)
             .await?
@@ -943,8 +948,13 @@ impl PgDataClient for DocumentDBDataClient {
                     .service_context
                     .query_catalog()
                     .rename_collection(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
+                &[Type::TEXT, Type::TEXT, Type::TEXT, Type::BOOL],
+                &[
+                    &source_db,
+                    &source_collection,
+                    &target_collection,
+                    &drop_target,
+                ],
                 Timeout::transaction(request_info.max_time_ms),
                 request_tracker,
             )
@@ -978,7 +988,7 @@ impl PgDataClient for DocumentDBDataClient {
                     if let Some(code) = pg_error.code() {
                         if code == &SqlState::DUPLICATE_OBJECT {
                             return DocumentDBError::duplicate_user(
-                                "The specified user already exists.".to_string(),
+                                "The specified user already exists.".to_owned(),
                             );
                         }
                     }
@@ -1014,7 +1024,7 @@ impl PgDataClient for DocumentDBDataClient {
                     if let Some(code) = pg_error.code() {
                         if code == &SqlState::UNDEFINED_OBJECT {
                             return DocumentDBError::user_not_found(
-                                "The specified user does not exist.".to_string(),
+                                "The specified user does not exist.".to_owned(),
                             );
                         }
                     }
@@ -1050,7 +1060,7 @@ impl PgDataClient for DocumentDBDataClient {
                     if let Some(code) = pg_error.code() {
                         if code == &SqlState::UNDEFINED_OBJECT {
                             return DocumentDBError::user_not_found(
-                                "The specified user does not exist.".to_string(),
+                                "The specified user does not exist.".to_owned(),
                             );
                         }
                     }
@@ -1142,7 +1152,7 @@ impl PgDataClient for DocumentDBDataClient {
         _connection_context: &ConnectionContext,
     ) -> Result<Response> {
         Err(DocumentDBError::command_not_supported(
-            "Not supported operation.".to_string(),
+            "Not supported operation.".to_owned(),
         ))
     }
 
@@ -1238,7 +1248,7 @@ impl PgDataClient for DocumentDBDataClient {
                     if let Some(code) = pg_error.code() {
                         if code == &SqlState::DUPLICATE_OBJECT {
                             return DocumentDBError::duplicate_role(
-                                "The specified role already exists.".to_string(),
+                                "The specified role already exists.".to_owned(),
                             );
                         }
                     }
@@ -1273,7 +1283,7 @@ impl PgDataClient for DocumentDBDataClient {
                     if let Some(code) = pg_error.code() {
                         if code == &SqlState::UNDEFINED_OBJECT {
                             return DocumentDBError::role_not_found(
-                                "The specified role does not exist.".to_string(),
+                                "The specified role does not exist.".to_owned(),
                             );
                         }
                     }
@@ -1308,7 +1318,7 @@ impl PgDataClient for DocumentDBDataClient {
                     if let Some(code) = pg_error.code() {
                         if code == &SqlState::UNDEFINED_OBJECT {
                             return DocumentDBError::role_not_found(
-                                "The specified role does not exist.".to_string(),
+                                "The specified role does not exist.".to_owned(),
                             );
                         }
                     }
@@ -1347,7 +1357,7 @@ impl PgDataClient for DocumentDBDataClient {
         _connection_context: &ConnectionContext,
     ) -> Result<Response> {
         Err(DocumentDBError::command_not_supported(
-            "Not supported operation.".to_string(),
+            "Not supported operation.".to_owned(),
         ))
     }
 
@@ -1357,7 +1367,7 @@ impl PgDataClient for DocumentDBDataClient {
         _connection_context: &ConnectionContext,
     ) -> Result<Response> {
         Err(DocumentDBError::command_not_supported(
-            "Not supported operation.".to_string(),
+            "Not supported operation.".to_owned(),
         ))
     }
 
@@ -1367,7 +1377,7 @@ impl PgDataClient for DocumentDBDataClient {
         _connection_context: &ConnectionContext,
     ) -> Result<Response> {
         Err(DocumentDBError::command_not_supported(
-            "Not supported operation.".to_string(),
+            "Not supported operation.".to_owned(),
         ))
     }
 
@@ -1377,7 +1387,7 @@ impl PgDataClient for DocumentDBDataClient {
         _connection_context: &ConnectionContext,
     ) -> Result<Response> {
         Err(DocumentDBError::command_not_supported(
-            "Not supported operation.".to_string(),
+            "Not supported operation.".to_owned(),
         ))
     }
 }

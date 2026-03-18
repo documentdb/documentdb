@@ -6,6 +6,27 @@
  *-------------------------------------------------------------------------
  */
 
+#![expect(
+    clippy::missing_panics_doc,
+    reason = "Test helper functions - panics are expected test failures"
+)]
+#![expect(
+    clippy::missing_errors_doc,
+    reason = "Test helper functions - error conditions are self-explanatory"
+)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "Test helper functions - unwrap failures indicate test failures"
+)]
+#![expect(
+    clippy::expect_used,
+    reason = "Test helper functions - expect failures indicate test failures"
+)]
+#![expect(
+    clippy::float_cmp,
+    reason = "Test assertions compare exact float values returned from database"
+)]
+
 use bson::{doc, Document};
 use mongodb::{error::Error, Database};
 use tokio::time::{sleep, Duration};
@@ -125,13 +146,6 @@ pub async fn validate_empty_current_op(db: &Database) -> Result<(), Error> {
 }
 
 pub async fn validate_current_op_with_long_running_task(db: &Database) -> Result<(), Error> {
-    let collection = db.collection::<Document>("test_collection");
-
-    let docs: Vec<Document> = (0..1000)
-        .map(|i| doc! { "field": i, "data": "some data" })
-        .collect();
-    let _ = collection.insert_many(docs).await?;
-
     async fn run_long_running_index_task(collection: &mongodb::Collection<Document>) {
         let res = collection
             .create_index(
@@ -153,6 +167,13 @@ pub async fn validate_current_op_with_long_running_task(db: &Database) -> Result
             res.err()
         );
     }
+
+    let collection = db.collection::<Document>("test_collection");
+
+    let docs: Vec<Document> = (0..1000)
+        .map(|i| doc! { "field": i, "data": "some data" })
+        .collect();
+    let _ = collection.insert_many(docs).await?;
 
     let include_all = async {
         // Add a small delay to make sure that the long-running index creation is in progress when we run currentOp
@@ -262,14 +283,14 @@ pub async fn validate_currentop_captures_mongodb_operations(db: &Database) -> Re
         .unwrap();
 
     let inprog = result.get_array("inprog").unwrap();
-    for op in inprog.iter() {
+    for op in inprog {
         if let Some(doc) = op.as_document() {
             if let (Ok(active), Ok(ns)) = (doc.get_bool("active"), doc.get_str("ns")) {
                 if active && ns.contains("large_test_collection") {
                     assert!(doc.contains_key("opid"));
                     assert!(doc.contains_key("type"));
                     if doc.contains_key("command") {
-                        assert!(doc.get_document("command").is_ok());
+                        doc.get_document("command").unwrap();
                     }
                 }
             }

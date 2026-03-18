@@ -8,7 +8,7 @@
 
 use std::str::FromStr;
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub enum ReadConcern {
     /// Read concern is not specified.
     #[default]
@@ -37,12 +37,12 @@ impl FromStr for ReadConcern {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "" | "unspecified" => Ok(ReadConcern::Unspecified),
-            "local" => Ok(ReadConcern::Local),
-            "available" => Ok(ReadConcern::Available),
-            "majority" => Ok(ReadConcern::Majority),
-            "linearizable" => Ok(ReadConcern::Linearizable),
-            "snapshot" => Ok(ReadConcern::Snapshot),
+            "" | "unspecified" => Ok(Self::Unspecified),
+            "local" => Ok(Self::Local),
+            "available" => Ok(Self::Available),
+            "majority" => Ok(Self::Majority),
+            "linearizable" => Ok(Self::Linearizable),
+            "snapshot" => Ok(Self::Snapshot),
             _ => Err(()),
         }
     }

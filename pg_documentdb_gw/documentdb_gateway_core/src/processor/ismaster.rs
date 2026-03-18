@@ -21,6 +21,8 @@ use crate::{
     responses::{RawResponse, Response},
 };
 
+#[expect(clippy::cast_possible_truncation, reason = "timestamp fits in u32")]
+#[expect(clippy::cast_sign_loss, reason = "timestamp is always positive")]
 pub fn process(
     request_context: &RequestContext<'_>,
     writeable_primary_field: &str,
@@ -31,18 +33,22 @@ pub fn process(
     let local_time = i64::try_from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|_| {
-                DocumentDBError::internal_error("Failed to get the current time".to_string())
+            .map_err(|error| {
+                tracing::error!("Failed to get the current time: {error}");
+                DocumentDBError::internal_error("Failed to get the current time".to_owned())
             })?
             .as_millis(),
     )
-    .map_err(|_| DocumentDBError::internal_error("Current time exceeded an i64".to_string()))?;
+    .map_err(|error| {
+        tracing::error!("Current time exceeded an i64: {error}");
+        DocumentDBError::internal_error("Current time exceeded an i64".to_owned())
+    })?;
 
     if let Ok(client) = request.document().get_document("client") {
         if connection_context.client_information.is_some() {
             return Err(DocumentDBError::documentdb_error(
                 ErrorCode::ClientMetadataCannotBeMutated,
-                "Client metadata cannot be mutated".to_string(),
+                "Client metadata cannot be mutated".to_owned(),
             ));
         }
         connection_context.client_information = Some(client.to_raw_document_buf());

@@ -17,7 +17,7 @@ use std::fmt;
 /// - `driver_version`: Version of the driver.
 /// - `os_type`: Type of operating system (e.g., "Linux").
 /// - `os_name`: Name of the operating system (e.g., "Ubuntu").
-/// - `os_architecture`: Architecture of the operating system (e.g., "x86_64").
+/// - `os_architecture`: Architecture of the operating system (e.g., "`x86_64`").
 /// - `os_version`: Version of the operating system (e.g., "22.04").
 ///
 /// All fields are optional and may be `None` if not present in the source document.
@@ -33,6 +33,7 @@ pub struct ClientInformation {
 }
 
 impl ClientInformation {
+    #[must_use]
     pub fn parse_from_client_document(doc: &RawDocument) -> Self {
         fn get_str(doc: &RawDocument, subdoc: &str, field: &str) -> Option<String> {
             doc.get_document(subdoc)
@@ -53,7 +54,8 @@ impl ClientInformation {
     }
 
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
         self.application_name.is_none()
             && self.driver_name.is_none()
             && self.driver_version.is_none()
@@ -65,7 +67,7 @@ impl ClientInformation {
 }
 
 impl fmt::Display for ClientInformation {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let client_info: [Option<&str>; 7] = [
             self.application_name.as_deref(),
             self.driver_name.as_deref(),
@@ -76,12 +78,15 @@ impl fmt::Display for ClientInformation {
             self.os_version.as_deref(),
         ];
 
-        let client_info_in_string = serde_json::to_string(&client_info).map_err(|_| fmt::Error)?;
-        formatter.write_str(&client_info_in_string)
+        let client_info_in_string = serde_json::to_string(&client_info).map_err(|error| {
+            tracing::error!("Failed to serialize client information: {error}");
+            fmt::Error
+        })?;
+        f.write_str(&client_info_in_string)
     }
 }
 
-/// Parses optional MongoDB client metadata into a JSON string, with a safe fallback.
+/// Parses optional `MongoDB` client metadata into a JSON string, with a safe fallback.
 ///
 /// Given an optional `RawDocumentBuf` from the Mongo handshake (`client` field),
 /// this function tries to extract the seven well-known fields
@@ -131,8 +136,8 @@ mod tests {
     use super::*;
     use bson::doc;
 
-    fn make_raw_doc(doc: bson::Document) -> RawDocumentBuf {
-        RawDocumentBuf::from_document(&doc).expect("Failed to convert Document to RawDocumentBuf")
+    fn make_raw_doc(doc: &bson::Document) -> RawDocumentBuf {
+        RawDocumentBuf::from_document(doc).expect("Failed to convert Document to RawDocumentBuf")
     }
 
     #[test]
@@ -147,7 +152,7 @@ mod tests {
                 "version": "22.04"
             }
         };
-        let raw = make_raw_doc(doc);
+        let raw = make_raw_doc(&doc);
         let result = parse_client_info(Some(&raw));
         assert_eq!(
             result,
@@ -171,7 +176,7 @@ mod tests {
             "driver": { "name": "test-driver" },
             "os": { "type": "Linux" }
         };
-        let raw = make_raw_doc(doc);
+        let raw = make_raw_doc(&doc);
         let result = parse_client_info(Some(&raw));
         assert_eq!(
             result,
@@ -197,7 +202,7 @@ mod tests {
     #[test]
     fn test_parse_client_info_empty_document() {
         let doc = doc! {};
-        let raw = make_raw_doc(doc);
+        let raw = make_raw_doc(&doc);
         let result = parse_client_info(Some(&raw));
         assert_eq!(result, "{}");
     }
@@ -207,7 +212,7 @@ mod tests {
         let doc = doc! {
             "os": { "name": "Ubuntu", "version": "22.04" }
         };
-        let raw = make_raw_doc(doc);
+        let raw = make_raw_doc(&doc);
         let result = parse_client_info(Some(&raw));
         assert_eq!(
             result,
@@ -221,7 +226,7 @@ mod tests {
         let doc = doc! {
             "user_agent": "Mozilla/5.0 (compatible; Nmap Scripting Engine; https://nmap.org/book/nse.html)"
         };
-        let raw = make_raw_doc(doc);
+        let raw = make_raw_doc(&doc);
         let result = parse_client_info(Some(&raw));
         assert_eq!(
             result,

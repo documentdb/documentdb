@@ -15,7 +15,7 @@ use mongodb::{
 
 #[tokio::test]
 async fn is_master() -> Result<(), Error> {
-    let _ = initialize::initialize().await;
+    let _ = initialize::initialize().await?;
 
     let client = Client::with_options(
         ClientOptions::builder()

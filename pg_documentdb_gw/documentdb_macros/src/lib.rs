@@ -8,8 +8,22 @@
 
 extern crate proc_macro;
 
+use std::fmt::Write;
+
 use proc_macro::TokenStream;
 
+/// Generates the `from_known_external_error_code` function that maps SQL error
+/// states to integer error codes based on the OSS error-mapping CSV.
+///
+/// # Panics
+///
+/// Panics if the error-mapping CSV file cannot be opened, read, or parsed.
+/// This is intentional — proc macros run at compile time and a missing or
+/// malformed CSV is an unrecoverable build error.
+#[expect(
+    clippy::unwrap_used,
+    reason = "proc macro — compile-time panic is the correct failure mode"
+)]
 #[proc_macro]
 pub fn documentdb_int_error_mapping(_item: TokenStream) -> TokenStream {
     let mut result = String::new();
@@ -24,10 +38,12 @@ pub fn documentdb_int_error_mapping(_item: TokenStream) -> TokenStream {
         let line = line.unwrap();
         let parts: Vec<&str> = line.split(',').collect();
 
-        result += &format!(
+        write!(
+            result,
             "\"{}\" => Some(({}, \"{}\")),",
             parts[1], parts[2], parts[0]
-        );
+        )
+        .unwrap();
     }
     result += "_ => None
     }
@@ -35,10 +51,27 @@ pub fn documentdb_int_error_mapping(_item: TokenStream) -> TokenStream {
     result.parse().unwrap()
 }
 
-// In the gateway we deal with define known errors in two files, one located in the backend and one in the gateway
-// to add a logical separation between the two. This macro will generate an enum with all the error codes
-// defined in the two files, so that we can use it in the code.
-// The macro will also generate a from_i32 and from_u32 methods to convert from the error code to the enum variant.
+/// Generates the `ErrorCode` enum with `from_i32` and `from_u32` conversion
+/// methods from the OSS error-mapping CSV.
+///
+/// The gateway deals with known errors defined in two files — one in the
+/// backend and one in the gateway — to maintain a logical separation. This
+/// macro produces a unified enum so that both sets of error codes are
+/// available in Rust code.
+///
+/// # Panics
+///
+/// Panics if the error-mapping CSV file cannot be read or parsed.
+/// This is intentional — proc macros run at compile time and a missing or
+/// malformed CSV is an unrecoverable build error.
+#[expect(
+    clippy::unwrap_used,
+    reason = "proc macro — compile-time panic is the correct failure mode"
+)]
+#[expect(
+    clippy::expect_used,
+    reason = "proc macro — compile-time panic is the correct failure mode"
+)]
 #[proc_macro]
 pub fn documentdb_error_code_enum(_item: TokenStream) -> TokenStream {
     let external_error_mapping_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -59,8 +92,8 @@ pub fn documentdb_error_code_enum(_item: TokenStream) -> TokenStream {
         let parts: Vec<&str> = external_error.split(',').collect();
         let name = parts[0].trim();
         let code = parts[2].trim();
-        error_code_enum_entries += &format!("{name} = {code},");
-        from_primitive += &format!("{code} => Some(ErrorCode::{name}),");
+        write!(error_code_enum_entries, "{name} = {code},").unwrap();
+        write!(from_primitive, "{code} => Some(ErrorCode::{name}),").unwrap();
     }
 
     error_code_enum_entries += "
@@ -80,11 +113,20 @@ pub fn documentdb_error_code_enum(_item: TokenStream) -> TokenStream {
     error_code_enum_entries.parse().unwrap()
 }
 
+/// # Panics
+///
+/// Panics if the error-mapping CSV file cannot be read or parsed.
+/// This is intentional — proc macros run at compile time and a missing or
+/// malformed CSV is an unrecoverable build error.
+#[expect(
+    clippy::unwrap_used,
+    reason = "proc macro — compile-time panic is the correct failure mode"
+)]
 #[proc_macro]
 pub fn documentdb_extensive_log_postgres_errors(_item: TokenStream) -> TokenStream {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("postgres_errors.csv");
-    let csv =
-        std::fs::File::open(&path).unwrap_or_else(|_| panic!("Could not open file: {:?}", path));
+    let csv = std::fs::File::open(&path)
+        .unwrap_or_else(|_| panic!("Could not open file: \"{}\"", path.display()));
     let reader = std::io::BufReader::new(csv);
 
     let mut result = String::new();
@@ -92,12 +134,17 @@ pub fn documentdb_extensive_log_postgres_errors(_item: TokenStream) -> TokenStre
                 match state.code() {";
 
     for (index, line) in std::io::BufRead::lines(reader).skip(1).enumerate() {
-        let line = line
-            .unwrap_or_else(|_| panic!("Could not read line {} in file: {:?}", index + 2, path));
+        let line = line.unwrap_or_else(|_| {
+            panic!(
+                "Could not read line {} in file: {}",
+                index + 2,
+                path.display()
+            )
+        });
         let parts: Vec<&str> = line.split(',').collect();
         let code = parts[1].trim();
         let should_log_debug = parts[3].trim();
-        result += &format!("\"{}\" => {},", code, should_log_debug);
+        write!(result, "\"{code}\" => {should_log_debug},").unwrap();
     }
 
     result += "_ => false

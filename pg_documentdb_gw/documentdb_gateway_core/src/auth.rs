@@ -25,23 +25,25 @@ use crate::{
     processor,
     protocol::OK_SUCCEEDED,
     requests::{request_tracker::RequestTracker, Request, RequestType},
-    responses::{PgResponse, RawResponse, Response},
+    responses::{self, RawResponse, Response},
 };
 
 const NONCE_LENGTH: usize = 2;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthKind {
     Native,
     ExternalIdentity,
 }
 
+#[derive(Debug)]
 pub struct ScramFirstState {
     nonce: String,
     first_message_bare: String,
     first_message: String,
 }
 
+#[derive(Debug)]
 pub struct AuthState {
     authorized: Arc<RwLock<bool>>,
     first_state: Option<ScramFirstState>,
@@ -58,8 +60,9 @@ impl Default for AuthState {
 }
 
 impl AuthState {
+    #[must_use]
     pub fn new() -> Self {
-        AuthState {
+        Self {
             authorized: Arc::new(RwLock::new(false)),
             first_state: None,
             username: None,
@@ -69,43 +72,60 @@ impl AuthState {
         }
     }
 
+    /// Returns the username
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
     pub fn username(&self) -> Result<&str> {
         self.username
             .as_deref()
             .ok_or(DocumentDBError::internal_error(
-                "Username missing".to_string(),
+                "Username missing".to_owned(),
             ))
     }
 
+    /// Returns the user OID
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
     pub fn user_oid(&self) -> Result<u32> {
         self.user_oid.ok_or(DocumentDBError::internal_error(
-            "User OID missing".to_string(),
+            "User OID missing".to_owned(),
         ))
     }
 
+    #[must_use]
     pub fn is_authorized(&self) -> Arc<RwLock<bool>> {
         Arc::clone(&self.authorized)
     }
 
-    pub fn auth_kind(&self) -> &Option<AuthKind> {
-        &self.auth_kind
+    #[must_use]
+    pub const fn auth_kind(&self) -> Option<&AuthKind> {
+        self.auth_kind.as_ref()
     }
 
     pub fn set_username(&mut self, user: &str) {
-        self.username = Some(user.to_string());
+        self.username = Some(user.to_owned());
     }
 
-    pub fn set_user_oid(&mut self, user_oid: u32) {
+    pub const fn set_user_oid(&mut self, user_oid: u32) {
         self.user_oid = Some(user_oid);
     }
 
+    /// Sets the auth kind
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
     pub fn set_auth_kind(&mut self, kind: AuthKind) -> Result<()> {
         if self.auth_kind.is_none() {
             self.auth_kind = Some(kind);
             Ok(())
         } else if self.auth_kind != Some(kind) {
             Err(DocumentDBError::internal_error(
-                "Auth kind is already set".to_string(),
+                "Auth kind is already set".to_owned(),
             ))
         } else {
             Ok(())
@@ -120,12 +140,12 @@ impl AuthState {
         let timer_initialized = Arc::clone(&self.timer_initialized);
         if *timer_initialized.read().await {
             return Err(DocumentDBError::internal_error(
-                "Authentication expiry timer is already initialized".to_string(),
+                "Authentication expiry timer is already initialized".to_owned(),
             ));
         }
 
         let authorized = Arc::clone(&self.authorized);
-        let connection_activity_id_owned = connection_activity_id.to_string();
+        let connection_activity_id_owned = connection_activity_id.to_owned();
 
         // Spawn new expiry task that counts down and sets authorized to false
         tokio::spawn(async move {
@@ -146,6 +166,11 @@ impl AuthState {
     }
 }
 
+/// Processes an authentication request
+///
+/// # Errors
+///
+/// Returns an error if the operation fails.
 pub async fn process<T>(
     connection_context: &mut ConnectionContext,
     request_context: &RequestContext<'_>,
@@ -220,9 +245,8 @@ async fn handle_sasl_start(
 
     if mechanism == "MONGODB-OIDC" {
         return handle_oidc(connection_context, request).await;
-    } else {
-        return handle_scram(connection_context, request).await;
     }
+    return handle_scram(connection_context, request).await;
 }
 
 async fn handle_scram(
@@ -234,11 +258,11 @@ async fn handle_scram(
     let username = payload
         .username
         .ok_or(DocumentDBError::authentication_failed(
-            "Username missing from SaslStart.".to_string(),
+            "Username missing from SaslStart.".to_owned(),
         ))?;
 
     let client_nonce = payload.nonce.ok_or(DocumentDBError::authentication_failed(
-        "Nonce missing from SaslStart.".to_string(),
+        "Nonce missing from SaslStart.".to_owned(),
     ))?;
 
     let server_nonce = generate_server_nonce(client_nonce);
@@ -252,7 +276,7 @@ async fn handle_scram(
         first_message: response.clone(),
     });
 
-    connection_context.auth_state.username = Some(username.to_string());
+    connection_context.auth_state.username = Some(username.to_owned());
 
     connection_context
         .auth_state
@@ -285,13 +309,14 @@ async fn handle_oidc(
             DocumentDBError::bad_value(format!("Failed to parse OIDC payload as BSON: {e}"))
         })?;
 
-    let jwt_token = payload_doc.get_str("jwt").map_err(|_| {
-        DocumentDBError::authentication_failed("JWT token missing from OIDC payload".to_string())
+    let jwt_token = payload_doc.get_str("jwt").map_err(|_error| {
+        DocumentDBError::authentication_failed("JWT token missing from OIDC payload".to_owned())
     })?;
 
     handle_oidc_token_authentication(connection_context, jwt_token).await
 }
 
+#[expect(clippy::too_many_lines, reason = "complex authentication logic")]
 async fn handle_oidc_token_authentication(
     connection_context: &mut ConnectionContext,
     token_string: &str,
@@ -319,55 +344,49 @@ async fn handle_oidc_token_authentication(
     {
         Ok(rows) => rows,
         Err(e) => {
-            match e {
-                DocumentDBError::PostgresError(pge_error, _) => match pge_error.as_db_error() {
-                    Some(db_error) => {
-                        tracing::error!(
-                            activity_id = connection_context.connection_id.to_string().as_str(),
-                            "Backend error during authentication: PostgresError({:?}, {:?})",
-                            db_error.code(),
-                            db_error.hint()
-                        );
+            if let DocumentDBError::PostgresError(pge_error, _) = e {
+                if let Some(db_error) = pge_error.as_db_error() {
+                    tracing::error!(
+                        activity_id = connection_context.connection_id.to_string().as_str(),
+                        "Backend error during authentication: PostgresError({:?}, {:?})",
+                        db_error.code(),
+                        db_error.hint()
+                    );
 
-                        if let Some((extension_error_code, _)) =
-                            PgResponse::from_known_external_error_code(db_error.code())
-                        {
-                            if extension_error_code == ErrorCode::CommandNotSupported as i32 {
-                                return Err(DocumentDBError::authentication_failed(
-                                    "The authentication mechanism provided is not supported in the service.".to_string(),
-                                ));
-                            }
+                    if let Some((extension_error_code, _)) =
+                        responses::from_known_external_error_code(db_error.code())
+                    {
+                        if extension_error_code == ErrorCode::CommandNotSupported as i32 {
+                            return Err(DocumentDBError::authentication_failed(
+                                "The authentication mechanism provided is not supported in the service.".to_owned(),
+                            ));
                         }
+                    }
 
-                        return match *db_error.code() {
-                            SqlState::INVALID_PASSWORD => {
-                                Err(DocumentDBError::authentication_failed(
-                                    "The token provided is not valid.".to_string(),
-                                ))
-                            }
-                            SqlState::UNDEFINED_OBJECT => {
-                                Err(DocumentDBError::authentication_failed(
-                                    "External identity is not present in the system.".to_string(),
-                                ))
-                            }
-                            // All other errors are returned as InternalError in authentication code path.
-                            _ => Err(DocumentDBError::authentication_failed(
-                                "Internal Error.".to_string(),
-                            )),
-                        };
-                    }
-                    None => {
-                        tracing::error!(
-                            activity_id = connection_context.connection_id.to_string().as_str(),
-                            "DbError not found in PostgresError, which is unexpected."
-                        );
-                        return Err(DocumentDBError::authentication_failed(
-                            "Internal Error.".to_string(),
-                        ));
-                    }
-                },
-                _ => return Err(e),
+                    return if *db_error.code() == SqlState::INVALID_PASSWORD {
+                        Err(DocumentDBError::authentication_failed(
+                            "The token provided is not valid.".to_owned(),
+                        ))
+                    } else if *db_error.code() == SqlState::UNDEFINED_OBJECT {
+                        Err(DocumentDBError::authentication_failed(
+                            "External identity is not present in the system.".to_owned(),
+                        ))
+                    } else {
+                        // All other errors are returned as InternalError in authentication code path.
+                        Err(DocumentDBError::authentication_failed(
+                            "Internal Error.".to_owned(),
+                        ))
+                    };
+                }
+                tracing::error!(
+                    activity_id = connection_context.connection_id.to_string().as_str(),
+                    "DbError not found in PostgresError, which is unexpected."
+                );
+                return Err(DocumentDBError::authentication_failed(
+                    "Internal Error.".to_owned(),
+                ));
             }
+            return Err(e);
         }
     };
 
@@ -378,7 +397,7 @@ async fn handle_oidc_token_authentication(
 
     if authentication_result.trim() != oid {
         return Err(DocumentDBError::authentication_failed(
-            "Token validation failed".to_string(),
+            "Token validation failed".to_owned(),
         ));
     }
 
@@ -419,56 +438,55 @@ async fn handle_oidc_token_authentication(
     })))
 }
 
+#[expect(clippy::cast_sign_loss, reason = "exp is known positive from JWT spec")]
 fn parse_and_validate_jwt_token(token_string: &str) -> Result<(String, u64)> {
     let token_parts: Vec<&str> = token_string.split('.').collect();
     if token_parts.len() != 3 {
         return Err(DocumentDBError::authentication_failed(
-            "Invalid JWT token format.".to_string(),
+            "Invalid JWT token format.".to_owned(),
         ));
     }
 
     let payload_part = token_parts[1];
     let payload_bytes = general_purpose::URL_SAFE_NO_PAD
         .decode(payload_part)
-        .map_err(|_| {
-            DocumentDBError::authentication_failed("Invalid JWT token encoding.".to_string())
+        .map_err(|_error| {
+            DocumentDBError::authentication_failed("Invalid JWT token encoding.".to_owned())
         })?;
 
-    let payload_json: Value = serde_json::from_slice(&payload_bytes).map_err(|_| {
-        DocumentDBError::authentication_failed("Invalid JWT token payload.".to_string())
+    let payload_json: Value = serde_json::from_slice(&payload_bytes).map_err(|_error| {
+        DocumentDBError::authentication_failed("Invalid JWT token payload.".to_owned())
     })?;
 
     let oid = payload_json
         .get("oid")
         .and_then(|v| v.as_str())
         .ok_or_else(|| {
-            DocumentDBError::authentication_failed("Token does not contain OID.".to_string())
+            DocumentDBError::authentication_failed("Token does not contain OID.".to_owned())
         })?
-        .to_string();
+        .to_owned();
 
     let aud = payload_json
         .get("aud")
         .and_then(|v| v.as_str())
         .ok_or_else(|| {
             DocumentDBError::authentication_failed(
-                "Token does not contain audience claim.".to_string(),
+                "Token does not contain audience claim.".to_owned(),
             )
         })?
-        .to_string();
+        .to_owned();
 
     let exp = payload_json
         .get("exp")
-        .and_then(|v| v.as_i64())
+        .and_then(serde_json::Value::as_i64)
         .ok_or_else(|| {
-            DocumentDBError::authentication_failed(
-                "Token does not contain expiry time.".to_string(),
-            )
+            DocumentDBError::authentication_failed("Token does not contain expiry time.".to_owned())
         })?;
 
     let valid_audiences = ["https://ossrdbms-aad.database.windows.net"];
     if !valid_audiences.contains(&aud.as_str()) {
         return Err(DocumentDBError::authentication_failed(
-            "The audience claim provided in the token is not valid.".to_string(),
+            "The audience claim provided in the token is not valid.".to_owned(),
         ));
     }
 
@@ -477,7 +495,7 @@ fn parse_and_validate_jwt_token(token_string: &str) -> Result<(String, u64)> {
 
     if exp_datetime < now {
         return Err(DocumentDBError::authentication_failed(
-            "The token provided is expired.".to_string(),
+            "The token provided is expired.".to_owned(),
         ));
     }
 
@@ -502,7 +520,7 @@ async fn handle_sasl_continue(
         if let Ok(mechanism) = mechanism_result {
             if mechanism == "MONGODB-OIDC" {
                 return Err(DocumentDBError::authentication_failed(
-                    "Auth mechanism MONGODB-OIDC is not supported in SaslContinue".to_string(),
+                    "Auth mechanism MONGODB-OIDC is not supported in SaslContinue".to_owned(),
                 ));
             }
         } else {
@@ -512,27 +530,27 @@ async fn handle_sasl_continue(
         // Username is not always provided by saslcontinue
 
         let client_nonce = payload.nonce.ok_or(DocumentDBError::authentication_failed(
-            "Nonce missing from SaslContinue.".to_string(),
+            "Nonce missing from SaslContinue.".to_owned(),
         ))?;
         let proof = payload.proof.ok_or(DocumentDBError::authentication_failed(
-            "Proof missing from SaslContinue.".to_string(),
+            "Proof missing from SaslContinue.".to_owned(),
         ))?;
         let channel_binding =
             payload
                 .channel_binding
                 .ok_or(DocumentDBError::authentication_failed(
-                    "Channel binding missing from SaslContinue.".to_string(),
+                    "Channel binding missing from SaslContinue.".to_owned(),
                 ))?;
         let username = payload
             .username
             .or(connection_context.auth_state.username.as_deref())
             .ok_or(DocumentDBError::internal_error(
-                "Username missing from SaslContinue".to_string(),
+                "Username missing from SaslContinue".to_owned(),
             ))?;
 
         if client_nonce != first_state.nonce {
             return Err(DocumentDBError::authentication_failed(
-                "Nonce did not match expected nonce.".to_string(),
+                "Nonce did not match expected nonce.".to_owned(),
             ));
         }
 
@@ -573,7 +591,7 @@ async fn handle_sasl_continue(
             != 1
         {
             return Err(DocumentDBError::authentication_failed(
-                "Invalid key".to_string(),
+                "Invalid key".to_owned(),
             ));
         }
 
@@ -601,7 +619,7 @@ async fn handle_sasl_continue(
         })))
     } else {
         Err(DocumentDBError::authentication_failed(
-            "SaslContinue called without SaslStart state.".to_string(),
+            "SaslContinue called without SaslStart state.".to_owned(),
         ))
     }
 }
@@ -613,10 +631,7 @@ struct ScramPayload<'a> {
     channel_binding: Option<&'a str>,
 }
 
-fn parse_sasl_payload<'a, 'b: 'a>(
-    request: &'b Request<'a>,
-    with_header: bool,
-) -> Result<ScramPayload<'a>> {
+fn parse_sasl_payload<'a>(request: &'a Request<'a>, with_header: bool) -> Result<ScramPayload<'a>> {
     let payload = request
         .document()
         .get_binary("payload")
@@ -630,9 +645,7 @@ fn parse_sasl_payload<'a, 'b: 'a>(
             return Err(DocumentDBError::sasl_payload_invalid());
         }
         match &payload[0..=2] {
-            "n,," => (),
-            "p,," => (),
-            "y,," => (),
+            "n,," | "p,," | "y,," => (),
             _ => return Err(DocumentDBError::sasl_payload_invalid()),
         }
         payload = &payload[3..];
@@ -657,7 +670,7 @@ fn parse_sasl_payload<'a, 'b: 'a>(
             "c" => channel_binding = Some(v),
             _ => {
                 return Err(DocumentDBError::authentication_failed(
-                    "Sasl payload was invalid.".to_string(),
+                    "Sasl payload was invalid.".to_owned(),
                 ))
             }
         }
@@ -685,7 +698,7 @@ async fn get_salt_and_iteration(
             .starts_with(&blocked_prefix.to_lowercase())
         {
             return Err(DocumentDBError::authentication_failed(
-                "Username is invalid.".to_string(),
+                "Username is invalid.".to_owned(),
             ));
         }
     }
@@ -719,7 +732,7 @@ async fn get_salt_and_iteration(
     {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::AuthenticationFailed,
-            "Invalid account: User details not found in the database".to_string(),
+            "Invalid account: User details not found in the database".to_owned(),
         ));
     }
 
@@ -732,9 +745,14 @@ async fn get_salt_and_iteration(
         .get_str("salt")
         .map_err(DocumentDBError::pg_response_invalid)?;
 
-    Ok((salt.to_string(), iterations))
+    Ok((salt.to_owned(), iterations))
 }
 
+/// Gets the user OID from the database
+///
+/// # Errors
+///
+/// Returns an error if the operation fails.
 pub async fn get_user_oid(connection_context: &ConnectionContext, username: &str) -> Result<u32> {
     let user_oid_rows = connection_context
         .service_context

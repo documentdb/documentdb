@@ -10,6 +10,8 @@ pub mod client_info;
 pub mod event_id;
 mod verbose_latency;
 
+use std::fmt::Debug;
+
 use crate::{
     context::ConnectionContext,
     error::ErrorCode,
@@ -24,9 +26,12 @@ use either::Either;
 pub use verbose_latency::try_log_verbose_latency;
 
 /// `TelemetryProvider` takes care of emitting events and metrics for tracking the gateway.
-#[expect(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "telemetry requires many parameters"
+)]
 #[async_trait]
-pub trait TelemetryProvider: Send + Sync + DynClone {
+pub trait TelemetryProvider: Send + Sync + DynClone + Debug {
     /// Emits an event for every CRUD request dispatched to backend.
     async fn emit_request_event(
         &self,
@@ -44,6 +49,7 @@ pub trait TelemetryProvider: Send + Sync + DynClone {
 clone_trait_object!(TelemetryProvider);
 
 // In case of no error (success), error_code passed here should be None and status code returned is 200
+#[must_use]
 pub fn error_code_to_status_code(error: Option<i32>) -> u16 {
     match error {
         None => 200,

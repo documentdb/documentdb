@@ -8,28 +8,26 @@
 
 use std::fmt::Display;
 
-use bson::ser::Error;
-
-pub fn bson_serialize_error_message(error: Error) -> String {
-    format!("Error serializing CommandError: {error}.")
-}
-
+#[must_use]
 pub fn value_access_error_message() -> String {
-    "Value Access Error.".to_string()
+    "Value Access Error.".to_owned()
 }
 
+#[must_use]
 pub fn documentdb_error_message() -> String {
-    "DocumentDB error.".to_string()
+    "DocumentDB error.".to_owned()
 }
 
 pub fn pg_returned_invalid_response_message<E: Display>(error: E) -> String {
     format!("PG returned invalid response: {error}.")
 }
 
-pub fn duplicate_key_violation_message() -> &'static str {
+#[must_use]
+pub const fn duplicate_key_violation_message() -> &'static str {
     "Duplicate key violation on the requested collection."
 }
 
-pub fn generic_internal_error_message() -> &'static str {
+#[must_use]
+pub const fn generic_internal_error_message() -> &'static str {
     "An unexpected internal error has occurred."
 }

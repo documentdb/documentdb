@@ -24,8 +24,9 @@ pub struct PgPoolSettings {
 }
 
 impl PgPoolSettings {
-    pub fn system_pool_settings(max_connections: usize) -> Self {
-        PgPoolSettings {
+    #[must_use]
+    pub const fn system_pool_settings(max_connections: usize) -> Self {
+        Self {
             max_connections,
             system_connection_budget: 0,
             connection_pruning_interval: Duration::from_secs(CONN_PRUNE_INTERVAL_SECS),
@@ -43,7 +44,7 @@ impl PgPoolSettings {
             Duration::from_secs(config.gateway_connection_idle_lifetime_sec());
         let connection_lifetime = Duration::from_secs(config.gateway_connection_lifetime_sec());
 
-        PgPoolSettings {
+        Self {
             max_connections,
             system_connection_budget,
             connection_pruning_interval,
@@ -52,7 +53,8 @@ impl PgPoolSettings {
         }
     }
 
-    pub fn adjusted_max_connections(&self) -> usize {
+    #[must_use]
+    pub const fn adjusted_max_connections(&self) -> usize {
         let real_max_connections = self.max_connections - self.system_connection_budget;
 
         if real_max_connections < self.system_connection_budget {
@@ -62,15 +64,18 @@ impl PgPoolSettings {
         }
     }
 
-    pub fn connection_pruning_interval(&self) -> Duration {
+    #[must_use]
+    pub const fn connection_pruning_interval(&self) -> Duration {
         self.connection_pruning_interval
     }
 
-    pub fn connection_idle_lifetime(&self) -> Duration {
+    #[must_use]
+    pub const fn connection_idle_lifetime(&self) -> Duration {
         self.connection_idle_lifetime
     }
 
-    pub fn connection_lifetime(&self) -> Duration {
+    #[must_use]
+    pub const fn connection_lifetime(&self) -> Duration {
         self.connection_lifetime
     }
 }

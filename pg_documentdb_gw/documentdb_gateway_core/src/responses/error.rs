@@ -14,18 +14,17 @@ use crate::{
     error::{DocumentDBError, ErrorCode},
     protocol::OK_FAILED,
     responses::{
+        self,
         constant::{generic_internal_error_message, value_access_error_message},
-        pg::PgResponse,
     },
 };
 
-/// Display and Debug trait are not implemented explicitly to avoid logging PII mistakenly.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct CommandError {
     pub ok: f64,
 
-    /// The error code in i32, e.g. InternalError has error code 1.
+    /// The error code in i32, e.g. `InternalError` has error code 1.
     pub code: i32,
 
     /// The error string, e.g. Internal Error.
@@ -36,8 +35,9 @@ pub struct CommandError {
 }
 
 impl CommandError {
-    pub fn new(code: i32, code_name: String, msg: String) -> Self {
-        CommandError {
+    #[must_use]
+    pub const fn new(code: i32, code_name: String, msg: String) -> Self {
+        Self {
             ok: OK_FAILED,
             code,
             code_name,
@@ -45,6 +45,7 @@ impl CommandError {
         }
     }
 
+    #[must_use]
     pub fn to_raw_document_buf(&self) -> RawDocumentBuf {
         // The key names used here must match with the field names expected by the driver sdk on errors.
         let mut doc = RawDocumentBuf::new();
@@ -56,9 +57,9 @@ impl CommandError {
     }
 
     fn internal(msg: String) -> Self {
-        CommandError::new(
+        Self::new(
             ErrorCode::InternalError as i32,
-            "Internal Error".to_string(),
+            "Internal Error".to_owned(),
             msg,
         )
     }
@@ -69,53 +70,47 @@ impl CommandError {
         activity_id: &str,
     ) -> Self {
         match err {
-            DocumentDBError::IoError(e, _) => CommandError::internal(e.to_string()),
-            DocumentDBError::PostgresError(e, _) => {
+            DocumentDBError::IoError(e, _) => Self::internal(e.to_string()),
+            DocumentDBError::PostgresError(e, _)
+            | DocumentDBError::PoolError(PoolError::Backend(e), _) => {
                 Self::from_pg_error(connection_context, e, activity_id)
             }
-            DocumentDBError::PoolError(PoolError::Backend(e), _) => {
-                Self::from_pg_error(connection_context, e, activity_id)
-            }
-            DocumentDBError::PostgresDocumentDBError(e, msg, _) => {
-                if let Ok(state) = PgResponse::i32_to_postgres_sqlstate(e) {
-                    let mapped_response = PgResponse::known_pg_error(
+            DocumentDBError::PostgresDocumentDBError(error_code, msg, _) => {
+                if let Ok(state) = responses::i32_to_postgres_sqlstate(*error_code) {
+                    let mapped_response = responses::known_pg_error(
                         connection_context,
                         &state,
                         msg.as_str(),
                         activity_id,
                     );
-                    return CommandError::new(
+                    return Self::new(
                         mapped_response.error_code(),
-                        mapped_response.code_name().unwrap_or_default().to_string(),
-                        mapped_response.error_message().to_string(),
+                        mapped_response.code_name().unwrap_or_default().to_owned(),
+                        mapped_response.error_message().to_owned(),
                     );
                 }
 
                 tracing::error!(
                     activity_id = activity_id,
-                    "Unable to parse PostgresDocumentDBError code: {e}, message: {msg}"
+                    "Unable to parse PostgresDocumentDBError code: {error_code}, message: {msg}"
                 );
-                CommandError::internal(generic_internal_error_message().to_string())
+                Self::internal(generic_internal_error_message().to_owned())
             }
-            DocumentDBError::RawBsonError(e, _) => {
-                CommandError::internal(format!("Raw BSON error: {e}"))
-            }
-            DocumentDBError::PoolError(e, _) => CommandError::internal(format!("Pool error: {e}")),
+            DocumentDBError::RawBsonError(e, _) => Self::internal(format!("Raw BSON error: {e}")),
+            DocumentDBError::PoolError(e, _) => Self::internal(format!("Pool error: {e}")),
             DocumentDBError::CreatePoolError(e, _) => {
-                CommandError::internal(format!("Create pool error: {e}"))
+                Self::internal(format!("Create pool error: {e}"))
             }
             DocumentDBError::BuildPoolError(e, _) => {
-                CommandError::internal(format!("Build pool error: {e}"))
+                Self::internal(format!("Build pool error: {e}"))
             }
             DocumentDBError::DocumentDBError(error_code, msg, _, _) => {
-                CommandError::new(*error_code as i32, error_code.to_string(), msg.to_string())
+                Self::new(*error_code as i32, error_code.to_string(), msg.clone())
             }
             DocumentDBError::SSLErrorStack(error_stack, _) => {
-                CommandError::internal(format!("SSL error stack: {error_stack}"))
+                Self::internal(format!("SSL error stack: {error_stack}"))
             }
-            DocumentDBError::SSLError(error, _) => {
-                CommandError::internal(format!("SSL error: {error}"))
-            }
+            DocumentDBError::SSLError(error, _) => Self::internal(format!("SSL error: {error}")),
             DocumentDBError::ValueAccessError(error, _) => match &error.kind {
                 ValueAccessErrorKind::UnexpectedType {
                     actual, expected, ..
@@ -124,7 +119,7 @@ impl CommandError {
                         activity_id = activity_id,
                         "Type mismatch error: expected {expected:?} but got {actual:?}"
                     );
-                    CommandError::new(
+                    Self::new(
                         ErrorCode::TypeMismatch as i32,
                         value_access_error_message(),
                         format!(
@@ -138,53 +133,54 @@ impl CommandError {
                 ValueAccessErrorKind::InvalidBson(_) => {
                     let error_message = "Value is not a valid BSON";
                     tracing::error!(activity_id = activity_id, "{error_message}");
-                    CommandError::new(
+                    Self::new(
                         ErrorCode::BadValue as i32,
                         value_access_error_message(),
-                        error_message.to_string(),
+                        error_message.to_owned(),
                     )
                 }
                 ValueAccessErrorKind::NotPresent => {
                     let error_message = "Value is not present";
                     tracing::error!(activity_id = activity_id, "{error_message}");
-                    CommandError::new(
+                    Self::new(
                         ErrorCode::BadValue as i32,
                         value_access_error_message(),
-                        error_message.to_string(),
+                        error_message.to_owned(),
                     )
                 }
                 _ => {
                     tracing::error!(activity_id = activity_id, "Hit generic ValueAccessError.");
-                    CommandError::new(
+                    Self::new(
                         ErrorCode::BadValue as i32,
                         value_access_error_message(),
-                        "Unexpected value".to_string(),
+                        "Unexpected value".to_owned(),
                     )
                 }
             },
         }
     }
 
+    #[must_use]
     pub fn from_pg_error(
         context: &ConnectionContext,
         e: &tokio_postgres::Error,
         activity_id: &str,
     ) -> Self {
         if let Some(state) = e.code() {
-            let mapped_result = PgResponse::known_pg_error(
+            let mapped_result = responses::known_pg_error(
                 context,
                 state,
                 e.as_db_error().map_or("", |e| e.message()),
                 activity_id,
             );
 
-            CommandError::new(
+            Self::new(
                 mapped_result.error_code(),
-                mapped_result.code_name().unwrap_or_default().to_string(),
-                mapped_result.error_message().to_string(),
+                mapped_result.code_name().unwrap_or_default().to_owned(),
+                mapped_result.error_message().to_owned(),
             )
         } else {
-            CommandError::internal(e.to_string())
+            Self::internal(e.to_string())
         }
     }
 }

@@ -7,7 +7,7 @@
  */
 
 use bson::doc;
-use mongodb::{error::Error, Database};
+use mongodb::Database;
 
 use crate::utils::commands;
 
@@ -157,7 +157,7 @@ const UNSUPPORTED_COMMANDS: &[&str] = &[
     "writebacklisten",
 ];
 
-pub async fn validate_command_not_found(db: &Database) -> Result<(), Error> {
+pub async fn validate_command_not_found(db: &Database) -> () {
     commands::execute_command_and_validate_error(
         db,
         doc! { "atlasVersion": 1 },
@@ -165,10 +165,9 @@ pub async fn validate_command_not_found(db: &Database) -> Result<(), Error> {
         "Command 'atlasVersion' not found.",
     )
     .await;
-    Ok(())
 }
 
-pub async fn validate_commands_not_supported(db: &Database) -> Result<(), Error> {
+pub async fn validate_commands_not_supported(db: &Database) -> () {
     for command_name in UNSUPPORTED_COMMANDS {
         let expected_msg = format!("Command '{command_name}' not supported.");
         commands::execute_command_and_validate_error(
@@ -179,5 +178,4 @@ pub async fn validate_commands_not_supported(db: &Database) -> Result<(), Error>
         )
         .await;
     }
-    Ok(())
 }

@@ -6,6 +6,15 @@
  *-------------------------------------------------------------------------
  */
 
+#![expect(
+    clippy::missing_panics_doc,
+    reason = "Test helper functions - panics are expected test failures"
+)]
+#![expect(
+    clippy::missing_errors_doc,
+    reason = "Test helper functions - error conditions are self-explanatory"
+)]
+
 use bson::{doc, Document};
 use futures::StreamExt;
 use mongodb::{
@@ -62,7 +71,7 @@ pub async fn validate_abort_transaction(client: &Client, db: &Database) -> Resul
 }
 
 /// Asserts a command run inside a transaction returns error code 263
-/// (OperationNotSupportedInTransaction).
+/// (`OperationNotSupportedInTransaction`).
 async fn assert_blocked_in_transaction(
     client: &Client,
     db_name: &str,

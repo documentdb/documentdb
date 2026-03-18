@@ -16,6 +16,8 @@ use bson::RawDocument;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 /// Write a server response to the client stream
+/// # Errors
+/// Returns error if the operation fails.
 pub async fn write<S>(header: &Header, response: &Response, stream: &mut S) -> Result<()>
 where
     S: AsyncWrite + Unpin,
@@ -24,6 +26,10 @@ where
 }
 
 /// Write a raw BSON object to the client stream
+/// # Errors
+/// Returns error if the operation fails.
+#[expect(clippy::cast_possible_truncation, reason = "message size fits in i32")]
+#[expect(clippy::cast_possible_wrap, reason = "message size is always positive")]
 pub async fn write_and_flush<S>(
     header: &Header,
     response: &RawDocument,
@@ -40,7 +46,10 @@ where
         OpCode::Msg => write_message(header, response, stream).await,
 
         // Query is responded to with Reply
-        #[allow(deprecated)]
+        #[expect(
+            deprecated,
+            reason = "OP_QUERY is still supported for legacy clients and testing"
+        )]
         OpCode::Query => {
             // Write the header
             let header = Header {
@@ -62,7 +71,10 @@ where
         }
 
         // Insert has no response
-        #[allow(deprecated)]
+        #[expect(
+            deprecated,
+            reason = "OP_INSERT is still supported for legacy clients and testing"
+        )]
         OpCode::Insert => Ok(()),
         _ => Err(DocumentDBError::internal_error(format!(
             "Unexpected response opcode: {:?}",
@@ -76,6 +88,10 @@ where
 }
 
 /// Serializes the Message to bytes and writes them to `writer`.
+/// # Errors
+/// Returns error if the operation fails.
+#[expect(clippy::cast_possible_truncation, reason = "message size fits in i32")]
+#[expect(clippy::cast_possible_wrap, reason = "message size is always positive")]
 pub async fn write_message<S>(header: &Header, response: &RawDocument, writer: &mut S) -> Result<()>
 where
     S: AsyncWrite + Unpin,
@@ -104,6 +120,10 @@ where
     Ok(())
 }
 
+/// # Errors
+/// Returns error if the operation fails.
+#[expect(clippy::cast_possible_truncation, reason = "message size fits in i32")]
+#[expect(clippy::cast_possible_wrap, reason = "message size is always positive")]
 pub async fn write_error_without_header<S>(
     connection_context: &ConnectionContext,
     err: DocumentDBError,

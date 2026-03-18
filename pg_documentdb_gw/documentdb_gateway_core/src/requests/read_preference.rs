@@ -10,9 +10,7 @@ use crate::error::{DocumentDBError, ErrorCode, Result};
 use bson::RawDocument;
 use std::str::FromStr;
 
-pub struct ReadPreference {}
-
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ReadPreferenceMode {
     Primary,
     Secondary,
@@ -26,11 +24,11 @@ impl FromStr for ReadPreferenceMode {
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "primary" => Ok(ReadPreferenceMode::Primary),
-            "secondary" => Ok(ReadPreferenceMode::Secondary),
-            "primarypreferred" => Ok(ReadPreferenceMode::PrimaryPreferred),
-            "secondarypreferred" => Ok(ReadPreferenceMode::SecondaryPreferred),
-            "nearest" => Ok(ReadPreferenceMode::Nearest),
+            "primary" => Ok(Self::Primary),
+            "secondary" => Ok(Self::Secondary),
+            "primarypreferred" => Ok(Self::PrimaryPreferred),
+            "secondarypreferred" => Ok(Self::SecondaryPreferred),
+            "nearest" => Ok(Self::Nearest),
             unsupported => Err(DocumentDBError::documentdb_error(
                 ErrorCode::FailedToParse,
                 format!("Unsupported read preference mode '{unsupported}'"),
@@ -39,12 +37,30 @@ impl FromStr for ReadPreferenceMode {
     }
 }
 
+#[derive(Debug)]
+pub struct ReadPreference;
+
 impl ReadPreference {
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if document parsing fails.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "complex read preference parsing logic"
+    )]
+    #[expect(
+        clippy::unwrap_used,
+        reason = "read_preference_mode is validated before unwrap"
+    )]
     pub fn parse(raw_document: Option<&RawDocument>) -> Result<()> {
         match raw_document {
             None => Err(DocumentDBError::documentdb_error(
                 ErrorCode::FailedToParse,
-                "'$readPreference' must be a document".to_string(),
+                "'$readPreference' must be a document".to_owned(),
             )),
             Some(doc) => {
                 let mut read_preference_mode: Option<ReadPreferenceMode> = None;
@@ -58,14 +74,14 @@ impl ReadPreference {
                             if read_preference_mode.is_some() {
                                 return Err(DocumentDBError::documentdb_error(
                                     ErrorCode::FailedToParse,
-                                    "'mode' field is already specified".to_string(),
+                                    "'mode' field is already specified".to_owned(),
                                 ));
                             }
 
                             let mode_str = v.as_str().ok_or_else(|| {
                                 DocumentDBError::documentdb_error(
                                     ErrorCode::FailedToParse,
-                                    "'mode' field must be a string".to_string(),
+                                    "'mode' field must be a string".to_owned(),
                                 )
                             })?;
 
@@ -75,21 +91,21 @@ impl ReadPreference {
                             if max_staleness_seconds.is_some() {
                                 return Err(DocumentDBError::documentdb_error(
                                     ErrorCode::FailedToParse,
-                                    "'maxStalenessSeconds' field is already specified".to_string(),
+                                    "'maxStalenessSeconds' field is already specified".to_owned(),
                                 ));
                             }
 
                             let seconds = v.as_i32().ok_or_else(|| {
                                 DocumentDBError::documentdb_error(
                                     ErrorCode::FailedToParse,
-                                    "'maxStalenessSeconds' field must be an integer".to_string(),
+                                    "'maxStalenessSeconds' field must be an integer".to_owned(),
                                 )
                             })?;
 
                             if seconds < 0 {
                                 return Err(DocumentDBError::documentdb_error(
                                     ErrorCode::FailedToParse,
-                                    "'maxStalenessSeconds' field must be non-negative".to_string(),
+                                    "'maxStalenessSeconds' field must be non-negative".to_owned(),
                                 ));
                             }
 
@@ -99,14 +115,14 @@ impl ReadPreference {
                             if hedge.is_some() {
                                 return Err(DocumentDBError::documentdb_error(
                                     ErrorCode::FailedToParse,
-                                    "'hedge' field is already specified".to_string(),
+                                    "'hedge' field is already specified".to_owned(),
                                 ));
                             }
 
                             let hedge_doc = v.as_document().ok_or_else(|| {
                                 DocumentDBError::documentdb_error(
                                     ErrorCode::FailedToParse,
-                                    "'hedge' field must be a document".to_string(),
+                                    "'hedge' field must be a document".to_owned(),
                                 )
                             })?;
 
@@ -118,7 +134,7 @@ impl ReadPreference {
                                         DocumentDBError::documentdb_error(
                                             ErrorCode::FailedToParse,
                                             "'enabled' field in 'hedge' must be a boolean"
-                                                .to_string(),
+                                                .to_owned(),
                                         )
                                     })?);
                                 }
@@ -128,19 +144,17 @@ impl ReadPreference {
                             return Err(DocumentDBError::documentdb_error(
                                 ErrorCode::FailedToSatisfyReadPreference,
                                 "no server available for query with specified tag set list"
-                                    .to_string(),
+                                    .to_owned(),
                             ));
                         }
-                        _ => {
-                            continue;
-                        }
+                        _ => {}
                     }
                 }
 
                 if read_preference_mode.is_none() {
                     return Err(DocumentDBError::documentdb_error(
                         ErrorCode::FailedToParse,
-                        "'mode' field is required".to_string(),
+                        "'mode' field is required".to_owned(),
                     ));
                 }
 
@@ -150,14 +164,14 @@ impl ReadPreference {
                     if max_staleness_seconds.is_some() {
                         return Err(DocumentDBError::documentdb_error(
                             ErrorCode::FailedToParse,
-                            "mode 'primary' does not allow for 'maxStalenessSeconds'".to_string(),
+                            "mode 'primary' does not allow for 'maxStalenessSeconds'".to_owned(),
                         ));
                     }
 
                     if hedge.is_some() {
                         return Err(DocumentDBError::documentdb_error(
                             ErrorCode::FailedToParse,
-                            "mode 'primary' does not allow for 'hedge'".to_string(),
+                            "mode 'primary' does not allow for 'hedge'".to_owned(),
                         ));
                     }
                 }
@@ -165,14 +179,14 @@ impl ReadPreference {
                 if read_preference_mode == ReadPreferenceMode::Secondary {
                     return Err(DocumentDBError::documentdb_error(
                         ErrorCode::FailedToSatisfyReadPreference,
-                        "no server available for query with ReadPreference secondary".to_string(),
+                        "no server available for query with ReadPreference secondary".to_owned(),
                     ));
                 }
 
                 if hedge == Some(true) {
                     return Err(DocumentDBError::documentdb_error(
                         ErrorCode::BadValue,
-                        "hedged reads are not supported".to_string(),
+                        "hedged reads are not supported".to_owned(),
                     ));
                 }
 

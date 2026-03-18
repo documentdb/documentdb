@@ -87,7 +87,7 @@ async fn list_indexes() -> Result<(), Error> {
 
 #[tokio::test]
 async fn rw_concern() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     constant::validate_rw_concern(&client).await
 }

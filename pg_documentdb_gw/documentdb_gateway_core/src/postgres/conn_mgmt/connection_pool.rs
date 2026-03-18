@@ -63,21 +63,25 @@ fn pg_configuration(
 
 pub type PoolConnection = deadpool_postgres::Object;
 
+#[derive(Debug)]
 pub struct ConnectionPoolStatus {
     identifier: String,
     status: Status,
 }
 
 impl ConnectionPoolStatus {
-    pub fn new(identifier: String, status: Status) -> Self {
-        ConnectionPoolStatus { identifier, status }
+    #[must_use]
+    pub const fn new(identifier: String, status: Status) -> Self {
+        Self { identifier, status }
     }
 
+    #[must_use]
     pub fn identifier(&self) -> &str {
         &self.identifier
     }
 
-    pub fn status(&self) -> Status {
+    #[must_use]
+    pub const fn status(&self) -> Status {
         self.status
     }
 }
@@ -91,12 +95,15 @@ pub struct ConnectionPool {
 }
 
 impl ConnectionPool {
+    /// # Errors
+    ///
+    /// Returns error if the operation fails.
     pub fn new_with_user(
         setup_configuration: &dyn SetupConfiguration,
         query_catalog: &QueryCatalog,
         user: &str,
         password: Option<&str>,
-        application_name: String,
+        application_name: &str,
         pool_settings: PgPoolSettings,
     ) -> Result<Self> {
         let config = pg_configuration(
@@ -104,7 +111,7 @@ impl ConnectionPool {
             query_catalog,
             user,
             password,
-            &application_name,
+            application_name,
         );
 
         let manager = Manager::new(config, NoTls);
@@ -145,7 +152,7 @@ impl ConnectionPool {
             pool_settings.adjusted_max_connections()
         );
 
-        Ok(ConnectionPool {
+        Ok(Self {
             pool,
             last_used: RwLock::new(Instant::now()),
             identifier: pool_identifier,
@@ -153,9 +160,12 @@ impl ConnectionPool {
         })
     }
 
+    /// # Errors
+    /// Returns error if the operation fails.
     pub async fn acquire_connection(&self) -> Result<PoolConnection> {
         let mut write_lock = self.last_used.write().await;
         *write_lock = Instant::now();
+        drop(write_lock);
         Ok(self.pool.get().await?)
     }
 

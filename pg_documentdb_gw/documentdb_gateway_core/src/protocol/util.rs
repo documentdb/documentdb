@@ -12,6 +12,8 @@ use crate::error::DocumentDBError;
 
 pub trait SyncLittleEndianRead: Read {
     /// Read an `i32` in little-endian order.
+    /// # Errors
+    /// Returns error if the operation fails.
     fn read_i32_sync(&mut self) -> Result<i32, DocumentDBError> {
         let mut buf: [u8; 4] = [0; 4];
         self.read_exact(&mut buf)?;
@@ -19,12 +21,16 @@ pub trait SyncLittleEndianRead: Read {
     }
 
     /// Read a `u32` in little-endian order.
+    /// # Errors
+    /// Returns error if the operation fails.
     fn read_u32_sync(&mut self) -> Result<u32, DocumentDBError> {
         let mut buf: [u8; 4] = [0; 4];
         self.read_exact(&mut buf)?;
         Ok(u32::from_le_bytes(buf))
     }
 
+    /// # Errors
+    /// Returns error if the operation fails.
     fn read_u8_sync(&mut self) -> Result<u8, DocumentDBError> {
         let mut buf: [u8; 1] = [0; 1];
         self.read_exact(&mut buf)?;
