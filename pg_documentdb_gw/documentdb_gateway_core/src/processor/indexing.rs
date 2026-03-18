@@ -16,7 +16,6 @@ use crate::{
     context::{ConnectionContext, RequestContext},
     error::{DocumentDBError, ErrorCode, Result},
     postgres::{PgDataClient, PgDocument},
-    processor::cursor::save_cursor,
     responses::{
         constant::pg_returned_invalid_response_message, PgResponse, RawResponse, Response,
     },
@@ -37,7 +36,7 @@ pub async fn process_create_indexes(
     }
 
     let create_indexes_rows = pg_data_client
-        .execute_create_indexes(request_context, &db, connection_context)
+        .execute_create_indexes(request_context, connection_context)
         .await?;
 
     let row = create_indexes_rows
@@ -204,10 +203,7 @@ pub async fn process_list_indexes(
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let (response, conn) = pg_data_client
+    pg_data_client
         .execute_list_indexes(request_context, connection_context)
-        .await?;
-
-    save_cursor(connection_context, conn, &response, request_context.info).await?;
-    Ok(Response::Pg(response))
+        .await
 }

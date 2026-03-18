@@ -13,39 +13,10 @@ use bson::{rawdoc, RawArrayBuf};
 use crate::{
     context::{ConnectionContext, Cursor, CursorStoreEntry, RequestContext},
     error::{DocumentDBError, ErrorCode, Result},
-    postgres::{conn_mgmt::Connection, PgDataClient, PgDocument},
+    postgres::{conn_mgmt::PullConnection, PgDataClient, PgDocument},
     protocol::OK_SUCCEEDED,
-    requests::RequestInfo,
     responses::{PgResponse, RawResponse, Response},
 };
-
-pub async fn save_cursor(
-    connection_context: &ConnectionContext,
-    connection: Arc<Connection>,
-    response: &PgResponse,
-    request_info: &RequestInfo<'_>,
-) -> Result<()> {
-    if let Some((persist, cursor)) = response.get_cursor()? {
-        let connection = persist.then_some(connection);
-        let dynamic_config = connection_context.service_context.dynamic_configuration();
-        let cursor_timeout =
-            if dynamic_config.enable_stateless_cursor_timeout() && connection.is_none() {
-                Duration::from_secs(dynamic_config.stateless_cursor_idle_timeout_sec())
-            } else {
-                Duration::from_secs(dynamic_config.default_cursor_idle_timeout_sec())
-            };
-        connection_context.add_cursor(
-            connection,
-            cursor,
-            connection_context.auth_state.username()?,
-            request_info.db()?,
-            request_info.collection()?,
-            cursor_timeout,
-            request_info.session_id.map(<[u8]>::to_vec),
-        );
-    }
-    Ok(())
-}
 
 pub async fn process_kill_cursors(
     request_context: &RequestContext<'_>,
@@ -146,7 +117,10 @@ pub async fn process_get_more(
             request_context,
             &db,
             &cursor,
-            &cursor_connection,
+            match &cursor_connection {
+                Some(conn) => PullConnection::Cursor(Arc::clone(conn)),
+                None => PullConnection::PoolOrTransaction,
+            },
             connection_context,
         )
         .await?;

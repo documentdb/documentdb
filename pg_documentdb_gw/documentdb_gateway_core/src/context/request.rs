@@ -21,4 +21,14 @@ impl<'a> RequestContext<'a> {
     pub const fn get_components(&self) -> (&Request<'a>, &RequestInfo<'a>, &RequestTracker) {
         (self.payload, self.info, self.tracker)
     }
+
+    #[must_use]
+    pub const fn payload(&self) -> &'a Request<'a> {
+        self.payload
+    }
+
+    #[must_use]
+    pub const fn info(&self) -> &'a RequestInfo<'a> {
+        self.info
+    }
 }

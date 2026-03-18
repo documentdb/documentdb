@@ -24,7 +24,7 @@ use crate::{
     postgres::{PgDataClient, PgDocument},
     processor,
     protocol::OK_SUCCEEDED,
-    requests::{request_tracker::RequestTracker, Request, RequestType},
+    requests::{Request, RequestType},
     responses::{self, RawResponse, Response},
 };
 
@@ -316,7 +316,6 @@ async fn handle_oidc(
     handle_oidc_token_authentication(connection_context, jwt_token).await
 }
 
-#[expect(clippy::too_many_lines, reason = "complex authentication logic")]
 async fn handle_oidc_token_authentication(
     connection_context: &mut ConnectionContext,
     token_string: &str,
@@ -337,56 +336,49 @@ async fn handle_oidc_token_authentication(
                 .authenticate_with_token(),
             &[Type::TEXT, Type::TEXT],
             &[&oid, &token_string],
-            None,
-            &RequestTracker::new(),
         )
         .await
     {
         Ok(rows) => rows,
         Err(e) => {
-            if let DocumentDBError::PostgresError(pge_error, _) = e {
-                if let Some(db_error) = pge_error.as_db_error() {
-                    tracing::error!(
-                        activity_id = connection_context.connection_id.to_string().as_str(),
-                        "Backend error during authentication: PostgresError({:?}, {:?})",
-                        db_error.code(),
-                        db_error.hint()
-                    );
-
-                    if let Some((extension_error_code, _)) =
-                        responses::from_known_external_error_code(db_error.code())
-                    {
-                        if extension_error_code == ErrorCode::CommandNotSupported as i32 {
-                            return Err(DocumentDBError::authentication_failed(
-                                "The authentication mechanism provided is not supported in the service.".to_owned(),
-                            ));
-                        }
-                    }
-
-                    return if *db_error.code() == SqlState::INVALID_PASSWORD {
-                        Err(DocumentDBError::authentication_failed(
-                            "The token provided is not valid.".to_owned(),
-                        ))
-                    } else if *db_error.code() == SqlState::UNDEFINED_OBJECT {
-                        Err(DocumentDBError::authentication_failed(
-                            "External identity is not present in the system.".to_owned(),
-                        ))
-                    } else {
-                        // All other errors are returned as InternalError in authentication code path.
-                        Err(DocumentDBError::authentication_failed(
-                            "Internal Error.".to_owned(),
-                        ))
-                    };
-                }
+            if let Some(db_error) = e.as_db_error() {
                 tracing::error!(
                     activity_id = connection_context.connection_id.to_string().as_str(),
-                    "DbError not found in PostgresError, which is unexpected."
+                    "Backend error during authentication: PostgresError({:?}, {:?})",
+                    db_error.code(),
+                    db_error.hint()
                 );
-                return Err(DocumentDBError::authentication_failed(
-                    "Internal Error.".to_owned(),
-                ));
+
+                if let Some((extension_error_code, _)) =
+                    responses::from_known_external_error_code(db_error.code())
+                {
+                    if extension_error_code == ErrorCode::CommandNotSupported as i32 {
+                        return Err(DocumentDBError::authentication_failed(
+                            "The authentication mechanism provided is not supported in the service.".to_owned(),
+                        ));
+                    }
+                }
+
+                return match *db_error.code() {
+                    SqlState::INVALID_PASSWORD => Err(DocumentDBError::authentication_failed(
+                        "The token provided is not valid.".to_owned(),
+                    )),
+                    SqlState::UNDEFINED_OBJECT => Err(DocumentDBError::authentication_failed(
+                        "External identity is not present in the system.".to_owned(),
+                    )),
+                    // All other errors are returned as InternalError in authentication code path.
+                    _ => Err(DocumentDBError::authentication_failed(
+                        "Internal Error.".to_owned(),
+                    )),
+                };
             }
-            return Err(e);
+            tracing::error!(
+                activity_id = connection_context.connection_id.to_string().as_str(),
+                "DbError not found in PostgresError, which is unexpected."
+            );
+            return Err(DocumentDBError::authentication_failed(
+                "Internal Error.".to_owned(),
+            ));
         }
     };
 
@@ -574,8 +566,6 @@ async fn handle_sasl_continue(
                     .authenticate_with_scram_sha256(),
                 &[Type::TEXT, Type::TEXT, Type::TEXT],
                 &[&username, &auth_message, &proof],
-                None,
-                &RequestTracker::new(),
             )
             .await?;
 
@@ -715,8 +705,6 @@ async fn get_salt_and_iteration(
                 .salt_and_iterations(),
             &[Type::TEXT],
             &[&username],
-            None,
-            &RequestTracker::new(),
         )
         .await?;
 
@@ -763,8 +751,6 @@ pub async fn get_user_oid(connection_context: &ConnectionContext, username: &str
             "SELECT oid from pg_roles WHERE rolname = $1",
             &[Type::TEXT],
             &[&username],
-            None,
-            &RequestTracker::new(),
         )
         .await?;
 

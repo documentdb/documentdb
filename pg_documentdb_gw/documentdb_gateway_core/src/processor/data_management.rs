@@ -15,7 +15,6 @@ use crate::{
     context::{ConnectionContext, RequestContext},
     error::{DocumentDBError, ErrorCode, Result},
     postgres::PgDataClient,
-    processor::cursor,
     responses::{PgResponse, Response},
 };
 
@@ -25,14 +24,19 @@ pub async fn process_delete(
     dynamic_config: &Arc<dyn DynamicConfiguration>,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let is_read_only_for_disk_full = dynamic_config.is_read_only_for_disk_full();
-    let delete_rows = pg_data_client
-        .execute_delete(
-            request_context,
-            is_read_only_for_disk_full,
-            connection_context,
-        )
-        .await?;
+    // Nested transactions not allowed when database is in read-only mode
+    let is_read_only_for_disk_full =
+        dynamic_config.is_read_only_for_disk_full() && connection_context.transaction.is_none();
+
+    let delete_rows = if is_read_only_for_disk_full {
+        pg_data_client
+            .execute_delete_when_readonly(request_context, connection_context)
+            .await?
+    } else {
+        pg_data_client
+            .execute_delete(request_context, connection_context)
+            .await?
+    };
 
     PgResponse::new(delete_rows)
         .transform_write_errors(connection_context, request_context.activity_id)
@@ -43,12 +47,9 @@ pub async fn process_find(
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let (response, conn) = pg_data_client
+    pg_data_client
         .execute_find(request_context, connection_context)
-        .await?;
-
-    cursor::save_cursor(connection_context, conn, &response, request_context.info).await?;
-    Ok(Response::Pg(response))
+        .await
 }
 
 pub async fn process_insert(
@@ -57,7 +58,6 @@ pub async fn process_insert(
     pg_data_client: &impl PgDataClient,
     enable_write_procedures: bool,
     enable_write_procedures_with_batch_commit: bool,
-    enable_backend_timeout: bool,
 ) -> Result<Response> {
     let insert_rows = pg_data_client
         .execute_insert(
@@ -65,7 +65,6 @@ pub async fn process_insert(
             connection_context,
             enable_write_procedures,
             enable_write_procedures_with_batch_commit,
-            enable_backend_timeout,
         )
         .await?;
 
@@ -78,11 +77,9 @@ pub async fn process_aggregate(
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let (response, conn) = pg_data_client
+    pg_data_client
         .execute_aggregate(request_context, connection_context)
-        .await?;
-    cursor::save_cursor(connection_context, conn, &response, request_context.info).await?;
-    Ok(Response::Pg(response))
+        .await
 }
 
 pub async fn process_update(
@@ -91,7 +88,6 @@ pub async fn process_update(
     pg_data_client: &impl PgDataClient,
     enable_write_procedures: bool,
     enable_write_procedures_with_batch_commit: bool,
-    enable_backend_timeout: bool,
 ) -> Result<Response> {
     let update_rows = pg_data_client
         .execute_update(
@@ -99,7 +95,6 @@ pub async fn process_update(
             connection_context,
             enable_write_procedures,
             enable_write_procedures_with_batch_commit,
-            enable_backend_timeout,
         )
         .await?;
 
@@ -122,12 +117,9 @@ pub async fn process_list_collections(
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let (response, conn) = pg_data_client
+    pg_data_client
         .execute_list_collections(request_context, connection_context)
-        .await?;
-
-    cursor::save_cursor(connection_context, conn, &response, request_context.info).await?;
-    Ok(Response::Pg(response))
+        .await
 }
 
 pub async fn process_validate(
