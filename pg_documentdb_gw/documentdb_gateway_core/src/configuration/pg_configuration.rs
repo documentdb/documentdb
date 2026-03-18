@@ -48,11 +48,11 @@ impl PgConfigurationInner {
         match Self::load_host_config(&self.dynamic_config_path).await {
             Ok(host_config) => {
                 configs.insert(
-                    "IsPrimary".to_string(),
+                    "IsPrimary".to_owned(),
                     host_config.is_primary.to_lowercase(),
                 );
                 configs.insert(
-                    "SendShutdownResponses".to_string(),
+                    "SendShutdownResponses".to_owned(),
                     host_config.send_shutdown_responses.to_lowercase(),
                 );
             }
@@ -85,11 +85,11 @@ impl PgConfigurationInner {
 
             let mut value: String = pg_config.get(1);
             if value == "on" {
-                value = "true".to_string();
+                "true".clone_into(&mut value);
             } else if value == "off" {
-                value = "false".to_string();
+                "false".clone_into(&mut value);
             }
-            configs.insert(key.to_owned(), value);
+            configs.insert(key.clone(), value);
         }
 
         let pg_is_in_recovery_row = self
@@ -106,7 +106,7 @@ impl PgConfigurationInner {
             .await?;
 
         let in_recovery: bool = pg_is_in_recovery_row.first().is_some_and(|row| row.get(0));
-        configs.insert(POSTGRES_RECOVERY_KEY.to_string(), in_recovery.to_string());
+        configs.insert(POSTGRES_RECOVERY_KEY.to_owned(), in_recovery.to_string());
 
         tracing::info!("Dynamic configurations loaded: {configs:?}");
         Ok(configs)
@@ -140,11 +140,12 @@ struct WatchedFileState {
 
 impl PgConfiguration {
     fn start_dynamic_configuration_refresh_thread(
-        configuration: Arc<PgConfiguration>,
+        configuration: Arc<Self>,
         refresh_interval: u32,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(refresh_interval as u64));
+            let mut interval =
+                tokio::time::interval(Duration::from_secs(u64::from(refresh_interval)));
             interval.tick().await;
 
             loop {
@@ -155,7 +156,7 @@ impl PgConfiguration {
         })
     }
 
-    async fn reload_configuration(configuration: &PgConfiguration) {
+    async fn reload_configuration(configuration: &Self) {
         if let Err(e) = configuration.refresh_configuration().await {
             tracing::error!("Config reload failed! {e}");
         }
@@ -176,6 +177,9 @@ impl PgConfiguration {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
     pub async fn new(
         setup_configuration: &dyn SetupConfiguration,
         pool_manager: Arc<PoolManager>,
@@ -191,7 +195,7 @@ impl PgConfiguration {
         let last_update_at = ArcSwap::from_pointee(Instant::now());
         let topology_bson = ArcSwap::from_pointee(Self::load_topology(&inner.pool_manager).await);
 
-        let mut configuration = Arc::new(PgConfiguration {
+        let mut configuration = Arc::new(Self {
             inner,
             values,
             last_update_at,
@@ -221,6 +225,9 @@ impl PgConfiguration {
         *self.last_update_at.load_full()
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
     pub async fn refresh_configuration(&self) -> Result<()> {
         let new_config = match self.inner.load_configurations().await {
             Ok(config) => config,
@@ -239,10 +246,7 @@ impl PgConfiguration {
         Ok(())
     }
 
-    fn start_config_watcher(
-        configuration: Arc<PgConfiguration>,
-        watch_interval_ms: u64,
-    ) -> JoinHandle<()> {
+    fn start_config_watcher(configuration: Arc<Self>, watch_interval_ms: u64) -> JoinHandle<()> {
         let dynamic_config_path = configuration.inner.dynamic_config_path.clone();
         let file_path = Path::new(&dynamic_config_path).to_path_buf();
         let poll_interval = Duration::from_millis(watch_interval_ms);
@@ -331,29 +335,22 @@ impl DynamicConfiguration for PgConfiguration {
         self.values
             .load_full()
             .get(key)
-            .map(|v| v.parse::<bool>().unwrap_or(default))
-            .unwrap_or(default)
+            .map_or(default, |v| v.parse::<bool>().unwrap_or(default))
     }
     fn get_i32(&self, key: &str, default: i32) -> i32 {
         self.values
             .load_full()
             .get(key)
-            .map(|v| v.parse::<i32>().unwrap_or(default))
-            .unwrap_or(default)
+            .map_or(default, |v| v.parse::<i32>().unwrap_or(default))
     }
     fn get_u64(&self, key: &str, default: u64) -> u64 {
         self.values
             .load_full()
             .get(key)
-            .map(|v| v.parse::<u64>().unwrap_or(default))
-            .unwrap_or(default)
+            .map_or(default, |v| v.parse::<u64>().unwrap_or(default))
     }
     fn equals_value(&self, key: &str, value: &str) -> bool {
-        self.values
-            .load_full()
-            .get(key)
-            .map(|v| v == value)
-            .unwrap_or(false)
+        self.values.load_full().get(key).is_some_and(|v| v == value)
     }
 
     fn topology(&self) -> RawBson {
@@ -372,7 +369,7 @@ impl DynamicConfiguration for PgConfiguration {
                 tracing::error!("GUC max_connections is not setup correctly");
                 25usize
             }
-            n => n as usize,
+            n => usize::try_from(n).unwrap_or(25),
         }
     }
 

@@ -1,8 +1,13 @@
 [package]
 name = "documentdb_tests"
+description = "Integration test suite for the DocumentDB gateway."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 bson.workspace = true

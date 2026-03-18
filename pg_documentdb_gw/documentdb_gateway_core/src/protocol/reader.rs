@@ -29,6 +29,10 @@ use crate::{
 };
 
 /// Read a standard message header from the client stream
+///
+/// # Errors
+///
+/// Returns an error if the operation fails.
 pub async fn read_header<S>(stream: &mut S) -> Result<Option<Header>>
 where
     S: AsyncRead + Unpin,
@@ -49,13 +53,18 @@ where
     }
 }
 
-/// Given an already read header, read the remaining message bytes into a RequestMessage
+/// Given an already read header, read the remaining message bytes into a `RequestMessage`
+///
+/// # Errors
+///
+/// Returns an error if the operation fails.
 pub async fn read_request<S>(header: &Header, stream: &mut S) -> Result<RequestMessage>
 where
     S: AsyncRead + Unpin,
 {
-    let message_size = usize::try_from(header.length).map_err(|_| {
-        DocumentDBError::bad_value("Message length could not be converted to a usize".to_string())
+    let message_size = usize::try_from(header.length).map_err(|error| {
+        tracing::error!("Message length could not be converted to a usize: {error}");
+        DocumentDBError::bad_value("Message length could not be converted to a usize".to_owned())
     })?;
 
     // 16 bytes of the message were already used by the headers
@@ -72,6 +81,9 @@ where
 }
 
 /// Parse a request message into a typed Request
+///
+/// # Errors
+/// Returns an error if the message has an unsupported opcode or cannot be parsed.
 pub fn parse_request<'a>(
     message: &'a RequestMessage,
     requires_response: &mut bool,
@@ -79,9 +91,15 @@ pub fn parse_request<'a>(
     // Parse the specific message based on OpCode
     let request = match message.op_code {
         OpCode::Msg => parse_msg(message, requires_response)?,
-        #[allow(deprecated)]
+        #[expect(
+            deprecated,
+            reason = "OP_QUERY is still supported for legacy clients and testing"
+        )]
         OpCode::Query => op_query::parse_query(&message.request)?,
-        #[allow(deprecated)]
+        #[expect(
+            deprecated,
+            reason = "OP_INSERT is still supported for legacy clients and testing"
+        )]
         OpCode::Insert => op_insert::parse_insert(message)?,
         _ => Err(DocumentDBError::internal_error(format!(
             "Unimplemented: {:?}",
@@ -92,37 +110,39 @@ pub fn parse_request<'a>(
 }
 
 /// Read from a byte array until a nul terminator, parse using utf-8
+///
+/// # Errors
+///
+/// Returns an error if the operation fails.
 pub fn str_from_u8_nul_utf8(utf8_src: &[u8]) -> Result<(&str, usize)> {
     let nul_range_end =
         utf8_src
             .iter()
             .position(|&c| c == b'\0')
             .ok_or(DocumentDBError::bad_value(
-                "Message did not contain a string".to_string(),
+                "Message did not contain a string".to_owned(),
             ))?;
-    let s = ::std::str::from_utf8(&utf8_src[0..nul_range_end])
-        .map_err(|_| DocumentDBError::bad_value("String was not a utf-8 string".to_string()))?;
+    let s = ::std::str::from_utf8(&utf8_src[0..nul_range_end]).map_err(|error| {
+        tracing::error!("String was not a utf-8 string: {error}");
+        DocumentDBError::bad_value("String was not a utf-8 string".to_owned())
+    })?;
     Ok((s, nul_range_end))
 }
 
-/// Parse an OP_MSG
+/// Parse an `OP_MSG`
 fn parse_msg<'a>(message: &'a RequestMessage, requires_response: &mut bool) -> Result<Request<'a>> {
     let reader = Cursor::new(message.request.as_slice());
     let msg: Message = Message::read_from_op_msg(reader, message.response_to)?;
 
-    *requires_response = !msg._flags.contains(message::MessageFlags::MORE_TO_COME);
+    *requires_response = !msg.flags.contains(message::MessageFlags::MORE_TO_COME);
     match msg.sections.len() {
         0 => Err(DocumentDBError::bad_value(
-            "Message had no sections".to_string(),
+            "Message had no sections".to_owned(),
         )),
         1 => match &msg.sections[0] {
             MessageSection::Document(doc) => parse_cmd(doc, None),
-            MessageSection::Sequence {
-                size: _,
-                _identifier: _,
-                documents: _,
-            } => Err(DocumentDBError::bad_value(
-                "Expected the only section to be a document.".to_string(),
+            MessageSection::Sequence { .. } => Err(DocumentDBError::bad_value(
+                "Expected the only section to be a document.".to_owned(),
             )),
         },
         2 => match (&msg.sections[0], &msg.sections[1]) {
@@ -136,16 +156,19 @@ fn parse_msg<'a>(message: &'a RequestMessage, requires_response: &mut bool) -> R
                 },
             ) => parse_cmd(doc, Some(extras)),
             (MessageSection::Sequence { .. }, _) => Err(DocumentDBError::bad_value(
-                "Expected first section to be a single document.".to_string(),
+                "Expected first section to be a single document.".to_owned(),
             )),
         },
         _ => Err(DocumentDBError::bad_value(
-            "Expected at most two sections.".to_string(),
+            "Expected at most two sections.".to_owned(),
         )),
     }
 }
 
-/// Parse a command document - shared by OP_QUERY and OP_MSG paths.
+/// Parse a command document - shared by `OP_QUERY` and `OP_MSG` paths.
+///
+/// # Errors
+/// Returns an error if the command document is empty or contains an unrecognized command.
 pub fn parse_cmd<'a>(command: &'a RawDocument, extra: Option<&'a [u8]>) -> Result<Request<'a>> {
     if let Some(result) = command.into_iter().next() {
         let cmd_name = result?.0;
@@ -160,7 +183,7 @@ pub fn parse_cmd<'a>(command: &'a RawDocument, extra: Option<&'a [u8]>) -> Resul
         Ok(Request::Raw(request_type, command, extra))
     } else {
         Err(DocumentDBError::bad_value(
-            "Admin command received without a command.".to_string(),
+            "Admin command received without a command.".to_owned(),
         ))
     }
 }

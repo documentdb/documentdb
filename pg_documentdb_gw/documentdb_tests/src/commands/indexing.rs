@@ -6,6 +6,19 @@
  *-------------------------------------------------------------------------
  */
 
+#![expect(
+    clippy::missing_panics_doc,
+    reason = "Test helper functions - panics are expected test failures"
+)]
+#![expect(
+    clippy::missing_errors_doc,
+    reason = "Test helper functions - error conditions are self-explanatory"
+)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "Test helper functions - unwrap failures indicate test failures"
+)]
+
 use bson::{doc, Document};
 use mongodb::{error::Error, error::WriteFailure, Database, IndexModel};
 
@@ -109,7 +122,7 @@ pub async fn validate_index_key_too_large_error(db: &Database) -> Result<(), Err
     let collection = db.collection::<Document>(coll_name);
 
     // Drop collection if it exists
-    collection.drop().await.ok();
+    let _ = collection.drop().await;
 
     // Create the collection
     db.create_collection(coll_name).await?;

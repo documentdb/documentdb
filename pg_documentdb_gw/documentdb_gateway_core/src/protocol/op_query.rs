@@ -17,8 +17,11 @@ use crate::{
     requests::Request,
 };
 
-/// Parse an OP_QUERY message using `Buf` for efficient in-memory reads.
-pub fn parse_query<'a>(message: &'a [u8]) -> Result<Request<'a>> {
+/// Parse an `OP_QUERY` message using `Buf` for efficient in-memory reads.
+///
+/// # Errors
+/// Returns an error if the message is malformed or cannot be parsed.
+pub fn parse_query(message: &[u8]) -> Result<Request<'_>> {
     let mut buf = message;
 
     if buf.remaining() < 4 {

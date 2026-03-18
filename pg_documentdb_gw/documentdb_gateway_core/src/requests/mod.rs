@@ -29,8 +29,10 @@ use crate::{
 pub use request_tracker::RequestIntervalKind;
 pub use request_type::RequestType;
 
-/// The RequestMessage holds ownership to the whole client message
-/// Other objects, like the Request will only hold references to it
+/// The `RequestMessage` holds ownership to the whole client message.
+///
+/// Other objects, like the `Request` will only hold references to it.
+#[derive(Debug)]
 pub struct RequestMessage {
     pub request: Vec<u8>,
     pub op_code: OpCode,
@@ -55,8 +57,9 @@ pub struct RequestInfo<'a> {
 }
 
 impl RequestInfo<'_> {
+    #[must_use]
     pub fn new() -> Self {
-        RequestInfo {
+        Self {
             max_time_ms: None,
             transaction_info: None,
             db: None,
@@ -66,86 +69,108 @@ impl RequestInfo<'_> {
         }
     }
 
+    /// # Errors
+    /// Returns error if the collection is not set.
     pub fn collection(&self) -> Result<&str> {
         self.collection.ok_or(DocumentDBError::documentdb_error(
             ErrorCode::InvalidNamespace,
-            "Invalid namespace".to_string(),
+            "Invalid namespace".to_owned(),
         ))
     }
 
+    /// # Errors
+    /// Returns error if `$db` is not set.
     pub fn db(&self) -> Result<&str> {
         self.db.ok_or(DocumentDBError::bad_value(
-            "Expected $db to be present".to_string(),
+            "Expected $db to be present".to_owned(),
         ))
     }
 
-    pub fn read_concern(&self) -> &ReadConcern {
+    #[must_use]
+    pub const fn read_concern(&self) -> &ReadConcern {
         &self.read_concern
     }
 }
 
 impl<'a> Request<'a> {
+    /// # Errors
+    /// Returns error if BSON to document conversion fails.
     pub fn to_json(&self) -> Result<Document> {
         Ok(match self {
-            Request::Raw(_, body, _) => Document::try_from(*body)?,
-            Request::RawBuf(_, body) => body.to_document()?,
+            Self::Raw(_, body, _) => Document::try_from(*body)?,
+            Self::RawBuf(_, body) => body.to_document()?,
         })
     }
 
-    pub fn request_type(&self) -> &RequestType {
+    #[must_use]
+    pub const fn request_type(&self) -> RequestType {
         match self {
-            Request::Raw(t, _, _) => t,
-            Request::RawBuf(t, _) => t,
+            Self::Raw(t, _, _) | Self::RawBuf(t, _) => *t,
         }
     }
 
+    #[must_use]
     pub fn document(&'a self) -> &'a RawDocument {
         match self {
-            Request::Raw(_, d, _) => d,
-            Request::RawBuf(_, d) => d,
+            Self::Raw(_, d, _) => d,
+            Self::RawBuf(_, d) => d,
         }
     }
 
-    pub fn extra(&'a self) -> Option<&'a [u8]> {
+    #[must_use]
+    pub const fn extra(&'a self) -> Option<&'a [u8]> {
         match self {
-            Request::Raw(_, _, extra) => *extra,
-            Request::RawBuf(_, _) => None,
+            Self::Raw(_, _, extra) => *extra,
+            Self::RawBuf(_, _) => None,
         }
     }
 
+    /// # Errors
+    /// Returns error if `$db` field is missing or not a string.
     pub fn db(&self) -> Result<&str> {
         self.document()
             .get_str("$db")
             .map_err(DocumentDBError::parse_failure())
     }
 
+    /// # Errors
+    /// Returns error if field extraction fails.
     pub fn extract_fields<F>(&self, mut f: F) -> Result<()>
     where
         F: FnMut(&str, RawBsonRef) -> Result<()>,
     {
-        for entry in self.document().into_iter() {
+        for entry in self.document() {
             let (k, v) = entry?;
-            f(k, v)?
+            f(k, v)?;
         }
         Ok(())
     }
 
+    #[expect(clippy::expect_used, reason = "element type checked before access")]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "truncation acceptable for f64 to i64 conversion"
+    )]
     fn to_i64(bson: RawBsonRef) -> Result<i64> {
         match bson.element_type() {
-            ElementType::Int32 => Ok(bson.as_i32().expect("Checked") as i64),
+            ElementType::Int32 => Ok(i64::from(bson.as_i32().expect("Checked"))),
             ElementType::Int64 => Ok(bson.as_i64().expect("Checked")),
             ElementType::Double => Ok(bson.as_f64().expect("Checked") as i64),
             _ => Err(DocumentDBError::documentdb_error(
                 ErrorCode::TypeMismatch,
-                "Unexpected type".to_string(),
+                "Unexpected type".to_owned(),
             )),
         }
     }
 
+    /// # Errors
+    /// Returns error if common field extraction fails.
     pub fn extract_common(&'a self) -> Result<RequestInfo<'a>> {
         self.extract_fields_and_common(|_, _| Ok(()))
     }
 
+    /// # Errors
+    /// Returns error if collection or common field extraction fails.
     pub fn extract_coll_and_common(
         &'a self,
         collection_key: &str,
@@ -157,10 +182,10 @@ impl<'a> Request<'a> {
                     v.as_str()
                         .ok_or(DocumentDBError::documentdb_error(
                             ErrorCode::InvalidNamespace,
-                            "Invalid namespace".to_string(),
+                            "Invalid namespace".to_owned(),
                         ))?
-                        .to_string(),
-                )
+                        .to_owned(),
+                );
             }
             Ok(())
         })?;
@@ -172,6 +197,9 @@ impl<'a> Request<'a> {
         ))
     }
 
+    /// # Errors
+    /// Returns error if field extraction or parsing fails.
+    #[expect(clippy::too_many_lines, reason = "complex field extraction logic")]
     pub fn extract_fields_and_common<F>(&'a self, mut coll_extractor: F) -> Result<RequestInfo<'a>>
     where
         F: FnMut(&str, RawBsonRef) -> Result<()>,
@@ -194,7 +222,7 @@ impl<'a> Request<'a> {
                     db = Some(v.as_str().ok_or(DocumentDBError::bad_value(format!(
                         "Expected $db to be a string but got {:?}",
                         v.element_type()
-                    )))?)
+                    )))?);
                 }
                 "maxTimeMS" => max_time_ms = Some(Self::to_i64(v)?),
                 "lsid" => {
@@ -238,8 +266,8 @@ impl<'a> Request<'a> {
                         .get_str("level")
                         .unwrap_or("");
                     read_concern = ReadConcern::from_str(level).unwrap_or(ReadConcern::default());
-                    if let ReadConcern::Snapshot = read_concern {
-                        isolation_level = Some(IsolationLevel::RepeatableRead)
+                    if read_concern == ReadConcern::Snapshot {
+                        isolation_level = Some(IsolationLevel::RepeatableRead);
                     }
                 }
                 "$readPreference" => ReadPreference::parse(v.as_document())?,
@@ -274,15 +302,15 @@ impl<'a> Request<'a> {
 
         Ok(RequestInfo {
             max_time_ms,
-            collection,
-            session_id,
             transaction_info,
             db,
+            collection,
+            session_id,
             read_concern,
         })
     }
 
-    fn collection_field(&self) -> &[&'static str] {
+    const fn collection_field(&self) -> &[&'static str] {
         match self.request_type() {
             RequestType::Aggregate => &["aggregate"],
             RequestType::CollMod => &["collMod"],

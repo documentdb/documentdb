@@ -72,7 +72,7 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     }
 
     fn max_write_batch_size(&self) -> i32 {
-        self.get_i32("maxWriteBatchSize", 100000)
+        self.get_i32("maxWriteBatchSize", 100_000)
     }
 
     fn read_only(&self) -> bool {
@@ -106,6 +106,9 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         self.get_u64("mongoCursorIdleResolutionIntervalSeconds", 5)
     }
 
+    #[expect(clippy::cast_possible_truncation, reason = "value fits in i32")]
+    #[expect(clippy::cast_possible_wrap, reason = "value is small positive")]
+    #[expect(clippy::cast_sign_loss, reason = "value is always positive")]
     fn system_connection_budget(&self) -> usize {
         let min_system_connections = (conn_mgmt::SYSTEM_REQUESTS_MAX_CONNECTIONS
             + conn_mgmt::AUTHENTICATION_MAX_CONNECTIONS)
@@ -141,6 +144,9 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         self.get_i32("slowQueryLogIntervalInMilliseconds", -1)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "")
     }

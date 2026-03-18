@@ -19,7 +19,10 @@ use crate::{
     requests::{Request, RequestMessage, RequestType},
 };
 
-/// Parse an OP_INSERT message into a `Request`.
+/// Parse an `OP_INSERT` message into a `Request`.
+///
+/// # Errors
+/// Returns an error if the message is malformed or cannot be parsed.
 pub fn parse_insert(message: &RequestMessage) -> Result<Request<'_>> {
     let mut buf = message.request.as_slice();
 
@@ -45,7 +48,7 @@ pub fn parse_insert(message: &RequestMessage) -> Result<Request<'_>> {
     Ok(Request::RawBuf(RequestType::Insert, doc))
 }
 
-/// Build an OP_INSERT command document using `BufMut`, avoiding per-document
+/// Build an `OP_INSERT` command document using `BufMut`, avoiding per-document
 /// `RawDocumentBuf` parsing. The embedded documents are copied as raw bytes.
 fn build_insert_command(
     collection: &str,
@@ -72,7 +75,7 @@ fn build_insert_command(
 
 #[cfg(test)]
 mod tests {
-    use bson::{rawdoc, RawArrayBuf, RawDocumentBuf};
+    use bson::{rawdoc, RawArrayBuf};
 
     use super::*;
 
@@ -88,7 +91,7 @@ mod tests {
     }
 
     /// Concatenate `count` BSON documents into a contiguous byte buffer,
-    /// simulating the document section of an OP_INSERT message.
+    /// simulating the document section of an `OP_INSERT` message.
     fn make_docs_bytes(count: usize) -> Vec<u8> {
         let mut bytes = Vec::new();
         for i in 0..count {
@@ -173,7 +176,7 @@ mod tests {
         let mut bad = Vec::new();
         bad.extend_from_slice(&100_i32.to_le_bytes());
         bad.extend_from_slice(&[0u8; 6]);
-        assert!(build_insert_command("c", true, &bad, "d").is_err());
+        build_insert_command("c", true, &bad, "d").unwrap_err();
     }
 
     #[test]
@@ -181,6 +184,6 @@ mod tests {
         let mut bad = Vec::new();
         bad.extend_from_slice(&0_i32.to_le_bytes());
         bad.push(0);
-        assert!(build_insert_command("c", true, &bad, "d").is_err());
+        build_insert_command("c", true, &bad, "d").unwrap_err();
     }
 }

@@ -6,6 +6,27 @@
  *-------------------------------------------------------------------------
  */
 
+#![expect(
+    clippy::missing_panics_doc,
+    reason = "Test helper functions - panics are expected test failures"
+)]
+#![expect(
+    clippy::missing_errors_doc,
+    reason = "Test helper functions - error conditions are self-explanatory"
+)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "Test helper functions - unwrap failures indicate test failures"
+)]
+#![expect(
+    clippy::expect_used,
+    reason = "Test helper functions - expect failures indicate test failures"
+)]
+#![expect(
+    clippy::float_cmp,
+    reason = "Test assertions compare exact float values returned from database"
+)]
+
 use bson::doc;
 use mongodb::{
     bson::Uuid,
@@ -99,11 +120,10 @@ pub async fn validate_session_termination(
                     assert_eq!(
                         cmd_err.code,
                         251, // NoSuchTransaction error code
-                        "Expected NoSuchTransaction error, got: {:?}",
-                        cmd_err
+                        "Expected NoSuchTransaction error, got: {cmd_err:?}"
                     );
                 } else {
-                    panic!("Expected Command error, got: {:?}", error);
+                    panic!("Expected Command error, got: {error:?}");
                 }
             }
 

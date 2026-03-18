@@ -26,31 +26,46 @@ use crate::test_setup::config::setup_configuration;
 
 static POOL_MANAGER: OnceLock<Arc<PoolManager>> = OnceLock::new();
 
+/// Returns (or lazily initialises) the shared connection pool manager used
+/// by tests.
+///
+/// # Panics
+///
+/// Panics if the system-requests or authentication connection pools cannot
+/// be created during first initialisation.
 pub fn get_pool_manager() -> Arc<PoolManager> {
     Arc::clone(POOL_MANAGER.get_or_init(|| {
         let query_catalog = create_query_catalog();
         let setup_config = setup_configuration();
         let postgres_system_user = setup_config.postgres_system_user();
 
+        #[expect(
+            clippy::expect_used,
+            reason = "Test setup functions - expect failures indicate setup failures"
+        )]
         let system_requests_pool = ConnectionPool::new_with_user(
             &setup_config,
             &query_catalog,
             postgres_system_user,
             None,
-            format!("{}-SystemRequests", setup_config.application_name()),
+            &format!("{}-SystemRequests", setup_config.application_name()),
             PgPoolSettings::system_pool_settings(SYSTEM_REQUESTS_MAX_CONNECTIONS),
         )
-        .expect("Failed to create system requests pool");
+        .expect("Failed to create system-requests connection pool");
 
+        #[expect(
+            clippy::expect_used,
+            reason = "Test setup functions - expect failures indicate setup failures"
+        )]
         let authentication_pool = ConnectionPool::new_with_user(
             &setup_config,
             &query_catalog,
             postgres_system_user,
             None,
-            format!("{}-PreAuthRequests", setup_config.application_name()),
+            &format!("{}-PreAuthRequests", setup_config.application_name()),
             PgPoolSettings::system_pool_settings(AUTHENTICATION_MAX_CONNECTIONS),
         )
-        .expect("Failed to create authentication pool");
+        .expect("Failed to create authentication connection pool");
 
         Arc::new(PoolManager::new(
             query_catalog,
@@ -61,6 +76,13 @@ pub fn get_pool_manager() -> Arc<PoolManager> {
     }))
 }
 
+/// Creates a `PostgreSQL` superuser for test authentication, ignoring
+/// duplicate-object errors if the role already exists.
+///
+/// # Errors
+///
+/// Returns an error if a database operation fails (other than the role
+/// already existing).
 pub async fn create_user(user: &str, pass: &str) -> Result<()> {
     let pool_manager = get_pool_manager();
 
@@ -81,7 +103,7 @@ pub async fn create_user(user: &str, pass: &str) -> Result<()> {
             }
             _ => return Err(docdb_error),
         }
-    };
+    }
 
     pool_manager
         .authentication_connection()

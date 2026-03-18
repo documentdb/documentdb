@@ -14,15 +14,15 @@ pub enum RequestIntervalKind {
     /// Time spent reading stream from request body.
     ReadRequest,
 
-    /// Interval kind for the overall request processing duration, which includes FormatRequest, and HandleRequest via backend.
-    /// ReadRequest and WriteResponse are not part of HandleMessage.
+    /// Interval kind for the overall request processing duration, which includes `FormatRequest`, and `HandleRequest` via backend.
+    /// `ReadRequest` and `WriteResponse` are not part of `HandleMessage`.
     HandleMessage,
 
     /// Time spent formatting and parsing the incoming request.
     FormatRequest,
 
-    /// Time spent handling the request, which includes ProcessRequest and, if applicable,
-    /// PostgresBeginTransaction, PostgresSetStatementTimeout, and PostgresCommitTransaction.
+    /// Time spent handling the request, which includes `ProcessRequest` and, if applicable,
+    /// `PostgresBeginTransaction`, `PostgresSetStatementTimeout`, and `PostgresCommitTransaction`.
     HandleRequest,
 
     /// Time spent in network transport and Postgres processing.
@@ -56,12 +56,14 @@ impl Default for RequestTracker {
 }
 
 impl RequestTracker {
+    #[must_use]
     pub fn new() -> Self {
-        RequestTracker {
+        Self {
             request_interval_metrics_array: std::array::from_fn(|_| AtomicI64::new(0)),
         }
     }
 
+    #[expect(clippy::cast_possible_truncation, reason = "nanoseconds fit in i64")]
     pub fn record_duration(&self, interval: RequestIntervalKind, start_time: Instant) {
         let elapsed = start_time.elapsed();
         self.request_interval_metrics_array[interval as usize]

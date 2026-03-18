@@ -7,6 +7,8 @@
  *
  *-------------------------------------------------------------------------
  */
+#![allow(clippy::expect_used, reason = "benchmarking code")]
+#![allow(clippy::unwrap_used, reason = "benchmarking code")]
 
 use bson::{rawdoc, RawArrayBuf, RawDocumentBuf};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
@@ -25,8 +27,11 @@ fn make_test_document(id: i32) -> Vec<u8> {
     .into_bytes()
 }
 
-/// Construct a complete OP_INSERT wire-format message.
-#[expect(deprecated)]
+/// Construct a complete `OP_INSERT` wire-format message.
+#[expect(
+    deprecated,
+    reason = "OP_INSERT is still supported for legacy clients and testing"
+)]
 fn make_op_insert_message(doc_count: usize) -> RequestMessage {
     let collection = b"testdb.mycoll\0";
     let flags: i32 = 0; // ordered
@@ -55,7 +60,7 @@ fn make_docs_bytes(count: usize) -> Vec<u8> {
     bytes
 }
 
-/// Baseline: the original approach using per-document RawDocumentBuf + rawdoc!
+/// Baseline: the original approach using per-document `RawDocumentBuf` + rawdoc!
 fn old_build_insert(
     collection: &str,
     ordered: bool,

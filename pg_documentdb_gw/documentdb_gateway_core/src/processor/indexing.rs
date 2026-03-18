@@ -28,11 +28,11 @@ pub async fn process_create_indexes(
     dynamic_config: &Arc<dyn DynamicConfiguration>,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let db = request_context.info.db()?.to_string();
+    let db = request_context.info.db()?.to_owned();
     if db == "config" || db == "admin" {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::IllegalOperation,
-            "Creating indexes in the \"config\" or \"admin\" databases is not allowed".to_string(),
+            "Creating indexes in the \"config\" or \"admin\" databases is not allowed".to_owned(),
         ));
     }
 
@@ -59,6 +59,7 @@ pub async fn process_create_indexes(
     }
 }
 
+#[expect(clippy::cast_sign_loss, reason = "value is always positive")]
 pub async fn wait_for_index(
     request_context: &RequestContext<'_>,
     create_result: PgResponse,
@@ -98,11 +99,12 @@ pub async fn wait_for_index(
         }
 
         if let Some(max_time_ms) = request_context.info.max_time_ms {
-            let max_time_ms = max_time_ms.try_into().map_err(|_| {
-                DocumentDBError::internal_error("Failed to convert max_time_ms to u128".to_string())
+            let max_time_ms = max_time_ms.try_into().map_err(|error| {
+                tracing::error!("Failed to convert max_time_ms to u128: {error}");
+                DocumentDBError::internal_error("Failed to convert max_time_ms to u128".to_owned())
             })?;
             if start_time.elapsed().as_millis() > max_time_ms {
-                return Err(DocumentDBError::documentdb_error(ErrorCode::ExceededTimeLimit, "The command being executed was terminated due to a command timeout. This may be due to concurrent transactions. Consider increasing the maxTimeMS on the command.".to_string()));
+                return Err(DocumentDBError::documentdb_error(ErrorCode::ExceededTimeLimit, "The command being executed was terminated due to a command timeout. This may be due to concurrent transactions. Consider increasing the maxTimeMS on the command.".to_owned()));
             }
         }
     }
@@ -116,21 +118,21 @@ fn parse_create_index_error(response: &PgResponse) -> Result<Response> {
 
     let mut errmsg = None;
     let mut code = None;
-    for shard in raw.into_iter() {
+    for shard in raw {
         let (_, v) = shard?;
         for entry in v.as_document().ok_or(DocumentDBError::internal_error(
-            "CreateIndex shard was not a document".to_string(),
+            "CreateIndex shard was not a document".to_owned(),
         ))? {
             let (k, v) = entry?;
             match k {
                 "errmsg" => {
                     errmsg = Some(v.as_str().ok_or(DocumentDBError::internal_error(
-                        "errmsg was not a string".to_string(),
+                        "errmsg was not a string".to_owned(),
                     ))?);
                 }
                 "code" => {
                     code = Some(v.as_i32().ok_or(DocumentDBError::internal_error(
-                        "Code was not an i32".to_string(),
+                        "Code was not an i32".to_owned(),
                     ))?);
                 }
                 _ => {}
@@ -138,14 +140,14 @@ fn parse_create_index_error(response: &PgResponse) -> Result<Response> {
         }
     }
     let code = code.ok_or(DocumentDBError::internal_error(
-        "code was missing in create index result".to_string(),
+        "code was missing in create index result".to_owned(),
     ))?;
     let errmsg = errmsg.ok_or(DocumentDBError::internal_error(
-        "errmsg was missing in create index result".to_string(),
+        "errmsg was missing in create index result".to_owned(),
     ))?;
     Err(DocumentDBError::PostgresDocumentDBError(
         code,
-        errmsg.to_string(),
+        errmsg.to_owned(),
         std::backtrace::Backtrace::capture(),
     ))
 }
@@ -175,7 +177,7 @@ pub async fn process_drop_indexes(
         .get_bool("ok")
         .map_err(|e| DocumentDBError::internal_error(pg_returned_invalid_response_message(e)))?;
 
-    response.insert("ok", if is_response_ok { 1 } else { 0 });
+    response.insert("ok", i32::from(is_response_ok));
 
     if is_response_ok {
         Ok(Response::Raw(RawResponse(RawDocumentBuf::from_document(
@@ -191,7 +193,7 @@ pub async fn process_drop_indexes(
 
         Err(DocumentDBError::PostgresDocumentDBError(
             error_code,
-            error_message.to_string(),
+            error_message.to_owned(),
             std::backtrace::Backtrace::capture(),
         ))
     }

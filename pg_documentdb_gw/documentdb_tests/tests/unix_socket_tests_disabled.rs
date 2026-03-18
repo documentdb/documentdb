@@ -11,13 +11,13 @@ use documentdb_tests::test_setup::{clients, initialize};
 use std::path::Path;
 
 #[tokio::test]
-async fn test_unix_socket_disabled() {
+async fn test_unix_socket_disabled() -> Result<(), mongodb::error::Error> {
     // Clean up socket files from other test files (they never shutdown)
     let _ = std::fs::remove_file("/tmp/osddb.sock");
     let _ = std::fs::remove_file("/tmp/custom_osddb.sock");
 
     // When no path is provided, Unix socket should be disabled by default
-    let (tcp, unix) = initialize::initialize_with_config_and_unix(None).await;
+    let (tcp, unix) = initialize::initialize_with_config_and_unix(None).await?;
 
     // Verify Unix socket is disabled
     assert!(unix.is_none());
@@ -30,20 +30,22 @@ async fn test_unix_socket_disabled() {
     let result = coll.find_one(doc! { "test": "tcp works" }).await.unwrap();
     let doc = result.expect("Document should exist");
     assert_eq!(doc.get_str("test").unwrap(), "tcp works");
+
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_unix_socket_connection_fails_when_disabled() {
+async fn test_unix_socket_connection_fails_when_disabled() -> Result<(), mongodb::error::Error> {
     let _ = std::fs::remove_file("/tmp/osddb.sock");
 
-    let (_tcp, unix) = initialize::initialize_with_config_and_unix(None).await;
+    let (_tcp, unix) = initialize::initialize_with_config_and_unix(None).await?;
     assert!(unix.is_none());
 
     let socket_path = "/tmp/osddb.sock";
     assert!(!Path::new(socket_path).exists());
 
     // Attempt to create Unix socket client
-    let unix_client = clients::get_client_unix_socket(socket_path);
+    let unix_client = clients::get_client_unix_socket(socket_path)?;
 
     // Try to perform an operation - should fail since socket doesn't exist
     let result = unix_client.list_database_names().await;
@@ -51,4 +53,5 @@ async fn test_unix_socket_connection_fails_when_disabled() {
         result.is_err(),
         "Unix socket connection should fail when socket is disabled"
     );
+    Ok(())
 }

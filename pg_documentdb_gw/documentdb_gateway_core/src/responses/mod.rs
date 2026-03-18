@@ -8,8 +8,7 @@
 
 use bson::{rawdoc, Document, RawDocument};
 
-use crate::error::Result;
-use crate::protocol::OK_SUCCEEDED;
+use crate::{error::Result, protocol::OK_SUCCEEDED};
 
 pub mod constant;
 mod error;
@@ -18,7 +17,10 @@ mod raw;
 pub mod writer;
 
 pub use error::CommandError;
-pub use pg::PgResponse;
+pub use pg::{
+    from_known_external_error_code, i32_to_postgres_sqlstate, known_pg_error,
+    postgres_sqlstate_to_i32, PgResponse,
+};
 pub use raw::RawResponse;
 
 #[derive(Debug)]
@@ -28,27 +30,34 @@ pub enum Response {
 }
 
 impl Response {
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
     pub fn as_raw_document(&self) -> Result<&RawDocument> {
         match self {
-            Response::Pg(pg) => pg.as_raw_document(),
-            Response::Raw(raw) => raw.as_raw_document(),
+            Self::Pg(pg) => pg.as_raw_document(),
+            Self::Raw(raw) => Ok(raw.as_raw_document()),
         }
     }
 
     /// Returns the byte length of the response BSON document, or 0 if unavailable.
+    #[must_use]
     pub fn response_byte_len(&self) -> usize {
         match self {
-            Response::Pg(pg) => pg.response_byte_len(),
-            Response::Raw(raw) => raw.response_byte_len(),
+            Self::Pg(pg) => pg.response_byte_len(),
+            Self::Raw(raw) => raw.response_byte_len(),
         }
     }
 
+    /// # Errors
+    /// Returns an error if the raw document cannot be converted to a JSON `Document`.
     pub fn as_json(&self) -> Result<Document> {
         Ok(Document::try_from(self.as_raw_document()?)?)
     }
 
+    #[must_use]
     pub fn ok() -> Self {
-        Response::Raw(RawResponse(rawdoc! {
+        Self::Raw(RawResponse(rawdoc! {
             "ok":OK_SUCCEEDED,
         }))
     }

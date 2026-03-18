@@ -11,9 +11,12 @@ use std::{cmp::Ordering, collections::HashMap, str::FromStr};
 
 use async_recursion::async_recursion;
 use bson::{rawdoc, Document, RawArrayBuf, RawBson, RawDocument, RawDocumentBuf};
-use model::*;
-use once_cell::sync::Lazy;
+use model::{
+    DistributedJob, DistributedQueryPlan, DistributedSubPlan, ExplainPlan, IndexCost, IndexDetails,
+    PostgresExplain, VectorSearchParams,
+};
 use serde_json::Value;
+use std::sync::LazyLock;
 
 use crate::{
     context::{ConnectionContext, RequestContext},
@@ -34,8 +37,8 @@ type AggregationStage = (
     Option<fn(&ExplainPlan, &mut RawDocumentBuf, &QueryCatalog) -> ()>,
 );
 
-static AGGREGATION_STAGE_NAME_MAP: Lazy<HashMap<&'static str, AggregationStage>> =
-    Lazy::new(|| {
+static AGGREGATION_STAGE_NAME_MAP: LazyLock<HashMap<&'static str, AggregationStage>> =
+    LazyLock::new(|| {
         let project_function: fn(&ExplainPlan, &mut RawDocumentBuf, &QueryCatalog) -> () =
             |p, writer, query_catalog| {
                 write_output_stage(
@@ -49,7 +52,7 @@ static AGGREGATION_STAGE_NAME_MAP: Lazy<HashMap<&'static str, AggregationStage>>
                     query_catalog,
                     p,
                     writer,
-                )
+                );
             };
         let add_fields_function: fn(&ExplainPlan, &mut RawDocumentBuf, &QueryCatalog) -> () =
             |p, writer, query_catalog| {
@@ -64,7 +67,7 @@ static AGGREGATION_STAGE_NAME_MAP: Lazy<HashMap<&'static str, AggregationStage>>
                     query_catalog,
                     p,
                     writer,
-                )
+                );
             };
         HashMap::from([
             ("UNWIND", ("$unwind", None)),
@@ -98,7 +101,7 @@ fn write_output_stage(
         for o in output {
             let doc = f(o, query_catalog);
             for (key, val) in doc.into_iter().flatten() {
-                writer.append(key, val.to_raw_bson())
+                writer.append(key, val.to_raw_bson());
             }
         }
     }
@@ -157,7 +160,7 @@ pub async fn process_explain(
                     .await
                 } else {
                     Err(DocumentDBError::bad_value(
-                        "Explain command was not a document.".to_string(),
+                        "Explain command was not a document.".to_owned(),
                     ))
                 }
             }
@@ -202,17 +205,17 @@ pub async fn process_explain(
                 .await
             }
             _ => Err(DocumentDBError::bad_value(
-                "Unrecognized explain command.".to_string(),
+                "Unrecognized explain command.".to_owned(),
             )),
         }
     } else {
         Err(DocumentDBError::bad_value(
-            "No command was provided to explain".to_string(),
+            "No command was provided to explain".to_owned(),
         ))
     }
 }
 
-#[derive(PartialEq, Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum Verbosity {
     Default,
     QueryPlanner,
@@ -225,16 +228,17 @@ pub enum Verbosity {
 impl Verbosity {
     fn from_str(value: &str) -> Self {
         match value {
-            "queryPlanner" => Verbosity::QueryPlanner,
-            "executionStats" => Verbosity::ExecutionStats,
-            "allPlansExecution" => Verbosity::AllPlansExecution,
-            "allShardsQueryPlan" => Verbosity::AllShardsQueryPlan,
-            "allShardsExecution" => Verbosity::AllShardsExecution,
-            _ => Verbosity::Default,
+            "queryPlanner" => Self::QueryPlanner,
+            "executionStats" => Self::ExecutionStats,
+            "allPlansExecution" => Self::AllPlansExecution,
+            "allShardsQueryPlan" => Self::AllShardsQueryPlan,
+            "allShardsExecution" => Self::AllShardsExecution,
+            _ => Self::Default,
         }
     }
 }
 
+#[expect(clippy::expect_used, reason = "values are checked before access")]
 async fn run_explain(
     request_context: &RequestContext<'_>,
     query_base: &str,
@@ -253,11 +257,9 @@ async fn run_explain(
 
     match explain_response {
         Some(content) => {
-            let explain_content = if dynamic_config.enable_developer_explain() {
-                Some(convert_to_bson(content.clone()))
-            } else {
-                None
-            };
+            let explain_content = dynamic_config
+                .enable_developer_explain()
+                .then(|| convert_to_bson(content.clone()));
 
             let (collection_name, subtype) = get_subtype_and_collection_name(request)?;
             let (body, planning_time, execution_time, data_size) = transform_explain(
@@ -320,7 +322,7 @@ async fn run_explain(
                         request.document(),
                         request_info,
                     ),
-                )
+                );
             }
 
             explain.append("ok", OK_SUCCEEDED);
@@ -328,7 +330,7 @@ async fn run_explain(
             Ok(Response::Raw(RawResponse(explain)))
         }
         None => Err(DocumentDBError::internal_error(
-            "PG returned no rows in response".to_string(),
+            "PG returned no rows in response".to_owned(),
         )),
     }
 }
@@ -355,17 +357,20 @@ fn get_subtype_and_collection_name<'a>(request: &'a Request<'_>) -> Result<(&'a 
             .into_iter()
             .next()
             .ok_or(DocumentDBError::bad_value(
-                "Explain request was empty".to_string(),
+                "Explain request was empty".to_owned(),
             ))??;
     Ok((
         first_field.as_str().ok_or(DocumentDBError::bad_value(
-            "First field of explain document needs to be a string".to_string(),
+            "First field of explain document needs to be a string".to_owned(),
         ))?,
         RequestType::from_str(key)?,
     ))
 }
 
-#[expect(clippy::type_complexity)]
+#[expect(
+    clippy::type_complexity,
+    reason = "complex return type required by explain transform"
+)]
 fn transform_explain(
     explain_content: serde_json::Value,
     db: &str,
@@ -406,6 +411,7 @@ fn transform_explain(
     Ok((base_result, planning_time, execution_time, data_size))
 }
 
+#[expect(clippy::expect_used, reason = "values are checked before access")]
 fn decompose_distributed_plan(mut explain_plan: ExplainPlan) -> ExplainPlan {
     if explain_plan.distributed_plan.is_some()
         && explain_plan
@@ -430,6 +436,10 @@ fn decompose_distributed_plan(mut explain_plan: ExplainPlan) -> ExplainPlan {
     explain_plan
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "distributed_plan is checked for Some before access"
+)]
 fn walk_plan<T, F, G>(
     explain_plan: &ExplainPlan,
     plan_func: &F,
@@ -458,7 +468,7 @@ where
         for task in tasks {
             for plans in &task.worker_plans {
                 for plan in plans {
-                    state = walk_plan(&plan.plan, plan_func, job_func, state, walk_inner)
+                    state = walk_plan(&plan.plan, plan_func, job_func, state, walk_inner);
                 }
             }
         }
@@ -466,13 +476,14 @@ where
     if walk_inner {
         if let Some(ref plans) = explain_plan.inner_plans {
             for plan in plans {
-                state = walk_plan(plan, plan_func, job_func, state, walk_inner)
+                state = walk_plan(plan, plan_func, job_func, state, walk_inner);
             }
         }
     }
     state
 }
 
+#[expect(clippy::expect_used, reason = "values are checked before access")]
 fn decompose_plan_with_subplans(
     mut explain_plan: ExplainPlan,
     subplans: &mut Vec<DistributedSubPlan>,
@@ -509,20 +520,19 @@ fn decompose_plan_with_subplans(
         if subplans[subplans.len() - 1].statements.len() == 1 {
             let mut last_sub_plan = subplans.remove(subplans.len() - 1);
             return decompose_plan_with_subplans(last_sub_plan.statements.remove(0).plan, subplans);
-        } else {
-            let mut new_plans = Vec::new();
-            for plans in subplans {
-                for plan in &plans.statements {
-                    new_plans.push(plan.plan.clone());
-                }
-            }
-            if new_plans.len() == 1 {
-                return decompose_distributed_plan(new_plans.remove(0));
-            }
-
-            explain_plan.inner_plans = Some(new_plans);
-            explain_plan.distributed_plan = None;
         }
+        let mut new_plans = Vec::new();
+        for plans in subplans {
+            for plan in &plans.statements {
+                new_plans.push(plan.plan.clone());
+            }
+        }
+        if new_plans.len() == 1 {
+            return decompose_distributed_plan(new_plans.remove(0));
+        }
+
+        explain_plan.inner_plans = Some(new_plans);
+        explain_plan.distributed_plan = None;
     } else if intermediate_read > 0 {
         if let Some(tasks) = explain_plan
             .distributed_plan
@@ -533,7 +543,7 @@ fn decompose_plan_with_subplans(
             for task in tasks {
                 for list in &task.worker_plans {
                     for plan in list {
-                        inner_plans.push(plan.plan.clone())
+                        inner_plans.push(plan.plan.clone());
                     }
                 }
             }
@@ -546,7 +556,7 @@ fn decompose_plan_with_subplans(
                     .into_iter()
                     .map(|p| walk_plan_and_replace_intermediate_reads(p, subplans))
                     .collect(),
-            )
+            );
         }
 
         // TODO: Rip out the citus dependency
@@ -586,7 +596,7 @@ fn walk_plan_and_replace_intermediate_reads(
                 .into_iter()
                 .map(|p| decompose_plan_with_subplans(p, subplans))
                 .collect(),
-        )
+        );
     }
 
     plan
@@ -634,7 +644,7 @@ fn remove_nested_add_fields(
                     get_stage_from_plan(&plan, Some(parent_stage_name), query_catalog);
                 if stage_name == "ADDFIELDS" {
                     plan.inner_plans
-                        .map_or(vec![].into_iter(), |ps| ps.into_iter())
+                        .map_or(vec![].into_iter(), std::iter::IntoIterator::into_iter)
                 } else {
                     vec![plan].into_iter()
                 }
@@ -665,7 +675,7 @@ fn try_simplify_plan(
     if query_base == "count" {
         if is_unsharded && plan.distributed_plan.is_none() {
             return ExplainPlan {
-                node_type: "Explain_Count_Scan".to_string(),
+                node_type: "Explain_Count_Scan".to_owned(),
                 inner_plans: Some(vec![remove_nested_add_fields(plan, "COUNT", query_catalog)]),
                 ..Default::default()
             };
@@ -679,7 +689,7 @@ fn try_simplify_plan(
                 let sub_plan = dp.job.tasks[0].worker_plans[0].remove(0);
                 let new_plan = remove_nested_add_fields(sub_plan.plan, "COUNT", query_catalog);
                 let new_plan = ExplainPlan {
-                    node_type: "Explain_Count_Scan".to_string(),
+                    node_type: "Explain_Count_Scan".to_owned(),
                     inner_plans: Some(vec![new_plan]),
                     ..Default::default()
                 };
@@ -690,7 +700,7 @@ fn try_simplify_plan(
                         planning_time: sub_plan.planning_time,
                         execution_time: sub_plan.execution_time,
                     },
-                )
+                );
             }
         }
     }
@@ -766,11 +776,7 @@ fn get_aggregate_plan_from_output<'a>(
             Some("LOOKUP_JOIN")
         } else {
             let facet_names: Vec<&str> = output.split('\'').collect();
-            if facet_names.len() > 4 {
-                Some(facet_names[facet_names.len() - 4])
-            } else {
-                None
-            }
+            (facet_names.len() > 4).then(|| facet_names[facet_names.len() - 4])
         }
     } else if output.contains("coord_combine_agg") {
         Some("MERGE_CURSORS")
@@ -781,6 +787,11 @@ fn get_aggregate_plan_from_output<'a>(
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "explain plan stage classification requires many branches"
+)]
+#[expect(clippy::expect_used, reason = "values are checked before access")]
 fn get_stage_from_plan(
     plan: &ExplainPlan,
     parent_stage: Option<&str>,
@@ -894,11 +905,9 @@ fn get_stage_from_plan(
             if let Some(join) = plan.join_type.as_ref() {
                 if join == "Left"
                     || (join == "Inner"
-                        && plan
-                            .output
-                            .as_ref()
-                            .map(|o| o.len() == 1 && o[0].contains("bson_dollar_merge_documents"))
-                            .unwrap_or_default())
+                        && plan.output.as_ref().is_some_and(|o| {
+                            o.len() == 1 && o[0].contains("bson_dollar_merge_documents")
+                        }))
                 {
                     ("LOOKUP".to_owned(), None)
                 } else {
@@ -910,10 +919,10 @@ fn get_stage_from_plan(
         }
         "CTE Scan" | "Subquery Scan" => {
             if let Some(outputs) = plan.output.as_ref() {
-                let project_stage = if !outputs.is_empty() {
-                    get_projection_plan_from_output(outputs)
-                } else {
+                let project_stage = if outputs.is_empty() {
                     None
+                } else {
+                    get_projection_plan_from_output(outputs)
                 };
 
                 if plan.filter.is_some() {
@@ -975,17 +984,17 @@ fn get_stage_from_plan(
                         }
                     }
                     "DocumentDBApiExplainQueryScan" => ("ExplainWrapper".to_owned(), None),
-                    scan_type if query_catalog.scan_types().contains(&scan_type.to_string()) => {
+                    scan_type if query_catalog.scan_types().contains(&scan_type.to_owned()) => {
                         ("FETCH".to_owned(), None)
                     }
                     _ => {
                         tracing::warn!("Unknown scan: {cpp}");
-                        ("".to_owned(), None)
+                        (String::new(), None)
                     }
                 }
             } else {
                 tracing::warn!("Custom scan without provider.");
-                ("".to_owned(), None)
+                (String::new(), None)
             }
         }
         "Function Scan" => {
@@ -995,7 +1004,10 @@ fn get_stage_from_plan(
                     "bson_lookup_unwind" => {
                         // A lookup unwind as the base RTE
                         if (plan.inner_plans.is_none()
-                            || plan.inner_plans.as_ref().is_some_and(|p| p.is_empty()))
+                            || plan
+                                .inner_plans
+                                .as_ref()
+                                .is_some_and(std::vec::Vec::is_empty))
                             && (plan.parent_relationship.is_none()
                                 || plan
                                     .parent_relationship
@@ -1008,13 +1020,12 @@ fn get_stage_from_plan(
                     "coll_stats_aggregation" => {
                         if parent_stage.is_some_and(|x| x == "COUNT") {
                             return ("RECORD_STORE_FAST_COUNT".to_owned(), None);
-                        } else {
-                            return ("COLLSTATS_AGG".to_owned(), None);
                         }
+                        return ("COLLSTATS_AGG".to_owned(), None);
                     }
                     _ => {}
                 }
-            };
+            }
             tracing::warn!(
                 "Unknown function found: {}",
                 plan.function_name.as_deref().unwrap_or("None")
@@ -1087,7 +1098,7 @@ fn aggregate_explain(
             }
 
             let mut i = 0;
-            for shard_plan in shard_parts.into_iter() {
+            for shard_plan in shard_parts {
                 i += 1;
                 shards_explain.append(
                     format!("shard_{i}"),
@@ -1126,12 +1137,12 @@ fn determine_pipeline_split(
         if dplan.job.task_count >= 1 {
             for job in dplan.job.tasks.as_slice() {
                 if let Some(error) = job.error.as_deref() {
-                    errors.push(error.to_string())
+                    errors.push(error.to_owned());
                 }
 
                 for plan in job.worker_plans.as_slice() {
                     if !plan.is_empty() {
-                        shard_parts.push(plan[0].plan.clone())
+                        shard_parts.push(plan[0].plan.clone());
                     }
                 }
             }
@@ -1177,7 +1188,7 @@ fn aggregate_explain_core(
                         query_catalog,
                     );
                     if let Some(f) = f {
-                        f(&plan, &mut doc, query_catalog)
+                        f(&plan, &mut doc, query_catalog);
                     }
                     rawdoc! { documentdb_name: doc }
                 })
@@ -1185,7 +1196,7 @@ fn aggregate_explain_core(
 
             let mut array = RawArrayBuf::new();
             for buf in bufs {
-                array.push(buf)
+                array.push(buf);
             }
             rawdoc! {"stages": array}
         }
@@ -1243,7 +1254,7 @@ fn classify_stages(
     }
 
     if let Some((stage, func)) = AGGREGATION_STAGE_NAME_MAP.get(stage_name.as_str()) {
-        processed_stages.push((stage.to_string(), plan, stage_name, *func));
+        processed_stages.push(((*stage).to_owned(), plan, stage_name, *func));
         return None;
     }
 
@@ -1277,7 +1288,7 @@ fn is_aggregation_stage_skippable(
         }
 
         // no filters, no output, no inner plan - ignorable.
-        if plan.output.as_ref().is_none_or(|o| o.is_empty()) {
+        if plan.output.as_ref().is_none_or(std::vec::Vec::is_empty) {
             return true;
         }
 
@@ -1300,7 +1311,9 @@ fn get_total_examined(plan: &ExplainPlan) -> (i64, i64) {
     let (mut total_rows_examined, mut total_keys_examined, _) = walk_plan(
         plan,
         &|p, (total_rows_examined, total_keys_examined, root)| {
-            if !std::ptr::eq(p, root) {
+            if std::ptr::eq(p, root) {
+                (total_rows_examined, total_keys_examined, root)
+            } else {
                 (
                     total_rows_examined
                         + p.actual_rows.unwrap_or(0)
@@ -1310,8 +1323,6 @@ fn get_total_examined(plan: &ExplainPlan) -> (i64, i64) {
                         + p.rows_removed_by_index.unwrap_or(0),
                     root,
                 )
-            } else {
-                (total_rows_examined, total_keys_examined, root)
             }
         },
         &|_, state| state,
@@ -1330,6 +1341,15 @@ fn get_total_examined(plan: &ExplainPlan) -> (i64, i64) {
     (total_rows_examined, total_keys_examined)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "query planner output construction requires many conditional fields"
+)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "values are checked for Some before unwrapping"
+)]
+#[expect(clippy::expect_used, reason = "values are checked before access")]
 fn query_planner(
     plan: ExplainPlan,
     collection_path: &str,
@@ -1338,7 +1358,7 @@ fn query_planner(
 ) -> RawDocumentBuf {
     let mut writer = RawDocumentBuf::new();
     if plan.distributed_plan.is_none() && !is_aggregation_stage {
-        writer.append("namespace", collection_path)
+        writer.append("namespace", collection_path);
     }
 
     // Collect indexCosts from the entire plan tree before walking stages.
@@ -1398,9 +1418,9 @@ fn query_planner(
                         if let Some(index_bounds) = detail.index_bounds.as_ref() {
                             if !index_bounds.is_empty() {
                                 let mut bounds_arr = RawArrayBuf::new();
-                                index_bounds.iter().for_each(|key| {
+                                for key in index_bounds {
                                     bounds_arr.push(key.as_str());
-                                });
+                                }
                                 index_doc.append("bounds", bounds_arr);
                             }
                         }
@@ -1408,9 +1428,9 @@ fn query_planner(
                         if let Some(start_bounds) = detail.start_bounds.as_ref() {
                             if !start_bounds.is_empty() {
                                 let mut bounds_arr = RawArrayBuf::new();
-                                start_bounds.iter().for_each(|key| {
+                                for key in start_bounds {
                                     bounds_arr.push(key.as_str());
-                                });
+                                }
                                 index_doc.append("startBounds", bounds_arr);
                             }
                         }
@@ -1418,9 +1438,9 @@ fn query_planner(
                         if let Some(raw_bounds) = detail.raw_bounds.as_ref() {
                             if !raw_bounds.is_empty() {
                                 let mut bounds_arr = RawArrayBuf::new();
-                                raw_bounds.iter().for_each(|key| {
+                                for key in raw_bounds {
                                     bounds_arr.push(key.as_str());
-                                });
+                                }
                                 index_doc.append("rawBounds", bounds_arr);
                             }
                         }
@@ -1453,22 +1473,22 @@ fn query_planner(
                     let mut vector_search = RawDocumentBuf::new();
                     if let Some(nprobes) = params.n_probes {
                         if nprobes != 0.0 {
-                            vector_search.append("nProbes", smallest_from_f64(nprobes))
+                            vector_search.append("nProbes", smallest_from_f64(nprobes));
                         }
                     }
                     if let Some(ef_search) = params.ef_search {
                         if ef_search != 0.0 {
-                            vector_search.append("efSearch", smallest_from_f64(ef_search))
+                            vector_search.append("efSearch", smallest_from_f64(ef_search));
                         }
                     }
                     if let Some(l_search) = params.l_search {
                         if l_search != 0.0 {
-                            vector_search.append("lSearch", smallest_from_f64(l_search))
+                            vector_search.append("lSearch", smallest_from_f64(l_search));
                         }
                     }
-                    doc.append("cosmosSearchCustomParams", vector_search)
+                    doc.append("cosmosSearchCustomParams", vector_search);
                 } else {
-                    tracing::error!("Failed to parse vector search params: {vector_search_params}")
+                    tracing::error!("Failed to parse vector search params: {vector_search_params}");
                 }
             }
 
@@ -1480,7 +1500,10 @@ fn query_planner(
             }
 
             if let Some(sort_keys) = plan.sort_keys.as_ref() {
-                doc.append("sortKeysCount", sort_keys.len() as i32);
+                doc.append(
+                    "sortKeysCount",
+                    i32::try_from(sort_keys.len()).unwrap_or(i32::MAX),
+                );
 
                 let mut sort_keys_arr = RawArrayBuf::new();
                 for order_string in sort_keys {
@@ -1495,7 +1518,10 @@ fn query_planner(
                 }
             }
             if let Some(presorted_keys) = plan.presorted_key.as_ref() {
-                doc.append("presortedKeysCount", presorted_keys.len() as i32);
+                doc.append(
+                    "presortedKeysCount",
+                    i32::try_from(presorted_keys.len()).unwrap_or(i32::MAX),
+                );
                 if let Some(sort_keys) = plan.sort_keys.as_ref() {
                     let mut sort_keys_arr = RawArrayBuf::new();
                     for order_string in sort_keys {
@@ -1532,9 +1558,8 @@ fn query_planner(
                 let rows: i64 = plan
                     .plan_rows
                     .as_ref()
-                    .map(|n| n.as_i64().unwrap_or(i64::MAX))
-                    .unwrap_or(0);
-                doc.append("estimatedTotalKeysExamined", smallest_from_i64(rows))
+                    .map_or(0, |n| n.as_i64().unwrap_or(i64::MAX));
+                doc.append("estimatedTotalKeysExamined", smallest_from_i64(rows));
             }
             doc
         },
@@ -1581,6 +1606,14 @@ fn limited_array_from_contents(contents: Vec<(&'static str, RawDocumentBuf)>) ->
     arr
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "execution stats output requires many conditional fields"
+)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "values are checked for Some before unwrapping"
+)]
 fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocumentBuf {
     let (total_rows_examined, total_keys_examined) = get_total_examined(&plan);
     let execution_time = smallest_from_f64(truncate_latency(plan.actual_total_time.unwrap_or(0.0)));
@@ -1609,12 +1642,12 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
                 smallest_from_i64(
                     plan.actual_rows.unwrap_or(0) + plan.rows_removed_by_filter.unwrap_or(0),
                 ),
-            )
+            );
         }
 
         if stage_name != "FETCH" {
             if let Some(index_name) = plan.index_name.as_deref() {
-                doc.append("indexName", index_name)
+                doc.append("indexName", index_name);
             }
 
             if let Some(heap_fetches) = plan.heap_fetches {
@@ -1674,9 +1707,9 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
                     if let Some(scan_key_details) = detail.scan_key_details.as_ref() {
                         if !scan_key_details.is_empty() {
                             let mut scan_key_arr = RawArrayBuf::new();
-                            scan_key_details.iter().for_each(|key| {
+                            for key in scan_key_details {
                                 scan_key_arr.push(key.as_str());
-                            });
+                            }
                             index_doc.append("scanKeys", scan_key_arr);
                         }
                     }
@@ -1689,7 +1722,7 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
         }
 
         if stage_name == "TEXT_MATCH" {
-            doc.append("textIndexVersion", 3)
+            doc.append("textIndexVersion", 3);
         }
 
         doc.append(
@@ -1700,19 +1733,19 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
         );
 
         if plan.sort_space_type.as_deref().is_some_and(|s| s == "Disk") {
-            doc.append("usedDisk", true)
+            doc.append("usedDisk", true);
         }
         if let Some(method) = plan.sort_method.as_deref() {
-            doc.append("sortMethod", method)
+            doc.append("sortMethod", method);
         }
         if let Some(blocks) = plan.exact_heap_blocks {
             if blocks != 0 {
-                doc.append("exactBlocksRead", smallest_from_i64(blocks))
+                doc.append("exactBlocksRead", smallest_from_i64(blocks));
             }
         }
         if let Some(blocks) = plan.lossy_heap_blocks {
             if blocks != 0 {
-                doc.append("lossyBlocksRead", smallest_from_i64(blocks))
+                doc.append("lossyBlocksRead", smallest_from_i64(blocks));
             }
         }
         if let Some(space_used) = plan.sort_space_used {
@@ -1720,37 +1753,37 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
                 doc.append(
                     "totalDataSizeSortedBytesEstimate",
                     smallest_from_i64(space_used),
-                )
+                );
             }
         }
         if let Some(v) = plan.rows_removed_by_filter {
             if v > 0 {
-                doc.append("totalDocsRemovedByRuntimeFilter", smallest_from_i64(v))
+                doc.append("totalDocsRemovedByRuntimeFilter", smallest_from_i64(v));
             }
         }
         if let Some(v) = plan.rows_removed_by_index {
             if v > 0 {
-                doc.append("totalDocsRemovedByIndexRechecks", smallest_from_i64(v))
+                doc.append("totalDocsRemovedByIndexRechecks", smallest_from_i64(v));
             }
         }
         if let Some(v) = plan.shared_hit_blocks {
             if v > 0 {
-                doc.append("numBlocksFromCache", smallest_from_i64(v))
+                doc.append("numBlocksFromCache", smallest_from_i64(v));
             }
         }
         if let Some(v) = plan.shared_read_blocks {
             if v > 0 {
-                doc.append("numBlocksFromDisk", smallest_from_i64(v))
+                doc.append("numBlocksFromDisk", smallest_from_i64(v));
             }
         }
         if let Some(v) = plan.io_read_time {
             if v > 0 {
-                doc.append("ioReadTimeMillis", smallest_from_i64(v))
+                doc.append("ioReadTimeMillis", smallest_from_i64(v));
             }
         }
         if let Some(v) = plan.workers_launched {
             if v > 0 {
-                doc.append("parallelWorkers", smallest_from_i64(v))
+                doc.append("parallelWorkers", smallest_from_i64(v));
             }
         }
 
@@ -1834,7 +1867,7 @@ fn collect_index_costs(
             if let Some(entry) = result.iter_mut().find(|(ns, _)| ns == effective_ns) {
                 entry.1.extend(cost_docs);
             } else {
-                result.push((effective_ns.to_string(), cost_docs));
+                result.push((effective_ns.to_owned(), cost_docs));
             }
         }
     }
@@ -1856,6 +1889,7 @@ fn collect_index_costs(
     }
 }
 
+#[expect(clippy::expect_used, reason = "values are checked before access")]
 fn skip_stage(plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPlan {
     if plan.node_type == "Subquery Scan"
         && plan.output.as_ref().is_some_and(|o| {
@@ -1880,7 +1914,7 @@ fn skip_stage(plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPlan {
             new_plan.namespace_name = plan.namespace_name.clone();
         }
 
-        distribute_index_details(&mut new_plan, plan.index_details.clone());
+        distribute_index_details(&mut new_plan, plan.index_details);
         new_plan
     } else {
         plan
@@ -1902,11 +1936,10 @@ fn walk_plan_stage(
         let mut inner_res = f(&plan, inner, query_catalog);
         walk_plan_stage_core(plan.clone(), Some(&stage), query_catalog, &mut inner_res, f);
         res.append("inputStage", inner_res);
-        res
     } else {
         walk_plan_stage_core(plan.clone(), Some(&stage), query_catalog, &mut res, f);
-        res
     }
+    res
 }
 
 fn walk_plan_stage_core(
@@ -1942,7 +1975,7 @@ fn walk_plan_stage_core(
         if let Some(bytes) = job.total_response_size {
             writer.append("retrievedDocumentSizeBytes", bytes);
         }
-        writer.append("shards", RawArrayBuf::from_iter(plan_bufs));
+        writer.append("shards", plan_bufs.collect::<RawArrayBuf>());
     }
 
     if let Some(mut inner_plans) = plan.inner_plans {
@@ -1953,14 +1986,13 @@ fn walk_plan_stage_core(
                 writer.append("inputStage", recurse);
             }
             Ordering::Greater => {
-                let docs = RawArrayBuf::from_iter(
-                    inner_plans
-                        .into_iter()
-                        .map(|p| walk_plan_stage(p, parent_stage, query_catalog, f)),
-                );
+                let docs = inner_plans
+                    .into_iter()
+                    .map(|p| walk_plan_stage(p, parent_stage, query_catalog, f))
+                    .collect::<RawArrayBuf>();
                 writer.append("inputStages", docs);
             }
-            _ => {}
+            Ordering::Less => {}
         }
     }
 }
@@ -1979,7 +2011,7 @@ fn cursor_explain(
         verbosity,
         Verbosity::ExecutionStats | Verbosity::AllPlansExecution | Verbosity::AllShardsExecution
     ) {
-        doc.append("executionStats", execution_stats(plan, query_catalog))
+        doc.append("executionStats", execution_stats(plan, query_catalog));
     }
     doc
 }
@@ -2002,7 +2034,7 @@ fn convert_to_bson(val: serde_json::Value) -> RawBson {
         Value::Object(map) => {
             let mut doc = RawDocumentBuf::new();
             for (k, v) in map {
-                doc.append(k, convert_to_bson(v))
+                doc.append(k, convert_to_bson(v));
             }
             RawBson::Document(doc)
         }
@@ -2019,6 +2051,10 @@ fn convert_to_bson(val: serde_json::Value) -> RawBson {
     }
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "intentional truncation of f64 to i64 for smallest representation"
+)]
 fn smallest_from_f64(value: f64) -> RawBson {
     if value % 1.0 == 0.0 {
         smallest_from_i64(value as i64)

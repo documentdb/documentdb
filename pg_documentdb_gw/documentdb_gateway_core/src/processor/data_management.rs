@@ -173,6 +173,11 @@ pub async fn process_count(
         .await
 }
 
+#[expect(clippy::expect_used, reason = "BSON type already verified")]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "precision loss acceptable for scale"
+)]
 fn convert_to_scale(scale: RawBsonRef) -> Result<f64> {
     match scale.element_type() {
         ElementType::Double => Ok(scale.as_f64().expect("Type of bson was checked.")),
@@ -180,8 +185,7 @@ fn convert_to_scale(scale: RawBsonRef) -> Result<f64> {
             scale.as_i32().expect("Type of bson was checked."),
         )),
         ElementType::Int64 => Ok(scale.as_i64().expect("Type of bson was checked.") as f64),
-        ElementType::Undefined => Ok(1.0),
-        ElementType::Null => Ok(1.0),
+        ElementType::Undefined | ElementType::Null => Ok(1.0),
         _ => Err(DocumentDBError::documentdb_error(
             ErrorCode::TypeMismatch,
             format!(
@@ -245,33 +249,28 @@ pub async fn process_kill_op(
 
     let mut operation_id: Option<String> = None;
     request.extract_fields(|key, value| {
-        match key {
+        if key == "op" {
             // The "op" field contains the operation ID to kill
-            "op" => {
-                if let Some(op_str) = value.as_str() {
-                    operation_id = Some(op_str.to_string());
-                } else {
-                    return Err(DocumentDBError::type_mismatch(format!(
-                        "Expected \"op\" field to be a string, but got {:?}",
-                        value.element_type()
-                    )));
-                }
-            }
-            _ => {
-                // Ignore other fields
+            if let Some(op_str) = value.as_str() {
+                operation_id = Some(op_str.to_owned());
+            } else {
+                return Err(DocumentDBError::type_mismatch(format!(
+                    "Expected \"op\" field to be a string, but got {:?}",
+                    value.element_type()
+                )));
             }
         }
         Ok(())
     })?;
 
     let op_id = operation_id
-        .ok_or_else(|| DocumentDBError::bad_value("Did not provide \"op\" field".to_string()))?;
+        .ok_or_else(|| DocumentDBError::bad_value("Did not provide \"op\" field".to_owned()))?;
 
     // Validate that the command is run against the admin database
     if request_info.db()? != "admin" {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::Unauthorized,
-            "killOp may only be run against the admin database.".to_string(),
+            "killOp may only be run against the admin database.".to_owned(),
         ));
     }
 
@@ -322,28 +321,28 @@ pub async fn process_get_parameter(
                             "allParameters" => {
                                 all_parameters =
                                     convert_to_bool(v).ok_or(DocumentDBError::type_mismatch(
-                                        "allParameters should be a bool".to_string(),
-                                    ))?
+                                        "allParameters should be a bool".to_owned(),
+                                    ))?;
                             }
                             "showDetails" => {
                                 show_details =
                                     convert_to_bool(v).ok_or(DocumentDBError::type_mismatch(
-                                        "showDetails should be convertible to a bool".to_string(),
-                                    ))?
+                                        "showDetails should be convertible to a bool".to_owned(),
+                                    ))?;
                             }
                             _ => {}
                         }
                     }
                 }
             }
-            _ => params.push(k.to_string()),
+            _ => params.push(k.to_owned()),
         }
         Ok(())
     })?;
     if request_info.db()? != "admin" {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::Unauthorized,
-            "getParameter may only be run against the admin database.".to_string(),
+            "getParameter may only be run against the admin database.".to_owned(),
         ));
     }
 

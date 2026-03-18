@@ -12,6 +12,11 @@ use crate::{
     requests::{read_concern::ReadConcern, Request, RequestInfo, RequestType},
 };
 
+/// Validates that the given request is consistent with the current connection and
+/// transaction state.
+///
+/// # Errors
+/// Returns an error if the request violates transaction or session constraints.
 pub fn validate_request(
     connection_context: &ConnectionContext,
     request_info: &RequestInfo,
@@ -25,7 +30,7 @@ pub fn validate_request(
         if request_info.session_id.is_none() {
             return Err(DocumentDBError::documentdb_error(
                     ErrorCode::NotARetryableWriteCommand,
-                    "txnNumber may only be provided for multi-document transactions and retryable write commands. autocommit:false was not provided, and command is not a retryable write command.".to_string(),
+                    "txnNumber may only be provided for multi-document transactions and retryable write commands. autocommit:false was not provided, and command is not a retryable write command.".to_owned(),
                 ));
         }
 
@@ -37,10 +42,7 @@ pub fn validate_request(
     if request_type.is_blocked_in_transaction() {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::OperationNotSupportedInTransaction,
-            format!(
-                "Cannot run '{}' in a multi-document transaction.",
-                request_type
-            ),
+            format!("Cannot run '{request_type}' in a multi-document transaction."),
         ));
     }
 
@@ -50,9 +52,9 @@ pub fn validate_request(
     {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::OperationNotSupportedInTransaction,
-            "Cannot run command KillCursors at the start of a transaction".to_string(),
+            "Cannot run command KillCursors at the start of a transaction".to_owned(),
         ));
-    };
+    }
 
     if matches!(
         request_type,
@@ -83,14 +85,14 @@ pub fn validate_request(
         if collection == "system.profile" {
             return Err(DocumentDBError::documentdb_error(
                 ErrorCode::OperationNotSupportedInTransaction,
-                "Cannot run command against system collections in transaction.".to_string(),
+                "Cannot run command against system collections in transaction.".to_owned(),
             ));
         }
 
         if collection.starts_with("system.") {
             return Err(DocumentDBError::documentdb_error(
                 ErrorCode::Location51071,
-                "Cannot run command against system views in transaction.".to_string(),
+                "Cannot run command against system views in transaction.".to_owned(),
             ));
         }
     }
@@ -100,7 +102,7 @@ pub fn validate_request(
     {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::InvalidOptions,
-            "Read concern cannot be defined after transaction has started".to_string(),
+            "Read concern cannot be defined after transaction has started".to_owned(),
         ));
     }
 

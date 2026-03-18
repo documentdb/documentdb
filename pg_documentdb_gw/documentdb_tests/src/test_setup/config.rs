@@ -10,11 +10,12 @@ use documentdb_gateway_core::configuration::{
     CertInputType, CertificateOptions, DocumentDBSetupConfiguration,
 };
 
+#[must_use]
 pub fn setup_configuration() -> DocumentDBSetupConfiguration {
     let system_user = std::env::var("PostgresSystemUser").unwrap_or(whoami::username());
 
     DocumentDBSetupConfiguration {
-        node_host_name: "localhost".to_string(),
+        node_host_name: "localhost".to_owned(),
         blocked_role_prefixes: Vec::new(),
         gateway_listen_port: Some(10260),
         allow_transaction_snapshot: Some(false),
@@ -28,6 +29,7 @@ pub fn setup_configuration() -> DocumentDBSetupConfiguration {
     }
 }
 
+#[must_use]
 pub fn setup_configuration_with_unix_socket_custom(
     path: Option<String>,
     permissions: Option<String>,

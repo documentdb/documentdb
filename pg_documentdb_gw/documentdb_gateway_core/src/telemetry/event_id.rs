@@ -16,6 +16,7 @@ pub enum EventId {
 }
 
 impl EventId {
+    #[must_use]
     pub const fn code(self) -> u64 {
         self as u64
     }

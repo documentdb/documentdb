@@ -7,19 +7,21 @@
  */
 
 use bson::RawDocumentBuf;
-use once_cell::sync::Lazy;
 use regex::{CaptureMatches, Regex};
 
 use crate::postgres::QueryCatalog;
 
-static SHARD_KEY_VALUE_EXTRACT: Lazy<Regex> = Lazy::new(|| {
+static SHARD_KEY_VALUE_EXTRACT: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    #[expect(clippy::expect_used, reason = "static regex pattern")]
     Regex::new("shard_key_value (OPERATOR\\(pg_catalog.=\\)|=) '(\\d+)'::bigint")
         .expect("Static input")
 });
-static BSON_SUM_OF_ONE_OUTPUT_REGEX: Lazy<Regex> = Lazy::new(|| {
+static BSON_SUM_OF_ONE_OUTPUT_REGEX: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    #[expect(clippy::expect_used, reason = "static regex pattern")]
     Regex::new("^bsonsum\\(bson_expression_get\\(.+, 'BSONHEX13000000012473756d00000000000000f03f00'::bson, true\\)\\)?$").expect("Static input")
 });
 
+#[expect(clippy::expect_used, reason = "static regex pattern")]
 pub fn get_projection_type_output(
     output: &str,
     function_name: &str,
@@ -55,10 +57,9 @@ pub fn is_unsharded_query(relation_name: &str, filter: &str) -> bool {
         let shard_key_value = result.get(2);
         if let Some(shard_key_value) = shard_key_value {
             return relation_name
-                .starts_with(&("documents_".to_string() + shard_key_value.as_str()));
-        } else {
-            return false;
+                .starts_with(&("documents_".to_owned() + shard_key_value.as_str()));
         }
+        return false;
     }
 
     false
@@ -87,6 +88,7 @@ pub fn is_output_count(output: &str, query_catalog: &QueryCatalog) -> bool {
     BSON_SUM_OF_ONE_OUTPUT_REGEX.is_match(&output)
 }
 
+#[expect(clippy::expect_used, reason = "static regex pattern")]
 fn get_expressions(
     captures: CaptureMatches,
     query_catalog: &QueryCatalog,
@@ -103,13 +105,14 @@ fn get_expressions(
                 let query_bson = index_condition.name("queryBson").map_or("", |m| m.as_str());
                 let query = hex::decode(query_bson).unwrap_or(vec![]);
                 let query_bson = RawDocumentBuf::from_bytes(query).unwrap_or_default();
-                expressions.push((operator, query_bson))
+                expressions.push((operator, query_bson));
             }
         }
     }
     expressions
 }
 
+#[expect(clippy::expect_used, reason = "static regex pattern")]
 pub fn get_runtime_conditions(
     input: &str,
     query_catalog: &QueryCatalog,
@@ -122,6 +125,7 @@ pub fn get_runtime_conditions(
     )
 }
 
+#[expect(clippy::expect_used, reason = "static regex pattern")]
 pub fn get_index_conditions(
     input: &str,
     query_catalog: &QueryCatalog,
@@ -134,6 +138,7 @@ pub fn get_index_conditions(
     )
 }
 
+#[expect(clippy::expect_used, reason = "static regex pattern")]
 pub fn get_sort_conditions(input: &str, query_catalog: &QueryCatalog) -> Option<RawDocumentBuf> {
     Regex::new(query_catalog.single_index_condition_regex())
         .expect("static input")

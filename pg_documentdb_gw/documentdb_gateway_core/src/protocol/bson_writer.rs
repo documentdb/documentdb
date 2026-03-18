@@ -33,8 +33,10 @@ pub fn bson_doc_size(buf: &[u8]) -> Result<usize> {
         ));
     }
     let size = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-    usize::try_from(size)
-        .map_err(|_| DocumentDBError::internal_error("BSON document size is negative".to_owned()))
+    usize::try_from(size).map_err(|error| {
+        tracing::error!("BSON document size is negative: {error}");
+        DocumentDBError::internal_error("BSON document size is negative".to_owned())
+    })
 }
 
 /// Append a BSON string element (type 0x02) to `buf`.
@@ -144,8 +146,10 @@ pub fn begin_document(buf: &mut Vec<u8>) -> usize {
 pub fn end_document(buf: &mut Vec<u8>, doc_start: usize) -> Result<()> {
     buf.put_u8(0); // document null terminator
 
-    let doc_len = i32::try_from(buf.len() - doc_start)
-        .map_err(|_| DocumentDBError::bad_value("Document too large".to_owned()))?;
+    let doc_len = i32::try_from(buf.len() - doc_start).map_err(|error| {
+        tracing::error!("Document too large: {error}");
+        DocumentDBError::bad_value("Document too large".to_owned())
+    })?;
 
     buf[doc_start..doc_start + 4].copy_from_slice(&doc_len.to_le_bytes());
 
@@ -167,12 +171,12 @@ mod tests {
     #[test]
     fn bson_doc_size_negative_returns_error() {
         let buf = (-1_i32).to_le_bytes();
-        assert!(bson_doc_size(&buf).is_err());
+        bson_doc_size(&buf).unwrap_err();
     }
 
     #[test]
     fn bson_doc_size_too_short_returns_error() {
-        assert!(bson_doc_size(&[0u8; 3]).is_err());
+        bson_doc_size(&[0u8; 3]).unwrap_err();
     }
 
     #[test]

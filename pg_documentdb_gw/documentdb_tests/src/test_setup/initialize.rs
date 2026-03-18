@@ -46,9 +46,9 @@ async fn test_init_once_async() {
     TEST_ASYNC_SETUP
         .get_or_init(|| async {
             // Create test user for authentication tests
-            postgres::create_user(TEST_USERNAME, TEST_PASSWORD)
+            let _ = postgres::create_user(TEST_USERNAME, TEST_PASSWORD)
                 .await
-                .unwrap();
+                .map_err(|error| tracing::error!("Failed to create test user: {error}"));
         })
         .await;
 }
@@ -67,7 +67,8 @@ async fn initialize_full(setup_config: DocumentDBSetupConfiguration) {
         let ready_flag = Arc::clone(&ready_flag);
 
         thread::spawn(move || {
-            run_test_gateway(setup_config, &ready_notify, &ready_flag);
+            let _ = run_test_gateway(setup_config, &ready_notify, &ready_flag)
+                .map_err(|error| tracing::error!("Unable to run the test gateway: {error}"));
         });
     });
 
@@ -76,29 +77,61 @@ async fn initialize_full(setup_config: DocumentDBSetupConfiguration) {
     }
 }
 
-pub async fn initialize_with_config(config: DocumentDBSetupConfiguration) -> Client {
+/// Starts the test gateway with the given configuration and returns an
+/// authenticated client.
+///
+/// # Errors
+///
+/// Returns an error if the client cannot be created after gateway
+/// initialization.
+pub async fn initialize_with_config(
+    config: DocumentDBSetupConfiguration,
+) -> std::result::Result<Client, Error> {
     initialize_full(config).await;
     get_client()
 }
 
-pub async fn initialize_with_config_and_unix(path: Option<String>) -> (Client, Option<Client>) {
+/// Starts the test gateway with an optional Unix socket path and returns
+/// both a TCP client and an optional Unix socket client.
+///
+/// # Errors
+///
+/// Returns an error if either client cannot be created after gateway
+/// initialization.
+pub async fn initialize_with_config_and_unix(
+    path: Option<String>,
+) -> std::result::Result<(Client, Option<Client>), Error> {
     let config = setup_configuration_with_unix_socket_custom(path.clone(), None);
     initialize_full(config).await;
 
-    let tcp_client = get_client();
-    let unix_client = path.map(|socket_path| get_client_unix_socket(&socket_path));
+    let tcp_client = get_client()?;
+    let unix_client = path
+        .map(|socket_path| get_client_unix_socket(&socket_path))
+        .transpose()?;
 
-    (tcp_client, unix_client)
+    Ok((tcp_client, unix_client))
 }
 
-pub async fn initialize() -> Client {
+/// Starts the test gateway with default configuration and returns an
+/// authenticated client.
+///
+/// # Errors
+///
+/// Returns an error if the client cannot be created after gateway
+/// initialization.
+pub async fn initialize() -> std::result::Result<Client, Error> {
     initialize_full(setup_configuration()).await;
     get_client()
 }
 
-// Initialize the server and also clear a database for use
+/// Initializes the test gateway and returns a freshly dropped database
+/// handle ready for use.
+///
+/// # Errors
+///
+/// Returns an error if gateway initialization or database setup fails.
 pub async fn initialize_with_db(db: &str) -> Result<Database, Error> {
-    let client = initialize().await;
+    let client = initialize().await?;
 
     setup_db(&client, db).await
 }

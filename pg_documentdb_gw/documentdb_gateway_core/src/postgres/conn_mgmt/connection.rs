@@ -27,6 +27,7 @@ pub struct Connection {
     pub in_transaction: bool,
 }
 
+#[derive(Debug)]
 pub enum TimeoutType {
     // Transaction timeout uses SET LOCAL inside a transaction, it cannot be used if cursors need to be persisted
     Transaction,
@@ -35,21 +36,32 @@ pub enum TimeoutType {
     Command,
 }
 
+#[derive(Debug)]
 pub struct Timeout {
     timeout_type: TimeoutType,
     max_time_ms: i64,
 }
 
 impl Timeout {
+    #[must_use]
+    #[expect(
+        clippy::single_option_map,
+        reason = "this will be refactored as part of separate PR"
+    )]
     pub fn command(max_time_ms: Option<i64>) -> Option<Self> {
-        max_time_ms.map(|m| Timeout {
+        max_time_ms.map(|m| Self {
             timeout_type: TimeoutType::Command,
             max_time_ms: m,
         })
     }
 
+    #[must_use]
+    #[expect(
+        clippy::single_option_map,
+        reason = "this will be refactored as part of separate PR"
+    )]
     pub fn transaction(max_time_ms: Option<i64>) -> Option<Self> {
-        max_time_ms.map(|m| Timeout {
+        max_time_ms.map(|m| Self {
             timeout_type: TimeoutType::Transaction,
             max_time_ms: m,
         })
@@ -70,6 +82,8 @@ impl Connection {
         Ok(self.pool_connection.query(&statement, params).await?)
     }
 
+    /// # Errors
+    /// Returns error if the operation fails.
     pub async fn query(
         &self,
         query: &str,
@@ -79,10 +93,7 @@ impl Connection {
         request_tracker: &RequestTracker,
     ) -> Result<Vec<Row>> {
         match timeout {
-            Some(Timeout {
-                timeout_type: _,
-                max_time_ms,
-            }) if self.in_transaction => {
+            Some(Timeout { max_time_ms, .. }) if self.in_transaction => {
                 let set_timeout_start = Instant::now();
                 self.pool_connection
                     .batch_execute(&format!("set local statement_timeout to {max_time_ms}"))
@@ -188,6 +199,8 @@ impl Connection {
         }
     }
 
+    /// # Errors
+    /// Returns error if the operation fails.
     pub async fn query_db_bson(
         &self,
         query: &str,
@@ -206,12 +219,18 @@ impl Connection {
         .await
     }
 
+    /// Batch execute SQL statements
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the operation fails.
     pub async fn batch_execute(&self, query: &str) -> Result<()> {
         Ok(self.pool_connection.batch_execute(query).await?)
     }
 
-    pub fn new(pool_connection: PoolConnection, in_transaction: bool) -> Self {
-        Connection {
+    #[must_use]
+    pub const fn new(pool_connection: PoolConnection, in_transaction: bool) -> Self {
+        Self {
             pool_connection,
             in_transaction,
         }

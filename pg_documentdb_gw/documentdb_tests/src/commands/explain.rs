@@ -6,6 +6,11 @@
  *-------------------------------------------------------------------------
  */
 
+#![expect(
+    clippy::missing_errors_doc,
+    reason = "Test helper functions - error conditions are self-explanatory"
+)]
+
 use bson::doc;
 use mongodb::{error::Error, Database};
 

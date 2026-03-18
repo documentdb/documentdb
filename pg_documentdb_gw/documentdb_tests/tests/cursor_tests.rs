@@ -6,6 +6,15 @@
  *-------------------------------------------------------------------------
  */
 
+#![expect(
+    clippy::missing_panics_doc,
+    reason = "Test functions - panics are expected test failures"
+)]
+#![expect(
+    clippy::missing_errors_doc,
+    reason = "Test functions - error conditions are self-explanatory"
+)]
+
 use documentdb_tests::{commands::cursor, test_setup::initialize};
 use mongodb::error::Error;
 

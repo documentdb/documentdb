@@ -27,8 +27,8 @@ pub fn get_service_context(
     tracing::info!("Initial dynamic configuration: {dynamic_configuration:?}");
 
     let service_context = ServiceContext::new(
-        setup_configuration.clone(),
-        Arc::clone(&dynamic_configuration),
+        setup_configuration,
+        dynamic_configuration,
         connection_pool_manager,
         tls_provider,
     );
@@ -38,6 +38,11 @@ pub fn get_service_context(
     service_context
 }
 
+/// # Panics
+///
+/// Panics if an internal invariant is violated.
+/// # Panics
+/// Panics if postgres object creation fails after max retries.
 pub async fn create_postgres_object<T, F, Fut>(
     create_func: F,
     setup_configuration: &dyn SetupConfiguration,
@@ -50,20 +55,14 @@ where
     let wait_time = Duration::from_secs(10);
     let start = Instant::now();
 
-    loop {
-        match create_func().await {
-            Ok(result) => {
-                return result;
+    match create_func().await {
+        Ok(result) => result,
+        Err(e) => {
+            if start.elapsed() < max_time {
+                tracing::warn!("Exception when creating postgres object {e:?}");
+                tokio::time::sleep(wait_time).await;
             }
-            Err(e) => {
-                if start.elapsed() < max_time {
-                    tracing::warn!("Exception when creating postgres object {e:?}");
-                    tokio::time::sleep(wait_time).await;
-                    continue;
-                } else {
-                    panic!("Failed to create postgres object after {max_time:?}: {e}");
-                }
-            }
+            panic!("Failed to create postgres object after {max_time:?}: {e}");
         }
     }
 }

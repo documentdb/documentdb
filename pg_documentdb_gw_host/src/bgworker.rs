@@ -1,7 +1,13 @@
-use pgrx::{bgworkers::*, prelude::*};
-use std::sync::Arc;
-use std::time::Duration;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+#![expect(
+    clippy::expect_used,
+    reason = "Main binary uses expect for initialization failures that should crash the process"
+)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "Main binary uses unwrap for failures that should crash the process"
+)]
+
+use std::{sync::Arc, time::Duration};
 
 use documentdb_gateway_core::{
     configuration::{DocumentDBSetupConfiguration, PgConfiguration, SetupConfiguration},
@@ -13,6 +19,11 @@ use documentdb_gateway_core::{
     shutdown_controller::SHUTDOWN_CONTROLLER,
     startup::{create_postgres_object, get_service_context},
 };
+use pgrx::{
+    bgworkers::{BackgroundWorker, BackgroundWorkerBuilder, BgWorkerStartTime, SignalWakeFlags},
+    prelude::*,
+};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::gucs::{PG_DOCUMENTDB_GATEWAY_DATABASE, PG_DOCUMENTDB_SETUP_CONFIGURATION};
 
@@ -110,7 +121,7 @@ async fn run_docdb_gateway(setup_configuration_file: &str) {
             PgConfiguration::new(
                 &setup_configuration,
                 Arc::clone(&connection_pool_manager),
-                vec!["documentdb.".to_string()],
+                vec!["documentdb.".to_owned()],
             )
             .await
         },
