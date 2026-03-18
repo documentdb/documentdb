@@ -23,32 +23,38 @@ CREATE TABLE documentdb_api_catalog.user (
 
 -- index for updates when a custom role is deleted
 CREATE INDEX IF NOT EXISTS idx_user_roles
-    ON documentdb_api_catalog.users(roles); 
+    ON documentdb_api_catalog.users(user_data.roles); 
 ```
 
 Sample Entry:
 
 ```
 | **user_name** | **user_data**
-| admin     | {roles: [{"test":"write"}, {"admin":"readAnyDatabase"}]}
+| admin         | {
+                    "roles": [
+                        {"db":"test","role":"write"}, 
+                        {"db":"admin", "role":"readAnyDatabase"}
+                    ],
+                    "comment": "..."
+                  }
 ```
 
-The users table references the Postgres role associated with the user, and stores the relevant user data in a bson object. The user_data object will store the roles associated with the user in a list of database/role name pairs (e.g. `roles: [{"test":"write"}, {"admin":"readAnyDatabase"}]`). Additional fields associated with the user can be added in the future, such as custom data, command, authenticationRestrictions (see: https://www.mongodb.com/docs/manual/reference/command/usersInfo/#output)
+The users table references the Postgres role associated with the user, and stores the relevant user data in a bson object. The user_data object will store the roles associated with the user in a list of database/role name pairs (e.g. `roles: [{"db":"test", "role":"write"}, {"db":"admin", "role":"readAnyDatabase"}]`). Additional fields associated with the user can be added in the future, such as custom data, command, authenticationRestrictions (see: https://www.mongodb.com/docs/manual/reference/command/usersInfo/#output)
 
 ### Roles Table
 
 ```
 CREATE TABLE IF NOT EXISTS documentdb_api_catalog.roles (
-    document documentdb_core.bson NOT NULL
+    role_document documentdb_core.bson NOT NULL
 );
 
 -- Index for role lookup
 CREATE INDEX IF NOT EXISTS idx_roles
-    ON documentdb_api_catalog.users(database, rolename); 
+    ON documentdb_api_catalog.roles(role_document.database, role_document.role); 
     
 -- Index for role inheritance lookup
 CREATE INDEX IF NOT EXISTS idx_roles_parents
-    ON documentdb_api_catalog.users(roles); 
+    ON documentdb_api_catalog.roless(role_document.roles); 
 ```
 
 Roles are stored with a role name, and a database as a primary key. Built in roles have the field “is_builtin”, which we will use to prevent the customer from modifying them. 
