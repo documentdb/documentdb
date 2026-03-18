@@ -150,9 +150,8 @@ impl PoolManager {
         }
     }
 
-    pub async fn clean_unused_pools(&self, max_age: Duration) {
-        #[expect(clippy::future_not_send, reason = "generic K may not be Send")]
-        async fn clean<K>(map: &DashMap<K, Arc<ConnectionPool>>, max_age: Duration)
+    pub fn clean_unused_pools(&self, max_age: Duration) {
+        fn clean<K>(map: &DashMap<K, Arc<ConnectionPool>>, max_age: Duration)
         where
             K: Clone + Eq + Hash,
         {
@@ -162,14 +161,14 @@ impl PoolManager {
                 .collect();
 
             for (key, pool) in entries {
-                if pool.last_used().await.elapsed() > max_age {
+                if pool.last_used().elapsed() > max_age {
                     map.remove(&key);
                 }
             }
         }
 
-        clean(&self.user_data_pools, max_age).await;
-        clean(&self.shared_data_pools, max_age).await;
+        clean(&self.user_data_pools, max_age);
+        clean(&self.shared_data_pools, max_age);
     }
 
     pub fn report_pool_stats(&self) -> Vec<ConnectionPoolStatus> {
@@ -216,8 +215,7 @@ pub fn clean_unused_pools(service_context: ServiceContext) {
 
             service_context
                 .connection_pool_manager()
-                .clean_unused_pools(max_age)
-                .await;
+                .clean_unused_pools(max_age);
         }
     });
 }
@@ -353,6 +351,23 @@ mod tests {
         fn system_connection_budget(&self) -> usize {
             0
         }
+
+        /// Overload this to be non-zero, since it's consumed by the interval
+        ///
+        /// This value is consumed by the `prune_interval` through the pool settings
+        /// ```no_run
+        /// use crate::postgres::PgPoolSettings;
+        ///
+        /// let pool_settings = PgPoolSettings::from_configuration(dynamic_config());
+        ///
+        /// let mut prune_interval =
+        ///    tokio::time::interval(pool_settings.connection_pruning_interval());
+        /// ```
+        /// and since the value of `get_u64` is overloaded to return 0 we need to overload
+        /// this function to return non-zero value
+        fn gateway_connection_pruning_interval_sec(&self) -> u64 {
+            1
+        }
     }
 
     fn setup_configuration() -> DocumentDBSetupConfiguration {
@@ -433,10 +448,11 @@ mod tests {
             );
 
             let shared_pool = shared_pool_result.unwrap();
+            // max_size is the combined capacity of the primary + timeout pools
             assert_eq!(
-                dynamic_configuration.max_conn(),
+                dynamic_configuration.max_conn() * 2,
                 shared_pool.status().status().max_size,
-                "Should have the same size as declared by MaxConnectionConfig"
+                "Should have the combined size of primary and timeout pools"
             );
 
             assert_eq!(
@@ -577,13 +593,18 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            dynamic_configuration.max_conn(),
+            dynamic_configuration.max_conn() * 2,
             user_pool.status().status().max_size
         );
     }
 
     #[tokio::test]
     async fn test_clean_unused_pools_with_expired_pools_removes_user_and_shared() {
+        // We still need an async context to create the connection pool (see ConnectionPool::new_with_user),
+        // but the test itself doesn't need to be async since we are not awaiting anything after the pool creation,
+        // so we can use yield_now to just get into async context and then proceed with sync code.
+        yield_now().await;
+
         let dynamic_configuration = MaxConnectionConfig {
             max_conn: 100.into(),
         };
@@ -599,9 +620,7 @@ mod tests {
         assert_eq!(4, pool_manager.report_pool_stats().len());
 
         sleep(Duration::from_millis(1)).await;
-        pool_manager
-            .clean_unused_pools(Duration::from_millis(0))
-            .await;
+        pool_manager.clean_unused_pools(Duration::from_millis(0));
 
         // only 2 system pools should remain since user and shared pools are expired
         assert_eq!(2, pool_manager.report_pool_stats().len());

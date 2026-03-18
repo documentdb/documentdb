@@ -18,35 +18,135 @@ use crate::{
     error::{DocumentDBError, Result},
     explain::Verbosity,
     postgres::{
-        conn_mgmt::{Connection, ConnectionPool, PoolConnection, Timeout},
-        PgDataClient, PgDocument,
+        conn_mgmt::{Connection, ConnectionPool, PoolConnection, PullConnection, QueryOptions},
+        PgDataClient, PgDocument, ScopedTransaction,
     },
     responses::{PgResponse, Response},
 };
 
+/// Remaps a `DocumentDBError::PostgresError` based of its `sql_state`, to a more meaningful and accurate `DocumentDBError`
+///
+/// For example, if we get a `PostgresError` with `sql_state` of "42704" (undefined object),
+/// we can remap it to a `DocumentDBError::user_not_found` error which is more meaningful
+/// in the context of user operations, instead of returning a generic `PostgresError` to the caller.
+pub fn remap_error(
+    error: DocumentDBError,
+    source_sql_state: &SqlState,
+    remap_func: fn(String) -> DocumentDBError,
+    target_error_message: &str,
+) -> DocumentDBError {
+    if let DocumentDBError::PostgresError(ref pg_error, _) = error {
+        if let Some(code) = pg_error.code() {
+            if code == source_sql_state {
+                return remap_func(target_error_message.to_owned());
+            }
+        }
+    }
+    error
+}
+
 #[derive(Debug)]
 pub struct DocumentDBDataClient {
     connection_pool: Option<Arc<ConnectionPool>>,
+    service_context: ServiceContext,
 }
 
 impl DocumentDBDataClient {
-    async fn acquire_pool_connection(&self) -> Result<PoolConnection> {
-        self.connection_pool
-            .as_ref()
-            .ok_or(DocumentDBError::internal_error(
-                "Acquiring connection to postgres on unauthorized data client".to_owned(),
-            ))?
-            .acquire_connection()
-            .await
+    /// Runs a db+bson query returning the raw rows.
+    async fn run_db_bson_rows(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+        query: &str,
+        query_options: QueryOptions,
+    ) -> Result<Vec<Row>> {
+        let db = request_context.info().db()?;
+        let doc = request_context.payload().document();
+
+        let run_db_bson = |conn: Arc<Connection>| async move {
+            conn.query_db_bson(query, db, &PgDocument(doc)).await
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            query_options,
+            run_db_bson,
+        )
+        .await
+    }
+
+    /// Runs a db+bson query and wraps the result in `Response::Pg`.
+    async fn run_db_bson(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+        query: &str,
+        query_options: QueryOptions,
+    ) -> Result<Response> {
+        let rows = self
+            .run_db_bson_rows(request_context, connection_context, query, query_options)
+            .await?;
+        Ok(Response::Pg(PgResponse::new(rows)))
+    }
+
+    /// Runs a db+bson cursor query and saves cursor state.
+    async fn run_db_bson_cursor(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+        query: &str,
+        query_options: QueryOptions,
+    ) -> Result<Response> {
+        let db = request_context.info().db()?;
+        let doc = request_context.payload().document();
+
+        let run_cursor = |conn: Arc<Connection>| async move {
+            let rows = conn.query_db_bson(query, db, &PgDocument(doc)).await?;
+            Ok((rows, conn))
+        };
+
+        self.run_cursor_query(
+            request_context,
+            connection_context,
+            query_options,
+            run_cursor,
+        )
+        .await
+    }
+
+    /// Runs a document-only query (single BYTEA param) and wraps the result.
+    async fn run_doc_only(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+        query: &str,
+        query_options: QueryOptions,
+    ) -> Result<Response> {
+        let doc = request_context.payload().document();
+
+        let run_doc = |conn: Arc<Connection>| async move {
+            let rows = conn
+                .query(query, &[Type::BYTEA], &[&PgDocument(doc)])
+                .await?;
+            Ok(Response::Pg(PgResponse::new(rows)))
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            query_options,
+            run_doc,
+        )
+        .await
     }
 }
 
 #[async_trait]
 impl PgDataClient for DocumentDBDataClient {
-    fn new_authorized(
-        service_context: &Arc<ServiceContext>,
-        authorization: &AuthState,
-    ) -> Result<Self> {
+    fn new_authorized(service_context: &ServiceContext, authorization: &AuthState) -> Result<Self> {
         let user = authorization.username()?;
         let dynamic_configuration = service_context.dynamic_configuration();
 
@@ -56,43 +156,59 @@ impl PgDataClient for DocumentDBDataClient {
                 .get_data_pool(user, dynamic_configuration.as_ref())?,
         );
 
-        Ok(Self { connection_pool })
-    }
-
-    fn new_unauthorized(_: &Arc<ServiceContext>) -> Result<Self> {
         Ok(Self {
-            connection_pool: None,
+            connection_pool,
+            service_context: service_context.clone(),
         })
     }
 
-    async fn pull_connection_with_transaction(&self, in_transaction: bool) -> Result<Connection> {
-        let pool_connection = self.acquire_pool_connection().await?;
+    fn new_unauthorized(service_context: &ServiceContext) -> Result<Self> {
+        Ok(Self {
+            connection_pool: None,
+            service_context: service_context.clone(),
+        })
+    }
 
-        Ok(Connection::new(pool_connection, in_transaction))
+    async fn acquire_pool_connection(&self) -> Result<PoolConnection> {
+        self.connection_pool
+            .as_ref()
+            .ok_or(DocumentDBError::internal_error(
+                "Acquiring connection to postgres on unauthorized data client".to_owned(),
+            ))?
+            .acquire_connection()
+            .await
+            .map_err(DocumentDBError::from)
+    }
+
+    fn service_context(&self) -> &ServiceContext {
+        &self.service_context
+    }
+
+    fn connection_pool(&self) -> Result<&ConnectionPool> {
+        self.connection_pool
+            .as_deref()
+            .ok_or(DocumentDBError::internal_error(
+                "No connection pool available on unauthorized data client".to_owned(),
+            ))
     }
 
     async fn execute_aggregate(
         &self,
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
-    ) -> Result<(PgResponse, Arc<Connection>)> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let connection = self.pull_connection(connection_context).await?;
-
-        let aggregate_rows = connection
-            .query_db_bson(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .aggregate_cursor_first_page(),
-                request_info.db()?,
-                &PgDocument(request.document()),
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-
-        Ok((PgResponse::new(aggregate_rows), connection))
+    ) -> Result<Response> {
+        self.run_db_bson_cursor(
+            request_context,
+            connection_context,
+            self.service_context
+                .query_catalog()
+                .aggregate_cursor_first_page(),
+            QueryOptions::builder()
+                .supports_backend_timeout(true)
+                .supports_transaction_timeout(false)
+                .build(),
+        )
+        .await
     }
 
     async fn execute_coll_stats(
@@ -101,28 +217,36 @@ impl PgDataClient for DocumentDBDataClient {
         scale: f64,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (_, request_info, request_tracker) = request_context.get_components();
+        let request_info = request_context.info();
 
-        let coll_stats_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .coll_stats(),
-                &[Type::TEXT, Type::TEXT, Type::FLOAT8],
-                &[
-                    &request_info.db()?.to_owned(),
-                    &request_info.collection()?.to_owned(),
-                    &scale,
-                ],
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
+        let db = request_info.db()?;
+        let coll = request_info.collection()?;
 
-        Ok(Response::Pg(PgResponse::new(coll_stats_rows)))
+        let run_coll_stats = |conn: Arc<Connection>| {
+            let db_str = db.to_owned();
+            let coll_str = coll.to_owned();
+            async move {
+                let rows = conn
+                    .query(
+                        self.service_context.query_catalog().coll_stats(),
+                        &[Type::TEXT, Type::TEXT, Type::FLOAT8],
+                        &[&db_str, &coll_str, &scale],
+                    )
+                    .await?;
+                Ok(Response::Pg(PgResponse::new(rows)))
+            }
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+            run_coll_stats,
+        )
+        .await
     }
 
     async fn execute_count_query(
@@ -130,24 +254,15 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-
-        let count_query_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query_db_bson(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .count_query(),
-                request_info.db()?,
-                &PgDocument(request.document()),
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-
-        Ok(Response::Pg(PgResponse::new(count_query_rows)))
+        self.run_db_bson(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().count_query(),
+            QueryOptions::builder()
+                .supports_backend_timeout(true)
+                .build(),
+        )
+        .await
     }
 
     async fn execute_create_collection(
@@ -155,49 +270,37 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-
-        let create_collection_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query_db_bson(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .create_collection_view(),
-                request_info.db()?,
-                &PgDocument(request.document()),
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-
-        Ok(Response::Pg(PgResponse::new(create_collection_rows)))
+        self.run_db_bson(
+            request_context,
+            connection_context,
+            self.service_context
+                .query_catalog()
+                .create_collection_view(),
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+        )
+        .await
     }
 
     async fn execute_create_indexes(
         &self,
         request_context: &RequestContext<'_>,
-        db: &str,
+
         connection_context: &ConnectionContext,
     ) -> Result<Vec<Row>> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let create_indexes_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query_db_bson(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .create_indexes_background(),
-                db,
-                &PgDocument(request.document()),
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-
-        Ok(create_indexes_rows)
+        self.run_db_bson_rows(
+            request_context,
+            connection_context,
+            self.service_context
+                .query_catalog()
+                .create_indexes_background(),
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .supports_transaction_timeout(false)
+                .build(),
+        )
+        .await
     }
 
     async fn execute_wait_for_index(
@@ -206,58 +309,106 @@ impl PgDataClient for DocumentDBDataClient {
         index_build_id: &PgDocument<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Vec<Row>> {
-        let (_, request_info, request_tracker) = request_context.get_components();
-        let wait_for_index_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
+        let run_wait_index = |conn: Arc<Connection>| async move {
+            conn.query(
+                self.service_context
                     .query_catalog()
                     .check_build_index_status(),
                 &[Type::BYTEA],
                 &[&index_build_id],
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
             )
-            .await?;
+            .await
+        };
 
-        Ok(wait_for_index_rows)
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .supports_transaction_timeout(false)
+                .build(),
+            run_wait_index,
+        )
+        .await
     }
 
     async fn execute_delete(
         &self,
         request_context: &RequestContext<'_>,
-        is_read_only_for_disk_full: bool,
         connection_context: &ConnectionContext,
     ) -> Result<Vec<Row>> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let query_catalog = connection_context.service_context.query_catalog();
+        let (request, request_info, _) = request_context.get_components();
 
-        let delete_rows = self
-            .run_readonly_if_needed(
-                is_read_only_for_disk_full,
-                self.pull_connection(connection_context).await?,
-                query_catalog,
-                move |connection| async move {
-                    connection
-                        .query(
-                            query_catalog.delete(),
-                            &[Type::TEXT, Type::BYTEA, Type::BYTEA],
-                            &[
-                                &request_info.db()?.to_owned(),
-                                &PgDocument(request.document()),
-                                &request.extra(),
-                            ],
-                            Timeout::transaction(request_info.max_time_ms),
-                            request_tracker,
-                        )
-                        .await
-                },
-            )
-            .await?;
+        let db = request_info.db()?;
+        let doc = request.document();
+        let extra = request.extra();
 
-        Ok(delete_rows)
+        let run_delete = |conn: Arc<Connection>| {
+            let db_str = db.to_owned();
+            async move {
+                conn.query(
+                    self.service_context.query_catalog().delete(),
+                    &[Type::TEXT, Type::BYTEA, Type::BYTEA],
+                    &[&db_str, &PgDocument(doc), &extra],
+                )
+                .await
+            }
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(true)
+                .build(),
+            run_delete,
+        )
+        .await
+    }
+
+    async fn execute_delete_when_readonly(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<Vec<Row>> {
+        let (request, request_info, _) = request_context.get_components();
+
+        let db = request_info.db()?;
+        let doc = request.document();
+        let extra = request.extra();
+
+        let run_delete_readonly = |conn: Arc<Connection>| {
+            let db_str = db.to_owned();
+            async move {
+                let mut txn = ScopedTransaction::start_if_necessary(&conn).await?;
+                conn.batch_execute(self.service_context.query_catalog().set_allow_write())
+                    .await?;
+                let rows = conn
+                    .query(
+                        self.service_context.query_catalog().delete(),
+                        &[Type::TEXT, Type::BYTEA, Type::BYTEA],
+                        &[&db_str, &PgDocument(doc), &extra],
+                    )
+                    .await;
+                if rows.is_ok() {
+                    txn.commit().await?;
+                }
+                rows
+            }
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(true)
+                .build(),
+            run_delete_readonly,
+        )
+        .await
     }
 
     async fn execute_distinct_query(
@@ -265,24 +416,15 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-
-        let distinct_query_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query_db_bson(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .distinct_query(),
-                request_info.db()?,
-                &PgDocument(request.document()),
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-
-        Ok(Response::Pg(PgResponse::new(distinct_query_rows)))
+        self.run_db_bson(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().distinct_query(),
+            QueryOptions::builder()
+                .supports_backend_timeout(true)
+                .build(),
+        )
+        .await
     }
 
     async fn execute_drop_collection(
@@ -290,30 +432,65 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         db: &str,
         collection: &str,
-        is_read_only_for_disk_full: bool,
         connection_context: &ConnectionContext,
     ) -> Result<()> {
-        let (_, request_info, request_tracker) = request_context.get_components();
-        let query_catalog = connection_context.service_context.query_catalog();
-
-        let _ = self
-            .run_readonly_if_needed(
-                is_read_only_for_disk_full,
-                self.pull_connection(connection_context).await?,
-                query_catalog,
-                move |connection| async move {
-                    connection
-                        .query(
-                            query_catalog.drop_collection(),
-                            &[Type::TEXT, Type::TEXT],
-                            &[&db, &collection],
-                            Timeout::transaction(request_info.max_time_ms),
-                            request_tracker,
-                        )
-                        .await
-                },
+        let run_drop_collection = |conn: Arc<Connection>| async move {
+            conn.query(
+                self.service_context.query_catalog().drop_collection(),
+                &[Type::TEXT, Type::TEXT],
+                &[&db, &collection],
             )
-            .await?;
+            .await
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+            run_drop_collection,
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    async fn execute_drop_collection_when_readonly(
+        &self,
+        request_context: &RequestContext<'_>,
+        db: &str,
+        collection: &str,
+        connection_context: &ConnectionContext,
+    ) -> Result<()> {
+        let run_drop_collection_readonly = |conn: Arc<Connection>| async move {
+            let mut txn = ScopedTransaction::start_if_necessary(&conn).await?;
+            conn.batch_execute(self.service_context.query_catalog().set_allow_write())
+                .await?;
+            let rows = conn
+                .query(
+                    self.service_context.query_catalog().drop_collection(),
+                    &[Type::TEXT, Type::TEXT],
+                    &[&db, &collection],
+                )
+                .await;
+            if rows.is_ok() {
+                txn.commit().await?;
+            }
+            rows
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+            run_drop_collection_readonly,
+        )
+        .await?;
 
         Ok(())
     }
@@ -322,30 +499,64 @@ impl PgDataClient for DocumentDBDataClient {
         &self,
         request_context: &RequestContext<'_>,
         db: &str,
-        is_read_only_for_disk_full: bool,
         connection_context: &ConnectionContext,
     ) -> Result<()> {
-        let (_, request_info, request_tracker) = request_context.get_components();
-        let query_catalog = connection_context.service_context.query_catalog();
-
-        let _ = self
-            .run_readonly_if_needed(
-                is_read_only_for_disk_full,
-                self.pull_connection(connection_context).await?,
-                query_catalog,
-                move |connection| async move {
-                    connection
-                        .query(
-                            query_catalog.drop_database(),
-                            &[Type::TEXT],
-                            &[&db],
-                            Timeout::transaction(request_info.max_time_ms),
-                            request_tracker,
-                        )
-                        .await
-                },
+        let run_drop_db = |conn: Arc<Connection>| async move {
+            conn.query(
+                self.service_context.query_catalog().drop_database(),
+                &[Type::TEXT],
+                &[&db],
             )
-            .await?;
+            .await
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+            run_drop_db,
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    async fn execute_drop_database_when_readonly(
+        &self,
+        request_context: &RequestContext<'_>,
+        db: &str,
+        connection_context: &ConnectionContext,
+    ) -> Result<()> {
+        let run_drop_db_readonly = |conn: Arc<Connection>| async move {
+            let mut txn = ScopedTransaction::start_if_necessary(&conn).await?;
+            conn.batch_execute(self.service_context.query_catalog().set_allow_write())
+                .await?;
+            let rows = conn
+                .query(
+                    self.service_context.query_catalog().drop_database(),
+                    &[Type::TEXT],
+                    &[&db],
+                )
+                .await;
+            if rows.is_ok() {
+                txn.commit().await?;
+            }
+            rows
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+            run_drop_db_readonly,
+        )
+        .await?;
 
         Ok(())
     }
@@ -357,62 +568,67 @@ impl PgDataClient for DocumentDBDataClient {
         verbosity: Verbosity,
         connection_context: &ConnectionContext,
     ) -> Result<(Option<serde_json::Value>, String)> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let analyze = if matches!(
-            verbosity,
-            Verbosity::QueryPlanner | Verbosity::AllShardsQueryPlan
-        ) {
-            "False"
-        } else {
-            "True"
+        let (request, request_info, _) = request_context.get_components();
+        let analyze = match verbosity {
+            Verbosity::QueryPlanner | Verbosity::AllShardsQueryPlan => "False",
+            _ => "True",
         };
-        let explain_query = connection_context
+
+        let explain_query = self
             .service_context
             .query_catalog()
             .explain(analyze, query_base);
 
-        let explain_rows = match verbosity {
-            Verbosity::AllShardsQueryPlan
-            | Verbosity::AllShardsExecution
-            | Verbosity::AllPlansExecution => {
-                let mut pool_connection = self.acquire_pool_connection().await?;
-                let transaction = pool_connection.transaction().await?;
-                let explain_config_query = match verbosity {
-                    Verbosity::AllPlansExecution => connection_context
-                        .service_context
-                        .query_catalog()
-                        .set_explain_all_plans_true(),
-                    _ => connection_context
-                        .service_context
-                        .query_catalog()
-                        .set_explain_all_tasks_true(),
-                };
-                if !explain_config_query.is_empty() {
-                    transaction.batch_execute(explain_config_query).await?;
-                }
-                let explain_prepared_stmt = transaction
-                    .prepare_typed_cached(&explain_query, &[Type::TEXT, Type::BYTEA])
-                    .await?;
-                transaction
-                    .query(
-                        &explain_prepared_stmt,
-                        &[&request_info.db()?, &PgDocument(request.document())],
-                    )
-                    .await?
-            }
-            _ => {
-                self.pull_connection(connection_context)
-                    .await?
-                    .query_db_bson(
-                        &explain_query,
-                        request_info.db()?,
-                        &PgDocument(request.document()),
-                        Timeout::transaction(request_info.max_time_ms),
-                        request_tracker,
-                    )
-                    .await?
-            }
+        let db = request_info.db()?;
+        let doc = request.document();
+        let explain_query_str = explain_query.as_str();
+
+        let explain_config = match verbosity {
+            Verbosity::AllShardsQueryPlan | Verbosity::AllShardsExecution => self
+                .service_context
+                .query_catalog()
+                .set_explain_all_tasks_true(),
+            Verbosity::AllPlansExecution => self
+                .service_context
+                .query_catalog()
+                .set_explain_all_plans_true(),
+            _ => "",
         };
+        let needs_transaction = !explain_config.is_empty();
+
+        let run_explain = |conn: Arc<Connection>| async move {
+            let mut txn = if needs_transaction {
+                let t = ScopedTransaction::start_if_necessary(&conn).await?;
+                conn.batch_execute(explain_config).await?;
+                Some(t)
+            } else {
+                None
+            };
+
+            let rows = conn
+                .query_db_bson(explain_query_str, db, &PgDocument(doc))
+                .await;
+
+            if let Some(ref mut t) = txn {
+                if rows.is_ok() {
+                    t.commit().await?;
+                }
+            }
+
+            rows
+        };
+
+        let explain_rows = self
+            .run_query(
+                request_context,
+                connection_context,
+                PullConnection::PoolOrTransaction,
+                QueryOptions::builder()
+                    .supports_backend_timeout(false)
+                    .build(),
+                run_explain,
+            )
+            .await?;
 
         let explain_response = match explain_rows.first() {
             Some(row) => {
@@ -429,24 +645,19 @@ impl PgDataClient for DocumentDBDataClient {
         &self,
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
-    ) -> Result<(PgResponse, Arc<Connection>)> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let connection = self.pull_connection(connection_context).await?;
-
-        let find_rows = connection
-            .query_db_bson(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .find_cursor_first_page(),
-                request_info.db()?,
-                &PgDocument(request.document()),
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-
-        Ok((PgResponse::new(find_rows), connection))
+    ) -> Result<Response> {
+        self.run_db_bson_cursor(
+            request_context,
+            connection_context,
+            self.service_context
+                .query_catalog()
+                .find_cursor_first_page(),
+            QueryOptions::builder()
+                .supports_backend_timeout(true)
+                .supports_transaction_timeout(false)
+                .build(),
+        )
+        .await
     }
 
     async fn execute_find_and_modify(
@@ -454,24 +665,15 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-
-        let find_and_modify_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query_db_bson(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .find_and_modify(),
-                request_info.db()?,
-                &PgDocument(request.document()),
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-
-        Ok(Response::Pg(PgResponse::new(find_and_modify_rows)))
+        self.run_db_bson(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().find_and_modify(),
+            QueryOptions::builder()
+                .supports_backend_timeout(true)
+                .build(),
+        )
+        .await
     }
 
     async fn execute_cursor_get_more(
@@ -479,33 +681,32 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         db: &str,
         cursor: &Cursor,
-        cursor_connection: &Option<Arc<Connection>>,
+        pull_connection: PullConnection,
         connection_context: &ConnectionContext,
     ) -> Result<Vec<Row>> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let connection = if let Some(ref connection) = cursor_connection {
-            connection
-        } else {
-            &self.pull_connection(connection_context).await?
+        let doc = request_context.payload().document();
+        let continuation = &cursor.continuation;
+
+        let run_get_more = |conn: Arc<Connection>| async move {
+            conn.query(
+                self.service_context.query_catalog().cursor_get_more(),
+                &[Type::TEXT, Type::BYTEA, Type::BYTEA],
+                &[&db, &PgDocument(doc), &PgDocument(continuation)],
+            )
+            .await
         };
 
-        let get_more_rows = connection
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .cursor_get_more(),
-                &[Type::TEXT, Type::BYTEA, Type::BYTEA],
-                &[
-                    &db,
-                    &PgDocument(request.document()),
-                    &PgDocument(&cursor.continuation),
-                ],
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-        Ok(get_more_rows)
+        self.run_query(
+            request_context,
+            connection_context,
+            pull_connection,
+            QueryOptions::builder()
+                .supports_backend_timeout(true)
+                .supports_transaction_timeout(false)
+                .build(),
+            run_get_more,
+        )
+        .await
     }
 
     async fn execute_insert(
@@ -514,68 +715,66 @@ impl PgDataClient for DocumentDBDataClient {
         connection_context: &ConnectionContext,
         enable_write_procedures: bool,
         enable_write_procedures_with_batch_commit: bool,
-        enable_backend_timeout: bool,
     ) -> Result<Vec<Row>> {
-        let (request, request_info, request_tracker) = request_context.get_components();
+        let (request, request_info, _) = request_context.get_components();
 
-        let mut query_str: &str = connection_context.service_context.query_catalog().insert();
+        let is_batch_commit =
+            enable_write_procedures_with_batch_commit && connection_context.transaction.is_none();
 
-        if enable_write_procedures_with_batch_commit
-            && connection_context.transaction.is_none()
-            && enable_backend_timeout
-        {
-            query_str = connection_context
-                .service_context
-                .query_catalog()
-                .insert_bulk();
+        let mut query: &str = self.service_context.query_catalog().insert();
+
+        if is_batch_commit {
+            query = self.service_context.query_catalog().insert_bulk();
         } else if enable_write_procedures {
-            query_str = connection_context
-                .service_context
-                .query_catalog()
-                .insert_txn_proc();
+            query = self.service_context.query_catalog().insert_txn_proc();
         }
 
-        let insert_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                query_str,
-                &[Type::TEXT, Type::BYTEA, Type::BYTEA],
-                &[
-                    &request_info.db()?.to_owned(),
-                    &PgDocument(request.document()),
-                    &request.extra(),
-                ],
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
+        let db = request_info.db()?;
+        let doc = request.document();
+        let extra = request.extra();
 
-        Ok(insert_rows)
+        let mut query_options_builder = QueryOptions::builder().supports_backend_timeout(true);
+        if is_batch_commit {
+            query_options_builder = query_options_builder.retry_request(false);
+        }
+
+        let run_insert = |conn: Arc<Connection>| {
+            let db_str = db.to_owned();
+            async move {
+                conn.query(
+                    query,
+                    &[Type::TEXT, Type::BYTEA, Type::BYTEA],
+                    &[&db_str, &PgDocument(doc), &extra],
+                )
+                .await
+            }
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            query_options_builder.build(),
+            run_insert,
+        )
+        .await
     }
 
     async fn execute_list_collections(
         &self,
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
-    ) -> Result<(PgResponse, Arc<Connection>)> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let connection = self.pull_connection(connection_context).await?;
-
-        let list_collections_rows = connection
-            .query_db_bson(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .list_collections(),
-                request_info.db()?,
-                &PgDocument(request.document()),
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-
-        Ok((PgResponse::new(list_collections_rows), connection))
+    ) -> Result<Response> {
+        self.run_db_bson_cursor(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().list_collections(),
+            QueryOptions::builder()
+                .supports_backend_timeout(true)
+                .supports_transaction_timeout(false)
+                .build(),
+        )
+        .await
     }
 
     async fn execute_list_databases(
@@ -583,67 +782,61 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
         // TODO: Handle the case where !nameOnly - the legacy gateway simply returns 0s in the appropriate format
-        let filter = request.document().get_document("filter").ok();
+        let filter = request_context
+            .payload()
+            .document()
+            .get_document("filter")
+            .ok();
         let filter_string = filter.map_or("", |_| "WHERE document @@ $1");
 
-        let list_db_query = connection_context
+        let list_db_query = self
             .service_context
             .query_catalog()
             .list_databases(filter_string);
-        let connection = self.pull_connection(connection_context).await?;
+        let list_db_query_str = list_db_query.as_str();
 
-        let list_database_rows = match filter {
-            None => {
-                connection
-                    .query(
-                        &list_db_query,
-                        &[],
-                        &[],
-                        Timeout::transaction(request_info.max_time_ms),
-                        request_tracker,
-                    )
-                    .await?
-            }
-            Some(filter) => {
-                connection
-                    .query(
-                        &list_db_query,
-                        &[Type::BYTEA],
-                        &[&PgDocument(filter)],
-                        Timeout::transaction(request_info.max_time_ms),
-                        request_tracker,
-                    )
-                    .await?
-            }
+        let run_list_dbs = |conn: Arc<Connection>| async move {
+            let rows = match filter {
+                None => conn.query(list_db_query_str, &[], &[]).await,
+                Some(filter) => {
+                    conn.query(list_db_query_str, &[Type::BYTEA], &[&PgDocument(filter)])
+                        .await
+                }
+            }?;
+
+            Ok(Response::Pg(PgResponse::new(rows)))
         };
 
-        Ok(Response::Pg(PgResponse::new(list_database_rows)))
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(true)
+                .build(),
+            run_list_dbs,
+        )
+        .await
     }
 
     async fn execute_list_indexes(
         &self,
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
-    ) -> Result<(PgResponse, Arc<Connection>)> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let connection = self.pull_connection(connection_context).await?;
-
-        let list_indexes_rows = connection
-            .query_db_bson(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .list_indexes_cursor_first_page(),
-                request_info.db()?,
-                &PgDocument(request.document()),
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-
-        Ok((PgResponse::new(list_indexes_rows), connection))
+    ) -> Result<Response> {
+        self.run_db_bson_cursor(
+            request_context,
+            connection_context,
+            self.service_context
+                .query_catalog()
+                .list_indexes_cursor_first_page(),
+            QueryOptions::builder()
+                .supports_backend_timeout(true)
+                .supports_transaction_timeout(false)
+                .build(),
+        )
+        .await
     }
 
     async fn execute_update(
@@ -652,47 +845,50 @@ impl PgDataClient for DocumentDBDataClient {
         connection_context: &ConnectionContext,
         enable_write_procedures: bool,
         enable_write_procedures_with_batch_commit: bool,
-        enable_backend_timeout: bool,
     ) -> Result<Vec<Row>> {
-        let (request, request_info, request_tracker) = request_context.get_components();
+        let (request, request_info, _) = request_context.get_components();
 
-        let mut query_str: &str = connection_context
-            .service_context
-            .query_catalog()
-            .process_update();
+        let is_batch_commit =
+            enable_write_procedures_with_batch_commit && connection_context.transaction.is_none();
 
-        if enable_write_procedures_with_batch_commit
-            && connection_context.transaction.is_none()
-            && enable_backend_timeout
-        {
-            query_str = connection_context
-                .service_context
-                .query_catalog()
-                .update_bulk();
+        let mut query_str: &str = self.service_context.query_catalog().process_update();
+        let mut query_options_builder = QueryOptions::builder()
+            .supports_backend_timeout(true)
+            .retry_deadlock(true);
+
+        if is_batch_commit {
+            query_str = self.service_context.query_catalog().update_bulk();
+            query_options_builder = query_options_builder
+                .retry_request(false)
+                .retry_deadlock(false); // turn off deadlock retry
         } else if enable_write_procedures {
-            query_str = connection_context
-                .service_context
-                .query_catalog()
-                .update_txn_proc();
+            query_str = self.service_context.query_catalog().update_txn_proc();
         }
 
-        let update_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                query_str,
-                &[Type::TEXT, Type::BYTEA, Type::BYTEA],
-                &[
-                    &request_info.db()?.to_owned(),
-                    &PgDocument(request.document()),
-                    &request.extra(),
-                ],
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
+        let db = request_info.db()?;
+        let doc = request.document();
+        let extra = request.extra();
 
-        Ok(update_rows)
+        let run_update = |conn: Arc<Connection>| {
+            let db_str = db.to_owned();
+            async move {
+                conn.query(
+                    query_str,
+                    &[Type::TEXT, Type::BYTEA, Type::BYTEA],
+                    &[&db_str, &PgDocument(doc), &extra],
+                )
+                .await
+            }
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            query_options_builder.build(),
+            run_update,
+        )
+        .await
     }
 
     async fn execute_validate(
@@ -700,24 +896,15 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-
-        let validate_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query_db_bson(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .validate(),
-                request_info.db()?,
-                &PgDocument(request.document()),
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-
-        Ok(Response::Pg(PgResponse::new(validate_rows)))
+        self.run_db_bson(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().validate(),
+            QueryOptions::builder()
+                .supports_backend_timeout(true)
+                .build(),
+        )
+        .await
     }
 
     async fn execute_drop_indexes(
@@ -725,24 +912,17 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<PgResponse> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-
-        let drop_indexes_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query_db_bson(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .drop_indexes(),
-                request_info.db()?,
-                &PgDocument(request.document()),
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
+        let rows = self
+            .run_db_bson_rows(
+                request_context,
+                connection_context,
+                self.service_context.query_catalog().drop_indexes(),
+                QueryOptions::builder()
+                    .supports_backend_timeout(false)
+                    .build(),
             )
             .await?;
-
-        Ok(PgResponse::new(drop_indexes_rows))
+        Ok(PgResponse::new(rows))
     }
 
     async fn execute_shard_collection(
@@ -754,25 +934,29 @@ impl PgDataClient for DocumentDBDataClient {
         reshard: bool,
         connection_context: &ConnectionContext,
     ) -> Result<()> {
-        let (_, request_info, request_tracker) = request_context.get_components();
-        self.pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .shard_collection(),
-                &[Type::TEXT, Type::TEXT, Type::BYTEA, Type::BOOL],
-                &[
-                    &db.to_owned(),
-                    &collection.to_owned(),
-                    &PgDocument(key),
-                    &reshard,
-                ],
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
+        let run_shard = |conn: Arc<Connection>| {
+            let db_str = db.to_owned();
+            let coll_str = collection.to_owned();
+            async move {
+                conn.query(
+                    self.service_context.query_catalog().shard_collection(),
+                    &[Type::TEXT, Type::TEXT, Type::BYTEA, Type::BOOL],
+                    &[&db_str, &coll_str, &PgDocument(key), &reshard],
+                )
+                .await
+            }
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+            run_shard,
+        )
+        .await?;
 
         Ok(())
     }
@@ -782,25 +966,38 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (_, request_info, request_tracker) = request_context.get_components();
-        let reindex_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .re_index(),
-                &[Type::TEXT, Type::TEXT],
-                &[
-                    &request_info.db()?.to_owned(),
-                    &request_info.collection()?.to_owned(),
-                ],
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-        Ok(Response::Pg(PgResponse::new(reindex_rows)))
+        let request_info = request_context.info();
+
+        let db = request_info.db()?;
+        let coll = request_info.collection()?;
+
+        let run_reindex = |conn: Arc<Connection>| {
+            let db_str = db.to_owned();
+            let coll_str = coll.to_owned();
+            async move {
+                let rows = conn
+                    .query(
+                        self.service_context.query_catalog().re_index(),
+                        &[Type::TEXT, Type::TEXT],
+                        &[&db_str, &coll_str],
+                    )
+                    .await?;
+
+                Ok(Response::Pg(PgResponse::new(rows)))
+            }
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .supports_transaction_timeout(false)
+                .build(),
+            run_reindex,
+        )
+        .await
     }
 
     async fn execute_current_op(
@@ -808,24 +1005,15 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-
-        let current_op_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .current_op(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-
-        Ok(Response::Pg(PgResponse::new(current_op_rows)))
+        self.run_doc_only(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().current_op(),
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+        )
+        .await
     }
 
     async fn execute_kill_op(
@@ -834,20 +1022,15 @@ impl PgDataClient for DocumentDBDataClient {
         _: &str,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let kill_op_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context.service_context.query_catalog().kill_op(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-
-        Ok(Response::Pg(PgResponse::new(kill_op_rows)))
+        self.run_doc_only(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().kill_op(),
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+        )
+        .await
     }
 
     async fn execute_coll_mod(
@@ -855,27 +1038,38 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let coll_mod_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .coll_mod(),
-                &[Type::TEXT, Type::TEXT, Type::BYTEA],
-                &[
-                    &request_info.db()?.to_owned(),
-                    &request_info.collection()?.to_owned(),
-                    &PgDocument(request.document()),
-                ],
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
+        let (request, request_info, _) = request_context.get_components();
 
-        Ok(Response::Pg(PgResponse::new(coll_mod_rows)))
+        let db = request_info.db()?;
+        let coll = request_info.collection()?;
+        let doc = request.document();
+
+        let run_coll_mod = |conn: Arc<Connection>| {
+            let db_str = db.to_owned();
+            let coll_str = coll.to_owned();
+            async move {
+                let rows = conn
+                    .query(
+                        self.service_context.query_catalog().coll_mod(),
+                        &[Type::TEXT, Type::TEXT, Type::BYTEA],
+                        &[&db_str, &coll_str, &PgDocument(doc)],
+                    )
+                    .await?;
+
+                Ok(Response::Pg(PgResponse::new(rows)))
+            }
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+            run_coll_mod,
+        )
+        .await
     }
 
     async fn execute_get_parameter(
@@ -886,23 +1080,31 @@ impl PgDataClient for DocumentDBDataClient {
         params: Vec<String>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (_, request_info, request_tracker) = request_context.get_components();
-        let get_parameter_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .get_parameter(),
-                &[Type::BOOL, Type::BOOL, Type::TEXT_ARRAY],
-                &[&all, &show_details, &params],
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
+        let run_get_param = |conn: Arc<Connection>| {
+            let params = params.clone();
+            async move {
+                let rows = conn
+                    .query(
+                        self.service_context.query_catalog().get_parameter(),
+                        &[Type::BOOL, Type::BOOL, Type::TEXT_ARRAY],
+                        &[&all, &show_details, &params],
+                    )
+                    .await?;
 
-        Ok(Response::Pg(PgResponse::new(get_parameter_rows)))
+                Ok(Response::Pg(PgResponse::new(rows)))
+            }
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+            run_get_param,
+        )
+        .await
     }
 
     async fn execute_db_stats(
@@ -911,23 +1113,33 @@ impl PgDataClient for DocumentDBDataClient {
         scale: f64,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (_, request_info, request_tracker) = request_context.get_components();
-        let db_stats_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .db_stats(),
-                &[Type::TEXT, Type::FLOAT8, Type::BOOL],
-                &[&request_info.db()?.to_owned(), &scale, &false],
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
+        let db = request_context.info().db()?;
 
-        Ok(Response::Pg(PgResponse::new(db_stats_rows)))
+        let run_db_stats = |conn: Arc<Connection>| {
+            let db_str = db.to_owned();
+            async move {
+                let rows = conn
+                    .query(
+                        self.service_context.query_catalog().db_stats(),
+                        &[Type::TEXT, Type::FLOAT8, Type::BOOL],
+                        &[&db_str, &scale, &false],
+                    )
+                    .await?;
+
+                Ok(Response::Pg(PgResponse::new(rows)))
+            }
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+            run_db_stats,
+        )
+        .await
     }
 
     async fn execute_rename_collection(
@@ -935,23 +1147,26 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Vec<Row>> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let rename_collection_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .rename_collection(),
+        let doc = request_context.payload().document();
+        let run_rename = |conn: Arc<Connection>| async move {
+            conn.query(
+                self.service_context.query_catalog().rename_collection(),
                 &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
+                &[&PgDocument(doc)],
             )
-            .await?;
+            .await
+        };
 
-        Ok(rename_collection_rows)
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+            run_rename,
+        )
+        .await
     }
 
     async fn execute_create_user(
@@ -959,35 +1174,23 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let create_user_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .create_user(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
+        self.run_doc_only(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().create_user(),
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+        )
+        .await
+        .map_err(|e| {
+            remap_error(
+                e,
+                &SqlState::DUPLICATE_OBJECT,
+                DocumentDBError::duplicate_user,
+                "The specified user already exists.",
             )
-            .await
-            .map_err(|e| {
-                if let DocumentDBError::PostgresError(pg_error, _) = &e {
-                    if let Some(code) = pg_error.code() {
-                        if code == &SqlState::DUPLICATE_OBJECT {
-                            return DocumentDBError::duplicate_user(
-                                "The specified user already exists.".to_owned(),
-                            );
-                        }
-                    }
-                }
-                e
-            })?;
-
-        Ok(Response::Pg(PgResponse::new(create_user_rows)))
+        })
     }
 
     async fn execute_drop_user(
@@ -995,35 +1198,23 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let drop_user_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .drop_user(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
+        self.run_doc_only(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().drop_user(),
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+        )
+        .await
+        .map_err(|e| {
+            remap_error(
+                e,
+                &SqlState::UNDEFINED_OBJECT,
+                DocumentDBError::user_not_found,
+                "The specified user does not exist.",
             )
-            .await
-            .map_err(|e| {
-                if let DocumentDBError::PostgresError(pg_error, _) = &e {
-                    if let Some(code) = pg_error.code() {
-                        if code == &SqlState::UNDEFINED_OBJECT {
-                            return DocumentDBError::user_not_found(
-                                "The specified user does not exist.".to_owned(),
-                            );
-                        }
-                    }
-                }
-                e
-            })?;
-
-        Ok(Response::Pg(PgResponse::new(drop_user_rows)))
+        })
     }
 
     async fn execute_update_user(
@@ -1031,35 +1222,23 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let update_user_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .update_user(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
+        self.run_doc_only(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().update_user(),
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+        )
+        .await
+        .map_err(|e| {
+            remap_error(
+                e,
+                &SqlState::UNDEFINED_OBJECT,
+                DocumentDBError::user_not_found,
+                "The specified user does not exist.",
             )
-            .await
-            .map_err(|e| {
-                if let DocumentDBError::PostgresError(pg_error, _) = &e {
-                    if let Some(code) = pg_error.code() {
-                        if code == &SqlState::UNDEFINED_OBJECT {
-                            return DocumentDBError::user_not_found(
-                                "The specified user does not exist.".to_owned(),
-                            );
-                        }
-                    }
-                }
-                e
-            })?;
-
-        Ok(Response::Pg(PgResponse::new(update_user_rows)))
+        })
     }
 
     async fn execute_users_info(
@@ -1067,23 +1246,15 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let users_info_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .users_info(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::transaction(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-
-        Ok(Response::Pg(PgResponse::new(users_info_rows)))
+        self.run_doc_only(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().users_info(),
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+        )
+        .await
     }
 
     fn get_index_build_id<'a>(&self, index_response: &'a PgResponse) -> Result<PgDocument<'a>> {
@@ -1095,20 +1266,15 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<()> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        self.pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .unshard_collection(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
+        self.run_doc_only(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().unshard_collection(),
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+        )
+        .await?;
 
         Ok(())
     }
@@ -1118,23 +1284,28 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (_, request_info, request_tracker) = request_context.get_components();
-        let shard_map_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .get_shard_map(),
-                &[],
-                &[],
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
+        let run_get_shard_map = |conn: Arc<Connection>| async move {
+            let rows = conn
+                .query(
+                    self.service_context.query_catalog().get_shard_map(),
+                    &[],
+                    &[],
+                )
+                .await?;
 
-        Ok(Response::Pg(PgResponse::new(shard_map_rows)))
+            Ok(Response::Pg(PgResponse::new(rows)))
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+            run_get_shard_map,
+        )
+        .await
     }
 
     async fn execute_list_shards(
@@ -1152,22 +1323,15 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let connection_status_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .connection_status(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-        Ok(Response::Pg(PgResponse::new(connection_status_rows)))
+        self.run_doc_only(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().connection_status(),
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+        )
+        .await
     }
 
     async fn execute_compact(
@@ -1175,19 +1339,15 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let compact_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context.service_context.query_catalog().compact(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-        Ok(Response::Pg(PgResponse::new(compact_rows)))
+        self.run_doc_only(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().compact(),
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+        )
+        .await
     }
 
     async fn execute_kill_cursors(
@@ -1196,22 +1356,28 @@ impl PgDataClient for DocumentDBDataClient {
         connection_context: &ConnectionContext,
         cursor_ids: &[i64],
     ) -> Result<Response> {
-        let (_, request_info, request_tracker) = request_context.get_components();
-        let kill_cursors_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .kill_cursors(),
-                &[Type::INT8_ARRAY],
-                &[&cursor_ids],
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-        Ok(Response::Pg(PgResponse::new(kill_cursors_rows)))
+        let run_kill_cursors = |conn: Arc<Connection>| async move {
+            let rows = conn
+                .query(
+                    self.service_context.query_catalog().kill_cursors(),
+                    &[Type::INT8_ARRAY],
+                    &[&cursor_ids],
+                )
+                .await?;
+
+            Ok(Response::Pg(PgResponse::new(rows)))
+        };
+
+        self.run_query(
+            request_context,
+            connection_context,
+            PullConnection::PoolOrTransaction,
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+            run_kill_cursors,
+        )
+        .await
     }
 
     async fn execute_create_role(
@@ -1219,34 +1385,23 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let create_role_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .create_role(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
+        self.run_doc_only(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().create_role(),
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+        )
+        .await
+        .map_err(|e| {
+            remap_error(
+                e,
+                &SqlState::DUPLICATE_OBJECT,
+                DocumentDBError::duplicate_role,
+                "The specified role already exists.",
             )
-            .await
-            .map_err(|e| {
-                if let DocumentDBError::PostgresError(pg_error, _) = &e {
-                    if let Some(code) = pg_error.code() {
-                        if code == &SqlState::DUPLICATE_OBJECT {
-                            return DocumentDBError::duplicate_role(
-                                "The specified role already exists.".to_owned(),
-                            );
-                        }
-                    }
-                }
-                e
-            })?;
-        Ok(Response::Pg(PgResponse::new(create_role_rows)))
+        })
     }
 
     async fn execute_update_role(
@@ -1254,34 +1409,23 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let update_role_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .update_role(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
+        self.run_doc_only(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().update_role(),
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+        )
+        .await
+        .map_err(|e| {
+            remap_error(
+                e,
+                &SqlState::UNDEFINED_OBJECT,
+                DocumentDBError::role_not_found,
+                "The specified role does not exist.",
             )
-            .await
-            .map_err(|e| {
-                if let DocumentDBError::PostgresError(pg_error, _) = &e {
-                    if let Some(code) = pg_error.code() {
-                        if code == &SqlState::UNDEFINED_OBJECT {
-                            return DocumentDBError::role_not_found(
-                                "The specified role does not exist.".to_owned(),
-                            );
-                        }
-                    }
-                }
-                e
-            })?;
-        Ok(Response::Pg(PgResponse::new(update_role_rows)))
+        })
     }
 
     async fn execute_drop_role(
@@ -1289,34 +1433,23 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let drop_role_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .drop_role(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
+        self.run_doc_only(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().drop_role(),
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+        )
+        .await
+        .map_err(|e| {
+            remap_error(
+                e,
+                &SqlState::UNDEFINED_OBJECT,
+                DocumentDBError::role_not_found,
+                "The specified role does not exist.",
             )
-            .await
-            .map_err(|e| {
-                if let DocumentDBError::PostgresError(pg_error, _) = &e {
-                    if let Some(code) = pg_error.code() {
-                        if code == &SqlState::UNDEFINED_OBJECT {
-                            return DocumentDBError::role_not_found(
-                                "The specified role does not exist.".to_owned(),
-                            );
-                        }
-                    }
-                }
-                e
-            })?;
-        Ok(Response::Pg(PgResponse::new(drop_role_rows)))
+        })
     }
 
     async fn execute_roles_info(
@@ -1324,22 +1457,15 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, request_tracker) = request_context.get_components();
-        let roles_info_rows = self
-            .pull_connection(connection_context)
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .roles_info(),
-                &[Type::BYTEA],
-                &[&PgDocument(request.document())],
-                Timeout::command(request_info.max_time_ms),
-                request_tracker,
-            )
-            .await?;
-        Ok(Response::Pg(PgResponse::new(roles_info_rows)))
+        self.run_doc_only(
+            request_context,
+            connection_context,
+            self.service_context.query_catalog().roles_info(),
+            QueryOptions::builder()
+                .supports_backend_timeout(false)
+                .build(),
+        )
+        .await
     }
 
     async fn execute_balancer_start(

@@ -55,15 +55,19 @@ pub async fn process_drop_database(
         .cursor_store()
         .invalidate_cursors_by_database(&db);
 
-    let is_read_only_for_disk_full = dynamic_config.is_read_only_for_disk_full();
-    pg_data_client
-        .execute_drop_database(
-            request_context,
-            db.as_str(),
-            is_read_only_for_disk_full,
-            connection_context,
-        )
-        .await?;
+    // Nested transactions not allowed when database is in read-only mode
+    let is_read_only_for_disk_full =
+        dynamic_config.is_read_only_for_disk_full() && connection_context.transaction.is_none();
+
+    if is_read_only_for_disk_full {
+        pg_data_client
+            .execute_drop_database_when_readonly(request_context, db.as_str(), connection_context)
+            .await?;
+    } else {
+        pg_data_client
+            .execute_drop_database(request_context, db.as_str(), connection_context)
+            .await?;
+    }
 
     Ok(Response::Raw(RawResponse(rawdoc! {
         "ok": OK_SUCCEEDED,
@@ -90,16 +94,24 @@ pub async fn process_drop_collection(
         .cursor_store()
         .invalidate_cursors_by_collection(db_str, coll_str);
 
-    let is_read_only_for_disk_full = dynamic_config.is_read_only_for_disk_full();
-    pg_data_client
-        .execute_drop_collection(
-            request_context,
-            db_str,
-            coll_str,
-            is_read_only_for_disk_full,
-            connection_context,
-        )
-        .await?;
+    // Nested transactions not allowed when database is in read-only mode
+    let is_read_only_for_disk_full =
+        dynamic_config.is_read_only_for_disk_full() && connection_context.transaction.is_none();
+
+    if is_read_only_for_disk_full {
+        pg_data_client
+            .execute_drop_collection_when_readonly(
+                request_context,
+                db_str,
+                coll_str,
+                connection_context,
+            )
+            .await?;
+    } else {
+        pg_data_client
+            .execute_drop_collection(request_context, db_str, coll_str, connection_context)
+            .await?;
+    }
 
     Ok(Response::Raw(RawResponse(rawdoc! {
         "ok": OK_SUCCEEDED,
