@@ -1,2 +1,3 @@
 s/test: bson_composite_index_only_scan_rum_tests//g
 s/rum_fillfactor_tests//g
+s/rum_parallel_build_tests//g
