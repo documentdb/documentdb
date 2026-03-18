@@ -85,7 +85,7 @@ Built in roles that are scoped to a database, such as “read”, are stored wit
 
 ```
 {
-  "role": "read"
+  "role": "read",
   "database": "", // indicates the role is scoped to the db is was attached to
   "is_builtin": true,
   "description": "Provides read-only access to all collections",
