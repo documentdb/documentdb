@@ -18,7 +18,6 @@ use documentdb_gateway_core::{
         },
         create_query_catalog,
     },
-    requests::request_tracker::RequestTracker,
 };
 use tokio_postgres::error::SqlState;
 
@@ -87,22 +86,18 @@ pub async fn create_user(user: &str, pass: &str) -> Result<()> {
     let pool_manager = get_pool_manager();
 
     let statement = pool_manager.query_catalog().create_db_user(user, pass);
-    if let Err(docdb_error) = pool_manager
+    if let Err(tokio_error) = pool_manager
         .authentication_connection()
         .await?
         .batch_execute(&statement)
         .await
     {
-        match docdb_error {
-            DocumentDBError::PostgresError(tokio_error, _) => {
-                if let Some(sql_state) = tokio_error.code() {
-                    if sql_state == &SqlState::DUPLICATE_OBJECT {
-                        return Ok(());
-                    }
-                }
+        if let Some(sql_state) = tokio_error.code() {
+            if sql_state == &SqlState::DUPLICATE_OBJECT {
+                return Ok(());
             }
-            _ => return Err(docdb_error),
         }
+        return Err(DocumentDBError::from(tokio_error));
     }
 
     pool_manager
@@ -118,8 +113,6 @@ pub async fn create_user(user: &str, pass: &str) -> Result<()> {
             &format!("SELECT * FROM pg_roles WHERE rolname = '{user}'"),
             &[],
             &[],
-            None,
-            &RequestTracker::new(),
         )
         .await?
         .first()

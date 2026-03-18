@@ -35,8 +35,7 @@ impl Transaction {
             }
         };
 
-        conn
-            .batch_execute(&format!(
+        conn.batch_execute(&format!(
                 "START TRANSACTION ISOLATION LEVEL {isolation}; SET LOCAL lock_timeout='20ms'; SET LOCAL citus.max_adaptive_executor_pool_size=1;"
             ))
             .await?;
@@ -78,5 +77,6 @@ impl Transaction {
         self.conn
             .batch_execute(query_catalog.set_allow_write())
             .await
+            .map_err(DocumentDBError::from)
     }
 }

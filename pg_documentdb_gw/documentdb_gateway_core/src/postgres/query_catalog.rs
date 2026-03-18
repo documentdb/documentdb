@@ -20,11 +20,9 @@ pub struct QueryCatalog {
     pub bson_json_to_bson: String,
     pub bson_to_json_string: String,
 
-    // dynamic.rs
+    // pg_configuration.rs
     pub pg_settings: String,
     pub pg_is_in_recovery: String,
-
-    // version.rs
     pub extension_versions: String,
 
     // explain/mod.rs
@@ -543,13 +541,14 @@ pub fn create_query_catalog() -> QueryCatalog {
             salt_and_iterations: "SELECT documentdb_api_internal.scram_sha256_get_salt_and_iterations($1)".to_owned(),
             authenticate_with_token: "SELECT documentdb_api_internal.authenticate_token($1, $2)".to_owned(),
 
-            // dynamic.rs
+            // pg_configuration.rs
             pg_settings: "SELECT name, setting FROM pg_settings WHERE name LIKE 'documentdb.%' OR name IN ('max_connections', 'default_transaction_read_only')".to_owned(),
             pg_is_in_recovery: "SELECT pg_is_in_recovery()".to_owned(),
+            extension_versions: "SELECT documentdb_core.bson_build_document('internal', ARRAY[ (SELECT extversion FROM pg_extension WHERE extname = 'documentdb' LIMIT 1), documentdb_api.binary_version() ])".to_owned(),
 
             // explain/mod.rs
             explain: "EXPLAIN (FORMAT JSON, ANALYZE {analyze}, VERBOSE True, BUFFERS {analyze}, TIMING {analyze}) SELECT document FROM documentdb_api_catalog.bson_aggregation_{query_base}($1, $2)".to_owned(),
-            set_explain_all_plans_true: "SELECT set_config('documentdb.enableExtendedExplainPlans', 'true', true);".to_owned(),
+            set_explain_all_plans_true: "SET LOCAL documentdb.enableExtendedExplainPlans TO true".to_owned(),
             find_coalesce: "COALESCE(documentdb_api_catalog.bson_array_agg".to_owned(),
             find_operator: "OPERATOR(documentdb_api_catalog.@#%)".to_owned(),
             find_bson_text_meta_qual: "documentdb_api_catalog.bson_text_meta_qual".to_owned(),
@@ -637,9 +636,6 @@ pub fn create_query_catalog() -> QueryCatalog {
             // tests
             create_db_user: "CREATE ROLE \"{user}\" WITH LOGIN INHERIT PASSWORD '{pass}' IN ROLE documentdb_readonly_role; 
                              GRANT documentdb_admin_role TO {user} WITH ADMIN OPTION".to_owned(),
-
-            // version.rs
-            extension_versions: "SELECT documentdb_core.bson_build_document('internal', ARRAY[ (SELECT extversion FROM pg_extension WHERE extname = 'documentdb' LIMIT 1), documentdb_api.binary_version() ])".to_owned(),
 
             // scan_types
             scan_types: vec![

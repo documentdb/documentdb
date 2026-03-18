@@ -20,7 +20,6 @@ use crate::{
     configuration::{dynamic::POSTGRES_RECOVERY_KEY, DynamicConfiguration, SetupConfiguration},
     error::{DocumentDBError, Result},
     postgres::{conn_mgmt::PoolManager, PgDocument},
-    requests::request_tracker::RequestTracker,
 };
 
 #[derive(Debug, Deserialize, Default, Clone)]
@@ -59,18 +58,11 @@ impl PgConfigurationInner {
             Err(e) => tracing::warn!("Host Config file not able to be loaded: {e}"),
         }
 
-        let request_tracker = RequestTracker::new();
         let pg_config_rows = self
             .pool_manager
             .system_requests_connection()
             .await?
-            .query(
-                self.pool_manager.query_catalog().pg_settings(),
-                &[],
-                &[],
-                None,
-                &request_tracker,
-            )
+            .query(self.pool_manager.query_catalog().pg_settings(), &[], &[])
             .await?;
 
         for pg_config in pg_config_rows {
@@ -100,8 +92,6 @@ impl PgConfigurationInner {
                 self.pool_manager.query_catalog().pg_is_in_recovery(),
                 &[],
                 &[],
-                None,
-                &request_tracker,
             )
             .await?;
 
@@ -285,14 +275,9 @@ impl PgConfiguration {
 
         let results = match async {
             let conn = pool_manager.system_requests_connection().await?;
-            conn.query(
-                extension_versions_query,
-                &[],
-                &[],
-                None,
-                &RequestTracker::new(),
-            )
-            .await
+            conn.query(extension_versions_query, &[], &[])
+                .await
+                .map_err(DocumentDBError::from)
         }
         .await
         {

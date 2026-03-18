@@ -6,10 +6,7 @@
  *-------------------------------------------------------------------------
  */
 
-use documentdb_gateway_core::{
-    requests::request_tracker::RequestTracker,
-    responses::{PgResponse, Response},
-};
+use documentdb_gateway_core::responses::{PgResponse, Response};
 use documentdb_tests::test_setup::postgres;
 
 #[tokio::test]
@@ -21,13 +18,7 @@ async fn pg_response_byte_len_matches_query_result() {
         .expect("Failed to get connection");
 
     let rows = connection
-        .query(
-            "SELECT 'hello'::text, 42::int4, true::bool",
-            &[],
-            &[],
-            None,
-            &RequestTracker::new(),
-        )
+        .query("SELECT 'hello'::text, 42::int4, true::bool", &[], &[])
         .await
         .expect("Query failed");
 

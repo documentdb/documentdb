@@ -33,10 +33,6 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         self.get_bool("enableChangeStreams", false)
     }
 
-    fn enable_backend_timeout(&self) -> bool {
-        self.get_bool("enableStatementTimeout", false)
-    }
-
     fn enable_write_procedures(&self) -> bool {
         self.get_bool("enableWriteProcedures", false)
     }
