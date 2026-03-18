@@ -19,7 +19,7 @@
 #include <port/atomics.h>
 
 #define MAX_FEATURE_NAME_LENGTH 255
-#define MAX_FEATURE_COUNT 405
+#define MAX_FEATURE_COUNT 406
 
 /* Internal features that are not exposed */
 #define INTERNAL_FEATURE_TYPE MAX_FEATURE_COUNT
@@ -292,6 +292,7 @@ typedef enum
 	FEATURE_COMMAND_UPDATE_1000,
 	FEATURE_COMMAND_UPDATE_EXTENDED,
 	FEATURE_COMMAND_UPDATE_BULK,
+	FEATURE_COMMAND_BULKWRITE,
 	FEATURE_COMMAND_VALIDATE_REPAIR,
 
 	/* Feature collMod subfeatures */
