@@ -27,6 +27,7 @@
 #include "storage/predicate.h"
 #include "catalog/index.h"
 #include "miscadmin.h"
+#include "optimizer/optimizer.h"
 #include "utils/backend_progress.h"
 #include "utils/datum.h"
 #include "commands/progress.h"
@@ -859,8 +860,22 @@ rumbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 	}
 #endif
 
+#if PG_VERSION_NUM >= 160000 && PG_VERSION_NUM < 170000
+
+	/* PG 17 enables parallel index build for other index AMs,
+	 * However, in pg16 only BTree can participate in parallel build.
+	 * Given RUM a chance to do so.
+	 */
+	if (RumEnableParallelIndexBuild && indexInfo->ii_ParallelWorkers == 0)
+	{
+		indexInfo->ii_ParallelWorkers =
+			plan_create_index_workers(RelationGetRelid(heap),
+									  RelationGetRelid(index));
+	}
+#endif
+
 	if (indexInfo->ii_ParallelWorkers > 0 &&
-		RumParallelIndexWorkersOverride > 0 &&
+		(RumParallelIndexWorkersOverride > 0 || RumEnableParallelIndexBuild) &&
 		isSortedIndexBuildCapable)
 	{
 		ereport(DEBUG1, (errmsg("parallel index build requested with %d workers",
@@ -1177,7 +1192,8 @@ _rum_begin_parallel(RumBuildState *buildstate, Relation heap, Relation index,
 	 */
 	EnterParallelMode();
 	Assert(request > 0);
-	pcxt = CreateParallelContext("rum", "documentdb_rum_parallel_build_main",
+	pcxt = CreateParallelContext("pg_documentdb_extended_rum_core",
+								 "documentdb_rum_parallel_build_main",
 								 request);
 
 	scantuplesortstates = leaderparticipates ? request + 1 : request;

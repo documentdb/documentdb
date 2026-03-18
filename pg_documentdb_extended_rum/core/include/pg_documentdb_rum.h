@@ -1111,6 +1111,7 @@ extern PGDLLIMPORT int RumDataPageIntermediateSplitSize;
 extern PGDLLIMPORT bool RumThrowErrorOnInvalidDataPage;
 extern PGDLLIMPORT bool RumDisableFastScan;
 extern PGDLLIMPORT int RumParallelIndexWorkersOverride;
+extern PGDLLIMPORT bool RumEnableParallelIndexBuild;
 extern PGDLLIMPORT bool RumSkipRetryOnDeletePage;
 extern PGDLLIMPORT bool RumForceOrderedIndexScan;
 extern PGDLLIMPORT bool RumPreferOrderedIndexScan;
