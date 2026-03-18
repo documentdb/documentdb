@@ -73,6 +73,9 @@ PGDLLEXPORT bool RumEnableSkipIntermediateEntry =
 PGDLLEXPORT int RumParallelIndexWorkersOverride =
 	RUM_DEFAULT_PARALLEL_INDEX_WORKERS_OVERRIDE;
 
+#define RUM_DEFAULT_ENABLE_PARALLEL_INDEX_BUILD true
+PGDLLEXPORT bool RumEnableParallelIndexBuild = RUM_DEFAULT_ENABLE_PARALLEL_INDEX_BUILD;
+
 /* rumvacuum.c */
 #define RUM_DEFAULT_SKIP_RETRY_ON_DELETE_PAGE true
 PGDLLEXPORT bool RumSkipRetryOnDeletePage = RUM_DEFAULT_SKIP_RETRY_ON_DELETE_PAGE;
@@ -181,6 +184,15 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumParallelIndexWorkersOverride,
 		RUM_DEFAULT_PARALLEL_INDEX_WORKERS_OVERRIDE, -1, INT_MAX,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_parallel_index_build", documentDBRumGucPrefix),
+		"Sets whether or not to enable parallel index build",
+		NULL,
+		&RumEnableParallelIndexBuild,
+		RUM_DEFAULT_ENABLE_PARALLEL_INDEX_BUILD,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 

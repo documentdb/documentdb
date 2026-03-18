@@ -1,0 +1,203 @@
+SET search_path TO documentdb_api, documentdb_api_catalog, documentdb_api_internal, documentdb_core, public;
+SET documentdb.next_collection_id TO 1400;
+SET documentdb.next_collection_index_id TO 1400;
+SELECT COUNT(documentdb_api.insert_one('pinsert_db', 'pbuild',  FORMAT('{ "_id": %s, "a": %s }', i, i)::bson)) FROM generate_series(1, 1000) AS i;
+NOTICE:  creating collection
+ count 
+-------
+  1000
+(1 row)
+
+set documentdb_rum.parallel_index_workers_override to 2;
+set documentdb_rum.enable_parallel_index_build to on;
+set client_min_messages to DEBUG1;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'pinsert_db',
+    '{ "createIndexes": "pbuild", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableCompositeTerm": true } ] }', TRUE);
+DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND (index_spec).index_name = $2 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id)FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND documentdb_api_internal.index_spec_options_are_equivalent(index_spec, $2) AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 1401 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+DEBUG:  executing "INSERT INTO documentdb_api_catalog.collection_indexes (collection_id, index_spec, index_is_valid) VALUES ($1, $2, $3) RETURNING index_id" via SPI
+DEBUG:  executing "CREATE INDEX  documents_rum_index_1402 ON documentdb_data.documents_1401 USING documentdb_extended_rum ( document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops(pathspec='[ "a" ]',tl=2691)) " via SPI
+DEBUG:  building index "documents_rum_index_1402" on table "documents_1401" serially
+DEBUG:  Overriding parallel workers to 2
+DEBUG:  parallel index build requested with 1 workers
+LOG:  Rum performing merge on 1000.000000 tuples.
+DEBUG:  parallel index build completed with 1000.000000 heaptuples and 1000.000000 indextuples
+DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 1401 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+RESET client_min_messages;
+-- recreate to test with int64
+CALL documentdb_api.drop_indexes('pinsert_db', '{ "dropIndexes": "pbuild", "index": "a_1" }');
+                          retval                          
+----------------------------------------------------------
+ { "ok" : true, "nIndexesWas" : { "$numberLong" : "2" } }
+(1 row)
+
+-- insert the same value as Int64
+SELECT COUNT(documentdb_api.insert_one('pinsert_db', 'pbuild',  FORMAT('{ "_id": %s, "a": { "$numberLong": "%s" } }', i + 1000, i)::bson)) FROM generate_series(1, 1000) AS i;
+ count 
+-------
+  1000
+(1 row)
+
+-- insert the same as double
+SELECT COUNT(documentdb_api.insert_one('pinsert_db', 'pbuild',  FORMAT('{ "_id": %s, "a": { "$numberDouble": "%s" } }', i + 2000, i)::bson)) FROM generate_series(1, 1000) AS i;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'pinsert_db',
+    '{ "createIndexes": "pbuild", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableCompositeTerm": true } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- use the index.
+set documentdb.enableExtendedExplainPlans to on;
+SELECT documentdb_test_helpers.run_explain_and_trim($$
+    EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pinsert_db', '{ "count": "pbuild", "query": { "a": { "$gt": 500 } } }');
+$$);
+                                   run_explain_and_trim                                   
+------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1500 loops=1)
+         namespaceName: pinsert_db.pbuild
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (500, Infinity]]
+         innerScanLoops: 501 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1500)]
+         ->  Bitmap Heap Scan on documents_1401 collection (actual rows=1500 loops=1)
+               Recheck Cond: (document @> '{ "a" : { "$numberInt" : "500" } }'::bson)
+               Heap Blocks: exact=17
+               ->  Bitmap Index Scan on a_1 (actual rows=1500 loops=1)
+                     Index Cond: (document @> '{ "a" : { "$numberInt" : "500" } }'::bson)
+(15 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($$
+    EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pinsert_db', '{ "count": "pbuild", "query": { "a": { "$eq": 500 } } }');
+$$);
+                                   run_explain_and_trim                                   
+------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+         namespaceName: pinsert_db.pbuild
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [500, 500]]
+         innerScanLoops: 3 loops
+         scanType: regular
+         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3)]
+         ->  Bitmap Heap Scan on documents_1401 collection (actual rows=3 loops=1)
+               Recheck Cond: (document @= '{ "a" : { "$numberInt" : "500" } }'::bson)
+               Heap Blocks: exact=3
+               ->  Bitmap Index Scan on a_1 (actual rows=3 loops=1)
+                     Index Cond: (document @= '{ "a" : { "$numberInt" : "500" } }'::bson)
+(15 rows)
+
+CALL documentdb_api.drop_indexes('pinsert_db', '{ "dropIndexes": "pbuild", "index": "a_1" }');
+                          retval                          
+----------------------------------------------------------
+ { "ok" : true, "nIndexesWas" : { "$numberLong" : "2" } }
+(1 row)
+
+set documentdb_rum.parallel_index_workers_override to 0;
+set client_min_messages to DEBUG1;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'pinsert_db',
+    '{ "createIndexes": "pbuild", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableCompositeTerm": true } ] }', TRUE);
+DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND (index_spec).index_name = $2 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id)FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND documentdb_api_internal.index_spec_options_are_equivalent(index_spec, $2) AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 1401 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+DEBUG:  executing "INSERT INTO documentdb_api_catalog.collection_indexes (collection_id, index_spec, index_is_valid) VALUES ($1, $2, $3) RETURNING index_id" via SPI
+DEBUG:  executing "CREATE INDEX  documents_rum_index_1404 ON documentdb_data.documents_1401 USING documentdb_extended_rum ( document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops(pathspec='[ "a" ]',tl=2691)) " via SPI
+DEBUG:  building index "documents_rum_index_1404" on table "documents_1401" serially
+DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 1401 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+    
+RESET client_min_messages;
+-- use the index.
+SELECT documentdb_test_helpers.run_explain_and_trim($$
+    EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pinsert_db', '{ "count": "pbuild", "query": { "a": { "$gt": 500 } } }');
+$$);
+                                   run_explain_and_trim                                   
+------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1500 loops=1)
+         namespaceName: pinsert_db.pbuild
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (500, Infinity]]
+         innerScanLoops: 501 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1500)]
+         ->  Bitmap Heap Scan on documents_1401 collection (actual rows=1500 loops=1)
+               Recheck Cond: (document @> '{ "a" : { "$numberInt" : "500" } }'::bson)
+               Heap Blocks: exact=17
+               ->  Bitmap Index Scan on a_1 (actual rows=1500 loops=1)
+                     Index Cond: (document @> '{ "a" : { "$numberInt" : "500" } }'::bson)
+(15 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($$
+    EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pinsert_db', '{ "count": "pbuild", "query": { "a": { "$eq": 500 } } }');
+$$);
+                                   run_explain_and_trim                                   
+------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+         namespaceName: pinsert_db.pbuild
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [500, 500]]
+         innerScanLoops: 3 loops
+         scanType: regular
+         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3)]
+         ->  Bitmap Heap Scan on documents_1401 collection (actual rows=3 loops=1)
+               Recheck Cond: (document @= '{ "a" : { "$numberInt" : "500" } }'::bson)
+               Heap Blocks: exact=3
+               ->  Bitmap Index Scan on a_1 (actual rows=3 loops=1)
+                     Index Cond: (document @= '{ "a" : { "$numberInt" : "500" } }'::bson)
+(15 rows)
+
+set enable_indexscan to off;
+set enable_bitmapscan to off;
+set documentdb.enableExtendedExplainPlans to on;
+SELECT documentdb_test_helpers.run_explain_and_trim($$
+    EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pinsert_db', '{ "count": "pbuild", "query": { "a": { "$gt": 500 } } }');
+$$);
+                           run_explain_and_trim                           
+--------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Seq Scan on documents_1401 collection (actual rows=1500 loops=1)
+         Filter: (document @> '{ "a" : { "$numberInt" : "500" } }'::bson)
+         Rows Removed by Filter: 1500
+(4 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($$
+    EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pinsert_db', '{ "count": "pbuild", "query": { "a": { "$eq": 500 } } }');
+$$);
+                           run_explain_and_trim                           
+--------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Seq Scan on documents_1401 collection (actual rows=3 loops=1)
+         Filter: (document @= '{ "a" : { "$numberInt" : "500" } }'::bson)
+         Rows Removed by Filter: 2997
+(4 rows)
+
