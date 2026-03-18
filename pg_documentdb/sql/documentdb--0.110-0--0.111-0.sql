@@ -3,3 +3,5 @@
 
 #include "udfs/query/bson_orderby--0.111-0.sql"
 #include "operators/bson_dollar_operators--0.111-0.sql"
+
+#include "udfs/commands_crud/bulkWrite--0.111-0.sql"

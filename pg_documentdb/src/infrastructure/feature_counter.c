@@ -305,6 +305,7 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_COMMAND_UPDATE_1000] = "command_update_1000",
 	[FEATURE_COMMAND_UPDATE_EXTENDED] = "command_update_extended",
 	[FEATURE_COMMAND_UPDATE_BULK] = "command_update_bulk",
+	[FEATURE_COMMAND_BULKWRITE] = "command_bulkWrite",
 	[FEATURE_COMMAND_VALIDATE_REPAIR] = "validate_repair",
 
 	[FEATURE_COMMAND_COLLMOD_VIEW] = "collMod_view",

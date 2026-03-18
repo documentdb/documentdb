@@ -1,0 +1,31 @@
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
+SET citus.next_shard_id TO 15500000;
+SET documentdb.next_collection_id TO 155000;
+SET documentdb.next_collection_index_id TO 155000;
+-- Run inside transaction
+BEGIN;
+CALL documentdb_api.bulkWrite('{
+    "bulkWrite": 1,
+    "ops": [
+        { "insert": 0, "document": { "_id": 1, "a": 1 } },
+        { "insert": 0, "document": { "_id": 2, "a": 2 } },
+        { "update": 0, "filter": { "_id": 1 }, "updateMods": { "$set": { "a": 11 } } },
+        { "delete": 0, "filter": { "_id": 2 }, "multi": false }
+    ],
+    "nsInfo": [
+        { "ns": "bulkWriteDB0.coll0" }
+    ]
+}');
+ERROR:  the bulkwrite procedure cannot be used in transactions.
+END;
+--normal case
+CALL documentdb_api.bulkWrite('{
+    "bulkWrite": 1,
+    "ops": [
+        { "insert": 0, "document": { "_id": 1, "a": 11, "b": 111 } }
+    ],
+    "nsInfo": [
+        { "ns": "bulkWriteDB1.coll0" }
+    ]
+}');
+ERROR:  bulkWrite is not yet implemented
