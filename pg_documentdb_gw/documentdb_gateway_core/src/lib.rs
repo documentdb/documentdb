@@ -29,7 +29,7 @@ use openssl::ssl::Ssl;
 use socket2::TcpKeepalive;
 use tokio::{
     io::{AsyncRead, AsyncWrite, BufStream},
-    net::{unix::SocketAddr as UnixSocketAddr, TcpListener, TcpStream, UnixListener, UnixStream},
+    net::{unix::SocketAddr as UnixSocketAddr, TcpStream, UnixListener, UnixStream},
     time::{Duration, Instant},
 };
 use tokio_openssl::SslStream;
@@ -43,9 +43,9 @@ use crate::{
     protocol::header::Header,
     requests::{request_tracker::RequestTracker, validation, Request, RequestIntervalKind},
     responses::{CommandError, Response},
+    service::create_tcp_listeners,
     telemetry::{client_info::parse_client_info, TelemetryProvider},
 };
-
 // TCP keepalive configuration constants
 const TCP_KEEPALIVE_TIME_SECS: u64 = 180;
 const TCP_KEEPALIVE_INTERVAL_SECS: u64 = 60;
@@ -149,20 +149,14 @@ pub async fn run_gateway<T>(
 where
     T: PgDataClient,
 {
-    // TCP configuration part
-    let tcp_listener = TcpListener::bind(format!(
-        "{}:{}",
-        if service_context.setup_configuration().use_local_host() {
-            "127.0.0.1"
-        } else {
-            "[::]"
-        },
+    let (ipv4_listener, ipv6_listener) = create_tcp_listeners(
+        service_context.setup_configuration().use_local_host(),
         service_context.setup_configuration().gateway_listen_port(),
-    ))
+    )
     .await?;
 
     tracing::info!(
-        "TCP listener bound to port {}",
+        "TCP listener(s) bound to port {}",
         service_context.setup_configuration().gateway_listen_port()
     );
 
@@ -181,48 +175,73 @@ where
     // Listen for new tcp and unix socket connections
     loop {
         tokio::select! {
-            stream_and_address = tcp_listener.accept() => {
-                let conn_service_context = service_context.clone();
-                let conn_telemetry = telemetry.clone();
-                tokio::spawn(async move {
-                    let conn_res = handle_connection::<T>(
-                        stream_and_address,
-                        conn_service_context,
-                        conn_telemetry,
-                    )
-                    .await;
-
-                    if let Err(conn_err) = conn_res {
-                        tracing::error!("Failed to accept a TCP connection: {conn_err:?}.");
-                    }
-                });
+            // Handle IPv4 TCP connections
+            result = async {
+                match &ipv4_listener {
+                    Some(listener) => listener.accept().await,
+                    None => std::future::pending().await,
+                }
+            }, if ipv4_listener.is_some() => {
+                spawn_tcp_handler::<T>(result, service_context.clone(), telemetry.clone(), "IPv4");
             }
-            stream_result = async {
+            // Handle IPv6 TCP connections
+            result = async {
+                match &ipv6_listener {
+                    Some(listener) => listener.accept().await,
+                    None => std::future::pending().await,
+                }
+            }, if ipv6_listener.is_some() => {
+                spawn_tcp_handler::<T>(result, service_context.clone(), telemetry.clone(), "IPv6");
+            }
+            // Handle Unix socket connections
+            result = async {
                 match &unix_listener {
                     Some(listener) => listener.accept().await,
                     None => std::future::pending().await,
                 }
             }, if unix_listener.is_some() => {
-                let conn_service_context = service_context.clone();
-                let conn_telemetry = telemetry.clone();
-                tokio::spawn(async move {
-                    let conn_res = handle_unix_connection::<T>(
-                        stream_result,
-                        conn_service_context,
-                        conn_telemetry,
-                    )
-                    .await;
-
-                    if let Err(conn_err) = conn_res {
-                        tracing::error!("Failed to accept a Unix socket connection: {conn_err:?}.");
-                    }
-                });
+                spawn_unix_handler::<T>(result, service_context.clone(), telemetry.clone());
             }
             () = token.cancelled() => {
                 return Ok(())
             }
         }
     }
+}
+
+/// Spawns an async task to handle a TCP connection.
+fn spawn_tcp_handler<T>(
+    stream_and_address: std::io::Result<(TcpStream, std::net::SocketAddr)>,
+    service_context: ServiceContext,
+    telemetry: Option<Box<dyn TelemetryProvider>>,
+    protocol: &'static str,
+) where
+    T: PgDataClient,
+{
+    tokio::spawn(async move {
+        if let Err(err) =
+            handle_connection::<T>(stream_and_address, service_context, telemetry).await
+        {
+            tracing::error!("Failed to accept a TCP connection ({protocol}): {err:?}.");
+        }
+    });
+}
+
+/// Spawns an async task to handle a Unix socket connection.
+fn spawn_unix_handler<T>(
+    stream_result: std::io::Result<(UnixStream, UnixSocketAddr)>,
+    service_context: ServiceContext,
+    telemetry: Option<Box<dyn TelemetryProvider>>,
+) where
+    T: PgDataClient,
+{
+    tokio::spawn(async move {
+        if let Err(err) =
+            handle_unix_connection::<T>(stream_result, service_context, telemetry).await
+        {
+            tracing::error!("Failed to accept a Unix socket connection: {err:?}.");
+        }
+    });
 }
 
 /// Detects whether a TLS handshake is being initiated by peeking at the stream.
