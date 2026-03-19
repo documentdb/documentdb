@@ -36,6 +36,13 @@ pub enum AuthKind {
     ExternalIdentity,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthMechanism {
+    Oidc,
+    ScramSha256,
+    Unknown,
+}
+
 #[derive(Debug)]
 pub struct ScramFirstState {
     nonce: String,
@@ -51,6 +58,7 @@ pub struct AuthState {
     user_oid: Option<u32>,
     auth_kind: Option<AuthKind>,
     timer_initialized: Arc<RwLock<bool>>,
+    auth_mechanism: AuthMechanism,
 }
 
 impl Default for AuthState {
@@ -69,6 +77,7 @@ impl AuthState {
             user_oid: None,
             auth_kind: None,
             timer_initialized: Arc::new(RwLock::new(false)),
+            auth_mechanism: AuthMechanism::Unknown,
         }
     }
 
@@ -106,6 +115,11 @@ impl AuthState {
         self.auth_kind.as_ref()
     }
 
+    #[must_use]
+    pub const fn auth_mechanism(&self) -> &AuthMechanism {
+        &self.auth_mechanism
+    }
+
     pub fn set_username(&mut self, user: &str) {
         self.username = Some(user.to_owned());
     }
@@ -130,6 +144,10 @@ impl AuthState {
         } else {
             Ok(())
         }
+    }
+
+    pub const fn set_auth_mechanism(&mut self, mechanism: AuthMechanism) {
+        self.auth_mechanism = mechanism;
     }
 
     async fn initialize_expiry_timer(
@@ -246,6 +264,7 @@ async fn handle_sasl_start(
     if mechanism == "MONGODB-OIDC" {
         return handle_oidc(connection_context, request).await;
     }
+
     return handle_scram(connection_context, request).await;
 }
 
@@ -406,6 +425,9 @@ async fn handle_oidc_token_authentication(
     connection_context
         .auth_state
         .set_auth_kind(AuthKind::ExternalIdentity)?;
+    connection_context
+        .auth_state
+        .set_auth_mechanism(AuthMechanism::Oidc);
 
     // Allocate a connection pool for the user after successful authentication, which will be used for subsequent requests on this connection.
     // The pool will be deallocated after a period of inactivity.
@@ -600,6 +622,10 @@ async fn handle_sasl_continue(
 
         *connection_context.auth_state.is_authorized().write().await = true;
         connection_context.allocate_data_pool("")?;
+
+        connection_context
+            .auth_state
+            .set_auth_mechanism(AuthMechanism::ScramSha256);
 
         Ok(Response::Raw(RawResponse(rawdoc! {
             "payload": payload,
