@@ -12,6 +12,7 @@ help="false";
 withasan="false"
 pgVersion=""
 withvalgrind="false"
+sparseCheckoutDir=""
 while getopts "d:hxcv:ags:" opt; do
   case $opt in
     d) postgresqlInstallDir="$OPTARG"
@@ -28,6 +29,8 @@ while getopts "d:hxcv:ags:" opt; do
     ;;
     g) withvalgrind="true"
     ;;
+    s) sparseCheckoutDir="$OPTARG"
+    ;;
   esac
 
   # Assume empty string if it's unset since we cannot reference to
@@ -43,7 +46,15 @@ if [ "$help" == "true" ]; then
     echo "downloads PostgreSQL sources for the specified version, build and install it."
     echo "[-d] the directory to install postgresql to. Default: /usr/lib/postgresql/14"
     echo "[-v] the version of postgresql to build. E.g. 14, 15 etc."
+    echo "     Optional when -s is specified."
+    echo "[-s] sparse checkout subdirectory path within the repo (e.g. src/postgres-v16)."
+    echo "     When set, only this subdirectory is checked out from the repo."
+    echo "     The last component (e.g. postgres-v16) is used as the build directory name."
     echo "[-x] build with debug symbols."
+    echo ""
+    echo "Environment variables:"
+    echo "  POSTGRESQL_REF                   Git ref to checkout (overrides version-based lookup)."
+    echo "  OVERRIDE_POSTGRES_SOURCE_REPO    Override the postgres source repo URL."
     exit 1;
 fi
 
@@ -52,9 +63,14 @@ if [ -z $postgresqlInstallDir ]; then
     exit 1;
 fi
 
-if [ -z $pgVersion ]; then
-  echo "PG Version must be specified";
-  exit 1;
+if [ -z "$pgVersion" ]; then
+    if [ -n "$sparseCheckoutDir" ]; then
+        # Use the last path component as the build directory identifier.
+        pgVersion="$(basename "$sparseCheckoutDir")"
+    else
+        echo "PG Version must be specified (or use -s for sparse checkout).";
+        exit 1;
+    fi
 fi
 
 source="${BASH_SOURCE[0]}"
@@ -81,16 +97,31 @@ fi
 
 pushd $INSTALL_DEPENDENCIES_ROOT
 
-rm -rf postgres-repo/$pgVersion
-mkdir -p postgres-repo/$pgVersion
-cd postgres-repo/$pgVersion
+if [ -n "$sparseCheckoutDir" ]; then
+    # Sparse checkout: clone directly into postgres-repo/. The sparse checkout path
+    # already contains the version-specific structure (e.g. src/postgres/postgres-v17).
+    rm -rf postgres-repo
+    mkdir -p postgres-repo
+    cd postgres-repo
 
-git init
-git remote add origin "$postgresSourceRepo"
+    git init
+    git remote add origin "$postgresSourceRepo"
+    git sparse-checkout init --cone
+    git sparse-checkout set "$sparseCheckoutDir"
+    git fetch --depth 1 --no-tags --prune --prune-tags origin "$POSTGRESQL_REF"
+    git checkout FETCH_HEAD
+    echo "Entering sparse checkout subdirectory $sparseCheckoutDir..."
+    cd "$sparseCheckoutDir"
+else
+    rm -rf postgres-repo/$pgVersion
+    mkdir -p postgres-repo/$pgVersion
+    cd postgres-repo/$pgVersion
 
-# checkout to the commit specified in the cgmanifest.json
-git fetch --depth 1 --no-tags --prune --prune-tags origin "$POSTGRESQL_REF"
-git checkout FETCH_HEAD
+    git init
+    git remote add origin "$postgresSourceRepo"
+    git fetch --depth 1 --no-tags --prune --prune-tags origin "$POSTGRESQL_REF"
+    git checkout FETCH_HEAD
+fi
 
 echo "building and installing postgresql ref $POSTGRESQL_REF and installing to $postgresqlInstallDir..."
 
