@@ -132,6 +132,11 @@ pub async fn validate_cursor_default_batch_size(db: &Database) -> Result<(), Err
                 "Expected CursorNotFound error code 43, but got {}",
                 cmd_err.code
             );
+            assert_eq!(
+                cmd_err.code_name, "CursorNotFound",
+                "Expected error code name 'CursorNotFound', but got '{}'",
+                cmd_err.code_name
+            );
             assert!(
                 cmd_err.message.contains("Provided cursor was not found."),
                 "Error message should indicate cursor not found, got: {}",
@@ -291,6 +296,11 @@ pub async fn validate_kill_cursor(db: &Database) -> Result<(), Error> {
                 cmd_err.code, 43,
                 "Expected CursorNotFound error code 43, but got {}",
                 cmd_err.code
+            );
+            assert_eq!(
+                cmd_err.code_name, "CursorNotFound",
+                "Expected error code name 'CursorNotFound', but got '{}'",
+                cmd_err.code_name
             );
             assert!(
                 cmd_err.message.contains("Provided cursor was not found."),

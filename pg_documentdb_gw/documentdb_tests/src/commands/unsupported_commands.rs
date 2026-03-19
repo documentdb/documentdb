@@ -163,6 +163,7 @@ pub async fn validate_command_not_found(db: &Database) -> () {
         doc! { "atlasVersion": 1 },
         59,
         "Command 'atlasVersion' not found.",
+        "CommandNotFound",
     )
     .await;
 }
@@ -175,6 +176,7 @@ pub async fn validate_commands_not_supported(db: &Database) -> () {
             doc! { *command_name: 1 },
             115,
             &expected_msg,
+            "CommandNotSupported",
         )
         .await;
     }

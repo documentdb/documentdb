@@ -43,6 +43,8 @@ regex = "1.10.2"
 serde = { version = "1.0.125", features = ["derive", "rc"] }
 serde_json = { version = "1.0.107", features = ["arbitrary_precision"] }
 socket2 = "0.5.7"
+strum = "0.28.0"
+strum_macros = "0.28.0"
 tokio = { version = "1", features = ["full"] }
 tokio-openssl = "0.6.5"
 tokio-postgres = { version = "0.7.10", features = [
