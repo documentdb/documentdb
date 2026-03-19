@@ -349,7 +349,7 @@ async fn handle_oidc_token_authentication(
                     db_error.hint()
                 );
 
-                if let Some((extension_error_code, _)) =
+                if let Some(extension_error_code) =
                     responses::from_known_external_error_code(db_error.code())
                 {
                     if extension_error_code == ErrorCode::CommandNotSupported as i32 {
