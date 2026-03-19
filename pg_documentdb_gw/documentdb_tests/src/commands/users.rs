@@ -101,20 +101,27 @@ pub async fn validate_drop_user(client: &Client) -> Result<(), Error> {
 
 pub async fn validate_cannot_drop_system_users(db: &Database) -> Result<(), Error> {
     let system_users = vec![
-        ("documentdb_bg_worker_role", 2, "Invalid username."),
+        (
+            "documentdb_bg_worker_role",
+            2,
+            "Invalid username.",
+            "BadValue",
+        ),
         (
             "documentdb_admin_role",
             1,
             "An unexpected internal error has occurred.",
+            "InternalError",
         ),
         (
             "documentdb_readonly_role",
             1,
             "An unexpected internal error has occurred.",
+            "InternalError",
         ),
     ];
 
-    for (user, error_code, error_message) in system_users {
+    for (user, error_code, error_message, code_name) in system_users {
         commands::execute_command_and_validate_error(
             db,
             doc! {
@@ -122,6 +129,7 @@ pub async fn validate_cannot_drop_system_users(db: &Database) -> Result<(), Erro
             },
             error_code,
             error_message,
+            code_name,
         )
         .await;
     }
@@ -239,6 +247,7 @@ pub async fn validate_createuser_with_bad_password(db: &Database) -> Result<(), 
         },
         2,
         "Invalid password, use a different password.",
+        "BadValue",
     )
     .await;
 
@@ -309,6 +318,7 @@ pub async fn validate_usersinfo_with_missing_db_or_user(db: &Database) -> Result
         },
         2,
         "'usersInfo' document must contain both 'user' and 'db' together.",
+        "BadValue",
     )
     .await;
 
@@ -321,6 +331,7 @@ pub async fn validate_usersinfo_with_missing_db_or_user(db: &Database) -> Result
         },
         2,
         "'usersInfo' document must contain both 'user' and 'db' together.",
+        "BadValue",
     )
     .await;
 
@@ -333,6 +344,7 @@ pub async fn validate_usersinfo_with_empty_document(db: &Database) -> Result<(),
         doc! { "usersInfo": {} },
         2,
         "'usersInfo' document must contain either 'forAllDBs: true', or 'user' and 'db'.",
+        "BadValue",
     )
     .await;
 
@@ -351,6 +363,7 @@ pub async fn validate_usersinfo_with_all_fields(db: &Database) -> Result<(), Err
         },
         2,
         "'usersInfo' document must contain either 'forAllDBs: true', or 'user' and 'db'.",
+        "BadValue",
     )
     .await;
 
@@ -385,6 +398,7 @@ pub async fn validate_createuser_of_existing(db: &Database) -> Result<(), Error>
         },
         51003,
         "The specified user already exists.",
+        "Location51003",
     )
     .await;
 
@@ -408,6 +422,7 @@ pub async fn validate_dropuser_of_not_existing(db: &Database) -> Result<(), Erro
         doc! { "dropUser": test_user },
         11,
         "The specified user does not exist.",
+        "UserNotFound",
     )
     .await;
 
@@ -420,6 +435,7 @@ pub async fn validate_drop_system_user(db: &Database) -> Result<(), Error> {
         doc! { "dropUser": "replication" },
         2,
         "Invalid username.",
+        "BadValue",
     )
     .await;
 
@@ -456,6 +472,7 @@ pub async fn validate_update_user_of_not_existing(db: &Database) -> Result<(), E
         },
         11,
         "The specified user does not exist.",
+        "UserNotFound",
     )
     .await;
 

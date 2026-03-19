@@ -6,5 +6,5 @@
  *-------------------------------------------------------------------------
  */
 
-pub(crate) mod commands;
+pub mod commands;
 pub(crate) mod users;

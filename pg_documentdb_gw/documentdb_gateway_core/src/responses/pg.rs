@@ -77,12 +77,11 @@ pub fn known_pg_error<'a>(
     msg: &'a str,
     activity_id: &str,
 ) -> PostgresErrorMappedResult<'a> {
-    if let Some((known, code_name)) = from_known_external_error_code(state) {
+    if let Some(known) = from_known_external_error_code(state) {
         let message = "This may be due to the database disk being full";
         if known == ErrorCode::NotWritablePrimary as i32 {
             return PostgresErrorMappedResult {
                 error_code: ErrorCode::NotWritablePrimary as i32,
-                code_name: Some(code_name),
                 error_message: message,
                 internal_note: Some(message),
             };
@@ -90,7 +89,6 @@ pub fn known_pg_error<'a>(
 
         return PostgresErrorMappedResult {
             error_code: known,
-            code_name: Some(code_name),
             error_message: msg,
             ..Default::default()
         };
@@ -102,7 +100,6 @@ pub fn known_pg_error<'a>(
             error_code: code - API_ERROR_CODE_MIN,
             error_message: msg,
             internal_note: Some(msg),
-            ..Default::default()
         };
     }
 
@@ -117,7 +114,6 @@ pub fn known_pg_error<'a>(
 
                 PostgresErrorMappedResult {
                     error_code: ErrorCode::WriteConflict as i32,
-                    code_name: Some("UNIQUE_VIOLATION"),
                     error_message: duplicate_key_violation_message(),
                     internal_note: Some(msg),
                 }
@@ -126,7 +122,6 @@ pub fn known_pg_error<'a>(
 
                 PostgresErrorMappedResult {
                     error_code: ErrorCode::DuplicateKey as i32,
-                    code_name: Some("UNIQUE_VIOLATION"),
                     error_message: duplicate_key_violation_message(),
                     internal_note: Some(msg),
                 }
@@ -134,13 +129,11 @@ pub fn known_pg_error<'a>(
         }
         SqlState::DISK_FULL => PostgresErrorMappedResult {
             error_code: ErrorCode::OutOfDiskSpace as i32,
-            code_name: Some("DISK_FULL"),
             error_message: "The database disk is full",
             internal_note: Some(msg),
         },
         SqlState::UNDEFINED_TABLE => PostgresErrorMappedResult {
             error_code: ErrorCode::NamespaceNotFound as i32,
-            code_name: Some("UNDEFINED_TABLE"),
             error_message: msg,
             internal_note: Some("undefined table error."),
         },
@@ -152,7 +145,6 @@ pub fn known_pg_error<'a>(
                 );
                 PostgresErrorMappedResult {
                         error_code: ErrorCode::ExceededTimeLimit as i32,
-                        code_name: Some("QUERY_CANCELED"),
                         error_message: "The command being executed was terminated due to a command timeout. This may be due to concurrent transactions.",
                         internal_note: Some(msg),
                     }
@@ -160,7 +152,6 @@ pub fn known_pg_error<'a>(
                 tracing::error!(activity_id = activity_id, "Query canceled.");
                 PostgresErrorMappedResult {
                         error_code: ErrorCode::ExceededTimeLimit as i32,
-                        code_name: Some("QUERY_CANCELED"),
                         error_message: "The command being executed was terminated due to a command timeout. This may be due to concurrent transactions. Consider increasing the maxTimeMS on the command.",
                         internal_note: Some(msg),
                     }
@@ -174,7 +165,6 @@ pub fn known_pg_error<'a>(
                 );
                 PostgresErrorMappedResult {
                     error_code: ErrorCode::WriteConflict as i32,
-                    code_name: Some("LOCK_NOT_AVAILABLE"),
                     error_message: msg,
                     internal_note: Some(msg),
                 }
@@ -182,7 +172,6 @@ pub fn known_pg_error<'a>(
                 tracing::error!(activity_id = activity_id, "Lock not available error.");
                 PostgresErrorMappedResult {
                     error_code: ErrorCode::LockTimeout as i32,
-                    code_name: Some("LOCK_NOT_AVAILABLE"),
                     error_message: msg,
                     internal_note: Some(msg),
                 }
@@ -190,7 +179,6 @@ pub fn known_pg_error<'a>(
         }
         SqlState::FEATURE_NOT_SUPPORTED => PostgresErrorMappedResult {
             error_code: ErrorCode::CommandNotSupported as i32,
-            code_name: Some("FEATURE_NOT_SUPPORTED"),
             error_message: msg,
             ..Default::default()
         },
@@ -200,14 +188,12 @@ pub fn known_pg_error<'a>(
                 tracing::error!(activity_id = activity_id, error_message_loggable);
                 PostgresErrorMappedResult {
                     error_code: ErrorCode::BadValue as i32,
-                    code_name: Some("DATA_EXCEPTION"),
                     error_message: msg,
                     internal_note: Some(error_message_loggable),
                 }
             } else {
                 PostgresErrorMappedResult {
                     error_code: ErrorCode::InternalError as i32,
-                    code_name: Some("DATA_EXCEPTION"),
                     error_message: generic_internal_error_message(),
                     internal_note: Some("generic data exception error"),
                 }
@@ -218,7 +204,6 @@ pub fn known_pg_error<'a>(
                 tracing::error!(activity_id = activity_id, "Index creation requires resources too large to fit in the resource memory limit.");
                 PostgresErrorMappedResult {
                         error_code: ErrorCode::ExceededMemoryLimit as i32,
-                        code_name: Some("PROGRAM_LIMIT_EXCEEDED"),
                         error_message: "index creation requires resources too large to fit in the resource memory limit, please try creating index with less number of documents or creating index before inserting documents into collection",
                         internal_note: Some(msg),
                     }
@@ -227,14 +212,12 @@ pub fn known_pg_error<'a>(
                 tracing::error!(activity_id = activity_id, "{error_message}");
                 PostgresErrorMappedResult {
                     error_code: ErrorCode::CannotBuildIndexKeys as i32,
-                    code_name: Some("PROGRAM_LIMIT_EXCEEDED"),
                     error_message,
                     internal_note: Some(msg),
                 }
             } else {
                 PostgresErrorMappedResult {
                     error_code: ErrorCode::InternalError as i32,
-                    code_name: Some("PROGRAM_LIMIT_EXCEEDED"),
                     error_message: msg,
                     internal_note: Some(msg),
                 }
@@ -247,14 +230,12 @@ pub fn known_pg_error<'a>(
                 tracing::error!(activity_id = activity_id, "{error_message}");
                 PostgresErrorMappedResult {
                     error_code: ErrorCode::BadValue as i32,
-                    code_name: Some("NUMERIC_VALUE_OUT_OF_RANGE"),
                     error_message,
                     internal_note: Some(error_message),
                 }
             } else {
                 PostgresErrorMappedResult {
                     error_code: ErrorCode::InternalError as i32,
-                    code_name: Some("InternalError"),
                     error_message: generic_internal_error_message(),
                     internal_note: Some("generic numeric value out of range error"),
                 }
@@ -267,7 +248,6 @@ pub fn known_pg_error<'a>(
             tracing::error!(activity_id = activity_id, "{error_message}");
             PostgresErrorMappedResult {
                 error_code: ErrorCode::InvalidOptions as i32,
-                code_name: Some("OBJECT_NOT_IN_PREREQUISITE_STATE"),
                 error_message,
                 internal_note: Some(msg),
             }
@@ -280,14 +260,12 @@ pub fn known_pg_error<'a>(
                 tracing::error!(activity_id = activity_id, "{error_message}");
                 PostgresErrorMappedResult {
                     error_code: ErrorCode::BadValue as i32,
-                    code_name: Some("INTERNAL_ERROR"),
                     error_message,
                     internal_note: Some(error_message),
                 }
             } else {
                 PostgresErrorMappedResult {
                     error_code: ErrorCode::InternalError as i32,
-                    code_name: Some("InternalError"),
                     error_message: generic_internal_error_message(),
                     internal_note: Some(msg),
                 }
@@ -295,19 +273,16 @@ pub fn known_pg_error<'a>(
         }
         SqlState::INVALID_TEXT_REPRESENTATION => PostgresErrorMappedResult {
             error_code: ErrorCode::FailedToParse as i32,
-            code_name: Some("INVALID_TEXT_REPRESENTATION"),
             error_message: msg,
             internal_note: Some("invalid text representation error."),
         },
         SqlState::INVALID_PARAMETER_VALUE => PostgresErrorMappedResult {
             error_code: ErrorCode::BadValue as i32,
-            code_name: Some("INVALID_PARAMETER_VALUE"),
             error_message: msg,
             internal_note: Some("invalid parameter value error."),
         },
         SqlState::INVALID_ARGUMENT_FOR_NTH_VALUE => PostgresErrorMappedResult {
             error_code: ErrorCode::BadValue as i32,
-            code_name: Some("INVALID_ARGUMENT_FOR_NTH_VALUE"),
             error_message: msg,
             internal_note: Some("invalid argument for nth value error."),
         },
@@ -320,44 +295,37 @@ pub fn known_pg_error<'a>(
             tracing::error!(activity_id = activity_id, "{error_message}");
             PostgresErrorMappedResult {
                 error_code: ErrorCode::IllegalOperation as i32,
-                code_name: Some("IllegalOperation"),
                 error_message,
                 internal_note: Some(msg),
             }
         }
         SqlState::READ_ONLY_SQL_TRANSACTION => PostgresErrorMappedResult {
             error_code: ErrorCode::ExceededTimeLimit as i32,
-            code_name: Some("ExceededTimeLimit"),
             error_message: "Exceeded time limit while waiting for a new primary to be elected",
             internal_note: Some(msg),
         },
         SqlState::INSUFFICIENT_PRIVILEGE => PostgresErrorMappedResult {
             error_code: ErrorCode::Unauthorized as i32,
-            code_name: Some("Unauthorized"),
             error_message: "User is not authorized to perform this action",
             internal_note: Some(msg),
         },
         SqlState::T_R_DEADLOCK_DETECTED => PostgresErrorMappedResult {
             error_code: ErrorCode::WriteConflict as i32,
-            code_name: Some("WriteConflict"),
             error_message: "Could not acquire lock for operation due to deadlock",
             internal_note: Some(msg),
         },
         SqlState::UNDEFINED_OBJECT => PostgresErrorMappedResult {
             error_code: ErrorCode::UserNotFound as i32,
-            code_name: Some("UserNotFound"),
             error_message: msg,
             internal_note: Some("undefined object error."),
         },
         SqlState::DUPLICATE_OBJECT => PostgresErrorMappedResult {
             error_code: ErrorCode::Location51003 as i32,
-            code_name: Some("User already exists"),
             error_message: msg,
             internal_note: Some("duplicate object error."),
         },
         _ => PostgresErrorMappedResult {
             error_code: ErrorCode::InternalError as i32,
-            code_name: Some("InternalError"),
             error_message: generic_internal_error_message(),
             internal_note: Some(msg),
         },
@@ -525,7 +493,6 @@ impl PgResponse {
 #[derive(Debug, Default)]
 pub struct PostgresErrorMappedResult<'a> {
     error_code: i32,
-    code_name: Option<&'a str>,
     error_message: &'a str,
     internal_note: Option<&'a str>,
 }
@@ -533,10 +500,6 @@ pub struct PostgresErrorMappedResult<'a> {
 impl<'a> PostgresErrorMappedResult<'a> {
     pub const fn error_code(&self) -> i32 {
         self.error_code
-    }
-
-    pub const fn code_name(&self) -> Option<&'a str> {
-        self.code_name
     }
 
     pub const fn error_message(&self) -> &'a str {

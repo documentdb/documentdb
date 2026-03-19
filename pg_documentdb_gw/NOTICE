@@ -19,6 +19,8 @@ The full license texts for all dependencies are located in the 'pg_documentdb_gw
 - serde_json (MIT OR Apache-2.0)
 - serde (MIT OR Apache-2.0)
 - socket2 (MIT OR Apache-2.0)
+- strum (MIT)
+- strum_macros (MIT)
 - tokio (MIT)
 - tokio-openssl (MIT OR Apache-2.0)
 - tokio-postgres (MIT OR Apache-2.0)
