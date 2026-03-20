@@ -16,6 +16,9 @@
 #include <varatt.h>
 #endif
 
+#include "io/bson_core.h"
+#include "operators/bson_expression.h"
+
 /*
  * Varlena wrapper for MAXALIGN(8bytes) structs that are serialized as a varlena
  */
@@ -60,6 +63,44 @@ GetMaxAlignedVarlena(bytea *bytes)
 {
 	return (MaxAlignedVarlena *) bytes;
 }
+
+
+/*
+ * Aggregate state for single-value accumulators (e.g. $first/$last/$min/$max with expr).
+ * Used as the PostgreSQL bsonaggvalue aggregate state type.
+ */
+typedef struct BsonAggValue
+{
+	int32 vl_len_;          /* PostgreSQL varlena header */
+	bson_value_t value;     /* The aggregate value (pointers valid in current memory context) */
+	char *collationString;  /* Collation string comparison (NULL if none) */
+} BsonAggValue;
+
+
+/*
+ * Cached expression state for aggregates that need to parse expressions.
+ * Stores both the source expression (for cache invalidation check)
+ * and the parsed expression state.
+ */
+typedef struct CachedExpressionState
+{
+	/* The source expression pgbson - used to detect if expression changed */
+	pgbson *sourceExpression;
+
+	/* The source variable spec pgbson - used to detect if variables changed */
+	pgbson *sourceVariableSpec;
+
+	/* The source collation text datum - used to detect if collation changed via pointer comparison */
+	text *sourceCollationText;
+
+	/* The parsed expression state */
+	BsonExpressionState expressionState;
+} CachedExpressionState;
+
+const BsonExpressionState * GetOrCreateCachedExpressionState(FmgrInfo *flinfo,
+															 pgbson *expressionBson,
+															 pgbson *variableSpec,
+															 text *collationText);
 
 
 #endif

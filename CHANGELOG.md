@@ -2,10 +2,11 @@
 * Fix `$count:{}` accumulator in `$group` to reject invalid arguments. Guarded by `failOnNonEmptyGroupCountArg` feature flag *[Bugfix]*
 * Reject duplicate `_id` in `$group` stage. Guarded by `failOnGroupIdDuplicate` feature flag *[Bugfix]*
 * Update file modification time in `DeserializeFileState` to prevent TTL-based cleanup from expiring actively-used cursor files *[Bugfix]*
+* Improved performance for `$first` and `$last` accumulators in `$group` pipeline stage (no preceding `$sort`) under flag `enableNewWithExprAccumulators`. *[Perf]* (#457)
 * Support `$db` field in wire protocol command specs for insert, update, delete, findAndModify, createIndexes, dropIndexes, collMod, and background index commands *[Feature]*
 * Fixes crash that occurs when `enableDebugQueryText` is enabled and certain commands (e.g., `count_query`, `find_cursor_first_page`) operate on queries whose query trees are mutated by the PostgreSQL planner. *[Bugfix]* (#484)
 * Map PostgreSQL `Gather Merge` plan node to `PARALLEL_SORT_MERGE` in explain output *[Bugfix]*
-* Support collation with $min and $max aggregation $group accumulators. Guarded by `EnableNewMinMaxAccumulators` and `EnableCollation`
+* Support collation with $min and $max aggregation $group accumulators. Guarded by `EnableNewWithExprAccumulators` and `EnableCollation`
 * Optimize OP_INSERT and refactor opcode parsers
 * Enable index only scan by default and move to the cost estimate function *[Feature]*
 * Optimize index boundaries for $regex when there is an anchored prefix *[Perf]*
@@ -15,7 +16,7 @@
 * Integrate cargo tools to identify dependencies for pg_documentdb_gw *[Feature]* (#263)
 * Add support for killSessions command *[Feature]* (#402)
 * Support arbitrary database user and password *[Feature]* (#306)
-* Improved performance for `$max` and `$min` accumulators in `$group` and `$setWindowFields` pipeline stages under flag `enableNewMinMaxAccumulators`. 
+* Improved performance for `$max` and `$min` accumulators in `$group` and `$setWindowFields` pipeline stages under flag `enableNewMinMaxAccumulators`. (#457)
 * Fix crash in `bson_dollar_lookup_project` when matched documents array contains NULL elements from LEFT JOIN *[Bugfix]* (#465)
 * Fix crash in `$densify` with `partitionByFields` on shard key due to mismatched sort operators for INT8 partition expression *[Bugfix]* (#464)
 * Fix crash in `shard_collection` when implicit collection creation fails and returns NULL *[Bugfix]* (#462)

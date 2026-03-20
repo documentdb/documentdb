@@ -48,6 +48,9 @@ test: bson_dollar_operators_negation_tests_explain_runtime
 test: bson_collation_runtime_tests
 # we want to test BsonAggValue type I/O functions (which uses _send/_receive with pg18+citus14)
 test: bson_aggregation_pipeline_tests_maxmin_group 
+test: bson_aggregate_group_firstlast_sharded!PG18_OR_HIGHER!
+# This test is only run with pg17+ as EXPLAIN is broken for distributed scenario on older citus versions (known citus bug handling the cstring version)
+test: bson_aggregate_group_firstlast_explain_sharded
 
 # With PG18 the tests above this line all pass.
 test: bson_aggregation_cursor_tests_pk_cursors

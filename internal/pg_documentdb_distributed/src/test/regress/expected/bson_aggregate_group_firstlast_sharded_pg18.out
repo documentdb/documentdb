@@ -1,0 +1,412 @@
+\i sql/bson_aggregate_group_firstlast_sharded.sql
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,pg_catalog;
+SET citus.next_shard_id TO 19850000;
+SET documentdb.next_collection_id TO 19850;
+SET documentdb.next_collection_index_id TO 19850;
+-- =============================================================================
+-- Test 1: Sharded $first/$last with collation
+-- Exercises combine function (send/recv) path across shards with collation.
+-- =============================================================================
+-- Setup and shard data
+SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 1, "g": "A", "name": "cherry" }');
+psql:sql/bson_aggregate_group_firstlast_sharded.sql:13: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 2, "g": "A", "name": "BANANA" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 3, "g": "A", "name": "Apple" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 4, "g": "a", "name": "date" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 5, "g": "a", "name": "FIG" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 6, "g": "B", "name": "grape" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 7, "g": "B", "name": "KIWI" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('db', 'fl_collation_test', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNewGroupAccumulators TO on;
+-- 1a. GUC ON: collation-sensitive $first/$last after sharding
+SET documentdb.enableNewWithExprAccumulators TO on;
+set citus.propagate_set_commands to 'local';
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+-- With collation (case-insensitive strength 1): "cherry" eq "CHERRY" → matched
+-- TODO: Known bug - collation is not honored for value comparisons on worker nodes
+-- in distributed execution. The $eq comparison inside $cond falls back to binary,
+-- so "cherry" != "CHERRY" and all rows show "no-match" instead of "matched" for
+-- the group containing _id=1. Update expected output once the fix is in.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } }, "lastMatch": { "$last": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                               document                               
+---------------------------------------------------------------------
+ { "_id" : "A", "firstMatch" : "no-match", "lastMatch" : "no-match" }
+ { "_id" : "B", "firstMatch" : "no-match", "lastMatch" : "no-match" }
+ { "_id" : "a", "firstMatch" : "no-match", "lastMatch" : "no-match" }
+(3 rows)
+
+-- Without collation baseline (binary: "cherry" != "CHERRY")
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } }, "lastMatch": { "$last": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
+                               document                               
+---------------------------------------------------------------------
+ { "_id" : "A", "firstMatch" : "no-match", "lastMatch" : "no-match" }
+ { "_id" : "B", "firstMatch" : "no-match", "lastMatch" : "no-match" }
+ { "_id" : "a", "firstMatch" : "no-match", "lastMatch" : "no-match" }
+(3 rows)
+
+-- Simple field reference with collation
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstName": { "$first": "$name" }, "lastName": { "$last": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                            document                            
+---------------------------------------------------------------------
+ { "_id" : "A", "firstName" : "BANANA", "lastName" : "cherry" }
+ { "_id" : "B", "firstName" : "grape", "lastName" : "KIWI" }
+ { "_id" : "a", "firstName" : "date", "lastName" : "FIG" }
+(3 rows)
+
+-- Constant _id group with collation-sensitive expression
+-- TODO: Known bug - collation is not honored for value comparisons on worker nodes
+-- in distributed execution. firstMatch should be "matched" since doc _id=1 has
+-- name="cherry" which equals "CHERRY" at strength 1, but $eq uses binary
+-- comparison on the worker. Update expected output once the fix is in.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": null, "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } }, "lastMatch": { "$last": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } } } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                               document                                
+---------------------------------------------------------------------
+ { "_id" : null, "firstMatch" : "no-match", "lastMatch" : "no-match" }
+(1 row)
+
+ROLLBACK;
+-- 1b. GUC OFF: collation with old accumulators → error
+SET documentdb.enableNewWithExprAccumulators TO off;
+SET documentdb.enableCollationWithNewGroupAccumulators TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$name" }, "l": { "$last": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+psql:sql/bson_aggregate_group_firstlast_sharded.sql:60: ERROR:  collation is not supported in $group stage yet.
+SET documentdb.enableCollationWithNewGroupAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
+SET documentdb_core.enableCollation TO off;
+-- =============================================================================
+-- Test 2: Sharded $first/$last where every document in the group has a missing
+-- field. With hashed _id sharding the docs land on different shards, so the
+-- EOD (missing) value must survive the send/recv/combine path and come back
+-- as null in the final result.
+-- =============================================================================
+SELECT documentdb_api.insert_one('db', 'fl_missing_test', '{ "_id": 1, "category": "electronics" }');
+psql:sql/bson_aggregate_group_firstlast_sharded.sql:73: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_missing_test', '{ "_id": 2, "category": "electronics" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('db', 'fl_missing_test', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- 2a. GUC ON: $first and $last on missing nested field
+SET documentdb.enableNewWithExprAccumulators TO on;
+set citus.propagate_set_commands to 'local';
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_missing_test", "pipeline": [{ "$group": { "_id": "$category", "firstResult": { "$first": "$profile.email" }, "lastResult": { "$last": "$profile.email" } } }], "cursor": {} }');
+                               document                               
+---------------------------------------------------------------------
+ { "_id" : "electronics", "firstResult" : null, "lastResult" : null }
+(1 row)
+
+ROLLBACK;
+-- 2b. GUC OFF: $first and $last on missing nested field
+SET documentdb.enableNewWithExprAccumulators TO off;
+set citus.propagate_set_commands to 'local';
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_missing_test", "pipeline": [{ "$group": { "_id": "$category", "firstResult": { "$first": "$profile.email" }, "lastResult": { "$last": "$profile.email" } } }], "cursor": {} }');
+                               document                               
+---------------------------------------------------------------------
+ { "_id" : "electronics", "firstResult" : null, "lastResult" : null }
+(1 row)
+
+ROLLBACK;
+SELECT documentdb_api.drop_collection('db', 'fl_missing_test');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- =============================================================================
+-- Test 3: Sharded $setWindowFields for $first/$last
+-- Covers data correctness and EXPLAIN for both sortBy and no-sortBy paths
+-- with GUC on and off. Uses both $first and $last in every query.
+-- =============================================================================
+SELECT documentdb_api.insert_one('db', 'wfl_dist_test', '{ "_id": 1, "g": "A", "v": 10, "name": "alpha" }');
+psql:sql/bson_aggregate_group_firstlast_sharded.sql:106: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'wfl_dist_test', '{ "_id": 2, "g": "B", "v": 20, "name": "beta" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'wfl_dist_test', '{ "_id": 3, "g": "A", "v": 30, "name": "gamma" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'wfl_dist_test', '{ "_id": 4, "g": "B", "v": 40, "name": "delta" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('db', 'wfl_dist_test', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- 3a. GUC ON: $first/$last with sortBy - data correctness
+SET documentdb.enableNewWithExprAccumulators TO on;
+set citus.propagate_set_commands to 'local';
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "wfl_dist_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "sortBy": { "v": 1 }, "output": { "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
+                                                                          document                                                                          
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "g" : "A", "v" : { "$numberInt" : "10" }, "name" : "alpha", "firstVal" : { "$numberInt" : "10" }, "lastName" : "gamma" }
+ { "_id" : { "$numberInt" : "2" }, "g" : "B", "v" : { "$numberInt" : "20" }, "name" : "beta", "firstVal" : { "$numberInt" : "20" }, "lastName" : "delta" }
+ { "_id" : { "$numberInt" : "3" }, "g" : "A", "v" : { "$numberInt" : "30" }, "name" : "gamma", "firstVal" : { "$numberInt" : "10" }, "lastName" : "gamma" }
+ { "_id" : { "$numberInt" : "4" }, "g" : "B", "v" : { "$numberInt" : "40" }, "name" : "delta", "firstVal" : { "$numberInt" : "20" }, "lastName" : "delta" }
+(4 rows)
+
+-- 3b. GUC ON: $first/$last without sortBy - data correctness
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "wfl_dist_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
+                                                                          document                                                                          
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "g" : "A", "v" : { "$numberInt" : "10" }, "name" : "alpha", "firstVal" : { "$numberInt" : "30" }, "lastName" : "alpha" }
+ { "_id" : { "$numberInt" : "2" }, "g" : "B", "v" : { "$numberInt" : "20" }, "name" : "beta", "firstVal" : { "$numberInt" : "40" }, "lastName" : "beta" }
+ { "_id" : { "$numberInt" : "3" }, "g" : "A", "v" : { "$numberInt" : "30" }, "name" : "gamma", "firstVal" : { "$numberInt" : "30" }, "lastName" : "alpha" }
+ { "_id" : { "$numberInt" : "4" }, "g" : "B", "v" : { "$numberInt" : "40" }, "name" : "delta", "firstVal" : { "$numberInt" : "40" }, "lastName" : "beta" }
+(4 rows)
+
+ROLLBACK;
+-- 3c. GUC OFF: $first/$last with sortBy - data correctness
+SET documentdb.enableNewWithExprAccumulators TO off;
+set citus.propagate_set_commands to 'local';
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "wfl_dist_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "sortBy": { "v": 1 }, "output": { "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
+                                                                          document                                                                          
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "g" : "A", "v" : { "$numberInt" : "10" }, "name" : "alpha", "firstVal" : { "$numberInt" : "10" }, "lastName" : "gamma" }
+ { "_id" : { "$numberInt" : "2" }, "g" : "B", "v" : { "$numberInt" : "20" }, "name" : "beta", "firstVal" : { "$numberInt" : "20" }, "lastName" : "delta" }
+ { "_id" : { "$numberInt" : "3" }, "g" : "A", "v" : { "$numberInt" : "30" }, "name" : "gamma", "firstVal" : { "$numberInt" : "10" }, "lastName" : "gamma" }
+ { "_id" : { "$numberInt" : "4" }, "g" : "B", "v" : { "$numberInt" : "40" }, "name" : "delta", "firstVal" : { "$numberInt" : "20" }, "lastName" : "delta" }
+(4 rows)
+
+-- 3d. GUC OFF: $first/$last without sortBy - data correctness
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "wfl_dist_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
+                                                                          document                                                                          
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "g" : "A", "v" : { "$numberInt" : "10" }, "name" : "alpha", "firstVal" : { "$numberInt" : "30" }, "lastName" : "alpha" }
+ { "_id" : { "$numberInt" : "2" }, "g" : "B", "v" : { "$numberInt" : "20" }, "name" : "beta", "firstVal" : { "$numberInt" : "40" }, "lastName" : "beta" }
+ { "_id" : { "$numberInt" : "3" }, "g" : "A", "v" : { "$numberInt" : "30" }, "name" : "gamma", "firstVal" : { "$numberInt" : "30" }, "lastName" : "alpha" }
+ { "_id" : { "$numberInt" : "4" }, "g" : "B", "v" : { "$numberInt" : "40" }, "name" : "delta", "firstVal" : { "$numberInt" : "40" }, "lastName" : "beta" }
+(4 rows)
+
+ROLLBACK;
+-- 3e. GUC ON: EXPLAIN $first/$last with sortBy → bsonfirst / bsonlast (sorted path)
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "wfl_dist_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "sortBy": { "v": 1 }, "output": { "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } } }], "cursor": {} }') $cmd$);
+                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                         
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   ->  Distributed Subplan 104_1
+         ->  WindowAgg
+               Output: remote_scan.document, (documentdb_api_internal.bsonfirst(remote_scan."firstVal", '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[], '{ "" : "$v" }'::bson) OVER w1), documentdb_api_internal.bsonlast(remote_scan."lastName", '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[], '{ "" : "$name" }'::bson) OVER w2, remote_scan."?partitionBy?", remote_scan.worker_column_5
+               Window: w2 AS (PARTITION BY remote_scan."?partitionBy?" ORDER BY remote_scan.worker_column_5 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+               ->  WindowAgg
+                     Output: remote_scan."?partitionBy?", remote_scan.worker_column_5, remote_scan.document, remote_scan."firstVal", remote_scan."lastName", documentdb_api_internal.bsonfirst(remote_scan."firstVal", '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[], '{ "" : "$v" }'::bson) OVER w1
+                     Window: w1 AS (PARTITION BY remote_scan."?partitionBy?" ORDER BY remote_scan.worker_column_5 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+                     ->  Sort
+                           Output: remote_scan."?partitionBy?", remote_scan.worker_column_5, remote_scan.document, remote_scan."firstVal", remote_scan."lastName"
+                           Sort Key: remote_scan."?partitionBy?", remote_scan.worker_column_5 NULLS FIRST
+                           ->  Custom Scan (Citus Adaptive)
+                                 Output: remote_scan."?partitionBy?", remote_scan.worker_column_5, remote_scan.document, remote_scan."firstVal", remote_scan."lastName"
+                                 Task Count: 8
+                                 Tasks Shown: One of 8
+                                 ->  Task
+                                       Query: SELECT document, document AS "firstVal", document AS "lastName", documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS "?partitionBy?", documentdb_api_catalog.bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::documentdb_core.bson) AS worker_column_5 FROM documentdb_data.documents_19852_19850064 collection WHERE true
+                                       Node: host=localhost port=58070 dbname=regression
+                                       ->  Seq Scan on documentdb_data.documents_19852_19850064 collection
+                                             Output: document, document, document, documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), documentdb_api_catalog.bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('firstVal'::text, "firstVal", 'lastName'::text, "lastName"), false) AS document FROM (SELECT intermediate_result.document, intermediate_result."firstVal", intermediate_result."lastName" FROM read_intermediate_result('104_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, "firstVal" documentdb_core.bson, "lastName" documentdb_core.bson)) agg_stage_0
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
+               Output: documentdb_api_internal.bson_dollar_merge_documents(intermediate_result.document, documentdb_core.bson_repath_and_build('firstVal'::text, intermediate_result."firstVal", 'lastName'::text, intermediate_result."lastName"), false)
+               Function Call: read_intermediate_result('104_1'::text, 'binary'::citus_copy_format)
+(29 rows)
+
+-- 3f. GUC ON: EXPLAIN $first/$last without sortBy → bsonfirstwithexpr / bsonlastwithexpr
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "wfl_dist_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } } }], "cursor": {} }') $cmd$);
+                                                                                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                                                                                       
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   ->  Distributed Subplan 106_1
+         ->  WindowAgg
+               Output: remote_scan.document, (documentdb_api_internal.bsonfirstwithexpr(remote_scan."firstVal", '{ "" : "$v" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text) OVER w1), documentdb_api_internal.bsonlastwithexpr(remote_scan."lastName", '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text) OVER w2, remote_scan."?partitionBy?"
+               Window: w2 AS (PARTITION BY remote_scan."?partitionBy?" ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+               ->  WindowAgg
+                     Output: remote_scan."?partitionBy?", remote_scan.document, remote_scan."firstVal", remote_scan."lastName", documentdb_api_internal.bsonfirstwithexpr(remote_scan."firstVal", '{ "" : "$v" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text) OVER w1
+                     Window: w1 AS (PARTITION BY remote_scan."?partitionBy?" ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+                     ->  Sort
+                           Output: remote_scan."?partitionBy?", remote_scan.document, remote_scan."firstVal", remote_scan."lastName"
+                           Sort Key: remote_scan."?partitionBy?"
+                           ->  Custom Scan (Citus Adaptive)
+                                 Output: remote_scan."?partitionBy?", remote_scan.document, remote_scan."firstVal", remote_scan."lastName"
+                                 Task Count: 8
+                                 Tasks Shown: One of 8
+                                 ->  Task
+                                       Query: SELECT document, document AS "firstVal", document AS "lastName", documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS "?partitionBy?" FROM documentdb_data.documents_19852_19850064 collection WHERE true
+                                       Node: host=localhost port=58070 dbname=regression
+                                       ->  Seq Scan on documentdb_data.documents_19852_19850064 collection
+                                             Output: document, document, document, documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('firstVal'::text, "firstVal", 'lastName'::text, "lastName"), false) AS document FROM (SELECT intermediate_result.document, intermediate_result."firstVal", intermediate_result."lastName" FROM read_intermediate_result('106_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, "firstVal" documentdb_core.bson, "lastName" documentdb_core.bson)) agg_stage_0
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
+               Output: documentdb_api_internal.bson_dollar_merge_documents(intermediate_result.document, documentdb_core.bson_repath_and_build('firstVal'::text, intermediate_result."firstVal", 'lastName'::text, intermediate_result."lastName"), false)
+               Function Call: read_intermediate_result('106_1'::text, 'binary'::citus_copy_format)
+(29 rows)
+
+-- 3g. GUC OFF: EXPLAIN $first/$last with sortBy → bsonfirst / bsonlast (sorted path)
+SET documentdb.enableNewWithExprAccumulators TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "wfl_dist_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "sortBy": { "v": 1 }, "output": { "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } } }], "cursor": {} }') $cmd$);
+                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                         
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   ->  Distributed Subplan 108_1
+         ->  WindowAgg
+               Output: remote_scan.document, (documentdb_api_internal.bsonfirst(remote_scan."firstVal", '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[], '{ "" : "$v" }'::bson) OVER w1), documentdb_api_internal.bsonlast(remote_scan."lastName", '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[], '{ "" : "$name" }'::bson) OVER w2, remote_scan."?partitionBy?", remote_scan.worker_column_5
+               Window: w2 AS (PARTITION BY remote_scan."?partitionBy?" ORDER BY remote_scan.worker_column_5 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+               ->  WindowAgg
+                     Output: remote_scan."?partitionBy?", remote_scan.worker_column_5, remote_scan.document, remote_scan."firstVal", remote_scan."lastName", documentdb_api_internal.bsonfirst(remote_scan."firstVal", '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[], '{ "" : "$v" }'::bson) OVER w1
+                     Window: w1 AS (PARTITION BY remote_scan."?partitionBy?" ORDER BY remote_scan.worker_column_5 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+                     ->  Sort
+                           Output: remote_scan."?partitionBy?", remote_scan.worker_column_5, remote_scan.document, remote_scan."firstVal", remote_scan."lastName"
+                           Sort Key: remote_scan."?partitionBy?", remote_scan.worker_column_5 NULLS FIRST
+                           ->  Custom Scan (Citus Adaptive)
+                                 Output: remote_scan."?partitionBy?", remote_scan.worker_column_5, remote_scan.document, remote_scan."firstVal", remote_scan."lastName"
+                                 Task Count: 8
+                                 Tasks Shown: One of 8
+                                 ->  Task
+                                       Query: SELECT document, document AS "firstVal", document AS "lastName", documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS "?partitionBy?", documentdb_api_catalog.bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::documentdb_core.bson) AS worker_column_5 FROM documentdb_data.documents_19852_19850064 collection WHERE true
+                                       Node: host=localhost port=58070 dbname=regression
+                                       ->  Seq Scan on documentdb_data.documents_19852_19850064 collection
+                                             Output: document, document, document, documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), documentdb_api_catalog.bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('firstVal'::text, "firstVal", 'lastName'::text, "lastName"), false) AS document FROM (SELECT intermediate_result.document, intermediate_result."firstVal", intermediate_result."lastName" FROM read_intermediate_result('108_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, "firstVal" documentdb_core.bson, "lastName" documentdb_core.bson)) agg_stage_0
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
+               Output: documentdb_api_internal.bson_dollar_merge_documents(intermediate_result.document, documentdb_core.bson_repath_and_build('firstVal'::text, intermediate_result."firstVal", 'lastName'::text, intermediate_result."lastName"), false)
+               Function Call: read_intermediate_result('108_1'::text, 'binary'::citus_copy_format)
+(29 rows)
+
+-- 3h. GUC OFF: EXPLAIN $first/$last without sortBy → bsonfirstonsorted / bsonlastonsorted
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "wfl_dist_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } } }], "cursor": {} }') $cmd$);
+                                                                                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                                                                                       
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   ->  Distributed Subplan 110_1
+         ->  WindowAgg
+               Output: remote_scan.document, (documentdb_api_internal.bsonfirstonsorted(remote_scan."firstVal", '{ "" : "$v" }'::bson) OVER w1), documentdb_api_internal.bsonlastonsorted(remote_scan."lastName", '{ "" : "$name" }'::bson) OVER w2, remote_scan."?partitionBy?"
+               Window: w2 AS (PARTITION BY remote_scan."?partitionBy?" ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+               ->  WindowAgg
+                     Output: remote_scan."?partitionBy?", remote_scan.document, remote_scan."firstVal", remote_scan."lastName", documentdb_api_internal.bsonfirstonsorted(remote_scan."firstVal", '{ "" : "$v" }'::bson) OVER w1
+                     Window: w1 AS (PARTITION BY remote_scan."?partitionBy?" ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+                     ->  Sort
+                           Output: remote_scan."?partitionBy?", remote_scan.document, remote_scan."firstVal", remote_scan."lastName"
+                           Sort Key: remote_scan."?partitionBy?"
+                           ->  Custom Scan (Citus Adaptive)
+                                 Output: remote_scan."?partitionBy?", remote_scan.document, remote_scan."firstVal", remote_scan."lastName"
+                                 Task Count: 8
+                                 Tasks Shown: One of 8
+                                 ->  Task
+                                       Query: SELECT document, document AS "firstVal", document AS "lastName", documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS "?partitionBy?" FROM documentdb_data.documents_19852_19850064 collection WHERE true
+                                       Node: host=localhost port=58070 dbname=regression
+                                       ->  Seq Scan on documentdb_data.documents_19852_19850064 collection
+                                             Output: document, document, document, documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('firstVal'::text, "firstVal", 'lastName'::text, "lastName"), false) AS document FROM (SELECT intermediate_result.document, intermediate_result."firstVal", intermediate_result."lastName" FROM read_intermediate_result('110_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, "firstVal" documentdb_core.bson, "lastName" documentdb_core.bson)) agg_stage_0
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
+               Output: documentdb_api_internal.bson_dollar_merge_documents(intermediate_result.document, documentdb_core.bson_repath_and_build('firstVal'::text, intermediate_result."firstVal", 'lastName'::text, intermediate_result."lastName"), false)
+               Function Call: read_intermediate_result('110_1'::text, 'binary'::citus_copy_format)
+(29 rows)
+
+SELECT documentdb_api.drop_collection('db', 'wfl_dist_test');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SET documentdb.enableNewWithExprAccumulators TO off;

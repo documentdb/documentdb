@@ -5881,10 +5881,16 @@ Query *
 HandleGroup(const bson_value_t *existingValue, Query *query,
 			AggregationPipelineBuildContext *context)
 {
-	/* Collation is only supported for the new WithExpr accumulators,
-	 * not for the grouping key itself. */
+	/*
+	 * Collation is only supported with the new WithExpr accumulators, not for
+	 * the grouping key itself. We check both helpers because their underlying
+	 * SQL aggregate functions were introduced in different schema versions:
+	 * min/max WithExpr in v110 and first/last WithExpr in v111. Either being
+	 * available is sufficient to allow collation in $group with accumulators.
+	 */
 	if (IsCollationApplicable(context->collationString) &&
-		!(EnableCollationWithNewGroupAccumulators && CanUseWithExprAggregates()))
+		!(EnableCollationWithNewGroupAccumulators &&
+		  (CanUseWithExprMinMaxAggregates() || CanUseWithExprAggregates())))
 	{
 		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						errmsg("collation is not supported in $group stage yet.")));
@@ -6068,7 +6074,7 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_MAX);
 
-			if (CanUseWithExprAggregates())
+			if (CanUseWithExprMinMaxAggregates())
 			{
 				repathArgs = AddSimpleGroupAccumulatorWithExpr(
 					query, &accumulatorElement.bsonValue,
@@ -6095,7 +6101,7 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_MIN);
 
-			if (CanUseWithExprAggregates())
+			if (CanUseWithExprMinMaxAggregates())
 			{
 				repathArgs = AddSimpleGroupAccumulatorWithExpr(
 					query, &accumulatorElement.bsonValue,
@@ -6174,14 +6180,28 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_FIRST);
 			if (context->sortSpec.value_type == BSON_TYPE_EOD)
 			{
-				repathArgs = AddSimpleGroupAccumulator(query,
-													   &accumulatorElement.bsonValue,
-													   repathArgs,
-													   accumulatorText, parseState,
-													   identifiers,
-													   origEntry->expr,
-													   BsonFirstOnSortedAggregateFunctionOid(),
-													   context->variableSpec);
+				if (CanUseWithExprAggregates())
+				{
+					repathArgs = AddSimpleGroupAccumulatorWithExpr(
+						query, &accumulatorElement.bsonValue,
+						repathArgs,
+						accumulatorText, parseState,
+						identifiers, origEntry->expr,
+						BsonFirstWithExprAggregateFunctionOid(),
+						context->variableSpec,
+						context->collationString);
+				}
+				else
+				{
+					repathArgs = AddSimpleGroupAccumulator(query,
+														   &accumulatorElement.bsonValue,
+														   repathArgs,
+														   accumulatorText, parseState,
+														   identifiers,
+														   origEntry->expr,
+														   BsonFirstOnSortedAggregateFunctionOid(),
+														   context->variableSpec);
+				}
 			}
 			else
 			{
@@ -6201,14 +6221,28 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_LAST);
 			if (context->sortSpec.value_type == BSON_TYPE_EOD)
 			{
-				repathArgs = AddSimpleGroupAccumulator(query,
-													   &accumulatorElement.bsonValue,
-													   repathArgs,
-													   accumulatorText, parseState,
-													   identifiers,
-													   origEntry->expr,
-													   BsonLastOnSortedAggregateFunctionOid(),
-													   context->variableSpec);
+				if (CanUseWithExprAggregates())
+				{
+					repathArgs = AddSimpleGroupAccumulatorWithExpr(
+						query, &accumulatorElement.bsonValue,
+						repathArgs,
+						accumulatorText, parseState,
+						identifiers, origEntry->expr,
+						BsonLastWithExprAggregateFunctionOid(),
+						context->variableSpec,
+						context->collationString);
+				}
+				else
+				{
+					repathArgs = AddSimpleGroupAccumulator(query,
+														   &accumulatorElement.bsonValue,
+														   repathArgs,
+														   accumulatorText, parseState,
+														   identifiers,
+														   origEntry->expr,
+														   BsonLastOnSortedAggregateFunctionOid(),
+														   context->variableSpec);
+				}
 			}
 			else
 			{

@@ -1,0 +1,662 @@
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
+SET citus.next_shard_id TO 640000;
+SET documentdb.next_collection_id TO 6400;
+SET documentdb.next_collection_index_id TO 6400;
+-- The scope of this test is to verify EXPLAIN output, but due to a citus bug will only run in pg17 and pg18.
+-- Window aggregate EXPLAIN output will be covered in a seperate test that runs on all versions.
+-- Insert and shard a single collection used by all tests below
+SELECT documentdb_api.insert_one('db','group_firstlast_dist','{ "_id": 1, "category": "A", "val": 10, "name": "alpha" }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','group_firstlast_dist','{ "_id": 2, "category": "B", "val": 20, "name": "beta" }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','group_firstlast_dist','{ "_id": 3, "category": "A", "val": 30, "name": "gamma" }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','group_firstlast_dist','{ "_id": 4, "category": "B", "val": 40, "name": "delta" }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','group_firstlast_dist','{ "_id": 5, "category": "A", "val": 50, "name": "epsilon" }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','group_firstlast_dist','{ "_id": 6, "category": "C", "val": 60, "name": "zeta" }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('db', 'group_firstlast_dist', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+set citus.propagate_set_commands to 'local';
+-- ===== $first without $sort =====
+-- GUC OFF: should show bsonfirstonsorted
+SET documentdb.enableNewWithExprAccumulators TO off;
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+set local citus.explain_analyze_sort_method to taskId;
+SET documentdb.enableDebugQueryText TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
+  SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$group": { "_id": "$category", "firstVal": { "$first": "$val" }, "firstName": { "$first": "$name" } } } ], "cursor": {} }')
+$cmd$);
+                                                                                                                                                                                                                                                                                                                                                                                                                                             run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                              
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Output: remote_scan.document
+   ->  Distributed Subplan 29_1
+         Intermediate Data Size: 260 bytes
+         Result destination: Write locally
+         ->  HashAggregate (actual rows=3 loops=1)
+               Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, bsonfirstonsorted(remote_scan.c4), remote_scan.c5, bsonfirstonsorted(remote_scan.c6)
+               Group Key: remote_scan.c2
+               ->  Custom Scan (Citus Adaptive) (actual rows=6 loops=1)
+                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4, remote_scan.c5, remote_scan.c6
+                     Task Count: 8
+                     Tuple data received from nodes: 366 bytes
+                     Tasks Shown: One of 8
+                     ->  Task
+                           Query: SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2, 'firstVal'::text AS c3, documentdb_api_internal.bson_expression_get(document, '{ "" : "$val" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c4, 'firstName'::text AS c5, documentdb_api_internal.bson_expression_get(document, '{ "" : "$name" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c6 FROM documentdb_data.documents_6400_640016 collection WHERE documentdb_api_internal.bson_dollar_fullscan(document, '{ "category" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                           Tuple data received from node: 121 bytes
+                           Node: host=localhost port=58070 dbname=regression
+                           ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
+                                 Output: '_id'::text, documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'firstVal'::text, documentdb_api_internal.bson_expression_get(document, '{ "" : "$val" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'firstName'::text, documentdb_api_internal.bson_expression_get(document, '{ "" : "$name" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+   Task Count: 1
+   Tuple data received from nodes: 152 bytes
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('29_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
+         Tuple data received from node: 152 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
+               Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6)
+               Function Call: read_intermediate_result('29_1'::text, 'binary'::citus_copy_format)
+(29 rows)
+
+ROLLBACK;
+-- GUC ON: should show bsonfirstwithexpr
+SET documentdb.enableNewWithExprAccumulators TO on;
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+set local citus.explain_analyze_sort_method to taskId;
+SET documentdb.enableDebugQueryText TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
+  SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$group": { "_id": "$category", "firstVal": { "$first": "$val" }, "firstName": { "$first": "$name" } } } ], "cursor": {} }')
+$cmd$);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Output: remote_scan.document
+   ->  Distributed Subplan 31_1
+         Intermediate Data Size: 260 bytes
+         Result destination: Write locally
+         ->  HashAggregate (actual rows=3 loops=1)
+               Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson), remote_scan.c5, coord_combine_agg('xxxx'::oid, remote_scan.c6, NULL::bson)
+               Group Key: remote_scan.c2
+               ->  Custom Scan (Citus Adaptive) (actual rows=6 loops=1)
+                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4, remote_scan.c5, remote_scan.c6
+                     Task Count: 8
+                     Tuple data received from nodes: 366 bytes
+                     Tasks Shown: One of 8
+                     ->  Task
+                           Query: SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2, 'firstVal'::text AS c3, pg_catalog.worker_partial_agg('documentdb_api_internal.bsonfirstwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW(document, '{ "" : "$val" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS c4, 'firstName'::text AS c5, pg_catalog.worker_partial_agg('documentdb_api_internal.bsonfirstwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS c6 FROM documentdb_data.documents_6400_640016 collection WHERE documentdb_api_internal.bson_dollar_fullscan(document, '{ "category" : { "$numberInt" : "1" } }'::documentdb_core.bson) GROUP BY (documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                           Tuple data received from node: 121 bytes
+                           Node: host=localhost port=58070 dbname=regression
+                           ->  HashAggregate (actual rows=2 loops=1)
+                                 Output: '_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'firstVal'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$val" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)), 'firstName'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text))
+                                 Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                                 Batches: 1  Memory Usage: 24kB
+                                 ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
+                                       Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), document
+   Task Count: 1
+   Tuple data received from nodes: 152 bytes
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('31_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
+         Tuple data received from node: 152 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
+               Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6)
+               Function Call: read_intermediate_result('31_1'::text, 'binary'::citus_copy_format)
+(33 rows)
+
+ROLLBACK;
+-- Single group without $sort (GUC on) - should show bsonfirstwithexpr
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+set local citus.explain_analyze_sort_method to taskId;
+SET documentdb.enableDebugQueryText TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
+  SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$group": { "_id": null, "firstName": { "$first": "$name" } } } ], "cursor": {} }')
+$cmd$);
+                                                                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                                                                   
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
+   Output: remote_scan.document
+   ->  Distributed Subplan 33_1
+         Intermediate Data Size: 54 bytes
+         Result destination: Write locally
+         ->  HashAggregate (actual rows=1 loops=1)
+               Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson)
+               Group Key: remote_scan.c2
+               ->  Custom Scan (Citus Adaptive) (actual rows=4 loops=1)
+                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4
+                     Task Count: 8
+                     Tuple data received from nodes: 145 bytes
+                     Tasks Shown: One of 8
+                     ->  Task
+                           Query: SELECT '_id'::text AS c1, '{ "" : null }'::documentdb_core.bson AS c2, 'firstName'::text AS c3, pg_catalog.worker_partial_agg('documentdb_api_internal.bsonfirstwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS c4 FROM documentdb_data.documents_6400_640016 collection WHERE true GROUP BY '{ "" : null }'::documentdb_core.bson
+                           Tuple data received from node: 36 bytes
+                           Node: host=localhost port=58070 dbname=regression
+                           ->  GroupAggregate (actual rows=1 loops=1)
+                                 Output: '_id'::text, '{ "" : null }'::documentdb_core.bson, 'firstName'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text))
+                                 ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
+                                       Output: shard_key_value, object_id, document
+   Task Count: 1
+   Tuple data received from nodes: 31 bytes
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('33_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_0
+         Tuple data received from node: 31 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=1 loops=1)
+               Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4)
+               Function Call: read_intermediate_result('33_1'::text, 'binary'::citus_copy_format)
+(31 rows)
+
+ROLLBACK;
+-- ===== $first with $sort =====
+-- GUC OFF: with $sort - uses bsonfirst
+SET documentdb.enableNewWithExprAccumulators TO off;
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+set local citus.explain_analyze_sort_method to taskId;
+SET documentdb.enableDebugQueryText TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
+  SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$sort": { "val": -1 } }, { "$group": { "_id": "$category", "firstVal": { "$first": "$val" }, "firstName": { "$first": "$name" } } } ], "cursor": {} }')
+$cmd$);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Output: remote_scan.document
+   ->  Distributed Subplan 35_1
+         Intermediate Data Size: 262 bytes
+         Result destination: Write locally
+         ->  HashAggregate (actual rows=3 loops=1)
+               Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, bson_expression_get(coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), remote_scan.c5, bson_expression_get(coord_combine_agg('xxxx'::oid, remote_scan.c6, NULL::bson), '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Group Key: remote_scan.c2
+               ->  Custom Scan (Citus Adaptive) (actual rows=6 loops=1)
+                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4, remote_scan.c5, remote_scan.c6
+                     Task Count: 8
+                     Tuple data received from nodes: 1422 bytes
+                     Tasks Shown: One of 8
+                     ->  Task
+                           Query: SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(worker_column_1, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2, 'firstVal'::text AS c3, pg_catalog.worker_partial_agg('documentdb_api_catalog.bsonfirst(documentdb_core.bson,documentdb_core.bson[])'::regprocedure, ROW(worker_column_1, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[])) AS c4, 'firstName'::text AS c5, pg_catalog.worker_partial_agg('documentdb_api_catalog.bsonfirst(documentdb_core.bson,documentdb_core.bson[])'::regprocedure, ROW(worker_column_1, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[])) AS c6 FROM (SELECT agg_stage_1.document AS worker_column_1 FROM (SELECT collection.document FROM documentdb_data.documents_6400_640016 collection WHERE documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson) ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) USING OPERATOR(documentdb_api_internal.>>>) NULLS LAST) agg_stage_1) worker_subquery GROUP BY (documentdb_api_internal.bson_expression_get(worker_column_1, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                           Tuple data received from node: 472 bytes
+                           Node: host=localhost port=58070 dbname=regression
+                           ->  HashAggregate (actual rows=2 loops=1)
+                                 Output: '_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'firstVal'::text, worker_partial_agg('xxxx'::oid, ROW(agg_stage_1.document, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[])), 'firstName'::text, worker_partial_agg('xxxx'::oid, ROW(agg_stage_1.document, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[]))
+                                 Group Key: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                                 Batches: 1  Memory Usage: 24kB
+                                 ->  Subquery Scan on agg_stage_1 (actual rows=2 loops=1)
+                                       Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), agg_stage_1.document
+                                       ->  Sort (actual rows=2 loops=1)
+                                             Output: collection.document, (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson))
+                                             Sort Key: (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) USING >>> NULLS LAST
+                                             Sort Method: quicksort  Memory: xxxkB
+                                             ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
+                                                   Output: collection.document, documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson)
+   Task Count: 1
+   Tuple data received from nodes: 154 bytes
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('35_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_1
+         Tuple data received from node: 154 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
+               Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6)
+               Function Call: read_intermediate_result('35_1'::text, 'binary'::citus_copy_format)
+(39 rows)
+
+ROLLBACK;
+-- GUC ON: should still use bsonfirst (not new accumulators) when $sort precedes
+SET documentdb.enableNewWithExprAccumulators TO on;
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+set local citus.explain_analyze_sort_method to taskId;
+SET documentdb.enableDebugQueryText TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
+  SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$sort": { "val": -1 } }, { "$group": { "_id": "$category", "firstVal": { "$first": "$val" }, "firstName": { "$first": "$name" } } } ], "cursor": {} }')
+$cmd$);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Output: remote_scan.document
+   ->  Distributed Subplan 37_1
+         Intermediate Data Size: 262 bytes
+         Result destination: Write locally
+         ->  HashAggregate (actual rows=3 loops=1)
+               Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, bson_expression_get(coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), remote_scan.c5, bson_expression_get(coord_combine_agg('xxxx'::oid, remote_scan.c6, NULL::bson), '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Group Key: remote_scan.c2
+               ->  Custom Scan (Citus Adaptive) (actual rows=6 loops=1)
+                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4, remote_scan.c5, remote_scan.c6
+                     Task Count: 8
+                     Tuple data received from nodes: 1422 bytes
+                     Tasks Shown: One of 8
+                     ->  Task
+                           Query: SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(worker_column_1, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2, 'firstVal'::text AS c3, pg_catalog.worker_partial_agg('documentdb_api_catalog.bsonfirst(documentdb_core.bson,documentdb_core.bson[])'::regprocedure, ROW(worker_column_1, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[])) AS c4, 'firstName'::text AS c5, pg_catalog.worker_partial_agg('documentdb_api_catalog.bsonfirst(documentdb_core.bson,documentdb_core.bson[])'::regprocedure, ROW(worker_column_1, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[])) AS c6 FROM (SELECT agg_stage_1.document AS worker_column_1 FROM (SELECT collection.document FROM documentdb_data.documents_6400_640016 collection WHERE documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson) ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) USING OPERATOR(documentdb_api_internal.>>>) NULLS LAST) agg_stage_1) worker_subquery GROUP BY (documentdb_api_internal.bson_expression_get(worker_column_1, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                           Tuple data received from node: 472 bytes
+                           Node: host=localhost port=58070 dbname=regression
+                           ->  HashAggregate (actual rows=2 loops=1)
+                                 Output: '_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'firstVal'::text, worker_partial_agg('xxxx'::oid, ROW(agg_stage_1.document, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[])), 'firstName'::text, worker_partial_agg('xxxx'::oid, ROW(agg_stage_1.document, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[]))
+                                 Group Key: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                                 Batches: 1  Memory Usage: 24kB
+                                 ->  Subquery Scan on agg_stage_1 (actual rows=2 loops=1)
+                                       Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), agg_stage_1.document
+                                       ->  Sort (actual rows=2 loops=1)
+                                             Output: collection.document, (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson))
+                                             Sort Key: (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) USING >>> NULLS LAST
+                                             Sort Method: quicksort  Memory: xxxkB
+                                             ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
+                                                   Output: collection.document, documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson)
+   Task Count: 1
+   Tuple data received from nodes: 154 bytes
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('37_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_1
+         Tuple data received from node: 154 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
+               Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6)
+               Function Call: read_intermediate_result('37_1'::text, 'binary'::citus_copy_format)
+(39 rows)
+
+ROLLBACK;
+-- Single group with $sort (GUC on)
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+set local citus.explain_analyze_sort_method to taskId;
+SET documentdb.enableDebugQueryText TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
+  SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$sort": { "val": -1 } }, { "$group": { "_id": null, "firstName": { "$first": "$name" } } } ], "cursor": {} }')
+$cmd$);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
+   Output: remote_scan.document
+   ->  Distributed Subplan 39_1
+         Intermediate Data Size: 53 bytes
+         Result destination: Write locally
+         ->  HashAggregate (actual rows=1 loops=1)
+               Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, bson_expression_get(coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson), '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Group Key: remote_scan.c2
+               ->  Custom Scan (Citus Adaptive) (actual rows=4 loops=1)
+                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4
+                     Task Count: 8
+                     Tuple data received from nodes: 485 bytes
+                     Tasks Shown: One of 8
+                     ->  Task
+                           Query: SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get('{ }'::documentdb_core.bson, '{ "" : null }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2, 'firstName'::text AS c3, pg_catalog.worker_partial_agg('documentdb_api_catalog.bsonfirst(documentdb_core.bson,documentdb_core.bson[])'::regprocedure, ROW(worker_column_1, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[])) AS c4 FROM (SELECT agg_stage_1.document AS worker_column_1 FROM (SELECT collection.document FROM documentdb_data.documents_6400_640016 collection WHERE documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson) ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) USING OPERATOR(documentdb_api_internal.>>>) NULLS LAST) agg_stage_1) worker_subquery GROUP BY (documentdb_api_internal.bson_expression_get('{ }'::documentdb_core.bson, '{ "" : null }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                           Tuple data received from node: 120 bytes
+                           Node: host=localhost port=58070 dbname=regression
+                           ->  GroupAggregate (actual rows=1 loops=1)
+                                 Output: '_id'::text, '{ "" : null }'::documentdb_core.bson, 'firstName'::text, worker_partial_agg('xxxx'::oid, ROW(collection.document, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[]))
+                                 ->  Sort (actual rows=2 loops=1)
+                                       Output: collection.document, (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson))
+                                       Sort Key: (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) USING >>> NULLS LAST
+                                       Sort Method: quicksort  Memory: xxxkB
+                                       ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
+                                             Output: collection.document, documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson)
+   Task Count: 1
+   Tuple data received from nodes: 30 bytes
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('39_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_1
+         Tuple data received from node: 30 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=1 loops=1)
+               Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4)
+               Function Call: read_intermediate_result('39_1'::text, 'binary'::citus_copy_format)
+(35 rows)
+
+ROLLBACK;
+-- ===== $last without $sort =====
+-- GUC OFF: should show bsonlastonsorted
+SET documentdb.enableNewWithExprAccumulators TO off;
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+set local citus.explain_analyze_sort_method to taskId;
+SET documentdb.enableDebugQueryText TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
+  SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$group": { "_id": "$category", "lastVal": { "$last": "$val" }, "lastName": { "$last": "$name" } } } ], "cursor": {} }')
+$cmd$);
+                                                                                                                                                                                                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                             
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Output: remote_scan.document
+   ->  Distributed Subplan 41_1
+         Intermediate Data Size: 253 bytes
+         Result destination: Write locally
+         ->  HashAggregate (actual rows=3 loops=1)
+               Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, bsonlastonsorted(remote_scan.c4), remote_scan.c5, bsonlastonsorted(remote_scan.c6)
+               Group Key: remote_scan.c2
+               ->  Custom Scan (Citus Adaptive) (actual rows=6 loops=1)
+                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4, remote_scan.c5, remote_scan.c6
+                     Task Count: 8
+                     Tuple data received from nodes: 354 bytes
+                     Tasks Shown: One of 8
+                     ->  Task
+                           Query: SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2, 'lastVal'::text AS c3, documentdb_api_internal.bson_expression_get(document, '{ "" : "$val" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c4, 'lastName'::text AS c5, documentdb_api_internal.bson_expression_get(document, '{ "" : "$name" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c6 FROM documentdb_data.documents_6400_640016 collection WHERE documentdb_api_internal.bson_dollar_fullscan(document, '{ "category" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                           Tuple data received from node: 117 bytes
+                           Node: host=localhost port=58070 dbname=regression
+                           ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
+                                 Output: '_id'::text, documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'lastVal'::text, documentdb_api_internal.bson_expression_get(document, '{ "" : "$val" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'lastName'::text, documentdb_api_internal.bson_expression_get(document, '{ "" : "$name" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+   Task Count: 1
+   Tuple data received from nodes: 145 bytes
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('41_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
+         Tuple data received from node: 145 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
+               Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6)
+               Function Call: read_intermediate_result('41_1'::text, 'binary'::citus_copy_format)
+(29 rows)
+
+ROLLBACK;
+-- GUC ON: should show bsonlastwithexpr
+SET documentdb.enableNewWithExprAccumulators TO on;
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+set local citus.explain_analyze_sort_method to taskId;
+SET documentdb.enableDebugQueryText TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
+  SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$group": { "_id": "$category", "lastVal": { "$last": "$val" }, "lastName": { "$last": "$name" } } } ], "cursor": {} }')
+$cmd$);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Output: remote_scan.document
+   ->  Distributed Subplan 43_1
+         Intermediate Data Size: 253 bytes
+         Result destination: Write locally
+         ->  HashAggregate (actual rows=3 loops=1)
+               Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson), remote_scan.c5, coord_combine_agg('xxxx'::oid, remote_scan.c6, NULL::bson)
+               Group Key: remote_scan.c2
+               ->  Custom Scan (Citus Adaptive) (actual rows=6 loops=1)
+                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4, remote_scan.c5, remote_scan.c6
+                     Task Count: 8
+                     Tuple data received from nodes: 354 bytes
+                     Tasks Shown: One of 8
+                     ->  Task
+                           Query: SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2, 'lastVal'::text AS c3, pg_catalog.worker_partial_agg('documentdb_api_internal.bsonlastwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW(document, '{ "" : "$val" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS c4, 'lastName'::text AS c5, pg_catalog.worker_partial_agg('documentdb_api_internal.bsonlastwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS c6 FROM documentdb_data.documents_6400_640016 collection WHERE documentdb_api_internal.bson_dollar_fullscan(document, '{ "category" : { "$numberInt" : "1" } }'::documentdb_core.bson) GROUP BY (documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                           Tuple data received from node: 117 bytes
+                           Node: host=localhost port=58070 dbname=regression
+                           ->  HashAggregate (actual rows=2 loops=1)
+                                 Output: '_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'lastVal'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$val" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)), 'lastName'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text))
+                                 Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                                 Batches: 1  Memory Usage: 24kB
+                                 ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
+                                       Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), document
+   Task Count: 1
+   Tuple data received from nodes: 145 bytes
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('43_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
+         Tuple data received from node: 145 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
+               Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6)
+               Function Call: read_intermediate_result('43_1'::text, 'binary'::citus_copy_format)
+(33 rows)
+
+ROLLBACK;
+-- Single group without $sort (GUC on) - should show bsonlastwithexpr
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+set local citus.explain_analyze_sort_method to taskId;
+SET documentdb.enableDebugQueryText TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
+  SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$group": { "_id": null, "lastName": { "$last": "$name" } } } ], "cursor": {} }')
+$cmd$);
+                                                                                                                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                                                                                                                  
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
+   Output: remote_scan.document
+   ->  Distributed Subplan 45_1
+         Intermediate Data Size: 53 bytes
+         Result destination: Write locally
+         ->  HashAggregate (actual rows=1 loops=1)
+               Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson)
+               Group Key: remote_scan.c2
+               ->  Custom Scan (Citus Adaptive) (actual rows=4 loops=1)
+                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4
+                     Task Count: 8
+                     Tuple data received from nodes: 141 bytes
+                     Tasks Shown: One of 8
+                     ->  Task
+                           Query: SELECT '_id'::text AS c1, '{ "" : null }'::documentdb_core.bson AS c2, 'lastName'::text AS c3, pg_catalog.worker_partial_agg('documentdb_api_internal.bsonlastwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS c4 FROM documentdb_data.documents_6400_640016 collection WHERE true GROUP BY '{ "" : null }'::documentdb_core.bson
+                           Tuple data received from node: 34 bytes
+                           Node: host=localhost port=58070 dbname=regression
+                           ->  GroupAggregate (actual rows=1 loops=1)
+                                 Output: '_id'::text, '{ "" : null }'::documentdb_core.bson, 'lastName'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text))
+                                 ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
+                                       Output: shard_key_value, object_id, document
+   Task Count: 1
+   Tuple data received from nodes: 30 bytes
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('45_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_0
+         Tuple data received from node: 30 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=1 loops=1)
+               Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4)
+               Function Call: read_intermediate_result('45_1'::text, 'binary'::citus_copy_format)
+(31 rows)
+
+ROLLBACK;
+-- ===== $last with $sort =====
+-- GUC ON: should still use bsonlast (not new accumulators) when $sort precedes
+SET documentdb.enableNewWithExprAccumulators TO on;
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+set local citus.explain_analyze_sort_method to taskId;
+SET documentdb.enableDebugQueryText TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
+  SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$sort": { "val": -1 } }, { "$group": { "_id": "$category", "lastVal": { "$last": "$val" }, "lastName": { "$last": "$name" } } } ], "cursor": {} }')
+$cmd$);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Output: remote_scan.document
+   ->  Distributed Subplan 47_1
+         Intermediate Data Size: 253 bytes
+         Result destination: Write locally
+         ->  HashAggregate (actual rows=3 loops=1)
+               Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, bson_expression_get(coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), remote_scan.c5, bson_expression_get(coord_combine_agg('xxxx'::oid, remote_scan.c6, NULL::bson), '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Group Key: remote_scan.c2
+               ->  Custom Scan (Citus Adaptive) (actual rows=6 loops=1)
+                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4, remote_scan.c5, remote_scan.c6
+                     Task Count: 8
+                     Tuple data received from nodes: 1410 bytes
+                     Tasks Shown: One of 8
+                     ->  Task
+                           Query: SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(worker_column_1, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2, 'lastVal'::text AS c3, pg_catalog.worker_partial_agg('documentdb_api_catalog.bsonlast(documentdb_core.bson,documentdb_core.bson[])'::regprocedure, ROW(worker_column_1, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[])) AS c4, 'lastName'::text AS c5, pg_catalog.worker_partial_agg('documentdb_api_catalog.bsonlast(documentdb_core.bson,documentdb_core.bson[])'::regprocedure, ROW(worker_column_1, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[])) AS c6 FROM (SELECT agg_stage_1.document AS worker_column_1 FROM (SELECT collection.document FROM documentdb_data.documents_6400_640016 collection WHERE documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson) ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) USING OPERATOR(documentdb_api_internal.>>>) NULLS LAST) agg_stage_1) worker_subquery GROUP BY (documentdb_api_internal.bson_expression_get(worker_column_1, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                           Tuple data received from node: 468 bytes
+                           Node: host=localhost port=58070 dbname=regression
+                           ->  HashAggregate (actual rows=2 loops=1)
+                                 Output: '_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'lastVal'::text, worker_partial_agg('xxxx'::oid, ROW(agg_stage_1.document, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[])), 'lastName'::text, worker_partial_agg('xxxx'::oid, ROW(agg_stage_1.document, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[]))
+                                 Group Key: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                                 Batches: 1  Memory Usage: 24kB
+                                 ->  Subquery Scan on agg_stage_1 (actual rows=2 loops=1)
+                                       Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), agg_stage_1.document
+                                       ->  Sort (actual rows=2 loops=1)
+                                             Output: collection.document, (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson))
+                                             Sort Key: (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) USING >>> NULLS LAST
+                                             Sort Method: quicksort  Memory: xxxkB
+                                             ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
+                                                   Output: collection.document, documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson)
+   Task Count: 1
+   Tuple data received from nodes: 145 bytes
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('47_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_1
+         Tuple data received from node: 145 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
+               Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6)
+               Function Call: read_intermediate_result('47_1'::text, 'binary'::citus_copy_format)
+(39 rows)
+
+ROLLBACK;
+-- Single group with $sort (GUC on)
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+set local citus.explain_analyze_sort_method to taskId;
+SET documentdb.enableDebugQueryText TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
+  SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$sort": { "val": -1 } }, { "$group": { "_id": null, "lastName": { "$last": "$name" } } } ], "cursor": {} }')
+$cmd$);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
+   Output: remote_scan.document
+   ->  Distributed Subplan 49_1
+         Intermediate Data Size: 53 bytes
+         Result destination: Write locally
+         ->  HashAggregate (actual rows=1 loops=1)
+               Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, bson_expression_get(coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson), '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Group Key: remote_scan.c2
+               ->  Custom Scan (Citus Adaptive) (actual rows=4 loops=1)
+                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4
+                     Task Count: 8
+                     Tuple data received from nodes: 481 bytes
+                     Tasks Shown: One of 8
+                     ->  Task
+                           Query: SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get('{ }'::documentdb_core.bson, '{ "" : null }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2, 'lastName'::text AS c3, pg_catalog.worker_partial_agg('documentdb_api_catalog.bsonlast(documentdb_core.bson,documentdb_core.bson[])'::regprocedure, ROW(worker_column_1, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[])) AS c4 FROM (SELECT agg_stage_1.document AS worker_column_1 FROM (SELECT collection.document FROM documentdb_data.documents_6400_640016 collection WHERE documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson) ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) USING OPERATOR(documentdb_api_internal.>>>) NULLS LAST) agg_stage_1) worker_subquery GROUP BY (documentdb_api_internal.bson_expression_get('{ }'::documentdb_core.bson, '{ "" : null }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                           Tuple data received from node: 120 bytes
+                           Node: host=localhost port=58070 dbname=regression
+                           ->  GroupAggregate (actual rows=1 loops=1)
+                                 Output: '_id'::text, '{ "" : null }'::documentdb_core.bson, 'lastName'::text, worker_partial_agg('xxxx'::oid, ROW(collection.document, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[]))
+                                 ->  Sort (actual rows=2 loops=1)
+                                       Output: collection.document, (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson))
+                                       Sort Key: (documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) USING >>> NULLS LAST
+                                       Sort Method: quicksort  Memory: xxxkB
+                                       ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
+                                             Output: collection.document, documentdb_api_catalog.bson_orderby(collection.document, '{ "val" : { "$numberInt" : "-1" } }'::documentdb_core.bson)
+   Task Count: 1
+   Tuple data received from nodes: 30 bytes
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('49_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_1
+         Tuple data received from node: 30 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=1 loops=1)
+               Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4)
+               Function Call: read_intermediate_result('49_1'::text, 'binary'::citus_copy_format)
+(35 rows)
+
+ROLLBACK;
+-- ===== Collation EXPLAIN =====
+-- GUC ON + collation: should show bsonfirstwithexpr / bsonlastwithexpr with collation locale
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNewGroupAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+set local citus.explain_analyze_sort_method to taskId;
+SET documentdb.enableDebugQueryText TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+  EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
+  SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$group": { "_id": "$category", "firstName": { "$first": "$name" }, "lastName": { "$last": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
+   Output: remote_scan.document
+   ->  Distributed Subplan 51_1
+         Intermediate Data Size: 276 bytes
+         Result destination: Write locally
+         ->  HashAggregate (actual rows=3 loops=1)
+               Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson), remote_scan.c5, coord_combine_agg('xxxx'::oid, remote_scan.c6, NULL::bson)
+               Group Key: remote_scan.c2
+               ->  Custom Scan (Citus Adaptive) (actual rows=6 loops=1)
+                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4, remote_scan.c5, remote_scan.c6
+                     Task Count: 8
+                     Tuple data received from nodes: 402 bytes
+                     Tasks Shown: One of 8
+                     ->  Task
+                           Query: SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2, 'firstName'::text AS c3, pg_catalog.worker_partial_agg('documentdb_api_internal.bsonfirstwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)) AS c4, 'lastName'::text AS c5, pg_catalog.worker_partial_agg('documentdb_api_internal.bsonlastwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)) AS c6 FROM documentdb_data.documents_6400_640016 collection WHERE documentdb_api_internal.bson_dollar_fullscan(document, '{ "category" : { "$numberInt" : "1" } }'::documentdb_core.bson) GROUP BY (documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                           Tuple data received from node: 132 bytes
+                           Node: host=localhost port=58070 dbname=regression
+                           ->  HashAggregate (actual rows=2 loops=1)
+                                 Output: '_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'firstName'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)), 'lastName'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text))
+                                 Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                                 Batches: 1  Memory Usage: 24kB
+                                 ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
+                                       Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), document
+   Task Count: 1
+   Tuple data received from nodes: 168 bytes
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('51_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
+         Tuple data received from node: 168 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
+               Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6)
+               Function Call: read_intermediate_result('51_1'::text, 'binary'::citus_copy_format)
+(33 rows)
+
+ROLLBACK;
+SET documentdb.enableNewWithExprAccumulators TO off;
+SET documentdb.enableCollationWithNewGroupAccumulators TO off;
+SET documentdb_core.enableCollation TO off;
+-- Cleanup
+SELECT documentdb_api.drop_collection('db', 'group_firstlast_dist');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
