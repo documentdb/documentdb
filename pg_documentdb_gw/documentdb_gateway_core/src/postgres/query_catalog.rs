@@ -60,6 +60,7 @@ pub struct QueryCatalog {
     pub drop_collection: String,
     pub set_allow_write: String,
     pub shard_collection: String,
+    pub reshard_collection: String,
     pub rename_collection: String,
     pub coll_mod: String,
     pub unshard_collection: String,
@@ -352,6 +353,10 @@ impl QueryCatalog {
         &self.shard_collection
     }
 
+    pub fn reshard_collection(&self) -> &str {
+        &self.reshard_collection
+    }
+
     pub fn rename_collection(&self) -> &str {
         &self.rename_collection
     }
@@ -498,7 +503,8 @@ pub fn create_query_catalog() -> QueryCatalog {
             drop_collection: "SELECT documentdb_api.drop_collection($1, $2)".to_string(),
             set_allow_write: "SET LOCAL documentdb.IsPgReadOnlyForDiskFull to false; SET transaction read write".to_string(),
             create_collection_view: "SELECT documentdb_api.create_collection_view($1, $2)".to_string(),
-            shard_collection: "SELECT documentdb_api.shard_collection($1, $2, $3, $4)".to_string(),
+            shard_collection: "SELECT documentdb_api.shard_collection($1)".to_string(),
+            reshard_collection: "SELECT documentdb_api.reshard_collection($1)".to_string(),
             rename_collection: "SELECT documentdb_api.rename_collection($1)".to_string(),
             coll_mod: "SELECT documentdb_api.coll_mod($1, $2, $3)".to_string(),
             unshard_collection: "SELECT documentdb_api.unshard_collection($1)".to_string(),
