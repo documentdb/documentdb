@@ -531,3 +531,18 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('comp
 set work_mem to '64';
 WITH r1 AS (SELECT document FROM bson_aggregation_find('comp_db', '{ "find": "testbitmaponorder", "filter": { "a": { "$gt": "" }  }, "sort": { "b": 1 } }'))
 SELECT COUNT(*) FROM r1;
+
+-- reverse walk with no prefix.
+SELECT documentdb_api.insert_one('comp_db', 'no_prefix_scan', '{ "_id": 1, "a": 1, "b": "a" }');
+SELECT documentdb_api.insert_one('comp_db', 'no_prefix_scan', '{ "_id": 2, "a": 1, "b": "o" }');
+SELECT documentdb_api.insert_one('comp_db', 'no_prefix_scan', '{ "_id": 3, "a": 2, "b": "o" }');
+SELECT documentdb_api.insert_one('comp_db', 'no_prefix_scan', '{ "_id": 4, "a": 2, "b": "a" }');
+SELECT documentdb_api.insert_one('comp_db', 'no_prefix_scan', '{ "_id": 5, "a": 3, "b": "a" }');
+
+reset work_mem;
+reset enable_indexscan;
+reset enable_bitmapscan;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{ "createIndexes": "no_prefix_scan", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": true } ] }', true);
+
+SELECT document FROM bson_aggregation_find('comp_db', '{ "find": "no_prefix_scan", "filter": { "b": "o" }, "sort": { "a": 1 } }');
+SELECT document FROM bson_aggregation_find('comp_db', '{ "find": "no_prefix_scan", "filter": { "b": "o" }, "sort": { "a": -1 } }');

@@ -1651,7 +1651,16 @@ SetBoundaryStoppingValueLessThan(bool hasEqualityPrefix, const BsonIndexTerm *co
 									   -1);
 	}
 
-	return isBackwardScan ? -cmp : cmp;
+	if (isBackwardScan)
+	{
+		cmp = -cmp;
+		if (!hasEqualityPrefix && cmp == 1)
+		{
+			cmp = -1;
+		}
+	}
+
+	return cmp;
 }
 
 
