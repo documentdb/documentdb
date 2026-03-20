@@ -2438,3 +2438,58 @@ SELECT COUNT(*) FROM r1;
  10000
 (1 row)
 
+-- reverse walk with no prefix.
+SELECT documentdb_api.insert_one('comp_db', 'no_prefix_scan', '{ "_id": 1, "a": 1, "b": "a" }');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('comp_db', 'no_prefix_scan', '{ "_id": 2, "a": 1, "b": "o" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('comp_db', 'no_prefix_scan', '{ "_id": 3, "a": 2, "b": "o" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('comp_db', 'no_prefix_scan', '{ "_id": 4, "a": 2, "b": "a" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('comp_db', 'no_prefix_scan', '{ "_id": 5, "a": 3, "b": "a" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+reset work_mem;
+reset enable_indexscan;
+reset enable_bitmapscan;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{ "createIndexes": "no_prefix_scan", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": true } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('comp_db', '{ "find": "no_prefix_scan", "filter": { "b": "o" }, "sort": { "a": 1 } }');
+                                  document                                   
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "1" }, "b" : "o" }
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "2" }, "b" : "o" }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('comp_db', '{ "find": "no_prefix_scan", "filter": { "b": "o" }, "sort": { "a": -1 } }');
+                                  document                                   
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "2" }, "b" : "o" }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "1" }, "b" : "o" }
+(2 rows)
+
