@@ -155,13 +155,26 @@ GenerateFirstPageQueryData(void)
  * Used by both $group accumulators and $setWindowFields window operators.
  */
 extern bool EnableNewMinMaxAccumulators;
+extern bool EnableNewWithExprAccumulators;
 extern bool EnableCollationWithNewGroupAccumulators;
 
 inline static bool
+CanUseWithExprMinMaxAggregates(void)
+{
+	return (EnableNewMinMaxAccumulators || EnableNewWithExprAccumulators) &&
+		   IsClusterVersionAtleast(DocDB_V0, 110, 0);
+}
+
+
+/*
+ * Feature flag and version check for using the superset EnableNewWithExprAccumulators
+ * GUC. Gates WithExpr aggregates introduced in v111.
+ */
+inline static bool
 CanUseWithExprAggregates(void)
 {
-	return EnableNewMinMaxAccumulators &&
-		   IsClusterVersionAtleast(DocDB_V0, 110, 0);
+	return EnableNewWithExprAccumulators &&
+		   IsClusterVersionAtleast(DocDB_V0, 111, 0);
 }
 
 

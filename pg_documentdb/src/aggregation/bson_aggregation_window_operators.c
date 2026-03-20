@@ -191,7 +191,8 @@ static WindowFunc * HandleDollarFirstLastOperators(const bson_value_t *opValue,
 												   WindowOperatorContext *context,
 												   const char *opName,
 												   Oid aggregateFunctionOid,
-												   bool isNOperator);
+												   bool isNOperator,
+												   bool useWithExpr);
 
 /*===================================*/
 /* Window Operator Handler functions */
@@ -2832,10 +2833,18 @@ HandleDollarFirstWindowOperator(const bson_value_t *opValue,
 								WindowOperatorContext *context)
 {
 	bool isNOperator = false;
+	bool hasSortBy = context->sortOptions != NIL &&
+					 list_length(context->sortOptions) > 0;
 	Oid functionOid;
-	if (context->sortOptions != NIL && list_length(context->sortOptions) > 0)
+	bool useWithExpr = false;
+	if (hasSortBy)
 	{
 		functionOid = BsonFirstAggregateAllArgsFunctionOid();
+	}
+	else if (CanUseWithExprAggregates())
+	{
+		functionOid = BsonFirstWithExprAggregateFunctionOid();
+		useWithExpr = true;
 	}
 	else
 	{
@@ -2843,7 +2852,7 @@ HandleDollarFirstWindowOperator(const bson_value_t *opValue,
 	}
 
 	return HandleDollarFirstLastOperators(opValue, context, "$first", functionOid,
-										  isNOperator);
+										  isNOperator, useWithExpr);
 }
 
 
@@ -2856,10 +2865,18 @@ HandleDollarLastWindowOperator(const bson_value_t *opValue,
 							   WindowOperatorContext *context)
 {
 	bool isNOperator = false;
+	bool hasSortBy = context->sortOptions != NIL &&
+					 list_length(context->sortOptions) > 0;
 	Oid functionOid;
-	if (context->sortOptions != NIL && list_length(context->sortOptions) > 0)
+	bool useWithExpr = false;
+	if (hasSortBy)
 	{
 		functionOid = BsonLastAggregateAllArgsFunctionOid();
+	}
+	else if (CanUseWithExprAggregates())
+	{
+		functionOid = BsonLastWithExprAggregateFunctionOid();
+		useWithExpr = true;
 	}
 	else
 	{
@@ -2867,7 +2884,7 @@ HandleDollarLastWindowOperator(const bson_value_t *opValue,
 	}
 
 	return HandleDollarFirstLastOperators(opValue, context, "$last", functionOid,
-										  isNOperator);
+										  isNOperator, useWithExpr);
 }
 
 
@@ -2888,6 +2905,7 @@ HandleDollarFirstNWindowOperator(const bson_value_t *opValue,
 {
 	bool isNOperator = true;
 	Oid functionOid;
+	bool useWithExpr = false;
 	if (context->sortOptions != NIL && list_length(context->sortOptions) > 0)
 	{
 		functionOid = BsonFirstNAggregateAllArgsFunctionOid();
@@ -2898,7 +2916,7 @@ HandleDollarFirstNWindowOperator(const bson_value_t *opValue,
 	}
 
 	return HandleDollarFirstLastOperators(opValue, context, "$firstN", functionOid,
-										  isNOperator);
+										  isNOperator, useWithExpr);
 }
 
 
@@ -2919,6 +2937,7 @@ HandleDollarLastNWindowOperator(const bson_value_t *opValue,
 {
 	bool isNOperator = true;
 	Oid functionOid;
+	bool useWithExpr = false;
 	if (context->sortOptions != NIL && list_length(context->sortOptions) > 0)
 	{
 		functionOid = BsonLastNAggregateAllArgsFunctionOid();
@@ -2929,7 +2948,7 @@ HandleDollarLastNWindowOperator(const bson_value_t *opValue,
 	}
 
 	return HandleDollarFirstLastOperators(opValue, context, "$lastN", functionOid,
-										  isNOperator);
+										  isNOperator, useWithExpr);
 }
 
 
@@ -2944,7 +2963,8 @@ HandleDollarFirstLastOperators(const bson_value_t *opValue,
 							   WindowOperatorContext *context,
 							   const char *opName,
 							   Oid aggregateFunctionOid,
-							   bool isNOperator)
+							   bool isNOperator,
+							   bool useWithExpr)
 {
 	WindowFunc *windowFunc = makeNode(WindowFunc);
 	windowFunc->wintype = BsonTypeId();
@@ -3001,6 +3021,19 @@ HandleDollarFirstLastOperators(const bson_value_t *opValue,
 		{
 			windowFunc->args = list_make3(context->docExpr, sortArrayConst, constValue);
 		}
+	}
+	else if (useWithExpr)
+	{
+		/* WithExpr aggregates take (doc, exprSpec, varSpec, collationString) */
+		Expr *variableSpec = context->variableContext != NULL ?
+							 context->variableContext :
+							 (Expr *) makeNullConst(BsonTypeId(), -1, InvalidOid);
+
+		/* Collation is not supported in $setWindowFields yet, so pass NULL */
+		Const *collationConst = makeNullConst(TEXTOID, -1, InvalidOid);
+
+		windowFunc->args = list_make4(context->docExpr, constValue,
+									  variableSpec, collationConst);
 	}
 	else
 	{
@@ -3112,7 +3145,7 @@ static WindowFunc *
 HandleDollarMinWindowOperator(const bson_value_t *opValue,
 							  WindowOperatorContext *context)
 {
-	if (CanUseWithExprAggregates())
+	if (CanUseWithExprMinMaxAggregates())
 	{
 		return GetWindowFuncWithExprAggregate(opValue, context,
 											  BsonMinWithExprAggregateFunctionOid());
@@ -3133,7 +3166,7 @@ static WindowFunc *
 HandleDollarMaxWindowOperator(const bson_value_t *opValue,
 							  WindowOperatorContext *context)
 {
-	if (CanUseWithExprAggregates())
+	if (CanUseWithExprMinMaxAggregates())
 	{
 		return GetWindowFuncWithExprAggregate(opValue, context,
 											  BsonMaxWithExprAggregateFunctionOid());

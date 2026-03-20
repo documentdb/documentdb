@@ -426,7 +426,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                             |         |                                                                                                                                                                                                                    | f
 (6 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
                                                                                                                 filtereddoc                                                                                                                 | docsize |                                                                                                continuationfiltered                                                                                                | persistconnection 
 ---------------------------------------------------------------------
@@ -438,7 +438,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                             |         |                                                                                                                                                                                                                    | f
 (6 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }, { "$limit": 1 }]}');
                                                                                                 filtereddoc                                                                                                | docsize | continuationfiltered | persistconnection 
 ---------------------------------------------------------------------
@@ -589,7 +589,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                             |         |                                                                                                                                                                                                                    | f
 (6 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
                                                                                                                 filtereddoc                                                                                                                 | docsize |                                                                                                continuationfiltered                                                                                                | persistconnection 
 ---------------------------------------------------------------------
@@ -601,7 +601,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                             |         |                                                                                                                                                                                                                    | f
 (6 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 ROLLBACK;
 -- With local execution off.
 BEGIN;
@@ -731,7 +731,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                             |         |                                                                                                                                                                                                                    | f
 (6 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
                                                                                                                 filtereddoc                                                                                                                 | docsize |                                                                                                continuationfiltered                                                                                                | persistconnection 
 ---------------------------------------------------------------------
@@ -743,7 +743,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                             |         |                                                                                                                                                                                                                    | f
 (6 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 ROLLBACK;
 -- with sharded
 SELECT documentdb_api.shard_collection('db', 'get_aggregation_cursor_test', '{ "_id": "hashed" }', false);
@@ -903,7 +903,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                             |         |                                                                                                                                                                                                                    | f
 (6 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
                                                                                                                 filtereddoc                                                                                                                 | docsize |                                                                                                continuationfiltered                                                                                                | persistconnection 
 ---------------------------------------------------------------------
@@ -915,7 +915,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                             |         |                                                                                                                                                                                                                    | f
 (6 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 -- inside a transaction block
 BEGIN;
 SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2);
@@ -1043,7 +1043,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                             |         |                                                                                                                                                                                                                    | f
 (6 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
                                                                                                                 filtereddoc                                                                                                                 | docsize |                                                                                                continuationfiltered                                                                                                | persistconnection 
 ---------------------------------------------------------------------
@@ -1055,7 +1055,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                             |         |                                                                                                                                                                                                                    | f
 (6 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 ROLLBACK;
 -- With local execution off.
 BEGIN;
@@ -1185,7 +1185,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                           |         |                                                                                                                                                                                                                    | f
 (6 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }', obfuscate_id => true);
                                                                                                        filtereddoc                                                                                                        | docsize |                                                                                                continuationfiltered                                                                                                | persistconnection 
 ---------------------------------------------------------------------
@@ -1197,7 +1197,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                           |         |                                                                                                                                                                                                                    | f
 (6 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 ROLLBACK;
 -- test for errors when returnKey is set to true
 SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies", "filter" : { "title" : "a" }, "limit" : 1, "singleBatch" : true, "batchSize" : 1, "returnKey" : true, "lsid" : { "id" : { "$binary" : { "base64": "apfUje6LTzKH9YfO3smIGA==", "subType" : "04" } } }, "$db" : "db" }');

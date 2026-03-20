@@ -228,10 +228,13 @@ bool EnableExplainScanIndexCosts = DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS;
 #define DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME true
 bool EnableExplainScanNamespaceName = DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME;
 
-/* Added in v110, Pending stabilization */
+/* Added in v110, Pending stabilization. Superseded by EnableNewWithExprAccumulators in v111 */
 #define DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS false
 bool EnableNewMinMaxAccumulators = DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS;
 
+/* Added in v111, Pending stabilization */
+#define DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS false
+bool EnableNewWithExprAccumulators = DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS;
 
 /*
  * SECTION: Aggregation & Query feature flags
@@ -1020,5 +1023,13 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable dropping invalid indexes on read only database state."),
 		NULL, &EnableDropInvalidIndexesOnReadOnly,
 		DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableNewWithExprAccumulators", newGucPrefix),
+		gettext_noop(
+			"Whether to enable new WithExpr aggregate optimizations for min, max, first, and last accumulators."),
+		NULL, &EnableNewWithExprAccumulators,
+		DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }

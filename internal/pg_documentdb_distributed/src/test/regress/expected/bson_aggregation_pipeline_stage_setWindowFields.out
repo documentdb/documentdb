@@ -7834,10 +7834,10 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
 (13 rows)
 
 ---------------------------------------------------------------------
--- $min accumulator tests with new accumulator (enableNewMinMaxAccumulators = on)
--- Tests with enableNewMinMaxAccumulators = on
+-- $min accumulator tests with new accumulator (enableNewWithExprAccumulators = on)
+-- Tests with enableNewWithExprAccumulators = on
 ---------------------------------------------------------------------
-SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
 ---------------------------------------------------------------------
 -- Document window
 ---------------------------------------------------------------------
@@ -8247,7 +8247,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
  { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "totalInGroup" : { "$numberInt" : "512" } }
 (13 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 ---------------------------------------------------------------------
 -- $max accumulator tests
 ---------------------------------------------------------------------
@@ -8661,10 +8661,10 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
 (13 rows)
 
 ---------------------------------------------------------------------
--- $max accumulator tests with new accumulator (enableNewMinMaxAccumulators = on)
--- Tests with enableNewMinMaxAccumulators = on
+-- $max accumulator tests with new accumulator (enableNewWithExprAccumulators = on)
+-- Tests with enableNewWithExprAccumulators = on
 ---------------------------------------------------------------------
-SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
 ---------------------------------------------------------------------
 -- Document window
 ---------------------------------------------------------------------
@@ -9074,7 +9074,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
  { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "totalInGroup" : { "$numberInt" : "512" } }
 (13 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 -- Tests for $last
 SELECT documentdb_api.insert_one('db','lastSetWindowFields','{ "_id": 1, "storeId": 1, "area": "Delhi", "company": "ABC Cares", "lastUpdated": { "$date" : { "$numberLong" : "1756720800000" } }, "status": "open" }', NULL);
 NOTICE:  creating collection

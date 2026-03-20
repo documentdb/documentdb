@@ -33,3 +33,6 @@ s/coord_combine_agg\('[0-9]+'/coord_combine_agg\('xxxx'/g
 s/worker_partial_agg\('[0-9]+'/worker_partial_agg\('xxxx'/g
 s/Node: host=localhost port=[0-9]+ dbname=[a-zA-Z]+/Node: host=localhost port=xxx dbname=yyy/g
 s/Vacuum\[index=[0-9]+,vacuumCleanup=/Vacuum\[index=xxx,vacuumCleanup=/g
+# Strip function OIDs (e.g. '12345'::oid) which shift when catalog objects are added/removed
+# Must be after coord_combine_agg/worker_partial_agg rules to avoid conflicting replacements
+s/'[0-9]+'::oid/'xxxx'::oid/g
