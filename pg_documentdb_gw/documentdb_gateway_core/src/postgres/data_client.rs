@@ -204,13 +204,13 @@ pub trait PgDataClient: Send + Sync {
         &self,
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
-    ) -> Result<()>;
+    ) -> Result<Response>;
 
     async fn execute_reshard_collection(
         &self,
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
-    ) -> Result<()>;
+    ) -> Result<Response>;
 
     async fn execute_reindex(
         &self,

@@ -747,7 +747,7 @@ impl PgDataClient for DocumentDBDataClient {
         &self,
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
-    ) -> Result<()> {
+    ) -> Result<Response> {
         let (request, request_info, request_tracker) = request_context.get_components();
         self.pull_connection(connection_context)
             .await?
@@ -763,14 +763,14 @@ impl PgDataClient for DocumentDBDataClient {
             )
             .await?;
 
-        Ok(())
+        Ok(Response::ok())
     }
 
     async fn execute_reshard_collection(
         &self,
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
-    ) -> Result<()> {
+    ) -> Result<Response> {
         let (request, request_info, request_tracker) = request_context.get_components();
         self.pull_connection(connection_context)
             .await?
@@ -786,7 +786,7 @@ impl PgDataClient for DocumentDBDataClient {
             )
             .await?;
 
-        Ok(())
+        Ok(Response::ok())
     }
 
     async fn execute_reindex(

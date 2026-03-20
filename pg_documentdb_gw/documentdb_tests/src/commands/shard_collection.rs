@@ -27,7 +27,10 @@ pub async fn validate_shard_collection_basic(db: &Database) -> Result<(), Error>
         })
         .await?;
 
-    assert_eq!(result.get_f64("ok").unwrap(), 1.0);
+    assert_eq!(
+        result.get_f64("ok").expect("response should have ok field"),
+        1.0
+    );
 
     Ok(())
 }
@@ -48,7 +51,7 @@ pub async fn validate_reshard_collection_missing_key_error(db: &Database) {
     db.collection::<Document>("test_coll")
         .insert_one(doc! { "_id": 1 })
         .await
-        .unwrap();
+        .expect("insert for reshard test setup should succeed");
 
     commands::execute_command_and_validate_error(
         db,

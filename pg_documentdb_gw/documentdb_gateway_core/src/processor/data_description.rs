@@ -125,9 +125,7 @@ pub async fn process_shard_collection(
 ) -> Result<Response> {
     pg_data_client
         .execute_shard_collection(request_context, connection_context)
-        .await?;
-
-    Ok(Response::ok())
+        .await
 }
 
 pub async fn process_reshard_collection(
@@ -137,9 +135,7 @@ pub async fn process_reshard_collection(
 ) -> Result<Response> {
     pg_data_client
         .execute_reshard_collection(request_context, connection_context)
-        .await?;
-
-    Ok(Response::ok())
+        .await
 }
 
 pub async fn process_unshard_collection(
