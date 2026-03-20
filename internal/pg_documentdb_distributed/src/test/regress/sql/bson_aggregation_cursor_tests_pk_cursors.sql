@@ -4,6 +4,7 @@ SET documentdb.next_collection_index_id TO 400;
 SET citus.next_shard_id TO 40000;
 
 set documentdb.enablePrimaryKeyCursorScan to on;
+set documentdb.enableCursorPlanBeforeRestrictionPathUpdate to off;
 
 -- insert 10 documents - but insert the _id as reverse order of insertion order (so that TID and insert order do not match)
 DO $$
@@ -32,6 +33,72 @@ PREPARE drain_find_query_continuation(bson, bson) AS
             WHERE cte.continuation IS NOT NULL
     )
     SELECT bson_dollar_project(cursorPage, '{"firstBatchLength": { "$size": { "$ifNull": ["$cursor.firstBatch", []]}}, "nextBatchLength": { "$size": { "$ifNull": ["$cursor.nextBatch", []]}}}'), continuation FROM cte);
+
+-- Validates that every string in expected_index_conds appears as a substring of
+-- an "Index Cond:" line and every string in expected_filters appears as a
+-- substring of a "Filter:" line in the EXPLAIN output.
+CREATE OR REPLACE FUNCTION check_explain_index_and_filter(
+    explain_lines text[],
+    expected_index_conds text[] DEFAULT NULL,
+    expected_filters text[] DEFAULT NULL
+) RETURNS boolean AS $$
+DECLARE
+    line text;
+    cond text;
+    index_cond_line text := '';
+    filter_line text := '';
+    has_custom_scan boolean := false;
+    has_continuation boolean := false;
+    pg_major int;
+    saop_cond text := 'collection.object_id = ANY (';
+BEGIN
+    pg_major := current_setting('server_version_num')::int / 10000;
+    IF pg_major <= 16 THEN
+        expected_filters := array_append(COALESCE(expected_filters, '{}'), saop_cond);
+    ELSE
+        expected_index_conds := array_append(COALESCE(expected_index_conds, '{}'), saop_cond);
+    END IF;
+
+    FOREACH line IN ARRAY explain_lines LOOP
+        IF trim(line) LIKE 'Index Cond:%' THEN
+            index_cond_line := line;
+        ELSIF trim(line) LIKE 'Filter:%' THEN
+            filter_line := line;
+        END IF;
+        IF position('Custom Scan (DocumentDBApiScan)' IN line) > 0 THEN
+            has_custom_scan := true;
+        END IF;
+        IF position('Continuation: { "table_name" : "documents_403_40020"' IN line) > 0 THEN
+            has_continuation := true;
+        END IF;
+    END LOOP;
+
+    IF NOT has_custom_scan OR NOT has_continuation THEN
+        RAISE NOTICE 'FAIL: has_custom_scan=%, has_continuation=%', has_custom_scan, has_continuation;
+        RETURN false;
+    END IF;
+
+    IF expected_index_conds IS NOT NULL THEN
+        FOREACH cond IN ARRAY expected_index_conds LOOP
+            IF position(cond IN index_cond_line) = 0 THEN
+                RAISE NOTICE 'FAIL index_cond: looking for "%" in "%"', cond, index_cond_line;
+                RETURN false;
+            END IF;
+        END LOOP;
+    END IF;
+
+    IF expected_filters IS NOT NULL THEN
+        FOREACH cond IN ARRAY expected_filters LOOP
+            IF position(cond IN filter_line) = 0 THEN
+                RAISE NOTICE 'FAIL filter: looking for "%" in "%"', cond, filter_line;
+                RETURN false;
+            END IF;
+        END LOOP;
+    END IF;
+
+    RETURN true;
+END;
+$$ LANGUAGE plpgsql;
 
 -- create an index to force non HOT path
 SELECT documentdb_api_internal.create_indexes_non_concurrently('pkcursordb', '{"createIndexes": "aggregation_cursor_pk", "indexes": [{"key": {"a": 1}, "name": "a_1" }]}', TRUE);
@@ -278,3 +345,101 @@ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OF
 EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_getmore('pkcursordb',
     '{ "getMore": { "$numberLong": "4294967294" }, "collection": "aggregation_cursor_pk_sk2", "batchSize": 2 }', :'r1_continuation');
 END;
+
+-- Test: large $in filter  with pk cursor scan
+-- Insert 100 documents with string _ids (a1..a100); the $in will reference random values from a1..a100
+DO $$
+DECLARE i int;
+BEGIN
+FOR i IN 1..100 LOOP
+PERFORM documentdb_api.insert_one('pkcursordb', 'aggregation_cursor_pk_in', FORMAT('{ "_id": "a%s", "val": %s }', i, i)::documentdb_core.bson);
+END LOOP;
+END;
+$$;
+
+CREATE SCHEMA IF NOT EXISTS pm_temp_in;
+-- helper: builds a find command spec with a $in filter of N values (a1, a2, ..., aN)
+CREATE OR REPLACE FUNCTION pm_temp_in.make_in_find(n int, batch int) RETURNS documentdb_core.bson AS $$
+SELECT FORMAT('{ "find": "aggregation_cursor_pk_in", "projection": { "_id": 1 }, "filter": { "_id": { "$in": [ %s ] } }, "limit": %s }',
+    string_agg('"a' || v || '"', ', '), batch)::documentdb_core.bson
+FROM generate_series(1, n) AS v;
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION pm_temp_in.make_in_continuation(n int, batch int) RETURNS documentdb_core.bson AS $$
+SELECT FORMAT('{ "find": "aggregation_cursor_pk_in", "projection": { "_id": 1 }, "filter": { "_id": { "$in": [ %s ] } }, "batchSize": %s }',
+    string_agg('"a' || v || '"', ', '), batch)::documentdb_core.bson
+FROM generate_series(1, n) AS v;
+$$ LANGUAGE sql;
+
+-- first page: find with large $in (10 values), small batchSize to force cursor
+DROP TABLE IF EXISTS firstPageResponse;
+CREATE TEMP TABLE firstPageResponse AS
+SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid FROM 
+    find_cursor_first_page(database => 'pkcursordb', commandSpec => pm_temp_in.make_in_continuation(10, 5), cursorId => 4294967294);
+
+SELECT * FROM firstPageResponse;
+SELECT continuation AS r1_continuation FROM firstPageResponse \gset
+
+-- enablePrimaryKeyCursorScan = off, enableCursorPlanBeforeRestrictionPathUpdate = off
+-- The explain below should show bitmap index scan
+set documentdb.enablePrimaryKeyCursorScan to off;
+set documentdb.enableCursorPlanBeforeRestrictionPathUpdate to off;
+
+SELECT pm_temp_in.make_in_find(10, 5) AS in_spec \gset
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('pkcursordb', :'in_spec');
+
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('pkcursordb',
+    '{ "getMore": { "$numberLong": "4294967294" }, "collection": "aggregation_cursor_pk_in", "batchSize": 5 }', :'r1_continuation');
+
+-- enablePrimaryKeyCursorScan = on, enableCursorPlanBeforeRestrictionPathUpdate = off
+-- The explain below should show primary key scan, but $in is not pushed to the index so it will still filter a lot of rows
+set documentdb.enablePrimaryKeyCursorScan to on;
+
+SELECT pm_temp_in.make_in_find(10, 5) AS in_spec \gset
+
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('pkcursordb', :'in_spec');
+
+-- On PG16 the SAOP (object_id = ANY) stays in Filter; on PG17 it moves to Index Cond.
+-- Use check_explain_index_and_filter to verify version-invariant properties.
+DO $check$
+DECLARE
+    lines text[];
+    line text;
+    cont text;
+    result boolean;
+BEGIN
+    SELECT continuation::text INTO cont FROM firstPageResponse;
+    FOR line IN EXECUTE format(
+        'EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore(%L, %L, %L::bson)',
+        'pkcursordb',
+        '{ "getMore": { "$numberLong": "4294967294" }, "collection": "aggregation_cursor_pk_in", "batchSize": 5 }',
+        cont
+    ) LOOP
+        lines := array_append(lines, line);
+    END LOOP;
+    SELECT check_explain_index_and_filter(
+        lines,
+        ARRAY['collection.shard_key_value = ''403''::bigint', 'ROW(collection.shard_key_value, collection.object_id) >'],
+        ARRAY['documentdb_api_internal.cursor_state(collection.document, ''{ "']
+    ) INTO result;
+    RAISE NOTICE 'check_explain_index_and_filter: %', result;
+END;
+$check$;
+
+-- enablePrimaryKeyCursorScan = on, enableCursorPlanBeforeRestrictionPathUpdate = on
+-- The explain below should show primary key scan and the $in should be pushed down to the index
+set documentdb.enableCursorPlanBeforeRestrictionPathUpdate to on;
+
+SELECT pm_temp_in.make_in_find(10, 5) AS in_spec \gset
+
+
+SELECT document FROM bson_aggregation_find('pkcursordb', :'in_spec');
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('pkcursordb', :'in_spec');
+
+SELECT document FROM bson_aggregation_getmore('pkcursordb',
+    '{ "getMore": { "$numberLong": "4294967294" }, "collection": "aggregation_cursor_pk_in", "batchSize": 5 }', :'r1_continuation');
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('pkcursordb',
+    '{ "getMore": { "$numberLong": "4294967294" }, "collection": "aggregation_cursor_pk_in", "batchSize": 5 }', :'r1_continuation');
+
+
+set documentdb.enableCursorsOnAggregationQueryRewrite to off;

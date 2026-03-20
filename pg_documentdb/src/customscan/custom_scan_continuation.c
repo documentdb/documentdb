@@ -181,6 +181,7 @@ const StringView PrimaryKeyShardKey =
 
 extern bool EnablePrimaryKeyCursorScan;
 extern bool EnableContinuationFastBitmapLookup;
+extern bool EnableCursorPlanBeforeRestrictionPathUpdate;
 
 #define InputContinuationNodeName "ExtensionScanInputContinuation"
 
@@ -220,6 +221,11 @@ static bool EqualUnsupportedExtensionScanNode(const struct ExtensibleNode *a,
 											  const struct ExtensibleNode *b);
 static Node * ReplaceCursorParamValuesMutator(Node *node, ParamListInfo boundParams);
 static IndexOptInfo * GetPrimaryKeyIndexOpt(RelOptInfo *rel);
+static IndexPath * AddRowCompareToExistingPrimaryKeyPath(PlannerInfo *root,
+														 RelOptInfo *rel,
+														 IndexPath *existingPath,
+														 const ExtensionScanState *
+														 scanState);
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -266,7 +272,7 @@ command_cursor_state(PG_FUNCTION_ARGS)
 {
 	if (CurrentQueryState == NULL)
 	{
-		ereport(ERROR, (errmsg("This method must never be invoked directly")));
+		ereport(ERROR, (errmsg("command_cursor_state() must never be invoked directly")));
 	}
 	else
 	{
@@ -665,11 +671,6 @@ GetPrimaryKeyContinuationIndexPath(PlannerInfo *root, RelOptInfo *rel,
 		}
 	}
 
-	/* Now trim restrict info clauses that are already satisfied by the index path. */
-	bool hasOtherClausesIgnore = false;
-	inputPath = TrimIndexRestrictInfoForBtreePath(root, inputPath,
-												  &hasOtherClausesIgnore);
-
 	/* Restore old lists */
 	rel->indexlist = oldIndexList;
 	rel->pathlist = oldPathList;
@@ -681,10 +682,114 @@ GetPrimaryKeyContinuationIndexPath(PlannerInfo *root, RelOptInfo *rel,
 
 
 /*
- * UpdatePathsWithExtensionStreamingCursorPlans walks the built paths for a given query
- * and extracts the continuation state for that path.
- * If there is a continuation state, then builds a custom ExtensionPath that
- * wraps the inner path using that continuation state.
+ * AddRowCompareToExistingPrimaryKeyPath adds a RowCompareExpr continuation
+ * clause to an existing PK btree IndexPath. This preserves any index conditions
+ * (e.g., $in pushdown) already present on the path, rather than rebuilding
+ * the path from scratch.
+ */
+static IndexPath *
+AddRowCompareToExistingPrimaryKeyPath(PlannerInfo *root, RelOptInfo *rel,
+									  IndexPath *existingPath,
+									  const ExtensionScanState *scanState)
+{
+	RestrictInfo *rowCompareRestrictInfo =
+		BuildPrimaryKeyRowRestrictInfo(root, rel, scanState);
+
+	/* Copy the IndexPath and its IndexOptInfo so we don't modify the original */
+	IndexPath *pathCopy = palloc(sizeof(IndexPath));
+	memcpy(pathCopy, existingPath, sizeof(IndexPath));
+
+	IndexOptInfo *indexInfoCopy = palloc(sizeof(IndexOptInfo));
+	memcpy(indexInfoCopy, existingPath->indexinfo, sizeof(IndexOptInfo));
+	indexInfoCopy->indrestrictinfo =
+		lappend(list_copy(existingPath->indexinfo->indrestrictinfo),
+				rowCompareRestrictInfo);
+	pathCopy->indexinfo = indexInfoCopy;
+
+	/*
+	 * Build an IndexClause for the RowCompareExpr.
+	 * The PK btree has shard_key_value at col 0 and object_id at col 1,
+	 * so the RowCompare spans both columns.
+	 */
+	IndexClause *rowCompareClause = makeNode(IndexClause);
+	rowCompareClause->rinfo = rowCompareRestrictInfo;
+	rowCompareClause->indexquals = list_make1(rowCompareRestrictInfo);
+	rowCompareClause->lossy = false;
+	rowCompareClause->indexcol = 0;
+	rowCompareClause->indexcols = list_make2_int(0, 1);
+
+	/*
+	 * Insert the RowCompareExpr clause in sorted position by indexcol.
+	 * Btree index clauses must be ordered by attribute number; blindly
+	 * appending a col-0 clause after a col-1 clause would trigger
+	 * "btree index keys must be ordered by attribute".
+	 */
+	List *newClauses = NIL;
+	bool insertedRowCompare = false;
+	ListCell *clauseCell;
+	foreach(clauseCell, existingPath->indexclauses)
+	{
+		IndexClause *existing = lfirst(clauseCell);
+		if (!insertedRowCompare && existing->indexcol > rowCompareClause->indexcol)
+		{
+			newClauses = lappend(newClauses, rowCompareClause);
+			insertedRowCompare = true;
+		}
+		newClauses = lappend(newClauses, existing);
+	}
+
+	if (!insertedRowCompare)
+	{
+		newClauses = lappend(newClauses, rowCompareClause);
+	}
+	pathCopy->indexclauses = newClauses;
+
+	return pathCopy;
+}
+
+
+/*
+ * UpdatePathsWithExtensionStreamingCursorPlans wraps planner paths in
+ * DocumentDBApiScan CustomPath nodes that carry cursor continuation state.
+ *
+ * 1. Validation — Rejects unsupported query shapes (joins, recursion, lateral,
+ *    GROUP BY, non-volatile ORDER BY, table samples, aggregates). Only simple
+ *    base-relation scans are allowed.
+ *
+ * 2. Find continuation — Scans baserestrictinfo for a cursor_state() FuncExpr
+ *    qual. If there's no continuation (first page of a cursor, or not a cursor
+ *    query at all), returns false and does nothing.
+ *
+ * 3. Parse continuation — Deserializes the BSON continuation into
+ *    ExtensionScanState: table name, TID position, primary key datums
+ *    (shard_key_value, object_id), batch size hints.
+ *
+ * 4. Build wrapped paths — Two branches:
+ *
+ *    a) Has PK continuation (hasPrimaryKeyState = true): Builds a fresh PK
+ *       index path with a RowCompareExpr ((shard_key, object_id) >
+ *       (last_shard_key, last_object_id)) via GetPrimaryKeyContinuationIndexPath,
+ *       then wraps it in a single CustomPath.
+ *
+ *    b) No PK continuation (TID-based): Walks each existing path in
+ *       rel->pathlist and transforms it:
+ *         - IndexScan on PK btree -> kept as IndexScan (if EnablePrimaryKeyCursorScan)
+ *         - IndexScan on RUM/other -> converted to BitmapHeapPath
+ *         - BitmapHeapScan with PK inner -> unwrapped to bare IndexScan
+ *         - SeqScan -> converted to PK IndexScan (if available) or TidRangeScan
+ *       Each transformed path is wrapped in a CustomPath via
+ *       CreateCustomScanPathForContinuation.
+ *
+ * 5. Replace pathlist — Sets rel->pathlist = customPlanPaths and clears
+ *    partial_pathlist (no parallel scan with cursors). Also trims the unsharded
+ *    shard_key_value expression from baserestrictinfo if applicable.
+ *
+ * At execution time, the DocumentDBApiScan custom scan node:
+ *   - Skips forward to the continuation point (TID comparison or PK RowCompare)
+ *   - Enforces page size limits (batchCount, batchSizeHintBytes)
+ *   - Tracks the last-seen tuple's TID and PK datums for the next continuation
+ *   - Projects current_cursor_state(document) which serializes the continuation
+ *     token back to the client
  */
 bool
 UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
@@ -876,7 +981,48 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 		/* It's a continuation of the primary key index - force resume from PK */
 		inputContinuation.isPrimaryKeyScan = true;
 
-		IndexPath *inputPath = GetPrimaryKeyContinuationIndexPath(root, rel, &scanState);
+		IndexPath *inputPath = NULL;
+		if (EnableCursorPlanBeforeRestrictionPathUpdate)
+		{
+			/*
+			 * Check if there's already a PK btree IndexPath in rel->pathlist.
+			 * If so, reuse it and add the RowCompareExpr continuation clause,
+			 * preserving any existing index conditions on the path.
+			 * Otherwise, build a fresh PK path from scratch.
+			 */
+			IndexPath *existingPkPath = NULL;
+			foreach(cell, rel->pathlist)
+			{
+				Path *currentPath = lfirst(cell);
+				if (currentPath->pathtype == T_IndexScan)
+				{
+					IndexPath *indexPath = (IndexPath *) currentPath;
+					if (IsBtreePrimaryKeyIndex(indexPath->indexinfo))
+					{
+						existingPkPath = indexPath;
+						break;
+					}
+				}
+			}
+
+
+			if (existingPkPath != NULL)
+			{
+				inputPath = AddRowCompareToExistingPrimaryKeyPath(root, rel,
+																  existingPkPath,
+																  &scanState);
+			}
+		}
+
+		if (inputPath == NULL)
+		{
+			inputPath = GetPrimaryKeyContinuationIndexPath(root, rel, &scanState);
+		}
+
+		/* Trim restrict info clauses already satisfied by the index path */
+		bool hasOtherClausesIgnore = false;
+		inputPath = TrimIndexRestrictInfoForBtreePath(root, inputPath,
+													  &hasOtherClausesIgnore);
 
 		CustomPath *customPath = CreateCustomScanPathForContinuation(
 			root, rel, (Path *) inputPath, &inputContinuation,
@@ -938,7 +1084,8 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 					}
 					else if (isPrimaryKeyPath)
 					{
-						ReportFeatureUsage(FEATURE_CURSOR_CAN_USE_PRIMARY_KEY_SCAN);
+						ReportFeatureUsage(
+							FEATURE_CURSOR_CAN_USE_PRIMARY_KEY_SCAN);
 					}
 				}
 			}

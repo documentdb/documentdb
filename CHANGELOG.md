@@ -10,6 +10,8 @@
 * Optimize OP_INSERT and refactor opcode parsers
 * Enable index only scan by default and move to the cost estimate function *[Feature]*
 * Optimize index boundaries for $regex when there is an anchored prefix *[Perf]*
+* Push $in filters on object_id to the primary key index, during evaluation of a streaming cursor query *[Bugfix]*
+
 
 ### documentdb v0.110-0 (Unreleased) ###
 * Add support for keyword `description` in `$jsonSchema` *[Feature]*
