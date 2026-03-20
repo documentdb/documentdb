@@ -89,33 +89,6 @@ typedef struct DynamicHeapState
 	int32_t currentSizeWritten;
 } DynamicHeapState;
 
-typedef struct BsonAggValue
-{
-	int32 vl_len_;          /* PostgreSQL varlena header */
-	bson_value_t value;     /* The aggregate value (pointers valid in current memory context) */
-	char *collationString;  /* Collation string comparison (NULL if none) */
-} BsonAggValue;
-
-/*
- * Cached expression state for aggregates that need to parse expressions.
- * Stores both the source expression (for cache invalidation check)
- * and the parsed expression state.
- */
-typedef struct CachedExpressionState
-{
-	/* The source expression pgbson - used to detect if expression changed */
-	pgbson *sourceExpression;
-
-	/* The source variable spec pgbson - used to detect if variables changed */
-	pgbson *sourceVariableSpec;
-
-	/* The source collation text datum - used to detect if collation changed via pointer comparison */
-	text *sourceCollationText;
-
-	/* The parsed expression state */
-	BsonExpressionState expressionState;
-} CachedExpressionState;
-
 const char charset[] = "abcdefghijklmnopqrstuvwxyz0123456789";
 
 
@@ -2096,7 +2069,7 @@ bson_command_count_final(PG_FUNCTION_ARGS)
  * @param collationText: Optional collation text datum pointer (used for cache validation).
  * @return: Pointer to the cached BsonExpressionState.
  */
-static const BsonExpressionState *
+const BsonExpressionState *
 GetOrCreateCachedExpressionState(FmgrInfo *flinfo,
 								 pgbson *expressionBson,
 								 pgbson *variableSpec,
@@ -2444,6 +2417,25 @@ bsonaggvalue_in(PG_FUNCTION_ARGS)
 
 
 /*
+ * Helper: append BsonAggValue's value to a pgbson_writer.
+ * BSON_TYPE_EOD (missing field) cannot be serialized as a BSON element,
+ * so we write BSON_TYPE_NULL instead.
+ */
+static inline void
+AppendBsonAggValueToWriter(pgbson_writer *writer, const bson_value_t *value)
+{
+	if (value->value_type == BSON_TYPE_EOD)
+	{
+		PgbsonWriterAppendNull(writer, "", 0);
+	}
+	else
+	{
+		PgbsonWriterAppendValue(writer, "", 0, value);
+	}
+}
+
+
+/*
  * bsonaggvalue_out: Convert BsonAggValue to text output.
  * Returns the value wrapped as {"": value} with an optional "collation" field.
  * Uses hex representation by default, or extended JSON when the GUC is set.
@@ -2455,7 +2447,7 @@ bsonaggvalue_out(PG_FUNCTION_ARGS)
 
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
-	PgbsonWriterAppendValue(&writer, "", 0, &state->value);
+	AppendBsonAggValueToWriter(&writer, &state->value);
 	if (state->collationString != NULL)
 	{
 		PgbsonWriterAppendUtf8(&writer, "collation", strlen("collation"),
@@ -2488,7 +2480,7 @@ bsonaggvalue_send(PG_FUNCTION_ARGS)
 
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
-	PgbsonWriterAppendValue(&writer, "", 0, &state->value);
+	AppendBsonAggValueToWriter(&writer, &state->value);
 	if (state->collationString != NULL)
 	{
 		PgbsonWriterAppendUtf8(&writer, "collation", strlen("collation"),

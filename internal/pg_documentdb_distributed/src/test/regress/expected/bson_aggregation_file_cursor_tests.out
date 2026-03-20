@@ -408,7 +408,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 (6 rows)
 
 -- $max with file cursor - test with new aggregate implementation
-SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
                                                                                                                    filtereddoc                                                                                                                   | docsize |                                                                                                                                                                                  continuationfiltered                                                                                                                                                                                  | persistconnection 
 ---------------------------------------------------------------------
@@ -420,7 +420,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
                                                                                                                                                                                                                                                  |         |                                                                                                                                                                                                                                                                                                                                                                                        | f
 (6 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 1, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }, { "$limit": 1 }]}');
                                                                                                   filtereddoc                                                                                                   | docsize | continuationfiltered | persistconnection 
 ---------------------------------------------------------------------
@@ -572,7 +572,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 (6 rows)
 
 -- $max with local execution off - test with new aggregate implementation
-SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
                                                                                                                    filtereddoc                                                                                                                   | docsize |                                                                                                                                                                                  continuationfiltered                                                                                                                                                                                  | persistconnection 
 ---------------------------------------------------------------------
@@ -584,7 +584,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
                                                                                                                                                                                                                                                  |         |                                                                                                                                                                                                                                                                                                                                                                                        | f
 (6 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 RESET citus.enable_local_execution;
 -- with sharded
 SELECT documentdb_api.shard_collection('db', 'get_aggregation_cursor_test_file', '{ "_id": "hashed" }', false);
@@ -745,7 +745,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 (6 rows)
 
 -- $max with sharded file cursor - test with new aggregate implementation
-SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
                                                                                                                    filtereddoc                                                                                                                   | docsize |                                                                                                                                                                                  continuationfiltered                                                                                                                                                                                  | persistconnection 
 ---------------------------------------------------------------------
@@ -757,7 +757,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
                                                                                                                                                                                                                                                  |         |                                                                                                                                                                                                                                                                                                                                                                                        | f
 (6 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 -- With local execution off.
 set citus.enable_local_execution to off;
 SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2, obfuscate_id => true);
@@ -886,7 +886,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 (6 rows)
 
 -- $max with file cursor sharded - test with new aggregate implementation
-SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }', obfuscate_id => true);
                                                                                                           filtereddoc                                                                                                          | docsize |                                                                                                                                                                                  continuationfiltered                                                                                                                                                                                  | persistconnection 
 ---------------------------------------------------------------------
@@ -898,7 +898,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
                                                                                                                                                                                                                                |         |                                                                                                                                                                                                                                                                                                                                                                                        | f
 (6 rows)
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 RESET citus.enable_local_execution;
 -- start draining first page first (should not persist connection and have a query file)
 SELECT cursorPage, continuation, persistConnection FROM

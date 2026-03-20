@@ -1,0 +1,870 @@
+\i sql/bson_aggregation_pipeline_tests_firstlast_group.sql
+SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_core;
+SET documentdb.next_collection_id TO 25701000;
+SET documentdb.next_collection_index_id TO 25701000;
+-- 1. Setup test data
+SELECT documentdb_api.insert_one('db', 'fl_grp_test', '{ "_id": 1, "g": "A", "v": 10, "name": "alpha" }', NULL);
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:7: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_grp_test', '{ "_id": 2, "g": "B", "v": 20, "name": "beta" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_grp_test', '{ "_id": 3, "g": "A", "v": 30, "name": "gamma" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_grp_test', '{ "_id": 4, "g": "B", "v": 40, "name": "delta" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_grp_test', '{ "_id": 5, "g": "A", "v": 50, "name": "epsilon" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_grp_test', '{ "_id": 6, "g": "C", "v": 60, "name": "zeta" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_grp_test', '{ "_id": 7, "g": "A", "v": null, "name": "eta" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_grp_test', '{ "_id": 8, "g": "B" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- 2. $first/$last without $sort - GUC off then on
+SET documentdb.enableNewWithExprAccumulators TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } }], "cursor": {} }');
+                                  document                                  
+----------------------------------------------------------------------------
+ { "_id" : "A", "firstVal" : { "$numberInt" : "10" }, "lastName" : "eta" }
+ { "_id" : "B", "firstVal" : null, "lastName" : "delta" }
+ { "_id" : "C", "firstVal" : { "$numberInt" : "60" }, "lastName" : "zeta" }
+(3 rows)
+
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } }], "cursor": {} }');
+                                  document                                  
+----------------------------------------------------------------------------
+ { "_id" : "A", "firstVal" : { "$numberInt" : "10" }, "lastName" : "eta" }
+ { "_id" : "B", "firstVal" : null, "lastName" : "delta" }
+ { "_id" : "C", "firstVal" : { "$numberInt" : "60" }, "lastName" : "zeta" }
+(3 rows)
+
+-- 3. Computed expression in $first/$last - GUC on
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "firstDoubled": { "$first": { "$multiply": ["$v", 2] } }, "lastDoubled": { "$last": { "$multiply": ["$v", 2] } } } }], "cursor": {} }');
+                                               document                                               
+------------------------------------------------------------------------------------------------------
+ { "_id" : "A", "firstDoubled" : { "$numberInt" : "20" }, "lastDoubled" : null }
+ { "_id" : "B", "firstDoubled" : null, "lastDoubled" : { "$numberInt" : "80" } }
+ { "_id" : "C", "firstDoubled" : { "$numberInt" : "120" }, "lastDoubled" : { "$numberInt" : "120" } }
+(3 rows)
+
+-- 4. Empty collection - $first
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT documentdb_api.create_collection('db', 'fl_empty');
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:29: NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_empty", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$v" } } }], "cursor": {} }');
+ document 
+----------
+(0 rows)
+
+SELECT documentdb_api.drop_collection('db', 'fl_empty');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- 5. Nested/embedded documents as accumulator input
+SELECT documentdb_api.insert_one('db', 'fl_nested', '{ "_id": 1, "g": "X", "info": { "city": "SEA", "zip": 98101 } }', NULL);
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:34: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_nested', '{ "_id": 2, "g": "X", "info": { "city": "PDX", "zip": 97201 } }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_nested', '{ "_id": 3, "g": "Y", "info": { "city": "SFO", "zip": 94102 } }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_nested', '{ "_id": 4, "g": "X", "tags": ["a", "b", "c"] }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SET documentdb.enableNewWithExprAccumulators TO on;
+-- $first/$last on a sub-document field
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_nested", "pipeline": [{ "$group": { "_id": "$g", "firstInfo": { "$first": "$info" }, "lastInfo": { "$last": "$info" } } }], "cursor": {} }');
+                                                                          document                                                                          
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "X", "firstInfo" : { "city" : "SEA", "zip" : { "$numberInt" : "98101" } }, "lastInfo" : null }
+ { "_id" : "Y", "firstInfo" : { "city" : "SFO", "zip" : { "$numberInt" : "94102" } }, "lastInfo" : { "city" : "SFO", "zip" : { "$numberInt" : "94102" } } }
+(2 rows)
+
+-- $first on an array field
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_nested", "pipeline": [{ "$group": { "_id": "$g", "firstTags": { "$first": "$tags" } } }], "cursor": {} }');
+              document               
+-------------------------------------
+ { "_id" : "X", "firstTags" : null }
+ { "_id" : "Y", "firstTags" : null }
+(2 rows)
+
+SELECT documentdb_api.drop_collection('db', 'fl_nested');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- 6. Different BSON types: date, ObjectId, boolean, double
+SELECT documentdb_api.insert_one('db', 'fl_types', '{ "_id": 1, "g": "T", "d": { "$date": "2024-01-15T00:00:00Z" }, "oid": { "$oid": "aaaaaaaaaaaaaaaaaaaaaaaa" }, "b": true, "f": 3.14 }', NULL);
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:48: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_types', '{ "_id": 2, "g": "T", "d": { "$date": "2025-06-20T12:30:00Z" }, "oid": { "$oid": "bbbbbbbbbbbbbbbbbbbbbbbb" }, "b": false, "f": 2.718 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_types', '{ "_id": 3, "g": "U", "d": { "$date": "2023-03-01T08:00:00Z" }, "oid": { "$oid": "cccccccccccccccccccccccc" }, "b": true, "f": 1.0 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_types", "pipeline": [{ "$group": { "_id": "$g", "firstDate": { "$first": "$d" }, "lastDate": { "$last": "$d" } } }], "cursor": {} }');
+                                                                     document                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "T", "firstDate" : { "$date" : { "$numberLong" : "1705276800000" } }, "lastDate" : { "$date" : { "$numberLong" : "1750422600000" } } }
+ { "_id" : "U", "firstDate" : { "$date" : { "$numberLong" : "1677657600000" } }, "lastDate" : { "$date" : { "$numberLong" : "1677657600000" } } }
+(2 rows)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_types", "pipeline": [{ "$group": { "_id": "$g", "firstOid": { "$first": "$oid" }, "lastBool": { "$last": "$b" }, "firstDbl": { "$first": "$f" } } }], "cursor": {} }');
+                                                                       document                                                                        
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "T", "firstOid" : { "$oid" : "aaaaaaaaaaaaaaaaaaaaaaaa" }, "lastBool" : false, "firstDbl" : { "$numberDouble" : "3.1400000000000001243" } }
+ { "_id" : "U", "firstOid" : { "$oid" : "cccccccccccccccccccccccc" }, "lastBool" : true, "firstDbl" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+SELECT documentdb_api.drop_collection('db', 'fl_types');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- 7. Type-agnostic first/last: mixed types within the same group
+SELECT documentdb_api.insert_one('db', 'fl_mixed', '{ "_id": 1, "g": "M", "v": 42 }', NULL);
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:59: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_mixed', '{ "_id": 2, "g": "M", "v": "hello" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_mixed', '{ "_id": 3, "g": "M", "v": true }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_mixed', '{ "_id": 4, "g": "M", "v": { "$date": "2024-01-01T00:00:00Z" } }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_mixed", "pipeline": [{ "$group": { "_id": "$g", "firstV": { "$first": "$v" }, "lastV": { "$last": "$v" } } }], "cursor": {} }');
+                                                     document                                                     
+------------------------------------------------------------------------------------------------------------------
+ { "_id" : "M", "firstV" : { "$numberInt" : "42" }, "lastV" : { "$date" : { "$numberLong" : "1704067200000" } } }
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'fl_mixed');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- 8. Top-level "let" passes varSpec to the with-expr transition function
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "firstAdj": { "$first": { "$add": ["$v", "$$bonus"] } }, "lastAdj": { "$last": { "$add": ["$v", "$$bonus"] } } } }], "cursor": {}, "let": { "bonus": 100 } }');
+                                           document                                           
+----------------------------------------------------------------------------------------------
+ { "_id" : "A", "firstAdj" : { "$numberInt" : "110" }, "lastAdj" : null }
+ { "_id" : "B", "firstAdj" : null, "lastAdj" : { "$numberInt" : "140" } }
+ { "_id" : "C", "firstAdj" : { "$numberInt" : "160" }, "lastAdj" : { "$numberInt" : "160" } }
+(3 rows)
+
+-- EXPLAIN shows non-empty varSpec with "let" variables
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": { "$add": ["$v", "$$bonus"] } } } }], "cursor": {}, "let": { "bonus": 100 } }');
+                                                                                                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                                                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_0
+   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
+   ->  GroupAggregate
+         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)), 'f'::text, documentdb_api_internal.bsonfirstwithexpr(collection.document, '{ "" : { "$add" : [ "$v", "$$bonus" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson, NULL::text)
+         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+         ->  Sort
+               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)), collection.document
+               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+               ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson), collection.document
+                     Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(13 rows)
+
+-- 9. $last where the final document in a group has a missing field
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "lastV": { "$last": "$v" }, "lastName": { "$last": "$name" } } }], "cursor": {} }');
+                                 document                                 
+--------------------------------------------------------------------------
+ { "_id" : "A", "lastV" : null, "lastName" : "eta" }
+ { "_id" : "B", "lastV" : { "$numberInt" : "40" }, "lastName" : "delta" }
+ { "_id" : "C", "lastV" : { "$numberInt" : "60" }, "lastName" : "zeta" }
+(3 rows)
+
+-- =============================================================================
+-- Collation tests for $first/$last with the new WithExpr accumulators
+-- =============================================================================
+-- 10. Setup collation test data
+SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 1, "g": "A", "name": "cherry" }', NULL);
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:84: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 2, "g": "A", "name": "BANANA" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 3, "g": "A", "name": "Apple" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 4, "g": "a", "name": "date" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 5, "g": "a", "name": "FIG" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- 11. Basic collation with simple field reference (sanity: collation doesn't change order-based result)
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
+SET documentdb.enableCollationWithNewGroupAccumulators TO on;
+-- With collation (case-insensitive strength 1)
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstName": { "$first": "$name" }, "lastName": { "$last": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                           document                            
+---------------------------------------------------------------
+ { "_id" : "A", "firstName" : "cherry", "lastName" : "Apple" }
+ { "_id" : "a", "firstName" : "date", "lastName" : "FIG" }
+(2 rows)
+
+-- Without collation baseline (binary comparison for grouping; first/last order unchanged)
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstName": { "$first": "$name" }, "lastName": { "$last": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
+                           document                            
+---------------------------------------------------------------
+ { "_id" : "A", "firstName" : "cherry", "lastName" : "Apple" }
+ { "_id" : "a", "firstName" : "date", "lastName" : "FIG" }
+(2 rows)
+
+-- =============================================================================
+-- 12. Collation-sensitive computed expression — KEY test proving collation
+-- affects expression evaluation within $first/$last accumulators.
+-- With strength 1 (case-insensitive): $eq: ["cherry", "CHERRY"] → true → "matched"
+-- Without collation (binary):          $eq: ["cherry", "CHERRY"] → false → "no-match"
+-- =============================================================================
+-- $first with collation-sensitive $cond
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } }, "lastMatch": { "$last": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : "A", "firstMatch" : "matched", "lastMatch" : "no-match" }
+ { "_id" : "a", "firstMatch" : "no-match", "lastMatch" : "no-match" }
+(2 rows)
+
+-- Same query without collation (binary: "cherry" != "CHERRY")
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } }, "lastMatch": { "$last": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : "A", "firstMatch" : "no-match", "lastMatch" : "no-match" }
+ { "_id" : "a", "firstMatch" : "no-match", "lastMatch" : "no-match" }
+(2 rows)
+
+-- =============================================================================
+-- 13. EXPLAIN showing collation propagation in WithExpr aggregate functions
+-- =============================================================================
+-- With collation: collation text constant should appear in bsonfirstwithexpr/bsonlastwithexpr args
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$name" }, "l": { "$last": "$name" } } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_0
+   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4, agg_stage_0.c5, agg_stage_0.c6)
+   ->  GroupAggregate
+         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, documentdb_api_internal.bsonfirstwithexpr(collection.document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), 'l'::text, documentdb_api_internal.bsonlastwithexpr(collection.document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
+         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Sort
+               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
+               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Bitmap Heap Scan on documentdb_data.documents_25701005 collection
+                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Recheck Cond: (collection.shard_key_value = '25701005'::bigint)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection.shard_key_value = '25701005'::bigint)
+(13 rows)
+
+-- Without collation: NULL collation arg
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$name" }, "l": { "$last": "$name" } } }], "cursor": {} }');
+                                                                                                                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                                                                                                                     
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_0
+   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4, agg_stage_0.c5, agg_stage_0.c6)
+   ->  GroupAggregate
+         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, documentdb_api_internal.bsonfirstwithexpr(collection.document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'l'::text, documentdb_api_internal.bsonlastwithexpr(collection.document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)
+         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Sort
+               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
+               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Bitmap Heap Scan on documentdb_data.documents_25701005 collection
+                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Recheck Cond: (collection.shard_key_value = '25701005'::bigint)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection.shard_key_value = '25701005'::bigint)
+(13 rows)
+
+-- =============================================================================
+-- 14. Constant _id group with collation-sensitive expression
+-- =============================================================================
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": null, "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } }, "lastMatch": { "$last": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } } } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : null, "firstMatch" : "matched", "lastMatch" : "no-match" }
+(1 row)
+
+-- Without collation baseline
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": null, "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } }, "lastMatch": { "$last": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } } } }], "cursor": {} }');
+                               document                                
+-----------------------------------------------------------------------
+ { "_id" : null, "firstMatch" : "no-match", "lastMatch" : "no-match" }
+(1 row)
+
+-- =============================================================================
+-- 15. Collation with mixed types (string, number, null)
+-- =============================================================================
+SELECT documentdb_api.insert_one('db', 'fl_collation_mixed', '{ "_id": 1, "g": "G", "val": "banana" }', NULL);
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:138: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_collation_mixed', '{ "_id": 2, "g": "G", "val": "CHERRY" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_collation_mixed', '{ "_id": 3, "g": "G", "val": 42 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_collation_mixed', '{ "_id": 4, "g": "G", "val": null }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- $first/$last with collation-sensitive expression on mixed types
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_mixed", "pipeline": [{ "$group": { "_id": "$g", "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$val", "cherry"] }, "then": "matched", "else": "no-match" } } }, "lastMatch": { "$last": { "$cond": { "if": { "$eq": ["$val", "cherry"] }, "then": "matched", "else": "no-match" } } } } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : "G", "firstMatch" : "no-match", "lastMatch" : "no-match" }
+(1 row)
+
+-- Without collation
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_mixed", "pipeline": [{ "$group": { "_id": "$g", "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$val", "cherry"] }, "then": "matched", "else": "no-match" } } }, "lastMatch": { "$last": { "$cond": { "if": { "$eq": ["$val", "cherry"] }, "then": "matched", "else": "no-match" } } } } }], "cursor": {} }');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : "G", "firstMatch" : "no-match", "lastMatch" : "no-match" }
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'fl_collation_mixed');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- =============================================================================
+-- 16. numericOrdering in computed expression
+-- With numericOrdering: "item10" > "item2" (numeric), without: "item10" < "item2" (lexical)
+-- =============================================================================
+SELECT documentdb_api.insert_one('db', 'fl_numeric_order', '{ "_id": 1, "g": "N", "val": "item10" }', NULL);
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:156: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_numeric_order', '{ "_id": 2, "g": "N", "val": "item2" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_numeric_order', '{ "_id": 3, "g": "N", "val": "item20" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- numericOrdering=true: $gt "item10" > "item2" → true → "above"
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_numeric_order", "pipeline": [{ "$group": { "_id": "$g", "firstCmp": { "$first": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": "above", "else": "below" } } }, "lastCmp": { "$last": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": "above", "else": "below" } } } } }], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }');
+                          document                          
+------------------------------------------------------------
+ { "_id" : "N", "firstCmp" : "above", "lastCmp" : "above" }
+(1 row)
+
+-- numericOrdering=false (default): "item10" < "item2" (lexical) → false → "below"
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_numeric_order", "pipeline": [{ "$group": { "_id": "$g", "firstCmp": { "$first": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": "above", "else": "below" } } }, "lastCmp": { "$last": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": "above", "else": "below" } } } } }], "cursor": {}, "collation": { "locale": "en", "numericOrdering": false } }');
+                          document                          
+------------------------------------------------------------
+ { "_id" : "N", "firstCmp" : "below", "lastCmp" : "above" }
+(1 row)
+
+-- Without collation baseline
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_numeric_order", "pipeline": [{ "$group": { "_id": "$g", "firstCmp": { "$first": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": "above", "else": "below" } } }, "lastCmp": { "$last": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": "above", "else": "below" } } } } }], "cursor": {} }');
+                          document                          
+------------------------------------------------------------
+ { "_id" : "N", "firstCmp" : "below", "lastCmp" : "above" }
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'fl_numeric_order');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- =============================================================================
+-- 17. GUC gating: enableCollationWithNewGroupAccumulators off → error
+-- =============================================================================
+SET documentdb.enableCollationWithNewGroupAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:177: ERROR:  collation is not supported in $group stage yet.
+SET documentdb.enableNewWithExprAccumulators TO on;
+SET documentdb.enableCollationWithNewGroupAccumulators TO on;
+-- =============================================================================
+-- 18. GUC gating: enableCollation off → collation ignored, binary comparison
+-- =============================================================================
+SET documentdb_core.enableCollation TO off;
+-- With enableCollation off, the collation string is not applicable so
+-- it should not error out (collation is simply ignored) and binary comparison applies.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                  document                  
+--------------------------------------------
+ { "_id" : "A", "firstMatch" : "no-match" }
+ { "_id" : "a", "firstMatch" : "no-match" }
+(2 rows)
+
+-- Reset GUCs and cleanup
+SET documentdb_core.enableCollation TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
+SET documentdb.enableCollationWithNewGroupAccumulators TO off;
+SELECT documentdb_api.drop_collection('db', 'fl_collation_test');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- =============================================================================
+-- 19. $first returns null when the first document in a group has a missing
+--     nested field, even though a later document has the field defined.
+-- =============================================================================
+SELECT documentdb_api.insert_one('db', 'fl_first_missing', '{ "_id": 1, "category": "electronics" }', NULL);
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:202: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_first_missing', '{ "_id": 2, "category": "electronics", "profile": { "email": "alice@test.com" } }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_first_missing", "pipeline": [{ "$group": { "_id": "$category", "result": { "$first": "$profile.email" } } }], "cursor": {} }');
+                  document                  
+--------------------------------------------
+ { "_id" : "electronics", "result" : null }
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'fl_first_missing');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- =============================================================================
+-- 20. $last returns null when the last document in a group has a missing
+--     nested field, even though an earlier document has the field defined.
+--     (Flipped version of test 19.)
+-- =============================================================================
+SELECT documentdb_api.insert_one('db', 'fl_last_missing', '{ "_id": 1, "category": "electronics", "profile": { "email": "bob@test.com" } }', NULL);
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:215: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'fl_last_missing', '{ "_id": 2, "category": "electronics" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_last_missing", "pipeline": [{ "$group": { "_id": "$category", "result": { "$last": "$profile.email" } } }], "cursor": {} }');
+                  document                  
+--------------------------------------------
+ { "_id" : "electronics", "result" : null }
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'fl_last_missing');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- =============================================================================
+-- 21. EXPLAIN matrix: $sort on/off × GUC on/off for $first/$last in $group
+-- Verifies which aggregate function is chosen in each combination.
+-- =============================================================================
+-- 21a. GUC on, no $sort → bsonfirstwithexpr / bsonlastwithexpr
+SET documentdb.enableNewWithExprAccumulators TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }], "cursor": {} }');
+                                                                                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                                                                                  
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_0
+   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4, agg_stage_0.c5, agg_stage_0.c6)
+   ->  GroupAggregate
+         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, documentdb_api_internal.bsonfirstwithexpr(collection.document, '{ "" : "$v" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'l'::text, documentdb_api_internal.bsonlastwithexpr(collection.document, '{ "" : "$v" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)
+         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Sort
+               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
+               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(13 rows)
+
+-- 21b. GUC off, no $sort → bsonfirstonsorted / bsonlastonsorted
+SET documentdb.enableNewWithExprAccumulators TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }], "cursor": {} }');
+                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_0
+   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4, agg_stage_0.c5, agg_stage_0.c6)
+   ->  GroupAggregate
+         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'l'::text, bsonlastonsorted(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Sort
+               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
+               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(13 rows)
+
+-- 21c. GUC on, with $sort → bsonfirst / bsonlast (sorted path, not WithExpr)
+SET documentdb.enableNewWithExprAccumulators TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$sort": { "v": 1 } }, { "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }], "cursor": {} }');
+                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                                                                                                    
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_1
+   Output: bson_repath_and_build(agg_stage_1.c1, agg_stage_1.c2, agg_stage_1.c3, agg_stage_1.c4, agg_stage_1.c5, agg_stage_1.c6)
+   ->  GroupAggregate
+         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_1_1.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'l'::text, documentdb_api_internal.bson_expression_get(bsonlast(agg_stage_1_1.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_1_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Sort
+               Output: (documentdb_api_internal.bson_expression_get(agg_stage_1_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1_1.document
+               Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_1_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Subquery Scan on agg_stage_1_1
+                     Output: documentdb_api_internal.bson_expression_get(agg_stage_1_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1_1.document
+                     ->  Sort
+                           Output: collection.document, (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson))
+                           Sort Key: (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+                           ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+                                 Output: collection.document, bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)
+                                 Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+                                 ->  Bitmap Index Scan on _id_
+                                       Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(18 rows)
+
+-- 21d. GUC off, with $sort → bsonfirst / bsonlast (sorted path)
+SET documentdb.enableNewWithExprAccumulators TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$sort": { "v": 1 } }, { "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }], "cursor": {} }');
+                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                                                                                                    
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_1
+   Output: bson_repath_and_build(agg_stage_1.c1, agg_stage_1.c2, agg_stage_1.c3, agg_stage_1.c4, agg_stage_1.c5, agg_stage_1.c6)
+   ->  GroupAggregate
+         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_1_1.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'l'::text, documentdb_api_internal.bson_expression_get(bsonlast(agg_stage_1_1.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_1_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Sort
+               Output: (documentdb_api_internal.bson_expression_get(agg_stage_1_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1_1.document
+               Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_1_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Subquery Scan on agg_stage_1_1
+                     Output: documentdb_api_internal.bson_expression_get(agg_stage_1_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1_1.document
+                     ->  Sort
+                           Output: collection.document, (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson))
+                           Sort Key: (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+                           ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+                                 Output: collection.document, bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)
+                                 Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+                                 ->  Bitmap Index Scan on _id_
+                                       Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(18 rows)
+
+-- =============================================================================
+-- $setWindowFields tests for $first/$last with the new WithExpr accumulators
+-- =============================================================================
+-- 22. $first/$last with sortBy in $setWindowFields - GUC on
+-- With sortBy, the old sorted path should be used regardless of GUC
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "sortBy": { "v": 1 }, "output": { "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
+                                                                         document                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "g" : "A", "v" : { "$numberInt" : "10" }, "name" : "alpha", "firstVal" : null, "lastName" : "epsilon" }
+ { "_id" : { "$numberInt" : "2" }, "g" : "B", "v" : { "$numberInt" : "20" }, "name" : "beta", "firstVal" : null, "lastName" : "delta" }
+ { "_id" : { "$numberInt" : "3" }, "g" : "A", "v" : { "$numberInt" : "30" }, "name" : "gamma", "firstVal" : null, "lastName" : "epsilon" }
+ { "_id" : { "$numberInt" : "4" }, "g" : "B", "v" : { "$numberInt" : "40" }, "name" : "delta", "firstVal" : null, "lastName" : "delta" }
+ { "_id" : { "$numberInt" : "5" }, "g" : "A", "v" : { "$numberInt" : "50" }, "name" : "epsilon", "firstVal" : null, "lastName" : "epsilon" }
+ { "_id" : { "$numberInt" : "6" }, "g" : "C", "v" : { "$numberInt" : "60" }, "name" : "zeta", "firstVal" : { "$numberInt" : "60" }, "lastName" : "zeta" }
+ { "_id" : { "$numberInt" : "7" }, "g" : "A", "v" : null, "name" : "eta", "firstVal" : null, "lastName" : "epsilon" }
+ { "_id" : { "$numberInt" : "8" }, "g" : "B", "firstVal" : null, "lastName" : "delta" }
+(8 rows)
+
+-- 23. $first/$last without sortBy in $setWindowFields - GUC off (old OnSorted path)
+SET documentdb.enableNewWithExprAccumulators TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
+                                                                          document                                                                          
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "g" : "A", "v" : { "$numberInt" : "10" }, "name" : "alpha", "firstVal" : { "$numberInt" : "10" }, "lastName" : "eta" }
+ { "_id" : { "$numberInt" : "2" }, "g" : "B", "v" : { "$numberInt" : "20" }, "name" : "beta", "firstVal" : null, "lastName" : "delta" }
+ { "_id" : { "$numberInt" : "3" }, "g" : "A", "v" : { "$numberInt" : "30" }, "name" : "gamma", "firstVal" : { "$numberInt" : "10" }, "lastName" : "eta" }
+ { "_id" : { "$numberInt" : "4" }, "g" : "B", "v" : { "$numberInt" : "40" }, "name" : "delta", "firstVal" : null, "lastName" : "delta" }
+ { "_id" : { "$numberInt" : "5" }, "g" : "A", "v" : { "$numberInt" : "50" }, "name" : "epsilon", "firstVal" : { "$numberInt" : "10" }, "lastName" : "eta" }
+ { "_id" : { "$numberInt" : "6" }, "g" : "C", "v" : { "$numberInt" : "60" }, "name" : "zeta", "firstVal" : { "$numberInt" : "60" }, "lastName" : "zeta" }
+ { "_id" : { "$numberInt" : "7" }, "g" : "A", "v" : null, "name" : "eta", "firstVal" : { "$numberInt" : "10" }, "lastName" : "eta" }
+ { "_id" : { "$numberInt" : "8" }, "g" : "B", "firstVal" : null, "lastName" : "delta" }
+(8 rows)
+
+-- 24. $first/$last without sortBy in $setWindowFields - GUC on (new WithExpr path)
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
+                                                                          document                                                                          
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "g" : "A", "v" : { "$numberInt" : "10" }, "name" : "alpha", "firstVal" : { "$numberInt" : "10" }, "lastName" : "eta" }
+ { "_id" : { "$numberInt" : "2" }, "g" : "B", "v" : { "$numberInt" : "20" }, "name" : "beta", "firstVal" : null, "lastName" : "delta" }
+ { "_id" : { "$numberInt" : "3" }, "g" : "A", "v" : { "$numberInt" : "30" }, "name" : "gamma", "firstVal" : { "$numberInt" : "10" }, "lastName" : "eta" }
+ { "_id" : { "$numberInt" : "4" }, "g" : "B", "v" : { "$numberInt" : "40" }, "name" : "delta", "firstVal" : null, "lastName" : "delta" }
+ { "_id" : { "$numberInt" : "5" }, "g" : "A", "v" : { "$numberInt" : "50" }, "name" : "epsilon", "firstVal" : { "$numberInt" : "10" }, "lastName" : "eta" }
+ { "_id" : { "$numberInt" : "6" }, "g" : "C", "v" : { "$numberInt" : "60" }, "name" : "zeta", "firstVal" : { "$numberInt" : "60" }, "lastName" : "zeta" }
+ { "_id" : { "$numberInt" : "7" }, "g" : "A", "v" : null, "name" : "eta", "firstVal" : { "$numberInt" : "10" }, "lastName" : "eta" }
+ { "_id" : { "$numberInt" : "8" }, "g" : "B", "firstVal" : null, "lastName" : "delta" }
+(8 rows)
+
+-- 25. Computed expression with sortBy in $setWindowFields
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "sortBy": { "v": 1 }, "output": { "firstDoubled": { "$first": { "$multiply": ["$v", 2] } }, "lastDoubled": { "$last": { "$multiply": ["$v", 2] } } } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
+                                                                                      document                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "g" : "A", "v" : { "$numberInt" : "10" }, "name" : "alpha", "firstDoubled" : null, "lastDoubled" : { "$numberInt" : "100" } }
+ { "_id" : { "$numberInt" : "2" }, "g" : "B", "v" : { "$numberInt" : "20" }, "name" : "beta", "firstDoubled" : null, "lastDoubled" : { "$numberInt" : "80" } }
+ { "_id" : { "$numberInt" : "3" }, "g" : "A", "v" : { "$numberInt" : "30" }, "name" : "gamma", "firstDoubled" : null, "lastDoubled" : { "$numberInt" : "100" } }
+ { "_id" : { "$numberInt" : "4" }, "g" : "B", "v" : { "$numberInt" : "40" }, "name" : "delta", "firstDoubled" : null, "lastDoubled" : { "$numberInt" : "80" } }
+ { "_id" : { "$numberInt" : "5" }, "g" : "A", "v" : { "$numberInt" : "50" }, "name" : "epsilon", "firstDoubled" : null, "lastDoubled" : { "$numberInt" : "100" } }
+ { "_id" : { "$numberInt" : "6" }, "g" : "C", "v" : { "$numberInt" : "60" }, "name" : "zeta", "firstDoubled" : { "$numberInt" : "120" }, "lastDoubled" : { "$numberInt" : "120" } }
+ { "_id" : { "$numberInt" : "7" }, "g" : "A", "v" : null, "name" : "eta", "firstDoubled" : null, "lastDoubled" : { "$numberInt" : "100" } }
+ { "_id" : { "$numberInt" : "8" }, "g" : "B", "firstDoubled" : null, "lastDoubled" : { "$numberInt" : "80" } }
+(8 rows)
+
+-- 26. With let variables (varSpec), no sortBy in $setWindowFields - GUC on
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "firstAdj": { "$first": { "$add": ["$v", "$$bonus"] } }, "lastAdj": { "$last": { "$add": ["$v", "$$bonus"] } } } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "let": { "bonus": 100 } }');
+                                                                                  document                                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "g" : "A", "v" : { "$numberInt" : "10" }, "name" : "alpha", "firstAdj" : { "$numberInt" : "110" }, "lastAdj" : null }
+ { "_id" : { "$numberInt" : "2" }, "g" : "B", "v" : { "$numberInt" : "20" }, "name" : "beta", "firstAdj" : null, "lastAdj" : { "$numberInt" : "140" } }
+ { "_id" : { "$numberInt" : "3" }, "g" : "A", "v" : { "$numberInt" : "30" }, "name" : "gamma", "firstAdj" : { "$numberInt" : "110" }, "lastAdj" : null }
+ { "_id" : { "$numberInt" : "4" }, "g" : "B", "v" : { "$numberInt" : "40" }, "name" : "delta", "firstAdj" : null, "lastAdj" : { "$numberInt" : "140" } }
+ { "_id" : { "$numberInt" : "5" }, "g" : "A", "v" : { "$numberInt" : "50" }, "name" : "epsilon", "firstAdj" : { "$numberInt" : "110" }, "lastAdj" : null }
+ { "_id" : { "$numberInt" : "6" }, "g" : "C", "v" : { "$numberInt" : "60" }, "name" : "zeta", "firstAdj" : { "$numberInt" : "160" }, "lastAdj" : { "$numberInt" : "160" } }
+ { "_id" : { "$numberInt" : "7" }, "g" : "A", "v" : null, "name" : "eta", "firstAdj" : { "$numberInt" : "110" }, "lastAdj" : null }
+ { "_id" : { "$numberInt" : "8" }, "g" : "B", "firstAdj" : null, "lastAdj" : { "$numberInt" : "140" } }
+(8 rows)
+
+-- =============================================================================
+-- 27. EXPLAIN matrix: sortBy on/off × GUC on/off for $first/$last in $setWindowFields
+-- =============================================================================
+-- 27a. GUC on, with sortBy → bsonfirst / bsonlast (sorted path, NOT WithExpr)
+SET documentdb.enableNewWithExprAccumulators TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "sortBy": { "v": 1 }, "output": { "f": { "$first": "$v" }, "l": { "$last": "$name" } } } }], "cursor": {} }');
+                                                                                                                                                                                                                                                                                              QUERY PLAN                                                                                                                                                                                                                                                                                              
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_0
+   Output: documentdb_api_internal.bson_dollar_merge_documents(agg_stage_0.document, bson_repath_and_build('f'::text, agg_stage_0.f, 'l'::text, agg_stage_0.l), false)
+   ->  WindowAgg
+         Output: collection.document, (documentdb_api_internal.bsonfirst(collection.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[], '{ "" : "$v" }'::bson) OVER w1), documentdb_api_internal.bsonlast(collection.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[], '{ "" : "$name" }'::bson) OVER w2, (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson))
+         Window: w2 AS (PARTITION BY (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)) ORDER BY (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         ->  WindowAgg
+               Output: (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)), collection.document, documentdb_api_internal.bsonfirst(collection.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[], '{ "" : "$v" }'::bson) OVER w1
+               Window: w1 AS (PARTITION BY (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)) ORDER BY (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+               ->  Sort
+                     Output: (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)), collection.document
+                     Sort Key: (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+                     ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+                           Output: documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson), collection.document
+                           Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(16 rows)
+
+-- 27b. GUC off, no sortBy → bsonfirstonsorted / bsonlastonsorted
+SET documentdb.enableNewWithExprAccumulators TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "f": { "$first": "$v" }, "l": { "$last": "$name" } } } }], "cursor": {} }');
+                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_0
+   Output: documentdb_api_internal.bson_dollar_merge_documents(agg_stage_0.document, bson_repath_and_build('f'::text, agg_stage_0.f, 'l'::text, agg_stage_0.l), false)
+   ->  WindowAgg
+         Output: collection.document, (documentdb_api_internal.bsonfirstonsorted(collection.document, '{ "" : "$v" }'::bson) OVER w1), documentdb_api_internal.bsonlastonsorted(collection.document, '{ "" : "$name" }'::bson) OVER w2, (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Window: w2 AS (PARTITION BY (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)) ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         ->  WindowAgg
+               Output: (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document, documentdb_api_internal.bsonfirstonsorted(collection.document, '{ "" : "$v" }'::bson) OVER w1
+               Window: w1 AS (PARTITION BY (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)) ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+               ->  Sort
+                     Output: (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
+                     Sort Key: (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+                           Output: documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(16 rows)
+
+-- 27c. GUC on, no sortBy → bsonfirstwithexpr / bsonlastwithexpr
+SET documentdb.enableNewWithExprAccumulators TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "f": { "$first": "$v" }, "l": { "$last": "$name" } } } }], "cursor": {} }');
+                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_0
+   Output: documentdb_api_internal.bson_dollar_merge_documents(agg_stage_0.document, bson_repath_and_build('f'::text, agg_stage_0.f, 'l'::text, agg_stage_0.l), false)
+   ->  WindowAgg
+         Output: collection.document, (documentdb_api_internal.bsonfirstwithexpr(collection.document, '{ "" : "$v" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text) OVER w1), documentdb_api_internal.bsonlastwithexpr(collection.document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text) OVER w2, (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Window: w2 AS (PARTITION BY (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)) ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         ->  WindowAgg
+               Output: (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document, documentdb_api_internal.bsonfirstwithexpr(collection.document, '{ "" : "$v" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text) OVER w1
+               Window: w1 AS (PARTITION BY (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)) ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+               ->  Sort
+                     Output: (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
+                     Sort Key: (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+                           Output: documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(16 rows)
+
+-- 27d. GUC on, no sortBy, with let → varSpec should include user let variables
+SET documentdb.enableNewWithExprAccumulators TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "f": { "$first": { "$add": ["$v", "$$bonus"] } } } } }], "cursor": {}, "let": { "bonus": 100 } }');
+                                                                                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_0
+   Output: documentdb_api_internal.bson_dollar_merge_documents(agg_stage_0.document, bson_repath_and_build('f'::text, agg_stage_0.f), false)
+   ->  WindowAgg
+         Output: collection.document, documentdb_api_internal.bsonfirstwithexpr(collection.document, '{ "" : { "$add" : [ "$v", "$$bonus" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson, NULL::text) OVER w1, (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+         Window: w1 AS (PARTITION BY (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)) ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         ->  Sort
+               Output: (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)), collection.document
+               Sort Key: (documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+               ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+                     Output: documentdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson), collection.document
+                     Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(13 rows)
+
+-- 28. Cleanup original test collection
+SELECT documentdb_api.drop_collection('db', 'fl_grp_test');
+ drop_collection 
+-----------------
+ t
+(1 row)
+

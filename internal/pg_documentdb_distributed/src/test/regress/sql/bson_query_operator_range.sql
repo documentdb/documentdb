@@ -290,15 +290,15 @@ ANALYZE;
 -- full query 500K
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "range_and_aggregation", "pipeline": [ { "$match" : { "$and" : [ { "f_insercion" : { "$gte" : { "$date" : { "$numberLong" : "0" } }}, "f_insercion" : { "$lt" : { "$date" : { "$numberLong" : "500000" } }} } ] }}, {"$project" : { "f_insercion" : 1, "n_18_velocidad": 1, "_id": 0, "date" : { "$dateToParts" : { "date" : "$f_insercion" } }} }, { "$group" : { "_id" : { "year" : "$date.year", "month" : "$date.month", "day" : "$date.day", "hour" : "$date.hour" }, "speed_avg" : { "$avg" : "$n_18_velocidad" } , "speed_max" : { "$max" : "$n_18_velocidad" } , "speed_min" : { "$min" : "$n_18_velocidad" }} }], "cursor": {} }');
 
-SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "range_and_aggregation", "pipeline": [ { "$match" : { "$and" : [ { "f_insercion" : { "$gte" : { "$date" : { "$numberLong" : "0" } }}, "f_insercion" : { "$lt" : { "$date" : { "$numberLong" : "500000" } }} } ] }}, {"$project" : { "f_insercion" : 1, "n_18_velocidad": 1, "_id": 0, "date" : { "$dateToParts" : { "date" : "$f_insercion" } }} }, { "$group" : { "_id" : { "year" : "$date.year", "month" : "$date.month", "day" : "$date.day", "hour" : "$date.hour" }, "speed_avg" : { "$avg" : "$n_18_velocidad" } , "speed_max" : { "$max" : "$n_18_velocidad" } , "speed_min" : { "$min" : "$n_18_velocidad" }} }], "cursor": {} }');
-SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 
 -- full query 500K ( "idLinea": 1 filter ) 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "range_and_aggregation", "pipeline": [ { "$match" : { "idLinea": 1, "$and" : [ { "f_insercion" : { "$gte" : { "$date" : { "$numberLong" : "0" } }}, "f_insercion" : { "$lt" : { "$date" : { "$numberLong" : "500000" } }} } ] }}, {"$project" : { "f_insercion" : 1, "n_18_velocidad": 1, "_id": 0, "date" : { "$dateToParts" : { "date" : "$f_insercion" } }} }, { "$group" : { "_id" : { "year" : "$date.year", "month" : "$date.month", "day" : "$date.day", "hour" : "$date.hour" }, "speed_avg" : { "$avg" : "$n_18_velocidad" } , "speed_max" : { "$max" : "$n_18_velocidad" } , "speed_min" : { "$min" : "$n_18_velocidad" }} }], "cursor": {} }');
 
-SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "range_and_aggregation", "pipeline": [ { "$match" : { "idLinea": 1, "$and" : [ { "f_insercion" : { "$gte" : { "$date" : { "$numberLong" : "0" } }}, "f_insercion" : { "$lt" : { "$date" : { "$numberLong" : "500000" } }} } ] }}, {"$project" : { "f_insercion" : 1, "n_18_velocidad": 1, "_id": 0, "date" : { "$dateToParts" : { "date" : "$f_insercion" } }} }, { "$group" : { "_id" : { "year" : "$date.year", "month" : "$date.month", "day" : "$date.day", "hour" : "$date.hour" }, "speed_avg" : { "$avg" : "$n_18_velocidad" } , "speed_max" : { "$max" : "$n_18_velocidad" } , "speed_min" : { "$min" : "$n_18_velocidad" }} }], "cursor": {} }');
-SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 ROLLBACK;

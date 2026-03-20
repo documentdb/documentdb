@@ -1635,10 +1635,10 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
 
 
 -----------------------------------------------------------
--- $min accumulator tests with new accumulator (enableNewMinMaxAccumulators = on)
--- Tests with enableNewMinMaxAccumulators = on
+-- $min accumulator tests with new accumulator (enableNewWithExprAccumulators = on)
+-- Tests with enableNewWithExprAccumulators = on
 -----------------------------------------------------------
-SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
 
 ----------------------
 -- Document window
@@ -1695,7 +1695,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$min": "$quantity", "window": {"range": ["current", "current"], "unit": "day"}}}}}]}');
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 
 -----------------------------------------------------------
@@ -1759,10 +1759,10 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$max": "$quantity", "window": {"range": ["current", "current"], "unit": "day"}}}}}]}');
 
 -----------------------------------------------------------
--- $max accumulator tests with new accumulator (enableNewMinMaxAccumulators = on)
--- Tests with enableNewMinMaxAccumulators = on
+-- $max accumulator tests with new accumulator (enableNewWithExprAccumulators = on)
+-- Tests with enableNewWithExprAccumulators = on
 -----------------------------------------------------------
-SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
 
 ----------------------
 -- Document window
@@ -1819,7 +1819,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$max": "$quantity", "window": {"range": ["current", "current"], "unit": "day"}}}}}]}');
 
-SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 
 -- Tests for $last

@@ -127,14 +127,14 @@ for validationFile in $(ls $scriptDir/expected/*.out); do
         fi
     fi
 
-    for macro in "" "!PG16_OR_HIGHER!" "!PG17_OR_HIGHER!"; do
+    for macro in "" "!PG16_OR_HIGHER!" "!PG17_OR_HIGHER!" "!PG18_OR_HIGHER!"; do
         fileNameMod=$(echo "$fileNameBase" | sed -E "s/_tests/${macro}_tests/g")
         findResult=$(grep "$fileNameMod" basic_schedule_core || true)
         [ -n "$findResult" ] && break
     done
 
     if [ "$findResult" == "" ]; then
-        for macro in "" "!PG16_OR_HIGHER!" "!PG17_OR_HIGHER!"; do
+        for macro in "" "!PG16_OR_HIGHER!" "!PG17_OR_HIGHER!" "!PG18_OR_HIGHER!"; do
             fileNameMod=$(echo "$fileNameBase" | sed -E "s/_tests/_tests${macro}/g")
             findResult=$(grep "$fileNameMod" basic_schedule_core || true)
             [ -n "$findResult" ] && break
@@ -142,7 +142,7 @@ for validationFile in $(ls $scriptDir/expected/*.out); do
     fi
 
     if [ "$findResult" == "" ]; then
-        if [[ "$fileNameBase" =~ "pg15" ]] || [[ "$fileNameBase" =~ "pg16" ]] || [[ "$fileNameBase" =~ "pg17" ]] || [[ "$fileNameBase" =~ "_explain" ]]; then
+        if [[ "$fileNameBase" =~ "pg15" ]] || [[ "$fileNameBase" =~ "pg16" ]] || [[ "$fileNameBase" =~ "pg17" ]] || [[ "$fileNameBase" =~ "pg18" ]] || [[ "$fileNameBase" =~ "_explain" ]]; then
             echo "Skipping schedule existence check for $fileNameBase"
         else
             echo "Test file '$validationFile' with name '$fileNameBase' or '$fileNameMod' is not in the schedule, please add it to the schedule";
