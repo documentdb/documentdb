@@ -357,6 +357,7 @@ extern bool EnableIndexOnlyScan;
 extern bool EnableIndexOnlyScanOnCostFunction;
 extern bool EnableOrderByIdOnCostFunction;
 extern bool EnablePrimaryKeyCursorScan;
+extern bool EnableCursorPlanBeforeRestrictionPathUpdate;
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -1010,6 +1011,25 @@ HasTextPathOpFamily(IndexOptInfo *indexInfo)
 }
 
 
+/*
+ * CheckPathForIndexOperations recursively walks a path tree and inspects each
+ * IndexPath to detect operators that require a forced index pushdown.
+ *
+ * When it reaches an IndexPath, it checks:
+ *
+ *  - Primary key btree: PK btree (_id_) with >1 clause -> saves as
+ *    primaryKeyLookupPath (used later by TryUseAlternateIndexForPrimaryKeyLookup).
+ *  - Vector search: indexorderbys with a recognized vector AM -> sets
+ *    ForceIndexOpType_VectorSearch and extracts the search parameter.
+ *  - GeoNear: GIST index with a single bson_geonear_distance order-by ->
+ *    sets ForceIndexOpType_GeoNear.
+ *  - Text search: text-path OpFamily (RUM/GIST) -> extracts text index options
+ *    and sets ForceIndexOpType_Text. Errors if multiple text expressions found.
+ *
+ * Called from WalkPathsForIndexOperations which iterates rel->pathlist.
+ * The data collected here drives ForceIndexForQueryOperators, which replaces
+ * the planner's chosen path with the mandatory index path.
+ */
 static void
 CheckPathForIndexOperations(Path *path, ReplaceExtensionFunctionContext *context)
 {
@@ -1136,6 +1156,30 @@ WalkPathsForIndexOperations(List *pathsList,
 }
 
 
+/*
+ * WalkRestrictionPathsForIndexOperations inspects restriction and join quals
+ * to detect whether a primary key force-pushdown should be activated.
+ *
+ * It walks each qual via CheckRestrictionPathNodeForIndexOperation which
+ * populates a PrimaryKeyLookupContext by detecting:
+ *
+ *  Qual type                                     | Detects                          | Sets
+ *  ----------------------------------------------+----------------------------------+-------------------------------------------
+ *  FuncExpr: BsonInMatchFunctionId on _id        | Runtime $in on _id               | runtimeDollarInRestrictionData
+ *  FuncExpr: ApiCursorStateFunctionId            | Cursor continuation              | context->hasStreamingContinuationScan
+ *  FuncExpr: BsonIndexHintFunctionId             | Index hint                       | context->forceIndexQueryOpData (IndexHint)
+ *  OpExpr:   BigintEqualOperatorId on shard_key  | shard_key_value = X              | shardKeyQualExpr
+ *  OpExpr:   BsonEqualOperatorId on object_id    | object_id = val                  | objectId.restrictInfo
+ *  OpExpr:   BsonEqualMatchRuntimeOperatorId _id | Runtime _id equality             | runtimeEqualityRestrictionData
+ *  ScalarArrayOpExpr: BsonEqualOp on object_id   | object_id = ANY(...) ($in)       | objectId.restrictInfo
+ *
+ * After walking, if no other force-index op is set and both shardKeyQualExpr
+ * and objectId.restrictInfo are populated, activates ForceIndexOpType_PrimaryKeyLookup.
+ *
+ * Note that, actual index path creation for primary key lookup is not done here - we only set the relevant context and then
+ * the index path is created in the support function when we have all the necessary information. Index path creation happens later
+ * in ForceIndexForQueryOperators → TryUseAlternateIndexForPrimaryKeyLookup.
+ */
 void
 WalkRestrictionPathsForIndexOperations(List *restrictInfo,
 									   List *joinInfo,
@@ -1218,7 +1262,8 @@ ReplaceExtensionFunctionOperatorsInRestrictionPaths(List *restrictInfo,
 			IsOpExprShardKeyForUnshardedCollections(rinfo->clause,
 													context->inputData.collectionId))
 		{
-			if (EnablePrimaryKeyCursorScan && context->hasStreamingContinuationScan)
+			if (EnablePrimaryKeyCursorScan && context->hasStreamingContinuationScan &&
+				!EnableCursorPlanBeforeRestrictionPathUpdate)
 			{
 				/* Don't trim the shard key qual here - wait until the continuation is formed */
 				continue;
@@ -3508,6 +3553,19 @@ TrimIndexRestrictInfoForBtreePath(PlannerInfo *root, IndexPath *indexPath,
 			continue;
 		}
 
+		/*
+		 * Strip ##= (BsonIndexBoundsEqual) ScalarArrayOpExpr entries from
+		 * indrestrictinfo.  When the equivalent object_id = ANY(...) has
+		 * already been pushed as an IndexClause, keeping the ##= entry
+		 * causes PG to emit it as a redundant Filter in the plan.
+		 */
+		if (IsA(rinfo->clause, ScalarArrayOpExpr) &&
+			IsScalarArrayOpExprTrimmable((ScalarArrayOpExpr *) rinfo->clause))
+		{
+			restrictInfosToRemove = lappend(restrictInfosToRemove, rinfo);
+			continue;
+		}
+
 		if (!IsA(rinfo->clause, OpExpr))
 		{
 			hasOtherClauses = true;
@@ -3616,7 +3674,8 @@ TrimIndexRestrictInfoForBtreePath(PlannerInfo *root, IndexPath *indexPath,
 	}
 
 	list_free(clauseRestrictInfos);
-	if (list_length(additionalIndexClauses) == 0)
+	if (list_length(additionalIndexClauses) == 0 &&
+		list_length(restrictInfosToRemove) == 0)
 	{
 		*hasNonIdClauses = hasOtherClauses;
 		return indexPath;
@@ -3700,6 +3759,14 @@ ReplaceFunctionOperatorsInPlanPath(PlannerInfo *root, RelOptInfo *rel, Path *pat
 																  heapPath->bitmapqual,
 																  PARENTTYPE_BITMAPHEAP,
 																  context);
+	}
+	else if (IsA(path, CustomPath) && EnablePrimaryKeyCursorScan &&
+			 EnableCursorPlanBeforeRestrictionPathUpdate)
+	{
+		CustomPath *customPath = (CustomPath *) path;
+		ReplaceExtensionFunctionOperatorsInPaths(root, rel,
+												 customPath->custom_paths,
+												 PARENTTYPE_NONE, context);
 	}
 	else if (IsA(path, IndexPath))
 	{
@@ -4778,6 +4845,26 @@ MatchIndexPathForPrimaryKeyLookup(IndexPath *path, void *matchContext)
 }
 
 
+/*
+ * TryUseAlternateIndexForPrimaryKeyLookup is the "always succeeds" fallback for
+ * primary key pushdown. Called when ForceIndexForQueryOperators could not find a
+ * matching btree PK path via create_index_paths + MatchIndexPathForPrimaryKeyLookup.
+ *
+ * It manually constructs a zero-cost btree IndexPath on (shard_key_value, object_id):
+ *  - If an existing PK IndexPath was found during WalkPathsForIndexOperations
+ *    (primaryKeyLookupPath), it reuses that path and appends the object_id clause
+ *    if missing.
+ *  - Otherwise, builds a fresh IndexPath with both shard_key and object_id clauses.
+ *
+ * Costs are forced to zero so this path always wins in the planner's comparison.
+ * For point equality on _id, cardinality is set to 1.
+ *
+ * After creating the path, removes redundant runtime _id filters from
+ * baserestrictinfo to avoid double evaluation:
+ *  - For _id equality: removes BsonEqualMatchRuntime if values match.
+ *  - For _id $in: removes BsonInMatch if the ScalarArrayOpExpr array matches
+ *    (via InMatchIsEquvalentTo).
+ */
 static bool
 TryUseAlternateIndexForPrimaryKeyLookup(PlannerInfo *root, RelOptInfo *rel,
 										ReplaceExtensionFunctionContext *indexContext,

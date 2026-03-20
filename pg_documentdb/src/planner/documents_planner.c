@@ -139,6 +139,8 @@ extern bool EnableCursorsOnAggregationQueryRewrite;
 extern bool EnableIdIndexCustomCostFunction;
 extern bool EnableCompositeParallelIndexScan;
 extern bool ForceParallelScanIfAvailable;
+extern bool EnablePrimaryKeyCursorScan;
+extern bool EnableCursorPlanBeforeRestrictionPathUpdate;
 
 planner_hook_type ExtensionPreviousPlannerHook = NULL;
 set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook = NULL;
@@ -471,6 +473,20 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		ForceIndexForQueryOperators(root, rel, &indexContext);
 	}
 
+	/*
+	 * When enabled, run the streaming cursor plan rewrite early — before
+	 * path replacement modifies the paths. This allows the custom scan to
+	 * see the original planner paths (index scan vs bitmap) before they
+	 * are transformed by ReplaceExtensionFunctionOperatorsInPaths.
+	 */
+	bool updatedPaths = false;
+	if (EnableCursorPlanBeforeRestrictionPathUpdate &&
+		indexContext.hasStreamingContinuationScan)
+	{
+		updatedPaths = UpdatePathsWithExtensionStreamingCursorPlans(root, rel, rte,
+																	&indexContext);
+	}
+
 	rel->baserestrictinfo =
 		ReplaceExtensionFunctionOperatorsInRestrictionPaths(rel->baserestrictinfo,
 															&indexContext);
@@ -491,9 +507,10 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 
 	/*
 	 * Update any paths with custom scans as appropriate.
+	 * Skip if already done in the early path above.
 	 */
-	bool updatedPaths = false;
-	if (indexContext.hasStreamingContinuationScan)
+	if (!EnableCursorPlanBeforeRestrictionPathUpdate &&
+		indexContext.hasStreamingContinuationScan)
 	{
 		updatedPaths = UpdatePathsWithExtensionStreamingCursorPlans(root, rel, rte,
 																	&indexContext);
