@@ -549,3 +549,5 @@ impl std::fmt::Debug for DocumentDBError {
         Display::fmt(self, f)
     }
 }
+
+impl std::error::Error for DocumentDBError {}
