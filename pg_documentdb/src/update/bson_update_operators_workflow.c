@@ -1381,7 +1381,8 @@ HandleUnsetUpdateTree(BsonIntermediatePathNode *tree,
 
 
 /*
- * $setOnInsert is a no-op for non-upserts. For upserts, handle it like a basic update tree.
+ * $setOnInsert paths must always be added to the tree so that conflicts -  
+ * even for no-ops when !isUpsert - are detected and reported. 
  */
 static void
 HandleSetOnInsertUpdateTree(BsonIntermediatePathNode *tree, bson_iter_t *updateSpec,
@@ -1390,11 +1391,6 @@ HandleSetOnInsertUpdateTree(BsonIntermediatePathNode *tree, bson_iter_t *updateS
 							const PositionalUpdateSpec *positionalSpec,
 							bool isUpsert)
 {
-	if (!isUpsert)
-	{
-		return;
-	}
-
 	HandleBasicUpdateTree(tree, updateSpec, valuesFunc, stateFunc,
 						  positionalSpec, isUpsert);
 }

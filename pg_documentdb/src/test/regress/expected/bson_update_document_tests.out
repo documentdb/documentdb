@@ -1877,6 +1877,19 @@ SELECT documentdb_api_internal.bson_update_document('{"data": "data"}', '{ "": {
 ERROR:  Modifying the path 'a.b.c.d.e.f' will result in a conflict occurring at 'a.b.c.d.e'
 SELECT documentdb_api_internal.bson_update_document('{"data": "data"}', '{ "": { "$set": { "a.b.c.d.e": 1 }, "$inc": {"a.b": 1 } } }', '{}');
 ERROR:  Modifying the path 'a.b' will result in a conflict occurring at 'a.b'
+-- test conflicting update operator paths involving $setOnInsert
+-- $mul + $setOnInsert on same field (reported bug: should error regardless of upsert)
+SELECT documentdb_api_internal.bson_update_document('{"foo": "bar"}', '{ "": { "$mul": { "y": -21621 }, "$setOnInsert": { "y": true } } }', '{}');
+ERROR:  Modifying the path 'y' will result in a conflict occurring at 'y'
+-- $set + $setOnInsert on same field
+SELECT documentdb_api_internal.bson_update_document('{"data": "data"}', '{ "": { "$set": { "a": 1 }, "$setOnInsert": { "a": 2 } } }', '{}');
+ERROR:  Modifying the path 'a' will result in a conflict occurring at 'a'
+-- $setOnInsert + $inc on same field (operators in reverse order)
+SELECT documentdb_api_internal.bson_update_document('{"data": "data"}', '{ "": { "$setOnInsert": { "a": 1 }, "$inc": { "a": 1 } } }', '{}');
+ERROR:  Modifying the path 'a' will result in a conflict occurring at 'a'
+-- same conflict must also fire on a true upsert (empty source doc)
+SELECT documentdb_api_internal.bson_update_document('{}', '{ "": { "$mul": { "y": 1 }, "$setOnInsert": { "y": true } } }', '{}');
+ERROR:  Modifying the path 'y' will result in a conflict occurring at 'y'
 -- update scenario tests: $currentDate
 -- -- Function that extracts date / timestamp value of a given key in a json obj, and returns the equivalent epoch in ms
 CREATE OR REPLACE FUNCTION get_epochms_from_key(obj json, qkey text, is_date bool)

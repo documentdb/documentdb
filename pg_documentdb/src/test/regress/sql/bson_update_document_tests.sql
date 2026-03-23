@@ -565,6 +565,16 @@ SELECT documentdb_api_internal.bson_update_document('{"data": "data"}', '{ "": {
 SELECT documentdb_api_internal.bson_update_document('{"data": "data"}', '{ "": { "$set": { "a.b.c.d.e": 1 }, "$unset": {"a.b.c.d.e.f": 1 } } }', '{}');
 SELECT documentdb_api_internal.bson_update_document('{"data": "data"}', '{ "": { "$set": { "a.b.c.d.e": 1 }, "$inc": {"a.b": 1 } } }', '{}');
 
+-- test conflicting update operator paths involving $setOnInsert
+-- $mul + $setOnInsert on same field (reported bug: should error regardless of upsert)
+SELECT documentdb_api_internal.bson_update_document('{"foo": "bar"}', '{ "": { "$mul": { "y": -21621 }, "$setOnInsert": { "y": true } } }', '{}');
+-- $set + $setOnInsert on same field
+SELECT documentdb_api_internal.bson_update_document('{"data": "data"}', '{ "": { "$set": { "a": 1 }, "$setOnInsert": { "a": 2 } } }', '{}');
+-- $setOnInsert + $inc on same field (operators in reverse order)
+SELECT documentdb_api_internal.bson_update_document('{"data": "data"}', '{ "": { "$setOnInsert": { "a": 1 }, "$inc": { "a": 1 } } }', '{}');
+-- same conflict must also fire on a true upsert (empty source doc)
+SELECT documentdb_api_internal.bson_update_document('{}', '{ "": { "$mul": { "y": 1 }, "$setOnInsert": { "y": true } } }', '{}');
+
 -- update scenario tests: $currentDate
 
 -- -- Function that extracts date / timestamp value of a given key in a json obj, and returns the equivalent epoch in ms
