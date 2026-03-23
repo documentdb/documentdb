@@ -19,6 +19,63 @@ use crate::{
     responses::{RawResponse, Response},
 };
 
+const IGNORED_COMMON_SPEC_FIELDS: &[&str] = &[
+    "$clusterTime",
+    "$db",
+    "$readPreference",
+    "$sort",
+    "allowDiskUse",
+    "allowPartialResults",
+    "apiDeprecationErrors",
+    "apiStrict",
+    "apiVersion",
+    "autocommit",
+    "awaitData",
+    "batch_size",
+    "bypassDocumentValidation",
+    "bypassEmptyTsReplacement",
+    "collation",
+    "collstats",
+    "comment",
+    "commitQuorum",
+    "db",
+    "dbstats",
+    "flags",
+    "indexDetails",
+    "let",
+    "lsid",
+    "maxTimeMS",
+    "noCursorTimeout",
+    "oplogReplay",
+    "options",
+    "p5date",
+    "pipeline",
+    "projection",
+    "readConcern",
+    "readPreference",
+    "returnKey",
+    "showRecordId",
+    "snapshot",
+    "startTransaction",
+    "stmtId",
+    "storageEngine",
+    "symbol",
+    "tailable",
+    "timeseries",
+    "txnNumber",
+    "validationAction",
+    "validationLevel",
+    "validator",
+    "viewOn",
+    "writeConcern",
+];
+
+fn is_common_spec_ignored_field(field_name: &str) -> bool {
+    IGNORED_COMMON_SPEC_FIELDS
+        .iter()
+        .any(|ignored_field| field_name.eq_ignore_ascii_case(ignored_field))
+}
+
 pub async fn process_coll_mod(
     request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
@@ -147,9 +204,19 @@ pub async fn process_rename_collection(
                 );
             }
             "dropTarget" => {
-                drop_target = v.as_bool().unwrap_or(false);
+                drop_target = v.as_bool().ok_or(DocumentDBError::bad_value(
+                    "dropTarget was not a bool".to_owned(),
+                ))?;
             }
-            _ => {}
+            other if is_common_spec_ignored_field(other) => {}
+            other => {
+                return Err(DocumentDBError::documentdb_error(
+                    ErrorCode::UnknownBsonField,
+                    format!(
+                        "The BSON field 'renameCollection.{other}' is not recognized as a valid field"
+                    ),
+                ));
+            }
         }
         Ok(())
     })?;
