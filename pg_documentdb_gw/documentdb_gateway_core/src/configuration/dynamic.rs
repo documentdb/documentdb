@@ -54,7 +54,7 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     }
 
     fn index_build_sleep_milli_secs(&self) -> i32 {
-        self.get_i32("indexBuildWaitSleepTimeInMilliSec", 1000)
+        self.get_i32("indexBuildWaitSleepTimeInMilliSec", 100)
     }
 
     fn is_postgres_writable(&self) -> bool {
