@@ -7,11 +7,11 @@
 | Abinav Rameesh | Microsoft |
 | Vinod Sridharan | Microsoft |
 | Siddhesh Vethe | Microsoft |
-| Zhe Li | Microsoft |
-| Rashim Gupta | Amazon |
-| Norman Townsend | Amazon |
+| German Eichberger | Microsoft |
 | Viktor Tarassov | Amazon |
+| Nitin Ahuja | Amazon |
 | Maruthi Devarenti | Amazon |
+| Vin Yu | Amazon |
 | Patrick McLain | AB InBev |
 | Hari Krishna | Rippling |
 | Hari Krishna Sunder | YugabyteDB |
