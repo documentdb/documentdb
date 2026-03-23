@@ -2213,7 +2213,7 @@ BsonMinMaxWithExprTransitionCore(PG_FUNCTION_ARGS, bool isMax)
 		BsonAggValue *newState = (BsonAggValue *) palloc0(sizeof(BsonAggValue));
 		SET_VARSIZE(newState, sizeof(BsonAggValue));
 		bson_value_copy(&evaluatedValue, &newState->value);
-		newState->collationString = IsCollationApplicable(collationString) ?
+		newState->collationString = IsCollationValid(collationString) ?
 									pstrdup(collationString) : NULL;
 		MemoryContextSwitchTo(oldContext);
 
@@ -2305,7 +2305,7 @@ BsonMinMaxWithExprCombineCore(PG_FUNCTION_ARGS, bool isMax)
 
 	SET_VARSIZE(finalResult, sizeof(BsonAggValue));
 	bson_value_copy(&result->value, &finalResult->value);
-	finalResult->collationString = IsCollationApplicable(result->collationString) ?
+	finalResult->collationString = IsCollationValid(result->collationString) ?
 								   pstrdup(result->collationString) : NULL;
 
 	MemoryContextSwitchTo(oldContext);

@@ -476,5 +476,64 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_col
 -- Post-sharding constant group with collation
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_test", "pipeline": [ { "$group": { "_id": null, "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } } ], "collation": { "locale": "en", "strength": 1 } }');
 
+set citus.enable_local_execution to off;
+
+-- Post-sharding case-insensitive collation
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_test", "pipeline": [ { "$group": { "_id": "$group", "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- Post-sharding constant group with collation
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_collation_test", "pipeline": [ { "$group": { "_id": null, "maxName": { "$max": "$name" }, "minName": { "$min": "$name" } } } ], "collation": { "locale": "en", "strength": 1 } }');
+
+RESET citus.enable_local_execution;
+
+-- =============================================================================
+-- Test 17: $min/$max numericOrdering collation with remote/sharded execution
+-- Verifies that collation-aware comparisons work correctly in the transition
+-- function on worker nodes during distributed aggregation.
+-- We insert enough documents per group (10+) to ensure that multiple documents
+-- in the same group land on the same shard, exercising the comparison path
+-- in the transition function (not just the combine path on the coordinator).
+-- =============================================================================
+
+-- Group "x": numbers as strings where binary vs numeric orderings disagree
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 1,  "grp": "x", "val": "10" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 2,  "grp": "x", "val": "2" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 3,  "grp": "x", "val": "20" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 4,  "grp": "x", "val": "3" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 5,  "grp": "x", "val": "9" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 6,  "grp": "x", "val": "100" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 7,  "grp": "x", "val": "1" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 8,  "grp": "x", "val": "50" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 9,  "grp": "x", "val": "5" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 10, "grp": "x", "val": "200" }');
+
+-- Group "y": different range of numeric strings
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 11, "grp": "y", "val": "8" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 12, "grp": "y", "val": "80" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 13, "grp": "y", "val": "800" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 14, "grp": "y", "val": "4" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 15, "grp": "y", "val": "40" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 16, "grp": "y", "val": "400" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 17, "grp": "y", "val": "6" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 18, "grp": "y", "val": "60" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 19, "grp": "y", "val": "600" }');
+SELECT documentdb_api.insert_one('db','maxmin_numord_dist_test','{ "_id": 20, "grp": "y", "val": "7" }');
+
+-- Shard the collection
+SELECT documentdb_api.shard_collection('db', 'maxmin_numord_dist_test', '{ "_id": "hashed" }', false);
+
+-- Force remote execution to exercise worker-side transition comparisons
+SET citus.enable_local_execution TO off;
+
+-- Post-shard remote execution: grouped (exercises transition comparison on workers)
+-- Expected: x => max "200", min "1"; y => max "800", min "4"
+-- Without fix, binary ordering gives wrong results (e.g. max "9" instead of "200")
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_numord_dist_test", "pipeline": [ { "$group": { "_id": "$grp", "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": true } }');
+
+-- Post-shard remote execution: constant group (exercises combine on coordinator)
+-- Expected: max "800", min "1"
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_numord_dist_test", "pipeline": [ { "$group": { "_id": null, "maxVal": { "$max": "$val" }, "minVal": { "$min": "$val" } } } ], "collation": { "locale": "en", "numericOrdering": true } }');
+
+RESET citus.enable_local_execution;
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb_core.enableCollation TO off;
