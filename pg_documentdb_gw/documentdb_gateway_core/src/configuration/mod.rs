@@ -105,6 +105,10 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
     /// Defaults to 0o660 (owner+group read/write) if not specified.
     fn unix_socket_file_permissions(&self) -> u32;
 
+    /// Returns the kind identifier for this gateway instance.
+    /// Included in the hello command's `internal` response document.
+    fn instance_kind(&self) -> &str;
+
     /// Provides a way to downcast the trait object to a concrete type.
     fn as_any(&self) -> &dyn std::any::Any;
 }

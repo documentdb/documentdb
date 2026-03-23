@@ -139,5 +139,11 @@ pub async fn validate_is_master_unauthenticated(client: &Client) -> Result<(), E
         );
     }
 
+    // Validate kind field is present as a string
+    assert!(
+        internal.get_str("kind").is_ok(),
+        "internal must contain 'kind' string"
+    );
+
     Ok(())
 }

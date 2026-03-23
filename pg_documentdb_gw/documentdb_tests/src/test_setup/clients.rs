@@ -23,6 +23,26 @@ fn test_credentials(user: &str, password: &str) -> Credential {
         .build()
 }
 
+/// Creates a `MongoDB` test client with TLS but no authentication.
+/// Used for pre-auth commands like `hello` and `isMaster`.
+///
+/// # Errors
+///
+/// Returns an error if the server address cannot be parsed or the client
+/// cannot be constructed with the given options.
+pub fn get_client_unauthenticated() -> std::result::Result<Client, Error> {
+    let client_options = ClientOptions::builder()
+        .tls(Tls::Enabled(
+            TlsOptions::builder()
+                .allow_invalid_certificates(true)
+                .build(),
+        ))
+        .hosts(vec![ServerAddress::parse("127.0.0.1:10260")?])
+        .build();
+
+    Client::with_options(client_options)
+}
+
 /// Creates a `MongoDB` test client with TLS and SCRAM-SHA-256 authentication.
 ///
 /// # Errors

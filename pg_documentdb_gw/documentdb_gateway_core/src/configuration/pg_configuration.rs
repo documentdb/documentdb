@@ -37,6 +37,7 @@ struct PgConfigurationInner {
     dynamic_config_path: String,
     settings_prefixes: Vec<String>,
     pool_manager: Arc<PoolManager>,
+    instance_kind: String,
 }
 
 impl PgConfigurationInner {
@@ -179,11 +180,14 @@ impl PgConfiguration {
             dynamic_config_path: setup_configuration.dynamic_configuration_file(),
             settings_prefixes,
             pool_manager,
+            instance_kind: setup_configuration.instance_kind().to_owned(),
         };
 
         let values = ArcSwap::from_pointee(inner.load_configurations().await?);
         let last_update_at = ArcSwap::from_pointee(Instant::now());
-        let topology_bson = ArcSwap::from_pointee(Self::load_topology(&inner.pool_manager).await);
+        let topology_bson = ArcSwap::from_pointee(
+            Self::load_topology(&inner.pool_manager, &inner.instance_kind).await,
+        );
 
         let mut configuration = Arc::new(Self {
             inner,
@@ -229,7 +233,7 @@ impl PgConfiguration {
 
         self.values.store(Arc::new(new_config));
         self.topology_bson.store(Arc::new(
-            Self::load_topology(&self.inner.pool_manager).await,
+            Self::load_topology(&self.inner.pool_manager, &self.inner.instance_kind).await,
         ));
         self.last_update_at.store(Arc::new(Instant::now()));
 
@@ -267,7 +271,7 @@ impl PgConfiguration {
         })
     }
 
-    async fn load_topology(pool_manager: &PoolManager) -> RawBson {
+    async fn load_topology(pool_manager: &PoolManager, instance_kind: &str) -> RawBson {
         let extension_versions_query = pool_manager.query_catalog().extension_versions();
         if extension_versions_query.is_empty() {
             return rawbson!({});
@@ -299,7 +303,8 @@ impl PgConfiguration {
                 tracing::info!("Topology acquired: {doc:?}");
                 match doc.0.get("internal") {
                     Ok(Some(value)) => rawbson!({
-                        "documentdb_versions": value.to_raw_bson()
+                        "documentdb_versions": value.to_raw_bson(),
+                        "kind": instance_kind
                     }),
                     _ => rawbson!({}),
                 }
