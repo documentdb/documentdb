@@ -694,14 +694,14 @@ BuildBsonUpdateMetadata(BsonUpdateMetadata *metadata, const bson_value_t *update
 																		   variableSpec,
 																		   &
 																		   isReplaceStagePresent);
-			if (isReplaceStagePresent)
-			{
-				metadata->commandUpdateType = CommandUpdateType_Replacement;
-			}
-			else
-			{
-				metadata->commandUpdateType = CommandUpdateType_Update;
-			}
+
+			/*
+			 * We materialize the documents after each stage so for update descriptions
+			 * consider pipeline updates as replacements.
+			 *
+			 * TODO: Need to revisit this and see the feasibility of building more granular update descriptions.
+			 */
+			metadata->commandUpdateType = CommandUpdateType_Replacement;
 			break;
 		}
 
