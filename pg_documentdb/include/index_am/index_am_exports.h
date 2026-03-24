@@ -15,10 +15,18 @@
 #include <utils/rel.h>
 
 struct IndexScanDescData;
-struct ExplainState;
+typedef struct ExplainWriterFuncs
+{
+	void (*writeBool)(const char *name, bool value, void *writer);
+	void (*writeString)(const char *name, const char *value, void *writer);
+	void (*writeStringList)(const char *name, List *list, void *writer);
+	void (*writeInteger)(const char *name, const char *label, int32_t value,
+						 void *writer);
+} ExplainWriterFuncs;
 
-typedef void (*TryExplainIndexFunc)(struct IndexScanDescData *scan, struct
-									ExplainState *es);
+typedef void (*TryExplainIndexFunc)(struct IndexScanDescData *scan,
+									void *writerState,
+									ExplainWriterFuncs *es);
 
 typedef bool (*GetMultikeyStatusFunc)(Relation indexRelation);
 typedef bool (*GetTruncationStatusFunc)(Relation indexRelation);

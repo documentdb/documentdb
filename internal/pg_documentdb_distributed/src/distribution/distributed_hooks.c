@@ -784,6 +784,8 @@ InitializeDocumentDBDistributedHooks(void)
 	update_postgres_index_hook = UpdateDistributedPostgresIndex;
 	get_operation_cancellation_query_hook = GetDistributedOperationCancellationQuery;
 
+	RegisterDistributedExplainStageHook();
+
 	DistributedOperationsQuery =
 		"SELECT * FROM pg_stat_activity LEFT JOIN pg_catalog.get_all_active_transactions() ON process_id = pid JOIN pg_catalog.pg_dist_local_group ON TRUE";
 	DistributedApplicationNamePrefix = "citus_internal";

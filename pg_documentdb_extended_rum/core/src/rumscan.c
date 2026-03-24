@@ -56,8 +56,18 @@ typedef struct RumParallelScanDescData
 	ConditionVariable rum_ps_cv;    /* used to synchronize parallel scan */
 } RumParallelScanDescData;
 
+typedef struct ExplainWriterFuncs
+{
+	void (*writeBool)(const char *name, bool value, void *writer);
+	void (*writeString)(const char *name, const char *value, void *writer);
+	void (*writeStringList)(const char *name, List *list, void *writer);
+	void (*writeInteger)(const char *name, const char *label, int32_t value,
+						 void *writer);
+} ExplainWriterFuncs;
+
 extern PGDLLEXPORT void try_explain_documentdb_rum_index(IndexScanDesc scan,
-														 struct ExplainState *es);
+														 void *state,
+														 ExplainWriterFuncs *funcs);
 extern PGDLLEXPORT bool can_documentdb_rum_index_scan_ordered(IndexScanDesc scan);
 
 IndexScanDesc
@@ -1386,24 +1396,25 @@ can_documentdb_rum_index_scan_ordered(IndexScanDesc scan)
 
 
 extern PGDLLEXPORT void
-try_explain_documentdb_rum_index(IndexScanDesc scan, ExplainState *es)
+try_explain_documentdb_rum_index(IndexScanDesc scan,
+								 void *state, ExplainWriterFuncs *funcs)
 {
 	/* This function is called from explain.c */
 	int i, j;
 	List *entryList = NIL;
 	const char *scanType = "unknown";
 	RumScanOpaque so = (RumScanOpaque) scan->opaque;
-	ExplainPropertyInteger("innerScanLoops", "loops", so->scanLoops, es);
+	funcs->writeInteger("innerScanLoops", "loops", so->scanLoops, state);
 
 	if (so->killedItemsSkipped > 0)
 	{
-		ExplainPropertyInteger("deadEntriesOrPagesSkipped", "items",
-							   so->killedItemsSkipped, es);
+		funcs->writeInteger("deadEntriesOrPagesSkipped", "items",
+							so->killedItemsSkipped, state);
 	}
 
 	if (scan->parallel_scan != NULL)
 	{
-		ExplainPropertyBool("parallelScanCapable", so->isParallelEnabled, es);
+		funcs->writeBool("parallelScanCapable", so->isParallelEnabled, state);
 	}
 
 	switch (so->scanType)
@@ -1439,7 +1450,7 @@ try_explain_documentdb_rum_index(IndexScanDesc scan, ExplainState *es)
 		}
 	}
 
-	ExplainPropertyText("scanType", scanType, es);
+	funcs->writeString("scanType", scanType, state);
 	for (i = 0; i < so->nkeys; i++)
 	{
 		StringInfo buf = makeStringInfo();
@@ -1467,5 +1478,5 @@ try_explain_documentdb_rum_index(IndexScanDesc scan, ExplainState *es)
 							buf->data);
 	}
 
-	ExplainPropertyList("scanKeyDetails", entryList, es);
+	funcs->writeStringList("scanKeyDetails", entryList, state);
 }

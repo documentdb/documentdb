@@ -1,0 +1,293 @@
+SET search_path TO documentdb_api, documentdb_api_catalog,documentdb_core;
+SET documentdb.next_collection_id TO 1300;
+SET documentdb.next_collection_index_id TO 1300;
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.documentdb_explain(
+    p_explain_spec bson,
+    p_append_cursor_params boolean DEFAULT FALSE)
+ RETURNS bson
+ LANGUAGE c
+ VOLATILE
+AS 'pg_documentdb', $$documentdb_explain$$;
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.explain_and_mask_numbers(
+    p_explain_spec bson,
+    p_append_cursor_params boolean DEFAULT FALSE)
+ RETURNS SETOF text AS $$
+ DECLARE
+     explain_result bson;
+ BEGIN
+    SELECT documentdb_test_helpers.documentdb_explain(p_explain_spec, p_append_cursor_params) INTO explain_result;
+
+    SELECT regexp_replace(explain_result::text, '"startupCost" : { "\$numberDouble" : "[0-9eE\.]+" }', '"startupCost" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+    SELECT regexp_replace(explain_result::text, '"totalCost" : { "\$numberDouble" : "[0-9eE\.]+" }', '"totalCost" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+    SELECT regexp_replace(explain_result::text, '"executionStartAtTimeMillis" : { "\$numberDouble" : "[0-9eE\.]+" }', '"executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+    SELECT regexp_replace(explain_result::text, '"executionTimeMillis" : { "\$numberDouble" : "[0-9eE\.]+" }', '"executionTimeMillis" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+    SELECT regexp_replace(explain_result::text, '"numBlocksFromCache" : { "\$numberDouble" : "[0-9eE\.]+" }', '"numBlocksFromCache" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+    SELECT regexp_replace(explain_result::text, '"numBlocksFromDisk" : { "\$numberDouble" : "[0-9eE\.]+" }', '"numBlocksFromDisk" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+    SELECT regexp_replace(explain_result::text, '"ioReadTimeMillis" : { "\$numberDouble" : "[0-9eE\.]+" }', '"ioReadTimeMillis" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+    SELECT regexp_replace(explain_result::text, '"totalDataSizeSortedBytesEstimate" : { "\$numberDouble" : "[0-9eE\.]+" }', '"totalDataSizeSortedBytesEstimate" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+    SELECT regexp_replace(explain_result::text, '"estimatedTotalKeysExamined" : { "\$numberDouble" : "[0-9eE\.]+" }', '"estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+
+    RETURN QUERY WITH r1 AS (SELECT explain_result AS explain_val),
+        r2 AS (SELECT regexp_split_to_table(explain_val::text, ',') AS line from r1),
+        r3 AS ( SELECT row_number() over () as rn, line FROM r2)
+        SELECT STRING_AGG(line, ',' ORDER BY rn ASC) || ',' FROM r3 GROUP BY round(rn / 4);
+ END;
+ $$ LANGUAGE plpgsql;
+-- basic invalid inputs on spec.
+SELECT documentdb_test_helpers.documentdb_explain('{}'::bson);
+ERROR:  Missing required field 'explain' in explain spec
+SELECT documentdb_test_helpers.documentdb_explain('{ "$db": "expdb" }'::bson);
+ERROR:  Missing required field 'explain' in explain spec
+SELECT documentdb_test_helpers.documentdb_explain('{ "explain": { "find": "foo" } }'::bson);
+ERROR:  Missing or invalid 'verbosity' field in explain spec
+SELECT documentdb_test_helpers.documentdb_explain('{ "explain": { "find": "foo" }, "$db": "expdb" }'::bson);
+ERROR:  Missing or invalid 'verbosity' field in explain spec
+SELECT documentdb_test_helpers.documentdb_explain('{ "explain": { "find": "foo" }, "verbosity": "queryPlanner" }'::bson);
+ERROR:  Missing required field '$db' in explain spec
+SELECT documentdb_test_helpers.documentdb_explain('{ "explain": { "find": "foo" },  "$db": "expdb", "verbosity": "queryPlannerInvalid" }'::bson);
+ERROR:  Invalid verbosity option for explain: queryPlannerInvalid
+-- test find (with multiple combos) on non-existent collection.
+SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent" }, "$db": "expdb", "verbosity": "queryPlanner" }'::bson);
+                                                          explain_and_mask_numbers                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------
+ { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.nonexistent", "winningPlan" : { "stage" : "EOF",
+  "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" } } }, "ok" : { "$numberDouble" : "1.0" } },
+(2 rows)
+
+SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent" }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+                                                                                             explain_and_mask_numbers                                                                                             
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.nonexistent", "winningPlan" : { "stage" : "EOF",
+  "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" } } }, "executionStats" : { "nReturned" : { "$numberLong" : "0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" },
+  "executionStages" : { "stage" : "EOF", "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" },
+  "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" } } },
+  "ok" : { "$numberDouble" : "1.0" } },
+(5 rows)
+
+SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "limit": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+                                                                                            explain_and_mask_numbers                                                                                             
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.nonexistent", "winningPlan" : { "stage" : "LIMIT",
+  "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "limitAmount" : { "$numberDouble" : "1.0" },
+  "inputStage" : { "stage" : "EOF", "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" } } } }, "executionStats" : { "nReturned" : { "$numberLong" : "0" },
+  "executionTimeMillis" : { "$numberDouble" : "0.0" }, "executionStages" : { "stage" : "LIMIT", "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" },
+  "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" },
+  "ioReadTimeMillis" : { "$numberDouble" : "0.0" }, "inputStage" : { "stage" : "EOF", "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" },
+  "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" },
+  "ioReadTimeMillis" : { "$numberDouble" : "0.0" } } } }, "ok" : { "$numberDouble" : "1.0" } },
+(8 rows)
+
+SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+                                                                                                 explain_and_mask_numbers                                                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.nonexistent", "winningPlan" : { "stage" : "LIMIT",
+  "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "skipAmount" : { "$numberDouble" : "1.0" },
+  "limitAmount" : { "$numberDouble" : "1.0" }, "inputStage" : { "stage" : "EOF", "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" } } } },
+  "executionStats" : { "nReturned" : { "$numberLong" : "0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "executionStages" : { "stage" : "LIMIT", "nReturned" : { "$numberDouble" : "0.0" },
+  "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" },
+  "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" }, "inputStage" : { "stage" : "EOF", "nReturned" : { "$numberDouble" : "0.0" },
+  "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" },
+  "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" } } } }, "ok" : { "$numberDouble" : "1.0" } },
+(8 rows)
+
+SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+                                                                                                 explain_and_mask_numbers                                                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.nonexistent", "winningPlan" : { "stage" : "LIMIT",
+  "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "skipAmount" : { "$numberDouble" : "1.0" },
+  "limitAmount" : { "$numberDouble" : "1.0" }, "inputStage" : { "stage" : "SORT", "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" },
+  "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "sortPattern" : { "a" : { "$numberInt" : "1" } }, "inputStage" : { "stage" : "EOF", "startupCost" : { "$numberDouble" : "0.0" },
+  "totalCost" : { "$numberDouble" : "0.0" } } } } }, "executionStats" : { "nReturned" : { "$numberLong" : "0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "executionStages" : { "stage" : "LIMIT",
+  "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" },
+  "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" }, "inputStage" : { "stage" : "SORT",
+  "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "sortMethod" : "quicksort",
+  "totalDataSizeSortedBytesEstimate" : { "$numberLong" : "25" }, "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" },
+  "ioReadTimeMillis" : { "$numberDouble" : "0.0" }, "inputStage" : { "stage" : "EOF", "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" },
+  "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" },
+  "ioReadTimeMillis" : { "$numberDouble" : "0.0" } } } } }, "ok" : { "$numberDouble" : "1.0" } },
+(12 rows)
+
+SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "filter": { "b": { "$gt": 1 } }, "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+                                                                                                   explain_and_mask_numbers                                                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.nonexistent", "winningPlan" : { "stage" : "LIMIT",
+  "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "skipAmount" : { "$numberDouble" : "1.0" },
+  "limitAmount" : { "$numberDouble" : "1.0" }, "inputStage" : { "stage" : "SORT", "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" },
+  "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "sortPattern" : { "a" : { "$numberInt" : "1" } }, "inputStage" : { "stage" : "EOF", "startupCost" : { "$numberDouble" : "0.0" },
+  "totalCost" : { "$numberDouble" : "0.0" }, "filter" : { "b" : { "$gt" : { "$numberInt" : "1" } } } } } } }, "executionStats" : { "nReturned" : { "$numberLong" : "0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" },
+  "executionStages" : { "stage" : "LIMIT", "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" },
+  "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" },
+  "inputStage" : { "stage" : "SORT", "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" },
+  "sortMethod" : "quicksort", "totalDataSizeSortedBytesEstimate" : { "$numberLong" : "25" }, "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" },
+  "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" }, "inputStage" : { "stage" : "EOF", "nReturned" : { "$numberDouble" : "0.0" },
+  "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" },
+  "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" } } } } }, "ok" : { "$numberDouble" : "1.0" } },
+(12 rows)
+
+-- last one with all options
+SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "projection": { "c": 1 }, "filter": { "b": { "$gt": 1 } }, "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "queryPlanner" }'::bson);
+                                                                                        explain_and_mask_numbers                                                                                        
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.nonexistent", "winningPlan" : { "stage" : "PROJECTION_SIMPLE",
+  "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "transformBy" : { "c" : { "$numberInt" : "1" } },
+  "inputStage" : { "stage" : "LIMIT", "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" },
+  "skipAmount" : { "$numberDouble" : "1.0" }, "limitAmount" : { "$numberDouble" : "1.0" }, "inputStage" : { "stage" : "SORT", "startupCost" : { "$numberDouble" : "0.0" },
+  "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "sortPattern" : { "a" : { "$numberInt" : "1" } }, "inputStage" : { "stage" : "EOF",
+  "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "filter" : { "b" : { "$gt" : { "$numberInt" : "1" } } } } } } } }, "ok" : { "$numberDouble" : "1.0" } },
+(6 rows)
+
+SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "projection": { "c": 1 }, "filter": { "b": { "$gt": 1 } }, "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+                                                                                                explain_and_mask_numbers                                                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.nonexistent", "winningPlan" : { "stage" : "PROJECTION_SIMPLE",
+  "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "transformBy" : { "c" : { "$numberInt" : "1" } },
+  "inputStage" : { "stage" : "LIMIT", "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" },
+  "skipAmount" : { "$numberDouble" : "1.0" }, "limitAmount" : { "$numberDouble" : "1.0" }, "inputStage" : { "stage" : "SORT", "startupCost" : { "$numberDouble" : "0.0" },
+  "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "sortPattern" : { "a" : { "$numberInt" : "1" } }, "inputStage" : { "stage" : "EOF",
+  "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "filter" : { "b" : { "$gt" : { "$numberInt" : "1" } } } } } } } }, "executionStats" : { "nReturned" : { "$numberLong" : "0" },
+  "executionTimeMillis" : { "$numberDouble" : "0.0" }, "executionStages" : { "stage" : "PROJECTION_SIMPLE", "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" },
+  "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" },
+  "ioReadTimeMillis" : { "$numberDouble" : "0.0" }, "inputStage" : { "stage" : "LIMIT", "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" },
+  "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" },
+  "ioReadTimeMillis" : { "$numberDouble" : "0.0" }, "inputStage" : { "stage" : "SORT", "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" },
+  "executionTimeMillis" : { "$numberDouble" : "0.0" }, "sortMethod" : "quicksort", "totalDataSizeSortedBytesEstimate" : { "$numberLong" : "25" }, "totalDocsExamined" : { "$numberDouble" : "0.0" },
+  "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" }, "inputStage" : { "stage" : "EOF",
+  "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" },
+  "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" } } } } } }, "ok" : { "$numberDouble" : "1.0" } },
+(15 rows)
+
+-- now do the same with a simple COLLSCAN (runtime scan) on a collection that exists.
+SELECT documentdb_api.insert_one('expdb', 'coll1', '{ "_id": 1, "a": 1, "b": 2 }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "b": { "$gt": 1 } }, "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "queryPlanner" }'::bson);
+                                                                                        explain_and_mask_numbers                                                                                        
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.coll1", "winningPlan" : { "stage" : "PROJECTION_SIMPLE",
+  "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "transformBy" : { "c" : { "$numberInt" : "1" } },
+  "inputStage" : { "stage" : "LIMIT", "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" },
+  "skipAmount" : { "$numberDouble" : "1.0" }, "limitAmount" : { "$numberDouble" : "1.0" }, "inputStage" : { "stage" : "SORT", "startupCost" : { "$numberDouble" : "0.0" },
+  "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "sortPattern" : { "a" : { "$numberInt" : "1" } }, "inputStage" : { "stage" : "FETCH",
+  "ns" : "expdb.coll1", "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" },
+  "filter" : { "b" : { "$gt" : { "$numberInt" : "1" } } }, "inputStage" : { "stage" : "COLLSCAN", "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" },
+  "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "indexName" : "_id_", "direction" : "Forward", "indexFilters" : {  },
+  "isBitmap" : true } } } } } }, "ok" : { "$numberDouble" : "1.0" } },
+(9 rows)
+
+SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "b": { "$gt": 1 } }, "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+                                                                                                 explain_and_mask_numbers                                                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.coll1", "winningPlan" : { "stage" : "PROJECTION_SIMPLE",
+  "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "transformBy" : { "c" : { "$numberInt" : "1" } },
+  "inputStage" : { "stage" : "LIMIT", "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" },
+  "skipAmount" : { "$numberDouble" : "1.0" }, "limitAmount" : { "$numberDouble" : "1.0" }, "inputStage" : { "stage" : "SORT", "startupCost" : { "$numberDouble" : "0.0" },
+  "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "sortPattern" : { "a" : { "$numberInt" : "1" } }, "inputStage" : { "stage" : "FETCH",
+  "ns" : "expdb.coll1", "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" },
+  "filter" : { "b" : { "$gt" : { "$numberInt" : "1" } } }, "inputStage" : { "stage" : "COLLSCAN", "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" },
+  "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "indexName" : "_id_", "direction" : "Forward", "indexFilters" : {  },
+  "isBitmap" : true } } } } } }, "executionStats" : { "nReturned" : { "$numberLong" : "0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "executionStages" : { "stage" : "PROJECTION_SIMPLE",
+  "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" },
+  "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" }, "inputStage" : { "stage" : "LIMIT",
+  "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" },
+  "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" }, "inputStage" : { "stage" : "SORT",
+  "nReturned" : { "$numberDouble" : "1.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "sortMethod" : "quicksort",
+  "totalDataSizeSortedBytesEstimate" : { "$numberLong" : "25" }, "totalDocsExamined" : { "$numberDouble" : "1.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" },
+  "ioReadTimeMillis" : { "$numberDouble" : "0.0" }, "inputStage" : { "stage" : "FETCH", "nReturned" : { "$numberDouble" : "1.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" },
+  "executionTimeMillis" : { "$numberDouble" : "0.0" }, "exactBlocksRead" : { "$numberDouble" : "1.0" }, "lossyBlocksRead" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "1.0" },
+  "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" }, "inputStage" : { "stage" : "COLLSCAN",
+  "nReturned" : { "$numberDouble" : "1.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "1.0" },
+  "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" } } } } } } }, "ok" : { "$numberDouble" : "1.0" } },
+(20 rows)
+
+-- sort on the index (_id index)
+SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "_id": { "$gt": 1 } }, "sort": { "_id": -1 }, "limit": 2 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+                                                                                                 explain_and_mask_numbers                                                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.coll1", "winningPlan" : { "stage" : "LIMIT",
+  "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "limitAmount" : { "$numberDouble" : "2.0" },
+  "inputStage" : { "stage" : "FETCH", "inputStage" : { "stage" : "IXSCAN", "ns" : "expdb.coll1", "startupCost" : { "$numberDouble" : "0.0" },
+  "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "transformBy" : { "c" : { "$numberInt" : "1" } }, "indexName" : "_id_",
+  "direction" : "Backward", "indexFilters" : { "_id" : { "$gt" : { "$numberInt" : "1" } }, "_id" : { "$lte" : { "$numberDouble" : "Infinity" } } } } } } }, "executionStats" : { "nReturned" : { "$numberLong" : "0" },
+  "executionTimeMillis" : { "$numberDouble" : "0.0" }, "executionStages" : { "stage" : "LIMIT", "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" },
+  "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" },
+  "ioReadTimeMillis" : { "$numberDouble" : "0.0" }, "inputStage" : { "stage" : "FETCH", "inputStage" : { "stage" : "IXSCAN", "nReturned" : { "$numberDouble" : "0.0" },
+  "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" },
+  "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" } } } } }, "ok" : { "$numberDouble" : "1.0" } },
+(10 rows)
+
+-- incremental sort on the index (_id index)
+SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "_id": { "$gt": 1 } }, "sort": { "_id": 1, "b": 1 }, "limit": 2 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+                                                                                                   explain_and_mask_numbers                                                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.coll1", "winningPlan" : { "stage" : "LIMIT",
+  "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "limitAmount" : { "$numberDouble" : "2.0" },
+  "inputStage" : { "stage" : "SORT", "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" },
+  "sortPattern" : { "_id" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } }, "inputStage" : { "stage" : "FETCH", "inputStage" : { "stage" : "IXSCAN",
+  "ns" : "expdb.coll1", "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" },
+  "transformBy" : { "c" : { "$numberInt" : "1" } }, "indexName" : "_id_", "direction" : "Forward", "indexFilters" : { "_id" : { "$gt" : { "$numberInt" : "1" } },
+  "_id" : { "$lte" : { "$numberDouble" : "Infinity" } } } } } } } }, "executionStats" : { "nReturned" : { "$numberLong" : "0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "executionStages" : { "stage" : "LIMIT",
+  "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" },
+  "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" }, "inputStage" : { "stage" : "SORT",
+  "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "sortMethod" : "quicksort",
+  "totalDataSizeSortedBytesEstimate" : { "$numberLong" : "25" }, "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" },
+  "ioReadTimeMillis" : { "$numberDouble" : "0.0" }, "inputStage" : { "stage" : "FETCH", "inputStage" : { "stage" : "IXSCAN", "nReturned" : { "$numberDouble" : "0.0" },
+  "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" },
+  "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" } } } } } }, "ok" : { "$numberDouble" : "1.0" } },
+(14 rows)
+
+-- now do with a RUM index.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('expdb', '{ "createIndexes": "coll1", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1" } ] }'::bson, TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+set enable_seqscan to off;
+set documentdb.forceDisableSeqScan to on;
+SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "a": { "$gt": 1 }, "d": 1 }, "limit": 2 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+                                                                                               explain_and_mask_numbers                                                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.coll1", "winningPlan" : { "stage" : "LIMIT",
+  "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "limitAmount" : { "$numberDouble" : "2.0" },
+  "inputStage" : { "stage" : "FETCH", "inputStage" : { "stage" : "IXSCAN", "ns" : "expdb.coll1", "startupCost" : { "$numberDouble" : "0.0" },
+  "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "filter" : { "d" : { "$eq" : { "$numberInt" : "1" } } }, "transformBy" : { "c" : { "$numberInt" : "1" } },
+  "indexName" : "a_b_1", "direction" : "Forward", "keyPattern" : { "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } },
+  "isMultiKey" : false, "indexBounds" : [ "[\"a\": (1, Infinity], \"b\": (MinKey,
+  MaxKey)]" ], "indexFilters" : { "a" : { "$gt" : { "$numberInt" : "1" } } } } } } }, "executionStats" : { "nReturned" : { "$numberLong" : "0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" },
+  "executionStages" : { "stage" : "LIMIT", "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" },
+  "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" },
+  "inputStage" : { "stage" : "FETCH", "inputStage" : { "stage" : "IXSCAN", "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" },
+  "executionTimeMillis" : { "$numberDouble" : "0.0" }, "keyPattern" : { "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } }, "isMultiKey" : false,
+  "indexBounds" : [ "[\"a\": (1, Infinity], \"b\": (MinKey, MaxKey)]" ],
+  "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" } } } } },
+  "ok" : { "$numberDouble" : "1.0" } },
+(14 rows)
+
+-- cannot test sort pushdown here (or Idxos)
+SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "a": { "$gt": 1 }, "d": 1 }, "sort": { "a": 1, "d": 1 }, "limit": 2 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+                                                                                                 explain_and_mask_numbers                                                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "explainVersion" : { "$numberDouble" : "2.0" }, "queryPlanner" : { "namespace" : "expdb.coll1", "winningPlan" : { "stage" : "LIMIT",
+  "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }, "limitAmount" : { "$numberDouble" : "2.0" },
+  "inputStage" : { "stage" : "SORT", "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" },
+  "sortPattern" : { "a" : { "$numberInt" : "1" }, "d" : { "$numberInt" : "1" } }, "inputStage" : { "stage" : "FETCH", "inputStage" : { "stage" : "IXSCAN",
+  "ns" : "expdb.coll1", "startupCost" : { "$numberDouble" : "0.0" }, "totalCost" : { "$numberDouble" : "0.0" }, "estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" },
+  "filter" : { "d" : { "$eq" : { "$numberInt" : "1" } } }, "transformBy" : { "c" : { "$numberInt" : "1" } }, "indexName" : "a_b_1", "direction" : "Forward",
+  "keyPattern" : { "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } }, "isMultiKey" : false, "indexBounds" : [ "[\"a\": (1,
+  Infinity], \"b\": (MinKey, MaxKey)]" ], "indexFilters" : { "a" : { "$gt" : { "$numberInt" : "1" } } } } } } } },
+  "executionStats" : { "nReturned" : { "$numberLong" : "0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "executionStages" : { "stage" : "LIMIT", "nReturned" : { "$numberDouble" : "0.0" },
+  "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" },
+  "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" }, "inputStage" : { "stage" : "SORT", "nReturned" : { "$numberDouble" : "0.0" },
+  "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }, "executionTimeMillis" : { "$numberDouble" : "0.0" }, "sortMethod" : "quicksort", "totalDataSizeSortedBytesEstimate" : { "$numberLong" : "25" },
+  "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" },
+  "inputStage" : { "stage" : "FETCH", "inputStage" : { "stage" : "IXSCAN", "nReturned" : { "$numberDouble" : "0.0" }, "executionStartAtTimeMillis" : { "$numberDouble" : "0.0" },
+  "executionTimeMillis" : { "$numberDouble" : "0.0" }, "keyPattern" : { "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } }, "isMultiKey" : false,
+  "indexBounds" : [ "[\"a\": (1, Infinity], \"b\": (MinKey, MaxKey)]" ],
+  "totalDocsExamined" : { "$numberDouble" : "0.0" }, "numBlocksFromCache" : { "$numberDouble" : "0.0" }, "numBlocksFromDisk" : { "$numberDouble" : "0.0" }, "ioReadTimeMillis" : { "$numberDouble" : "0.0" } } } } } },
+  "ok" : { "$numberDouble" : "1.0" } },
+(18 rows)
+

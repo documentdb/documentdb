@@ -758,6 +758,30 @@ GetMongoQueryOperatorFromExpr(Node *expr, List **args)
 }
 
 
+const MongoQueryOperator *
+GetMongoQueryOperatorFromIndexOrRuntimeExpr(Node *expr, List **args)
+{
+	Oid funcId = GetFuncIdFromExpr(expr, args);
+	if (funcId != InvalidOid)
+	{
+		for (int operatorIndex = 0; operatorIndex < QueryOperatorSize; operatorIndex++)
+		{
+			const MongoOperatorInfo *operator = &(QueryOperators[operatorIndex]);
+			if (operator->indexQueryOperator.postgresOperatorName &&
+				(funcId ==
+				 operator->bsonQueryOperator.postgresRuntimeFunctionOidLookup() ||
+				 funcId == operator->bsonQueryOperator.postgresIndexFunctionOidLookup()))
+			{
+				return &operator->bsonQueryOperator;
+			}
+		}
+	}
+
+	*args = NIL;
+	return &UnknownOperator;
+}
+
+
 /*
  * Retrieves the MongoIndexOperatorInfo from known Nodes.
  * Also returns the args, and the FuncId associated with the Nodes.

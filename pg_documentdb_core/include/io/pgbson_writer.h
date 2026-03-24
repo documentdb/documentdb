@@ -18,7 +18,7 @@
 #include <datatype/timestamp.h>
 
 /* bson writer interface */
-typedef struct
+typedef struct pgbson_writer
 {
 	bson_t innerBson;
 } pgbson_writer;

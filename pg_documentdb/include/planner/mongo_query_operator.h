@@ -175,4 +175,7 @@ const MongoIndexOperatorInfo * GetMongoIndexQueryOperatorFromNode(Node *expr,
 																  List **args);
 const MongoIndexOperatorInfo * GetMongoIndexOperatorByPostgresOperatorId(Oid operatorId);
 
+const MongoQueryOperator * GetMongoQueryOperatorFromIndexOrRuntimeExpr(Node *expr,
+																	   List **args);
+
 #endif

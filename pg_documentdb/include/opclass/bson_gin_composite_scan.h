@@ -25,6 +25,7 @@ Datum FormCompositeDatumFromQuals(List *indexQuals, List *indexOrderBy, bool isM
 								  bool hasCorrelatedReducedTerm,
 								  bool supportsOperatorOrderedScans);
 char * SerializeCompositeIndexKeyForExplain(bytea *entry);
+void SerializeCompositeIndexKeyForExplainToWriter(bytea *entry, pgbson_writer *writer);
 bool ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey
 									targetScanKey, bool hasArrayKeys, bool
 									hasCorrelatedReducedTerms,

@@ -112,15 +112,6 @@ typedef struct IndexCostsData
 	double dataPagesProportionFetched;
 } IndexCostsData;
 
-
-#define MAX_EXPLAIN_COSTS_SIZE 100
-#define MAX_LOGGED_PLANS 8
-static IndexCostsData IndexExplainCosts[MAX_EXPLAIN_COSTS_SIZE] = { 0 };
-static int IndexExplainCostsIndex = 0;
-
-
-const char *DocumentdbRumCorePath = "$libdir/pg_documentdb_extended_rum_core";
-
 typedef const RumIndexArrayStateFuncs *(*GetIndexArrayStateFuncsFunc)(void);
 
 extern Datum gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS);
@@ -174,6 +165,13 @@ static Datum (*rum_tsquery_pre_consistent_func)(PG_FUNCTION_ARGS) = NULL;
 static Datum (*rum_tsquery_distance_func)(PG_FUNCTION_ARGS) = NULL;
 static Datum (*rum_ts_join_pos_func)(PG_FUNCTION_ARGS) = NULL;
 static Datum (*rum_extract_tsvector_func)(PG_FUNCTION_ARGS) = NULL;
+
+
+#define MAX_EXPLAIN_COSTS_SIZE 100
+#define MAX_LOGGED_PLANS 8
+static IndexCostsData IndexExplainCosts[MAX_EXPLAIN_COSTS_SIZE] = { 0 };
+static int IndexExplainCostsIndex = 0;
+const char *DocumentdbRumCorePath = "$libdir/pg_documentdb_extended_rum_core";
 
 inline static void
 EnsureRumLibLoaded(void)
@@ -1568,6 +1566,173 @@ GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum, bool hasOr
 }
 
 
+static void
+ExplainCompositeProperties(void *state, GetMultikeyStatusFunc multiKeyStatusFunc,
+						   Relation index_rel, bool enableCompositeReducedCorrelatedTerms,
+						   List *indexQuals, List *indexOrderBy, bool
+						   supportsOrderedOperatorScans,
+						   void (*writeBoolFunc)(const char *, bool, void *),
+						   void (*writeStringListFunc)(const char *, List *, void *))
+{
+	bool isMultiKey = multiKeyStatusFunc ? multiKeyStatusFunc(index_rel) :
+					  RumGetMultiKeyStatusSlow(index_rel);
+	writeBoolFunc("isMultiKey", isMultiKey, state);
+
+	bool hasCorrelatedTerms = false;
+	if (enableCompositeReducedCorrelatedTerms && isMultiKey)
+	{
+		/* Check if we have correlated reduced terms */
+		EnsureRumLibLoaded();
+		hasCorrelatedTerms = CheckIndexHasReducedTerms(index_rel, &rum_index_routine);
+	}
+
+	if (hasCorrelatedTerms)
+	{
+		writeBoolFunc("hasCorrelatedTerms", true, state);
+	}
+
+	bool isTruncated = RumGetTruncationStatus(index_rel);
+	if (isTruncated)
+	{
+		writeBoolFunc("hasTruncation", true, state);
+	}
+
+	Datum compositeDatum = FormCompositeDatumFromQuals(indexQuals, indexOrderBy,
+													   isMultiKey, hasCorrelatedTerms,
+													   supportsOrderedOperatorScans);
+	if (compositeDatum != 0)
+	{
+		List *rawPerPathBounds = NIL;
+		List *boundsList = GetIndexBoundsForExplain(index_rel, compositeDatum,
+													list_length(indexOrderBy) > 0,
+													&rawPerPathBounds);
+		if (rawPerPathBounds != NIL)
+		{
+			writeStringListFunc("startBounds", boundsList, state);
+			writeStringListFunc("rawBounds", rawPerPathBounds, state);
+		}
+		else
+		{
+			writeStringListFunc("indexBounds", boundsList, state);
+		}
+	}
+}
+
+
+static void
+PgbsonExplainWriterWriteBool(const char *name, bool value, void *writer)
+{
+	PgbsonWriterAppendBool((pgbson_writer *) writer, name, -1, value);
+}
+
+
+static void
+PgbsonExplainWriterWriteStringList(const char *name, List *list, void *writer)
+{
+	/* In bson_writer mode, we skip the key for the explain bounds inside rum
+	 * Ideally, we should remove this for composite opclass since we already have
+	 * scanBounds covering very similar information, but this is left behind for
+	 * compatibility for now.
+	 * TODO: Figure out if we really want this going forward and how to present this.
+	 */
+	if (strcmp(name, "scanKeyDetails") == 0)
+	{
+		return;
+	}
+
+
+	pgbson_array_writer arrayWriter;
+	PgbsonWriterStartArray((pgbson_writer *) writer, name, -1, &arrayWriter);
+	ListCell *cell;
+	foreach(cell, list)
+	{
+		const char *value = (const char *) lfirst(cell);
+		PgbsonArrayWriterWriteUtf8(&arrayWriter, value);
+	}
+	PgbsonWriterEndArray((pgbson_writer *) writer, &arrayWriter);
+}
+
+
+static void
+PgbsonExplainWriterWriteInteger(const char *name, const char *label, int32_t value,
+								void *writer)
+{
+	PgbsonWriterAppendInt32((pgbson_writer *) writer, name, -1, value);
+}
+
+
+static void
+PgbsonExplainWriterWriteString(const char *name, const char *value, void *writer)
+{
+	PgbsonWriterAppendUtf8((pgbson_writer *) writer, name, -1, value);
+}
+
+
+static void
+ExplainWriterWriteBool(const char *name, bool value, void *writer)
+{
+	ExplainPropertyBool(name, (bool) value, (struct ExplainState *) writer);
+}
+
+
+static void
+ExplainWriterWriteStringList(const char *name, List *list, void *writer)
+{
+	ExplainPropertyList(name, list, (struct ExplainState *) writer);
+}
+
+
+static void
+ExplainWriterWriteInteger(const char *name, const char *label, int32_t value,
+						  void *writer)
+{
+	ExplainPropertyInteger(name, label, value, (struct ExplainState *) writer);
+}
+
+
+static void
+ExplainWriterWriteString(const char *name, const char *value, void *writer)
+{
+	ExplainPropertyText(name, value, (struct ExplainState *) writer);
+}
+
+
+void
+ExplainRawCompositeScanToWriter(Relation index_rel, List *indexQuals, List *indexOrderBy,
+								ScanDirection indexScanDir, pgbson_writer *writer)
+{
+	bool supportsOrderedOperatorScans = false;
+	GetMultikeyStatusFunc multiKeyStatusFunc = NULL;
+	CanOrderInIndexScan isIndexScanOrdered = NULL;
+	if (!GetCompositeOpClassWithProps(index_rel, &supportsOrderedOperatorScans,
+									  &multiKeyStatusFunc, &isIndexScanOrdered))
+	{
+		return;
+	}
+
+	bool enableCompositeReducedCorrelatedTerms = false;
+	if (index_rel->rd_opcoptions != NULL)
+	{
+		BsonGinCompositePathOptions *options =
+			(BsonGinCompositePathOptions *) index_rel->rd_opcoptions[0];
+		pgbson_writer keyWriter;
+		PgbsonWriterStartDocument(writer, "keyPattern", -1, &keyWriter);
+		SerializeCompositeIndexKeyForExplainToWriter(
+			index_rel->rd_opcoptions[0], &keyWriter);
+		PgbsonWriterEndDocument(writer, &keyWriter);
+		enableCompositeReducedCorrelatedTerms =
+			options->enableCompositeReducedCorrelatedTerms;
+	}
+
+	ExplainCompositeProperties(writer, multiKeyStatusFunc, index_rel,
+							   enableCompositeReducedCorrelatedTerms, indexQuals,
+							   indexOrderBy,
+							   supportsOrderedOperatorScans,
+							   PgbsonExplainWriterWriteBool,
+							   PgbsonExplainWriterWriteStringList);
+}
+
+
 void
 ExplainRawCompositeScan(Relation index_rel, List *indexQuals, List *indexOrderBy,
 						ScanDirection indexScanDir, struct ExplainState *es)
@@ -1593,82 +1758,35 @@ ExplainRawCompositeScan(Relation index_rel, List *indexQuals, List *indexOrderBy
 			options->enableCompositeReducedCorrelatedTerms;
 	}
 
-	bool isMultiKey = multiKeyStatusFunc ? multiKeyStatusFunc(index_rel) :
-					  RumGetMultiKeyStatusSlow(index_rel);
-	ExplainPropertyBool("isMultiKey", isMultiKey, es);
-
-	bool hasCorrelatedTerms = false;
-	if (enableCompositeReducedCorrelatedTerms && isMultiKey)
-	{
-		/* Check if we have correlated reduced terms */
-		EnsureRumLibLoaded();
-		hasCorrelatedTerms = CheckIndexHasReducedTerms(index_rel, &rum_index_routine);
-	}
-
-	if (hasCorrelatedTerms)
-	{
-		ExplainPropertyBool("hasCorrelatedTerms", true, es);
-	}
-
-	bool isTruncated = RumGetTruncationStatus(index_rel);
-	if (isTruncated)
-	{
-		ExplainPropertyBool("hasTruncation", true, es);
-	}
-
-	Datum compositeDatum = FormCompositeDatumFromQuals(indexQuals, indexOrderBy,
-													   isMultiKey, hasCorrelatedTerms,
-													   supportsOrderedOperatorScans);
-	if (compositeDatum != 0)
-	{
-		List *rawPerPathBounds = NIL;
-		List *boundsList = GetIndexBoundsForExplain(index_rel, compositeDatum,
-													list_length(indexOrderBy) > 0,
-													&rawPerPathBounds);
-		if (rawPerPathBounds != NIL)
-		{
-			ExplainPropertyList("startBounds", boundsList, es);
-			ExplainPropertyList("rawBounds", rawPerPathBounds, es);
-		}
-		else
-		{
-			ExplainPropertyList("indexBounds", boundsList, es);
-		}
-	}
+	ExplainCompositeProperties(es, multiKeyStatusFunc, index_rel,
+							   enableCompositeReducedCorrelatedTerms, indexQuals,
+							   indexOrderBy,
+							   supportsOrderedOperatorScans,
+							   ExplainWriterWriteBool, ExplainWriterWriteStringList);
 }
 
 
-void
-ExplainCompositeScan(IndexScanDesc scan, ExplainState *es)
+static void
+ExplainCompositeScanCore(IndexScanDesc scan, void *state,
+						 ExplainWriterFuncs *writerFuncs)
 {
-	if (!IsCompositeOpClass(scan->indexRelation))
-	{
-		return;
-	}
-
 	DocumentDBRumIndexState *outerScanState =
 		(DocumentDBRumIndexState *) scan->opaque;
 
-	if (scan->indexRelation->rd_opcoptions != NULL)
-	{
-		const char *keyString = SerializeCompositeIndexKeyForExplain(
-			scan->indexRelation->rd_opcoptions[0]);
-		ExplainPropertyText("indexKey", keyString, es);
-	}
-
-	ExplainPropertyBool("isMultiKey",
-						outerScanState->multiKeyStatus == IndexMultiKeyStatus_HasArrays,
-						es);
+	writerFuncs->writeBool("isMultiKey",
+						   outerScanState->multiKeyStatus ==
+						   IndexMultiKeyStatus_HasArrays,
+						   state);
 
 	if (outerScanState->hasCorrelatedReducedTerms)
 	{
-		ExplainPropertyBool("hasCorrelatedTerms", true, es);
+		writerFuncs->writeBool("hasCorrelatedTerms", true, state);
 	}
 
 	bool hasTruncation = RumGetTruncationStatus(scan->indexRelation);
 	if (hasTruncation)
 	{
-		ExplainPropertyBool("hasTruncation", true, es);
+		writerFuncs->writeBool("hasTruncation", true, state);
 	}
 
 	if (outerScanState->compositeKey.sk_argument != (Datum) 0)
@@ -1681,29 +1799,99 @@ ExplainCompositeScan(IndexScanDesc scan, ExplainState *es)
 
 		if (rawPerPathBounds != NIL)
 		{
-			ExplainPropertyList("startBounds", boundsList, es);
-			ExplainPropertyList("rawBounds", rawPerPathBounds, es);
+			writerFuncs->writeStringList("startBounds", boundsList, state);
+			writerFuncs->writeStringList("rawBounds", rawPerPathBounds, state);
 		}
 		else
 		{
-			ExplainPropertyList("indexBounds", boundsList, es);
+			writerFuncs->writeStringList("indexBounds", boundsList, state);
 		}
 	}
 
 	if (outerScanState->numDuplicates > 0)
 	{
 		/* If we have duplicates, explain the number of duplicates */
-		ExplainPropertyInteger("numDuplicates", "entries",
-							   outerScanState->numDuplicates, es);
+		writerFuncs->writeInteger("numDuplicates", "entries",
+								  outerScanState->numDuplicates, state);
 	}
 
 	if (ScanDirectionIsBackward(outerScanState->scanDirection))
 	{
-		ExplainPropertyBool("isBackwardScan", true, es);
+		writerFuncs->writeBool("isBackwardScan", true, state);
 	}
 
 	/* Explain the inner scan using underlying am */
-	TryExplainByIndexAm(outerScanState->innerScan, es);
+	TryExplainByIndexAm(outerScanState->innerScan, writerFuncs, state);
+}
+
+
+static ExplainWriterFuncs
+GetForExplain(void)
+{
+	ExplainWriterFuncs writerFuncs =
+	{
+		.writeBool = ExplainWriterWriteBool,
+		.writeStringList = ExplainWriterWriteStringList,
+		.writeInteger = ExplainWriterWriteInteger,
+		.writeString = ExplainWriterWriteString
+	};
+	return writerFuncs;
+}
+
+
+static ExplainWriterFuncs
+GetForBsonWriter(void)
+{
+	ExplainWriterFuncs writerFuncs =
+	{
+		.writeBool = PgbsonExplainWriterWriteBool,
+		.writeStringList = PgbsonExplainWriterWriteStringList,
+		.writeInteger = PgbsonExplainWriterWriteInteger,
+		.writeString = PgbsonExplainWriterWriteString
+	};
+	return writerFuncs;
+}
+
+
+void
+ExplainCompositeScanToWriter(IndexScanDesc scan, pgbson_writer *writer)
+{
+	if (!IsCompositeOpClass(scan->indexRelation))
+	{
+		return;
+	}
+
+	if (scan->indexRelation->rd_opcoptions != NULL)
+	{
+		pgbson_writer keyWriter;
+		PgbsonWriterStartDocument(writer, "keyPattern", -1, &keyWriter);
+		SerializeCompositeIndexKeyForExplainToWriter(
+			scan->indexRelation->rd_opcoptions[0], &keyWriter);
+		PgbsonWriterEndDocument(writer, &keyWriter);
+	}
+
+	ExplainWriterFuncs writerFuncs = GetForBsonWriter();
+	ExplainCompositeScanCore(scan, writer, &writerFuncs);
+}
+
+
+void
+ExplainCompositeScan(IndexScanDesc scan, ExplainState *es)
+{
+	if (!IsCompositeOpClass(scan->indexRelation))
+	{
+		return;
+	}
+
+	if (scan->indexRelation->rd_opcoptions != NULL)
+	{
+		const char *keyString = SerializeCompositeIndexKeyForExplain(
+			scan->indexRelation->rd_opcoptions[0]);
+		ExplainPropertyText("indexKey", keyString, es);
+	}
+
+	ExplainWriterFuncs writerFuncs = GetForExplain();
+	ExplainCompositeScanCore(scan, es, &writerFuncs);
 }
 
 
@@ -1713,7 +1901,20 @@ ExplainRegularIndexScan(IndexScanDesc scan, struct ExplainState *es)
 	if (IsBsonRegularIndexAm(scan->indexRelation->rd_rel->relam))
 	{
 		/* See if there's a hook to explain more in this index */
-		TryExplainByIndexAm(scan, es);
+		ExplainWriterFuncs writerFuncs = GetForExplain();
+		TryExplainByIndexAm(scan, &writerFuncs, es);
+	}
+}
+
+
+void
+ExplainRegularIndexScanToWriter(IndexScanDesc scan, pgbson_writer *writer)
+{
+	if (IsBsonRegularIndexAm(scan->indexRelation->rd_rel->relam))
+	{
+		/* See if there's a hook to explain more in this index */
+		ExplainWriterFuncs writerFuncs = GetForBsonWriter();
+		TryExplainByIndexAm(scan, &writerFuncs, writer);
 	}
 }
 

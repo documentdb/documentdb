@@ -3018,6 +3018,25 @@ GetEqualityRangePredicatesForIndexPath(IndexPath *indexPath, void *options,
 }
 
 
+void
+SerializeCompositeIndexKeyForExplainToWriter(bytea *entry, pgbson_writer *writer)
+{
+	BsonGinCompositePathOptions *pathOptions = (BsonGinCompositePathOptions *) entry;
+	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
+	uint32_t indexPathsLengths[INDEX_MAX_KEYS] = { 0 };
+	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
+
+	int numPaths = GetIndexPathsFromOptionsWithLength(
+		pathOptions,
+		indexPaths, indexPathsLengths, sortOrders);
+	for (int i = 0; i < numPaths; i++)
+	{
+		PgbsonWriterAppendInt32(writer, indexPaths[i], indexPathsLengths[i],
+								sortOrders[i]);
+	}
+}
+
+
 char *
 SerializeCompositeIndexKeyForExplain(bytea *entry)
 {

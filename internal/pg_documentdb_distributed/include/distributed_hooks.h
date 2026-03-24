@@ -11,5 +11,6 @@
 #define DOCUMENTDB_DISTRIBUTED_HOOKS_H
 
 void InitializeDocumentDBDistributedHooks(void);
+void RegisterDistributedExplainStageHook(void);
 
 #endif

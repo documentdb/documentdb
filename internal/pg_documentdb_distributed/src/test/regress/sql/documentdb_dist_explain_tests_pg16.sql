@@ -1,0 +1,1 @@
+\i sql/documentdb_dist_explain_tests.sql

@@ -290,7 +290,8 @@ BsonIndexAmRequiresRangeOptimization(Oid indexAm, Oid opFamilyOid)
 
 
 void
-TryExplainByIndexAm(struct IndexScanDescData *scan, struct ExplainState *es)
+TryExplainByIndexAm(struct IndexScanDescData *scan, ExplainWriterFuncs *writeFuncs,
+					void *writerState)
 {
 	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(
 		scan->indexRelation->rd_rel->relam);
@@ -301,7 +302,7 @@ TryExplainByIndexAm(struct IndexScanDescData *scan, struct ExplainState *es)
 		return;
 	}
 
-	amEntry->add_explain_output(scan, es);
+	amEntry->add_explain_output(scan, writerState, writeFuncs);
 }
 
 

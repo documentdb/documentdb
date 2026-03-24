@@ -66,7 +66,8 @@ bool GetIndexAmSupportsIndexOnlyScan(Oid indexAm, Oid opFamilyOid,
 									 GetMultikeyStatusFunc *getMultiKeyStatus,
 									 GetTruncationStatusFunc *getTruncationStatus);
 
-void TryExplainByIndexAm(struct IndexScanDescData *scan, struct ExplainState *es);
+void TryExplainByIndexAm(struct IndexScanDescData *scan, ExplainWriterFuncs *writeFuncs,
+						 void *writerState);
 
 
 bool GetCompositeOpClassWithProps(Relation indexRelation,
