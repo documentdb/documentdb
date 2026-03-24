@@ -248,9 +248,7 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 		gettext_noop("The size of each sub-transaction within any write command."),
 		NULL, &BatchWriteSubTransactionCount,
 		DEFAULT_BATCH_WRITE_SUB_TRANSACTION_COUNT, 1, INT_MAX,
-		PGC_USERSET,
-		GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE,
-		NULL, NULL, NULL);
+		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.IsPgReadOnlyForDiskFull", prefix),
