@@ -88,6 +88,7 @@ pub async fn validate_rename_collection_cross_db_error(db: &Database) {
         },
         ERR_COMMAND_NOT_SUPPORTED,
         "cannot change databases",
+        "CommandNotSupported",
     )
     .await;
 }
@@ -106,6 +107,7 @@ pub async fn validate_rename_collection_self_rename_error(db: &Database) {
         },
         ERR_ILLEGAL_OPERATION,
         "rename a collection to itself",
+        "IllegalOperation",
     )
     .await;
 }
@@ -119,6 +121,7 @@ pub async fn validate_rename_collection_not_found_error(db: &Database) {
         },
         ERR_NAMESPACE_NOT_FOUND,
         "does not exist",
+        "NamespaceNotFound",
     )
     .await;
 }
@@ -138,6 +141,7 @@ pub async fn validate_rename_collection_unknown_field_error(db: &Database) {
         },
         ERR_UNKNOWN_BSON_FIELD,
         "not recognized as a valid field",
+        "UnknownBsonField",
     )
     .await;
 }
