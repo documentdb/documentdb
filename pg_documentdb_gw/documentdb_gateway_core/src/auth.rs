@@ -25,7 +25,7 @@ use crate::{
     processor,
     protocol::OK_SUCCEEDED,
     requests::{Request, RequestType},
-    responses::{self, RawResponse, Response},
+    responses::{self, constant::generic_internal_error_message, RawResponse, Response},
 };
 
 const NONCE_LENGTH: usize = 2;
@@ -335,19 +335,16 @@ async fn handle_oidc(
     handle_oidc_token_authentication(connection_context, jwt_token).await
 }
 
-async fn handle_oidc_token_authentication(
-    connection_context: &mut ConnectionContext,
+async fn perform_oidc_authentication(
+    connection_context: &ConnectionContext,
+    oid: &str,
     token_string: &str,
-) -> Result<Response> {
-    let (oid, seconds_until_expiry) = parse_and_validate_jwt_token(token_string)?;
-
-    let connection = connection_context
+) -> Result<()> {
+    match connection_context
         .service_context
         .connection_pool_manager()
         .authentication_connection()
-        .await?;
-
-    let authentication_token_row = match connection
+        .await?
         .query(
             connection_context
                 .service_context
@@ -358,14 +355,29 @@ async fn handle_oidc_token_authentication(
         )
         .await
     {
-        Ok(rows) => rows,
+        Ok(rows) => {
+            let auth_result: String = rows
+                .first()
+                .ok_or(DocumentDBError::pg_response_empty())?
+                .try_get(0)?;
+
+            if auth_result.trim() != oid {
+                return Err(DocumentDBError::authentication_failed(
+                    "Token validation failed".to_owned(),
+                ));
+            }
+
+            Ok(())
+        }
         Err(e) => {
             if let Some(db_error) = e.as_db_error() {
                 tracing::error!(
                     activity_id = connection_context.connection_id.to_string().as_str(),
-                    "Backend error during authentication: PostgresError({:?}, {:?})",
-                    db_error.code(),
-                    db_error.hint()
+                    error = %db_error,
+                    sub_status = %db_error.code().code(),
+                    error_file_name = %db_error.file().unwrap_or("not_found"),
+                    error_file_line_num = %db_error.line().unwrap_or_default(),
+                    "DbError during authentication: error = {{error}}, sub_status = {{sub_status}}, file = {{error_file_name}}, line = {{error_file_line_num}}."
                 );
 
                 if let Some(extension_error_code) =
@@ -386,31 +398,40 @@ async fn handle_oidc_token_authentication(
                         "External identity is not present in the system.".to_owned(),
                     )),
                     // All other errors are returned as InternalError in authentication code path.
-                    _ => Err(DocumentDBError::authentication_failed(
-                        "Internal Error.".to_owned(),
+                    _ => Err(DocumentDBError::authentication_failed_with_custom_log(
+                        generic_internal_error_message().to_owned(),
+                        &format!(
+                            "DbError during authentication: {}, code: {}, file: {}, line: {}.",
+                            db_error,
+                            db_error.code().code(),
+                            db_error.file().unwrap_or("not_found"),
+                            db_error.line().unwrap_or_default()
+                        ),
                     )),
                 };
             }
+
             tracing::error!(
                 activity_id = connection_context.connection_id.to_string().as_str(),
-                "DbError not found in PostgresError, which is unexpected."
+                error = %e,
+                "Non DbError from backend during authentication. error = {{error}}"
             );
-            return Err(DocumentDBError::authentication_failed(
-                "Internal Error.".to_owned(),
-            ));
+
+            Err(DocumentDBError::authentication_failed_with_custom_log(
+                generic_internal_error_message().to_owned(),
+                &format!("Non DbError from backend during authentication. error = {e}"),
+            ))
         }
-    };
-
-    let authentication_result: String = authentication_token_row
-        .first()
-        .ok_or(DocumentDBError::pg_response_empty())?
-        .try_get(0)?;
-
-    if authentication_result.trim() != oid {
-        return Err(DocumentDBError::authentication_failed(
-            "Token validation failed".to_owned(),
-        ));
     }
+}
+
+async fn handle_oidc_token_authentication(
+    connection_context: &mut ConnectionContext,
+    token_string: &str,
+) -> Result<Response> {
+    let (oid, seconds_until_expiry) = parse_and_validate_jwt_token(token_string)?;
+
+    perform_oidc_authentication(connection_context, &oid, token_string).await?;
 
     let server_signature = "";
     let payload = bson::Binary {

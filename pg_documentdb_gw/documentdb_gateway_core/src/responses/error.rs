@@ -61,8 +61,11 @@ impl CommandError {
         Ok(doc)
     }
 
-    const fn internal(msg: String) -> Self {
-        Self::new(ErrorCode::InternalError as i32, msg)
+    fn internal_error() -> Self {
+        Self::new(
+            ErrorCode::InternalError as i32,
+            generic_internal_error_message().to_owned(),
+        )
     }
 
     pub fn from_error(
@@ -71,7 +74,6 @@ impl CommandError {
         activity_id: &str,
     ) -> Self {
         match err {
-            DocumentDBError::IoError(e, _) => Self::internal(e.to_string()),
             DocumentDBError::PostgresError(e, _)
             | DocumentDBError::PoolError(PoolError::Backend(e), _) => {
                 Self::from_pg_error(connection_context, e, activity_id)
@@ -94,23 +96,11 @@ impl CommandError {
                     activity_id = activity_id,
                     "Unable to parse PostgresDocumentDBError code: {error_code}, message: {msg}"
                 );
-                Self::internal(generic_internal_error_message().to_owned())
-            }
-            DocumentDBError::RawBsonError(e, _) => Self::internal(format!("Raw BSON error: {e}")),
-            DocumentDBError::PoolError(e, _) => Self::internal(format!("Pool error: {e}")),
-            DocumentDBError::CreatePoolError(e, _) => {
-                Self::internal(format!("Create pool error: {e}"))
-            }
-            DocumentDBError::BuildPoolError(e, _) => {
-                Self::internal(format!("Build pool error: {e}"))
+                Self::internal_error()
             }
             DocumentDBError::DocumentDBError(error_code, msg, _, _) => {
                 Self::new(*error_code as i32, msg.clone())
             }
-            DocumentDBError::SSLErrorStack(error_stack, _) => {
-                Self::internal(format!("SSL error stack: {error_stack}"))
-            }
-            DocumentDBError::SSLError(error, _) => Self::internal(format!("SSL error: {error}")),
             DocumentDBError::ValueAccessError(error, _) => match &error.kind {
                 ValueAccessErrorKind::UnexpectedType {
                     actual, expected, ..
@@ -144,6 +134,13 @@ impl CommandError {
                     Self::new(ErrorCode::BadValue as i32, "Unexpected value".to_owned())
                 }
             },
+            DocumentDBError::IoError(_, _)
+            | DocumentDBError::RawBsonError(_, _)
+            | DocumentDBError::PoolError(_, _)
+            | DocumentDBError::CreatePoolError(_, _)
+            | DocumentDBError::BuildPoolError(_, _)
+            | DocumentDBError::SSLErrorStack(_, _)
+            | DocumentDBError::SSLError(_, _) => Self::internal_error(),
         }
     }
 
@@ -166,7 +163,7 @@ impl CommandError {
                 mapped_result.error_message().to_owned(),
             )
         } else {
-            Self::internal(e.to_string())
+            Self::internal_error()
         }
     }
 }

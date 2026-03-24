@@ -16,7 +16,10 @@ use tokio_postgres::error::SqlState;
 
 use crate::{
     context::ConnectionContext,
-    responses::{self, constant::pg_returned_invalid_response_message},
+    responses::{
+        self,
+        constant::{generic_internal_error_message, pg_returned_invalid_response_message},
+    },
 };
 
 documentdb_error_code_enum!();
@@ -87,6 +90,16 @@ impl DocumentDBError {
     }
 
     #[must_use]
+    pub fn authentication_failed_with_custom_log(msg: String, message_log: &str) -> Self {
+        Self::DocumentDBError(
+            ErrorCode::AuthenticationFailed,
+            msg,
+            Some(message_log.to_owned()),
+            Backtrace::capture(),
+        )
+    }
+
+    #[must_use]
     pub fn bad_value(msg: String) -> Self {
         Self::DocumentDBError(
             ErrorCode::BadValue,
@@ -97,11 +110,11 @@ impl DocumentDBError {
     }
 
     #[must_use]
-    pub fn internal_error(msg: String) -> Self {
+    pub fn internal_error(message_log: String) -> Self {
         Self::DocumentDBError(
             ErrorCode::InternalError,
-            msg.clone(),
-            msg.into(),
+            generic_internal_error_message().to_owned(),
+            message_log.into(),
             Backtrace::capture(),
         )
     }
