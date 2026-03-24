@@ -423,9 +423,13 @@ EvaluateMetaTextScore(pgbson *document)
 	Get_Index_Path_Option(textOptions, weights, pathSpecBytes, pathCount);
 #pragma GCC diagnostic pop
 
-	/* The datum array is right after the path count */
-	Datum *weightDatum = (Datum *) pathSpecBytes;
-	ArrayType *rankArray = construct_array(weightDatum, 4, FLOAT4OID, sizeof(float), true,
+	/* The datum array is right after the path count.
+	 * Use memcpy to avoid undefined behavior from misaligned access
+	 * the reloption storage is not guaranteed to be Datum (4 or 8-bytes) aligned. */
+	Datum weightDatumAligned[4];
+	memcpy(weightDatumAligned, pathSpecBytes, sizeof(Datum) * 4);
+	ArrayType *rankArray = construct_array(weightDatumAligned, 4, FLOAT4OID,
+										   sizeof(float), true,
 										   TYPALIGN_INT);
 
 	Datum result = OidFunctionCall3(TsRankFunctionId(),
@@ -544,6 +548,16 @@ BsonTextGenerateTSQueryCore(const bson_value_t *queryValue, bytea *indexOptions,
 
 	/* Now get the TSQuery result */
 	TSQuery query = DatumGetTSQuery(result);
+
+	/*
+	 * websearch_to_tsquery returns an empty TSQuery (size == 0) when the input
+	 * has no valid lexemes (e.g. empty string, only stop words). QT2QTN reads
+	 * past the TSQuery header on an empty query, so return early.
+	 */
+	if (query->size == 0)
+	{
+		return PointerGetDatum(query);
+	}
 
 	/* This TSQuery does an "AND" for phrases to check. Convert the AND to OR (mongo behavior) */
 	/* we leave the <=> phrase operator as-is. */

@@ -68,6 +68,42 @@ SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_searc
  { "_id" : { "$numberInt" : "4" }, "a" : "these are cats" }
 (4 rows)
 
+-- stop-word-only and empty $text queries through index support path (crash fix for QT2QTN)
+SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "who are you?" } }';
+NOTICE:  text-search query contains only stop words or doesn't contain lexemes, ignored
+NOTICE:  text-search query contains only stop words or doesn't contain lexemes, ignored
+ document 
+---------------------------------------------------------------------
+(0 rows)
+
+SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "the a an" } }';
+NOTICE:  text-search query contains only stop words or doesn't contain lexemes, ignored
+NOTICE:  text-search query contains only stop words or doesn't contain lexemes, ignored
+ document 
+---------------------------------------------------------------------
+(0 rows)
+
+SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "" } }';
+NOTICE:  text-search query doesn't contain lexemes: ""
+NOTICE:  text-search query doesn't contain lexemes: ""
+ document 
+---------------------------------------------------------------------
+(0 rows)
+
+SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "   " } }';
+NOTICE:  text-search query doesn't contain lexemes: "   "
+NOTICE:  text-search query doesn't contain lexemes: "   "
+ document 
+---------------------------------------------------------------------
+(0 rows)
+
+SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "the a an is", "$language": "en" } }';
+NOTICE:  text-search query contains only stop words or doesn't contain lexemes, ignored
+NOTICE:  text-search query contains only stop words or doesn't contain lexemes, ignored
+ document 
+---------------------------------------------------------------------
+(0 rows)
+
 EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "cat" } }';
                                                                                                                                       QUERY PLAN                                                                                                                                      
 ---------------------------------------------------------------------
