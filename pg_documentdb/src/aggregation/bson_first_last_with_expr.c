@@ -119,7 +119,7 @@ bson_first_with_expr_transition(PG_FUNCTION_ARGS)
 	MemoryContext oldCtx = MemoryContextSwitchTo(aggCtx);
 	BsonAggValue *newState = (BsonAggValue *) palloc0(sizeof(BsonAggValue));
 	SET_VARSIZE(newState, sizeof(BsonAggValue));
-	newState->collationString = IsCollationApplicable(collationString) ?
+	newState->collationString = IsCollationValid(collationString) ?
 								pstrdup(collationString) : NULL;
 	if (isEod)
 	{
@@ -269,7 +269,7 @@ bson_last_with_expr_transition(PG_FUNCTION_ARGS)
 	{
 		state = (BsonAggValue *) palloc0(sizeof(BsonAggValue));
 		SET_VARSIZE(state, sizeof(BsonAggValue));
-		state->collationString = IsCollationApplicable(collationString) ?
+		state->collationString = IsCollationValid(collationString) ?
 								 pstrdup(collationString) : NULL;
 	}
 

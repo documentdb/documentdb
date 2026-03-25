@@ -149,7 +149,7 @@ ParseComparisonOperator(const bson_value_t *argument,
 		state->secondArg = second;
 
 		const char *collationString = parseContext->collationString;
-		if (IsCollationApplicable(collationString))
+		if (IsCollationValid(collationString))
 		{
 			state->collationString = pstrdup(collationString);
 		}

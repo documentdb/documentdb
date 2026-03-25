@@ -32,10 +32,6 @@ set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
 
 -- With collation (case-insensitive strength 1): "cherry" eq "CHERRY" → matched
--- TODO: Known bug - collation is not honored for value comparisons on worker nodes
--- in distributed execution. The $eq comparison inside $cond falls back to binary,
--- so "cherry" != "CHERRY" and all rows show "no-match" instead of "matched" for
--- the group containing _id=1. Update expected output once the fix is in.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } }, "lastMatch": { "$last": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
 
 -- Without collation baseline (binary: "cherry" != "CHERRY")
@@ -45,10 +41,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstName": { "$first": "$name" }, "lastName": { "$last": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
 
 -- Constant _id group with collation-sensitive expression
--- TODO: Known bug - collation is not honored for value comparisons on worker nodes
--- in distributed execution. firstMatch should be "matched" since doc _id=1 has
--- name="cherry" which equals "CHERRY" at strength 1, but $eq uses binary
--- comparison on the worker. Update expected output once the fix is in.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": null, "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } }, "lastMatch": { "$last": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } } } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
 
 ROLLBACK;

@@ -66,14 +66,10 @@ BEGIN;
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
 -- With collation (case-insensitive strength 1): "cherry" eq "CHERRY" → matched
--- TODO: Known bug - collation is not honored for value comparisons on worker nodes
--- in distributed execution. The $eq comparison inside $cond falls back to binary,
--- so "cherry" != "CHERRY" and all rows show "no-match" instead of "matched" for
--- the group containing _id=1. Update expected output once the fix is in.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } }, "lastMatch": { "$last": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
                                document                               
 ---------------------------------------------------------------------
- { "_id" : "A", "firstMatch" : "no-match", "lastMatch" : "no-match" }
+ { "_id" : "A", "firstMatch" : "no-match", "lastMatch" : "matched" }
  { "_id" : "B", "firstMatch" : "no-match", "lastMatch" : "no-match" }
  { "_id" : "a", "firstMatch" : "no-match", "lastMatch" : "no-match" }
 (3 rows)
@@ -97,14 +93,10 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
 (3 rows)
 
 -- Constant _id group with collation-sensitive expression
--- TODO: Known bug - collation is not honored for value comparisons on worker nodes
--- in distributed execution. firstMatch should be "matched" since doc _id=1 has
--- name="cherry" which equals "CHERRY" at strength 1, but $eq uses binary
--- comparison on the worker. Update expected output once the fix is in.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": null, "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } }, "lastMatch": { "$last": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } } } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-                               document                                
+                               document                               
 ---------------------------------------------------------------------
- { "_id" : null, "firstMatch" : "no-match", "lastMatch" : "no-match" }
+ { "_id" : null, "firstMatch" : "no-match", "lastMatch" : "matched" }
 (1 row)
 
 ROLLBACK;
@@ -112,7 +104,7 @@ ROLLBACK;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$name" }, "l": { "$last": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-psql:sql/bson_aggregate_group_firstlast_sharded.sql:60: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregate_group_firstlast_sharded.sql:52: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SET documentdb_core.enableCollation TO off;
@@ -123,7 +115,7 @@ SET documentdb_core.enableCollation TO off;
 -- as null in the final result.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_missing_test', '{ "_id": 1, "category": "electronics" }');
-psql:sql/bson_aggregate_group_firstlast_sharded.sql:73: NOTICE:  creating collection
+psql:sql/bson_aggregate_group_firstlast_sharded.sql:65: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -179,7 +171,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_missing_test');
 -- with GUC on and off. Uses both $first and $last in every query.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'wfl_dist_test', '{ "_id": 1, "g": "A", "v": 10, "name": "alpha" }');
-psql:sql/bson_aggregate_group_firstlast_sharded.sql:106: NOTICE:  creating collection
+psql:sql/bson_aggregate_group_firstlast_sharded.sql:98: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

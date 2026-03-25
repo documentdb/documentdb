@@ -128,7 +128,7 @@ $cmd$);
                            ->  HashAggregate (actual rows=2 loops=1)
                                  Output: '_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'firstVal'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$val" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)), 'firstName'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text))
                                  Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
-                                 Batches: 1  Memory Usage: 24kB
+                                 Batches: 1  Memory Usage: 32kB
                                  ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
                                        Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), document
    Task Count: 1
@@ -224,7 +224,7 @@ $cmd$);
                            ->  HashAggregate (actual rows=2 loops=1)
                                  Output: '_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'firstVal'::text, worker_partial_agg('xxxx'::oid, ROW(agg_stage_1.document, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[])), 'firstName'::text, worker_partial_agg('xxxx'::oid, ROW(agg_stage_1.document, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[]))
                                  Group Key: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
-                                 Batches: 1  Memory Usage: 24kB
+                                 Batches: 1  Memory Usage: 32kB
                                  ->  Subquery Scan on agg_stage_1 (actual rows=2 loops=1)
                                        Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), agg_stage_1.document
                                        ->  Sort (actual rows=2 loops=1)
@@ -279,7 +279,7 @@ $cmd$);
                            ->  HashAggregate (actual rows=2 loops=1)
                                  Output: '_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'firstVal'::text, worker_partial_agg('xxxx'::oid, ROW(agg_stage_1.document, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[])), 'firstName'::text, worker_partial_agg('xxxx'::oid, ROW(agg_stage_1.document, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[]))
                                  Group Key: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
-                                 Batches: 1  Memory Usage: 24kB
+                                 Batches: 1  Memory Usage: 32kB
                                  ->  Subquery Scan on agg_stage_1 (actual rows=2 loops=1)
                                        Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), agg_stage_1.document
                                        ->  Sort (actual rows=2 loops=1)
@@ -430,7 +430,7 @@ $cmd$);
                            ->  HashAggregate (actual rows=2 loops=1)
                                  Output: '_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'lastVal'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$val" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)), 'lastName'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text))
                                  Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
-                                 Batches: 1  Memory Usage: 24kB
+                                 Batches: 1  Memory Usage: 32kB
                                  ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
                                        Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), document
    Task Count: 1
@@ -526,7 +526,7 @@ $cmd$);
                            ->  HashAggregate (actual rows=2 loops=1)
                                  Output: '_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'lastVal'::text, worker_partial_agg('xxxx'::oid, ROW(agg_stage_1.document, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[])), 'lastName'::text, worker_partial_agg('xxxx'::oid, ROW(agg_stage_1.document, '{"{ \"val\" : { \"$numberInt\" : \"-1\" } }"}'::documentdb_core.bson[]))
                                  Group Key: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
-                                 Batches: 1  Memory Usage: 24kB
+                                 Batches: 1  Memory Usage: 32kB
                                  ->  Subquery Scan on agg_stage_1 (actual rows=2 loops=1)
                                        Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), agg_stage_1.document
                                        ->  Sort (actual rows=2 loops=1)
@@ -625,16 +625,16 @@ $cmd$);
                ->  Custom Scan (Citus Adaptive) (actual rows=6 loops=1)
                      Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4, remote_scan.c5, remote_scan.c6
                      Task Count: 8
-                     Tuple data received from nodes: 402 bytes
+                     Tuple data received from nodes: 762 bytes
                      Tasks Shown: One of 8
                      ->  Task
                            Query: SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2, 'firstName'::text AS c3, pg_catalog.worker_partial_agg('documentdb_api_internal.bsonfirstwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)) AS c4, 'lastName'::text AS c5, pg_catalog.worker_partial_agg('documentdb_api_internal.bsonlastwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)) AS c6 FROM documentdb_data.documents_6400_640016 collection WHERE documentdb_api_internal.bson_dollar_fullscan(document, '{ "category" : { "$numberInt" : "1" } }'::documentdb_core.bson) GROUP BY (documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                           Tuple data received from node: 132 bytes
+                           Tuple data received from node: 252 bytes
                            Node: host=localhost port=58070 dbname=regression
                            ->  HashAggregate (actual rows=2 loops=1)
                                  Output: '_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'firstName'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)), 'lastName'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text))
                                  Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
-                                 Batches: 1  Memory Usage: 24kB
+                                 Batches: 1  Memory Usage: 32kB
                                  ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
                                        Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), document
    Task Count: 1
