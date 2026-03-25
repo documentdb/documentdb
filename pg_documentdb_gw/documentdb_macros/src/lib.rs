@@ -75,7 +75,8 @@ pub fn documentdb_error_code_enum(_item: TokenStream) -> TokenStream {
     let csv = std::fs::read_to_string(&external_error_mapping_path)
         .expect("Could not read external_error_mapping.csv");
     let mut error_code_enum_entries = String::new();
-    error_code_enum_entries += "#[derive(Debug, Clone, Copy, strum_macros::AsRefStr)]
+    error_code_enum_entries +=
+        "#[derive(Debug, Clone, Copy, strum_macros::AsRefStr, PartialEq, Eq)]
         pub enum ErrorCode {";
 
     let mut from_primitive = String::new();

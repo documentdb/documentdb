@@ -8,57 +8,9 @@
 
 pub mod client_info;
 pub mod event_id;
+mod telemetry_provider;
+pub mod utils;
 mod verbose_latency;
 
-use std::fmt::Debug;
-
-use crate::{
-    context::ConnectionContext,
-    error::ErrorCode,
-    protocol::header::Header,
-    requests::{request_tracker::RequestTracker, Request},
-    responses::{CommandError, Response},
-};
-use async_trait::async_trait;
-use dyn_clone::{clone_trait_object, DynClone};
-use either::Either;
-
+pub use telemetry_provider::TelemetryProvider;
 pub use verbose_latency::try_log_verbose_latency;
-
-/// `TelemetryProvider` takes care of emitting events and metrics for tracking the gateway.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "telemetry requires many parameters"
-)]
-#[async_trait]
-pub trait TelemetryProvider: Send + Sync + DynClone + Debug {
-    /// Emits an event for every CRUD request dispatched to backend.
-    async fn emit_request_event(
-        &self,
-        _: &ConnectionContext,
-        _: &Header,
-        _: Option<&Request<'_>>,
-        _: Either<&Response, (&CommandError, usize)>,
-        _: String,
-        _: &RequestTracker,
-        _: &str,
-        _: &str,
-    );
-}
-
-clone_trait_object!(TelemetryProvider);
-
-// In case of no error (success), error_code passed here should be None and status code returned is 200
-#[must_use]
-pub fn error_code_to_status_code(error: Option<i32>) -> u16 {
-    match error {
-        None => 200,
-        Some(code) => match ErrorCode::from_i32(code) {
-            Some(ErrorCode::AuthenticationFailed | ErrorCode::Unauthorized) => 401,
-            Some(ErrorCode::InternalError) => 500,
-            Some(ErrorCode::ExceededTimeLimit) => 408,
-            Some(ErrorCode::DuplicateKey) => 409,
-            _ => 400,
-        },
-    }
-}

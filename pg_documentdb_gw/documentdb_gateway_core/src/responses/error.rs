@@ -11,7 +11,7 @@ use deadpool_postgres::PoolError;
 
 use crate::{
     context::ConnectionContext,
-    error::{DocumentDBError, ErrorCode, Result},
+    error::{DocumentDBError, ErrorCode},
     protocol::OK_FAILED,
     responses::{self, constant::generic_internal_error_message},
 };
@@ -19,18 +19,18 @@ use crate::{
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct CommandError {
-    pub ok: f64,
+    ok: f64,
 
-    /// The error code in i32, e.g. `InternalError` has error code 1.
-    pub code: i32,
+    /// The `ErrorCode` associated with this error response.
+    code: ErrorCode,
 
     /// A human-readable description of the error, sent to the client.
-    pub message: String,
+    message: String,
 }
 
 impl CommandError {
     #[must_use = "Constructor for CommandError."]
-    pub const fn new(code: i32, msg: String) -> Self {
+    pub const fn new(code: ErrorCode, msg: String) -> Self {
         Self {
             ok: OK_FAILED,
             code,
@@ -38,32 +38,36 @@ impl CommandError {
         }
     }
 
+    #[must_use]
+    pub const fn ok(&self) -> f64 {
+        self.ok
+    }
+
+    #[must_use]
+    pub const fn code(&self) -> &ErrorCode {
+        &self.code
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
     /// Converts the `CommandError` into a `RawDocumentBuf` that can be sent to the client.
-    ///
-    /// # Errors
-    /// - Returns an error if the conversion of code into to `ErrorCode` fails, which should be extremely rare.
     #[must_use = "This constructs the actual error response to be sent to the client."]
-    pub fn to_raw_document_buf(&self) -> Result<RawDocumentBuf> {
+    pub fn to_raw_document_buf(&self) -> RawDocumentBuf {
         // The key names used here must match with the field names expected by the driver sdk on errors.
         let mut doc = RawDocumentBuf::new();
         doc.append("ok", self.ok);
-        doc.append("code", self.code);
-
-        let code_name = ErrorCode::from_i32(self.code).ok_or_else(|| {
-            DocumentDBError::internal_error(format!(
-                "Failed to map error code {} to ErrorCode for code_name.",
-                self.code
-            ))
-        })?;
-        doc.append("codeName", code_name.as_ref().to_owned());
-
+        doc.append("code", self.code as i32);
+        doc.append("codeName", self.code.as_ref().to_owned());
         doc.append("errmsg", self.message.clone());
-        Ok(doc)
+        doc
     }
 
     fn internal_error() -> Self {
         Self::new(
-            ErrorCode::InternalError as i32,
+            ErrorCode::InternalError,
             generic_internal_error_message().to_owned(),
         )
     }
@@ -99,7 +103,7 @@ impl CommandError {
                 Self::internal_error()
             }
             DocumentDBError::DocumentDBError(error_code, msg, _, _) => {
-                Self::new(*error_code as i32, msg.clone())
+                Self::new(*error_code, msg.clone())
             }
             DocumentDBError::ValueAccessError(error, _) => match &error.kind {
                 ValueAccessErrorKind::UnexpectedType {
@@ -110,7 +114,7 @@ impl CommandError {
                         "Type mismatch error: expected {expected:?} but got {actual:?}"
                     );
                     Self::new(
-                        ErrorCode::TypeMismatch as i32,
+                        ErrorCode::TypeMismatch,
                         format!(
                             "Expected {:?} but got {:?}, at key {}",
                             expected,
@@ -122,16 +126,16 @@ impl CommandError {
                 ValueAccessErrorKind::InvalidBson(_) => {
                     let error_message = "Value is not a valid BSON";
                     tracing::error!(activity_id = activity_id, "{error_message}");
-                    Self::new(ErrorCode::BadValue as i32, error_message.to_owned())
+                    Self::new(ErrorCode::BadValue, error_message.to_owned())
                 }
                 ValueAccessErrorKind::NotPresent => {
                     let error_message = "Value is not present";
                     tracing::error!(activity_id = activity_id, "{error_message}");
-                    Self::new(ErrorCode::BadValue as i32, error_message.to_owned())
+                    Self::new(ErrorCode::BadValue, error_message.to_owned())
                 }
                 _ => {
                     tracing::error!(activity_id = activity_id, "Hit generic ValueAccessError.");
-                    Self::new(ErrorCode::BadValue as i32, "Unexpected value".to_owned())
+                    Self::new(ErrorCode::BadValue, "Unexpected value".to_owned())
                 }
             },
             DocumentDBError::IoError(_, _)

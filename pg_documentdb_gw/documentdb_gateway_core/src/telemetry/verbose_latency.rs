@@ -10,7 +10,7 @@ use crate::{
     context::ConnectionContext,
     requests::{request_tracker::RequestTracker, Request, RequestIntervalKind},
     responses::CommandError,
-    telemetry::{error_code_to_status_code, event_id::EventId},
+    telemetry::{event_id::EventId, utils},
 };
 
 /// Returns whether verbose latency logging should be emitted for this request.
@@ -62,12 +62,8 @@ pub fn try_log_verbose_latency(
         .map(|r| r.request_type().to_string())
         .unwrap_or_default();
 
-    let (status_code, error_code) = if let Some(err) = error {
-        let code = err.code;
-        (error_code_to_status_code(code.into()), code)
-    } else {
-        (200, 0)
-    };
+    let status_code = utils::get_status_code_u16(error);
+    let error_code = utils::get_error_code_i32(error);
 
     tracing::info!(
         activity_id = activity_id,

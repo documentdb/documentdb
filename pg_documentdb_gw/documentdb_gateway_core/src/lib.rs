@@ -781,7 +781,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let command_error = CommandError::from_error(connection_context, error, activity_id);
-    let response = command_error.to_raw_document_buf()?;
+    let response = command_error.to_raw_document_buf();
 
     if let Some(start) = handle_message_start {
         request_tracker.record_duration(RequestIntervalKind::HandleMessage, start);
