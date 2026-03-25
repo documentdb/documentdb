@@ -13,8 +13,9 @@ CLEAN="False"
 help="false"
 PACKAGEDIR=""
 profile=""
+extraFeatures=""
 
-while getopts "d:v:ichp:r:" opt; do
+while getopts "d:v:ichp:r:f:" opt; do
   case $opt in
     d) SOURCEDIR="$OPTARG"
     ;;
@@ -29,6 +30,8 @@ while getopts "d:v:ichp:r:" opt; do
     p) PACKAGEDIR="$OPTARG"
     ;;
     r) profile="$OPTARG"
+    ;;
+    f) extraFeatures="$OPTARG"
     ;;
   esac
 
@@ -50,6 +53,7 @@ if [ "$help" == "true" ]; then
     echo "  -p <package_directory>  : Directory to store the built package (optional)."
     echo "  -r <profile>            : Build profile to use (optional, e.g., release, dev)."
     echo "  -c                      : Clean the build artifacts before building."
+    echo "  -f <features>           : Additional features to pass to cargo (comma-separated)."
     exit 0
 fi
 
@@ -98,6 +102,11 @@ if [ "$profile" != "" ]; then
 else
     installProfileArg="--release"
     packageProfileArg=""
+fi
+
+if [ "$extraFeatures" != "" ]; then
+    installProfileArg="$installProfileArg --features \"$extraFeatures\""
+    packageProfileArg="$packageProfileArg --features \"$extraFeatures\""
 fi
 
 pushd $SOURCEDIR
