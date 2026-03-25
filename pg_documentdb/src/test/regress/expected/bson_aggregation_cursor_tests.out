@@ -1239,3 +1239,66 @@ SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find": "g
 (1 row)
 
 SET documentdb.enableDebugQueryText TO off;
+-- Regression tests for DrainSingleResultQuery DestReceiver migration:
+-- Verify count/distinct produce correct results including NULL/empty cases.
+-- Count on existing populated collection
+SELECT document FROM documentdb_api.count_query('db', '{ "count": "get_aggregation_cursor_smalldoc_test" }');
+                               document                                
+-----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "10" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Count with filter matching nothing (exercises NULL result → default response)
+SELECT document FROM documentdb_api.count_query('db', '{ "count": "get_aggregation_cursor_smalldoc_test", "query": { "_id": { "$eq": "nonexistent_id" } } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Distinct on existing populated collection
+SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_smalldoc_test", "key": "_id" }');
+                                                                                                                                                document                                                                                                                                                
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "values" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" }, { "$numberInt" : "10" } ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Distinct with filter matching nothing
+SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_smalldoc_test", "key": "_id", "query": { "_id": { "$eq": "nonexistent_id" } } }');
+                        document                         
+---------------------------------------------------------
+ { "values" : [  ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Distinct on a key that does not exist in any document (exercises NULL datum path)
+SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_smalldoc_test", "key": "no_such_field" }');
+                        document                         
+---------------------------------------------------------
+ { "values" : [  ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Count/Distinct on a large-document collection (exercises PG_DETOAST_DATUM_COPY path)
+SELECT document FROM documentdb_api.count_query('db', '{ "count": "get_aggregation_cursor_test" }');
+                               document                                
+-----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "10" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_test", "key": "_id" }');
+                                                                                                                                                document                                                                                                                                                
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "values" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" }, { "$numberInt" : "10" } ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Count/Distinct on a nonexistent collection (exercises error/default handling)
+SELECT document FROM documentdb_api.count_query('db', '{ "count": "completely_nonexistent_collection" }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "completely_nonexistent_collection", "key": "a" }');
+                        document                         
+---------------------------------------------------------
+ { "values" : [  ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+

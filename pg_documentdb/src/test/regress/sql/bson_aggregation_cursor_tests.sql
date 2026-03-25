@@ -416,3 +416,29 @@ SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find": "n
 -- PointRead cursor (find by _id on existing collection with _id index)
 SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find": "get_aggregation_cursor_smalldoc_test", "filter": {"_id": 1} }');
 SET documentdb.enableDebugQueryText TO off;
+
+-- Regression tests for DrainSingleResultQuery DestReceiver migration:
+-- Verify count/distinct produce correct results including NULL/empty cases.
+
+-- Count on existing populated collection
+SELECT document FROM documentdb_api.count_query('db', '{ "count": "get_aggregation_cursor_smalldoc_test" }');
+
+-- Count with filter matching nothing (exercises NULL result → default response)
+SELECT document FROM documentdb_api.count_query('db', '{ "count": "get_aggregation_cursor_smalldoc_test", "query": { "_id": { "$eq": "nonexistent_id" } } }');
+
+-- Distinct on existing populated collection
+SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_smalldoc_test", "key": "_id" }');
+
+-- Distinct with filter matching nothing
+SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_smalldoc_test", "key": "_id", "query": { "_id": { "$eq": "nonexistent_id" } } }');
+
+-- Distinct on a key that does not exist in any document (exercises NULL datum path)
+SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_smalldoc_test", "key": "no_such_field" }');
+
+-- Count/Distinct on a large-document collection (exercises PG_DETOAST_DATUM_COPY path)
+SELECT document FROM documentdb_api.count_query('db', '{ "count": "get_aggregation_cursor_test" }');
+SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_test", "key": "_id" }');
+
+-- Count/Distinct on a nonexistent collection (exercises error/default handling)
+SELECT document FROM documentdb_api.count_query('db', '{ "count": "completely_nonexistent_collection" }');
+SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "completely_nonexistent_collection", "key": "a" }');

@@ -101,14 +101,23 @@ typedef struct TailableCursorContinuationEntry
 
 
 /*
- * TupleDestDestReceiver is internal representation of a DestReceiver which
- * forards tuples to a tuple destination.
+ * BsonStoreTupleDestReceiver is a DestReceiver that forwards tuples to a
+ * BSON output target. When isSingleResult is true, the first row is captured
+ * as a standalone pgbson pointer in singleResult. Otherwise, rows are
+ * streamed into the writer as elements of a BSON array.
  */
 typedef struct BsonStoreTupleDestReceiver
 {
 	DestReceiver pub;
 
+	/* Array writer for multi-result mode; receives each row as an array element. */
 	pgbson_array_writer *writer;
+
+	/* Captured document for single-result mode; set after the first row. */
+	pgbson *singleResult;
+
+	/* When true, use singleResult path; when false, use writer path. */
+	bool isSingleResult;
 
 	MemoryContext writerContext;
 
@@ -184,7 +193,8 @@ static BsonStoreTupleDestReceiver * CreateBsonStoreTupleDestReceiver(
 	cursorName,
 	uint32_t
 	accumulatedSize, bool
-	closeCursor);
+	closeCursor,
+	bool isSingleResult);
 static void DrainStatementViaExecutor(PlannedStmt *queryPlan, ParamListInfo paramList,
 									  const char *sourceText, DestReceiver *destReceiver,
 									  MemoryContext currentContext);
@@ -204,11 +214,8 @@ uint32_t ContiunationTokenLength = 16;
 pgbson *
 DrainSingleResultQuery(Query *query)
 {
-	/* Generate a cursor for the specified iteration */
 	int cursorOptions = CURSOR_OPT_NO_SCROLL | CURSOR_OPT_BINARY;
-	Portal queryPortal = CreateNewPortal();
-	queryPortal->visible = false;
-	queryPortal->cursorOptions = cursorOptions;
+	MemoryContext currentContext = CurrentMemoryContext;
 
 	/* Deparse query text before planning since the planner may modify the query tree */
 	char *sourceText = "";
@@ -222,47 +229,20 @@ DrainSingleResultQuery(Query *query)
 	PlannedStmt *queryPlan = pg_plan_query(query, NULL, cursorOptions,
 										   paramListInfo);
 
-	/* Set the plan in the cursor for this iteration */
-	PortalDefineQuery(queryPortal, NULL, sourceText,
-					  CMDTAG_SELECT,
-					  list_make1(queryPlan),
-					  NULL);
+	pgbson_array_writer *arrayWriter = NULL;
+	int32_t batchSize = 0; /* unused in single-result mode */
+	const char *cursorName = "";
+	uint32_t accumulatedSize = 0;
+	bool closeCursor = true;
+	bool isSingleResult = true;
+	BsonStoreTupleDestReceiver *receiver = CreateBsonStoreTupleDestReceiver(
+		arrayWriter, currentContext, batchSize, cursorName,
+		accumulatedSize, closeCursor, isSingleResult);
 
-	/* Trigger execution (Start the ExecEngine etc.) */
-	PortalStart(queryPortal, paramListInfo, 0, GetActiveSnapshot());
+	DrainStatementViaExecutor(queryPlan, paramListInfo, sourceText,
+							  (DestReceiver *) receiver, currentContext);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-	{
-		ereport(ERROR, (errmsg("could not connect to SPI manager")));
-	}
-
-	SPI_cursor_fetch(queryPortal, true, 1);
-
-	if (SPI_processed == 0)
-	{
-		return NULL;
-	}
-
-
-	bool isNull = false;
-	int tupleNumber = 0;
-	AttrNumber attrNumber = 1;
-	Datum resultDatum = SPI_getbinval(SPI_tuptable->vals[tupleNumber],
-									  SPI_tuptable->tupdesc, attrNumber,
-									  &isNull);
-
-	if (isNull)
-	{
-		return NULL;
-	}
-
-	Form_pg_attribute attr = TupleDescAttr(SPI_tuptable->tupdesc, attrNumber - 1);
-	Datum retDatum = SPI_datumTransfer(resultDatum, attr->attbyval, attr->attlen);
-
-	SPI_cursor_close(queryPortal);
-	SPI_finish();
-
-	return DatumGetPgBson(retDatum);
+	return receiver->singleResult;
 }
 
 
@@ -411,13 +391,15 @@ CreateAndDrainSingleBatchQuery(const char *cursorName, Query *query,
 	/* Plan the query */
 	ParamListInfo paramList = NULL;
 	PlannedStmt *queryPlan = pg_plan_query(query, NULL, cursorOptions, paramList);
+	bool isSingleResult = false;
 	BsonStoreTupleDestReceiver *receiver = CreateBsonStoreTupleDestReceiver(
 		arrayWriter,
 		CurrentMemoryContext,
 		batchSize,
 		cursorName,
 		accumulatedSize,
-		closeCursor);
+		closeCursor,
+		isSingleResult);
 	DrainStatementViaExecutor(queryPlan, paramList, sourceText, (DestReceiver *) receiver,
 							  currentContext);
 }
@@ -604,12 +586,14 @@ CreateAndDrainPersistedQueryWithFiles(const char *cursorName, Query *query,
 	ParamListInfo paramList = NULL;
 	PlannedStmt *queryPlan = pg_plan_query(query, NULL, cursorOptions, paramList);
 
+	bool isSingleResult = false;
 	BsonStoreTupleDestReceiver *receiver = CreateBsonStoreTupleDestReceiver(arrayWriter,
 																			CurrentMemoryContext,
 																			batchSize,
 																			cursorName,
 																			accumulatedSize,
-																			closeCursor);
+																			closeCursor,
+																			isSingleResult);
 	DrainStatementViaExecutor(queryPlan, paramList, sourceText, (DestReceiver *) receiver,
 							  currentContext);
 
@@ -655,12 +639,14 @@ CreateAndDrainPointReadQuery(const char *cursorName, Query *query,
 
 	int32_t batchSize = INT32_MAX;
 	bool closeCursor = true;
+	bool isSingleResult = false;
 	BsonStoreTupleDestReceiver *receiver = CreateBsonStoreTupleDestReceiver(
 		arrayWriter,
 		CurrentMemoryContext,
 		batchSize, cursorName,
 		accumulatedSize,
-		closeCursor);
+		closeCursor,
+		isSingleResult);
 	DrainStatementViaExecutor(queryPlan, paramList, sourceText,
 							  (DestReceiver *) receiver, currentContext);
 }
@@ -758,7 +744,16 @@ BsonStoreDestReceiverReceive(TupleTableSlot *slot,
 	Datum result = slot_getattr(slot, 1, &isNull);
 	if (isNull)
 	{
-		return true;
+		return !tupleDestReceiver->isSingleResult;
+	}
+
+	if (tupleDestReceiver->isSingleResult)
+	{
+		MemoryContext oldContext = MemoryContextSwitchTo(
+			tupleDestReceiver->writerContext);
+		tupleDestReceiver->singleResult = (pgbson *) PG_DETOAST_DATUM_COPY(result);
+		MemoryContextSwitchTo(oldContext);
+		return false; /* stop after first row */
 	}
 
 	pgbson *resultBson = DatumGetPgBsonPacked(result);
@@ -790,7 +785,8 @@ static BsonStoreTupleDestReceiver *
 CreateBsonStoreTupleDestReceiver(pgbson_array_writer *arrayWriter,
 								 MemoryContext writerContext,
 								 int32_t batchSize, const char *cursorName,
-								 uint32_t accumulatedSize, bool closeCursor)
+								 uint32_t accumulatedSize, bool closeCursor,
+								 bool isSingleResult)
 {
 	BsonStoreTupleDestReceiver *destReceiver =
 		(BsonStoreTupleDestReceiver *) palloc0(sizeof(BsonStoreTupleDestReceiver));
@@ -800,11 +796,20 @@ CreateBsonStoreTupleDestReceiver(pgbson_array_writer *arrayWriter,
 	destReceiver->pub.rShutdown = BsonStoreDestReceiverShutdown;
 	destReceiver->pub.rDestroy = BsonStoreDestReceiverDestroy;
 	destReceiver->currentAccumulatedSize = accumulatedSize;
-	destReceiver->writer = arrayWriter;
+	destReceiver->isSingleResult = isSingleResult;
 	destReceiver->writerContext = writerContext;
 	destReceiver->batchSize = batchSize;
 	destReceiver->cursorName = cursorName;
 	destReceiver->closeCursor = closeCursor;
+
+	if (isSingleResult)
+	{
+		destReceiver->singleResult = NULL;
+	}
+	else
+	{
+		destReceiver->writer = arrayWriter;
+	}
 
 
 	return destReceiver;
@@ -1070,12 +1075,14 @@ DrainPersistedFileCursor(const char *cursorName, int batchSize,
 	CursorFileState *cursorState = DeserializeFileState(cursorFileState);
 
 	bool closeCursor = true;
+	bool isSingleResult = false;
 	BsonStoreTupleDestReceiver *destReceiver = CreateBsonStoreTupleDestReceiver(
 		arrayWriter,
 		CurrentMemoryContext,
 		batchSize, cursorName,
 		accumulatedSize,
-		closeCursor);
+		closeCursor,
+		isSingleResult);
 	destReceiver->cursorFileState = cursorState;
 
 	pgbson *nextDocument = ReadFromCursorFile(cursorState);
