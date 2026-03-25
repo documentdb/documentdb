@@ -50,7 +50,21 @@ pub fn get_client_unauthenticated() -> std::result::Result<Client, Error> {
 /// Returns an error if the server address cannot be parsed or the client
 /// cannot be constructed with the given options.
 pub fn get_client() -> std::result::Result<Client, Error> {
-    let credential = test_credentials(TEST_USERNAME, TEST_PASSWORD);
+    get_client_with_credentials(TEST_USERNAME, TEST_PASSWORD)
+}
+
+/// Creates a `MongoDB` test client with TLS and SCRAM-SHA-256 authentication
+/// using the supplied credentials.
+///
+/// # Errors
+///
+/// Returns an error if the server address cannot be parsed or the client
+/// cannot be constructed with the given options.
+pub fn get_client_with_credentials(
+    username: &str,
+    password: &str,
+) -> std::result::Result<Client, Error> {
+    let credential = test_credentials(username, password);
 
     let client_options = ClientOptions::builder()
         .credential(credential)
