@@ -907,9 +907,7 @@ BuildBatchUpdateSpec(bson_iter_t *updateCommandIter, pgbsonsequence *updateDocs,
 	if (applyVariables)
 	{
 		TimeSystemVariables *timeSysVars = NULL;
-		bool isWriteCommand = true;
-		pgbson *parsedVariables = ParseAndGetTopLevelVariableSpec(&let, timeSysVars,
-																  isWriteCommand);
+		pgbson *parsedVariables = ParseAndGetTopLevelVariableSpec(&let, timeSysVars);
 		batchSpec->variableSpec = ConvertPgbsonToBsonValue(parsedVariables);
 	}
 	return batchSpec;

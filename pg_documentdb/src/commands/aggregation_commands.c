@@ -29,7 +29,6 @@
 #include "infrastructure/cursor_store.h"
 
 
-extern bool EnableNowSystemVariable;
 extern bool UseFileBasedPersistedCursors;
 extern bool EnableDelayedHoldPortal;
 
@@ -987,13 +986,10 @@ BuildStreamingContinuationDocument(HTAB *cursorMap, pgbson *querySpec, int64_t c
 	PgbsonWriterAppendInt32(&writer, "numIters", 8, numIterations);
 
 	/* Add time system variables accordingly */
-	if (EnableNowSystemVariable)
+	if (timeSystemVariables != NULL && timeSystemVariables->nowValue.value_type !=
+		BSON_TYPE_EOD)
 	{
-		if (timeSystemVariables != NULL && timeSystemVariables->nowValue.value_type !=
-			BSON_TYPE_EOD)
-		{
-			PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
-		}
+		PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
 	}
 
 	return PgbsonWriterGetPgbson(&writer);
@@ -1028,13 +1024,10 @@ BuildPersistedFileContinuationDocument(const char *cursorName, int64_t
 	PgbsonWriterAppendInt32(&writer, "numIters", 8, numIterations);
 
 	/* Add time system variables accordingly */
-	if (EnableNowSystemVariable)
+	if (timeSystemVariables != NULL && timeSystemVariables->nowValue.value_type !=
+		BSON_TYPE_EOD)
 	{
-		if (timeSystemVariables != NULL && timeSystemVariables->nowValue.value_type !=
-			BSON_TYPE_EOD)
-		{
-			PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
-		}
+		PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
 	}
 
 	return PgbsonWriterGetPgbson(&writer);
@@ -1063,13 +1056,10 @@ BuildPersistedContinuationDocument(const char *cursorName, int64_t cursorId, Que
 	PgbsonWriterAppendInt32(&writer, "numIters", 8, numIterations);
 
 	/* Add time system variables accordingly */
-	if (EnableNowSystemVariable)
+	if (timeSystemVariables != NULL && timeSystemVariables->nowValue.value_type !=
+		BSON_TYPE_EOD)
 	{
-		if (timeSystemVariables != NULL && timeSystemVariables->nowValue.value_type !=
-			BSON_TYPE_EOD)
-		{
-			PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
-		}
+		PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
 	}
 
 	return PgbsonWriterGetPgbson(&writer);

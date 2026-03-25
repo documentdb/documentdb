@@ -491,10 +491,8 @@ ParseFindAndModifyMessage(pgbson *message, Datum *databaseNameDatum)
 
 	if (applyVariableSpec)
 	{
-		bool isWriteCommand = true;
 		TimeSystemVariables *timeSysVars = NULL;
-		pgbson *parsedVariables = ParseAndGetTopLevelVariableSpec(&let, timeSysVars,
-																  isWriteCommand);
+		pgbson *parsedVariables = ParseAndGetTopLevelVariableSpec(&let, timeSysVars);
 		spec.variableSpec = ConvertPgbsonToBsonValue(parsedVariables);
 	}
 

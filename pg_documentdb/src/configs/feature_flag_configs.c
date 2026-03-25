@@ -240,10 +240,6 @@ bool EnableNewWithExprAccumulators = DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS;
  * SECTION: Aggregation & Query feature flags
  */
 
-/* Added in v108, enabled in v108, unknown removal */
-#define DEFAULT_ENABLE_NOW_SYSTEM_VARIABLE true
-bool EnableNowSystemVariable = DEFAULT_ENABLE_NOW_SYSTEM_VARIABLE;
-
 /* Added in v109, Pending stabilization */
 #define DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN false
 bool EnablePrimaryKeyCursorScan = DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN;
@@ -527,14 +523,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		DEFAULT_ENABLE_COLLATION_WITH_NEW_GROUP_ACCUMULATORS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableNowSystemVariable", newGucPrefix),
-		gettext_noop(
-			"Enables support for the $$NOW time system variable."),
-		NULL, &EnableNowSystemVariable,
-		DEFAULT_ENABLE_NOW_SYSTEM_VARIABLE,
-		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableLetAndCollationForQueryMatch", newGucPrefix),

@@ -1354,11 +1354,9 @@ GenerateAggregationQuery(text *database, pgbson *aggregationSpec, QueryData *que
 							"Required variables aggregate must be valid")));
 	}
 
-	bool isWriteCommand = false;
 	pgbson *parsedVariables = ParseAndGetTopLevelVariableSpec(&let,
 															  &queryData->
-															  timeSystemVariables,
-															  isWriteCommand);
+															  timeSystemVariables);
 
 	context.variableSpec = (Expr *) MakeBsonConst(parsedVariables);
 
@@ -1820,11 +1818,9 @@ default_find_case:
 		}
 	}
 
-	bool isWriteCommand = false;
 	pgbson *parsedVariables = ParseAndGetTopLevelVariableSpec(&let,
 															  &queryData->
-															  timeSystemVariables,
-															  isWriteCommand);
+															  timeSystemVariables);
 
 	context.variableSpec = (Expr *) MakeBsonConst(parsedVariables);
 

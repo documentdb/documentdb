@@ -285,7 +285,6 @@ typedef struct
 
 typedef bool (*IsQueryFilterNullFunc)(const TraverseValidateState *state);
 extern bool EnableCollation;
-extern bool EnableNowSystemVariable;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */

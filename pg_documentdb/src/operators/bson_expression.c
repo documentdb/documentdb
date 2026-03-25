@@ -74,8 +74,6 @@ typedef struct BsonExpressionPartitionByFieldsGetState
 } BsonExpressionPartitionByFieldsGetState;
 
 extern bool EnableCollation;
-extern bool EnableNowSystemVariable;
-extern bool EnableVariablesSupportForWriteCommands;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -2977,7 +2975,7 @@ void
 GetTimeSystemVariablesFromVariableSpec(const pgbson *variableSpec,
 									   TimeSystemVariables *timeSystemVariables)
 {
-	if (!EnableNowSystemVariable || variableSpec == NULL)
+	if (variableSpec == NULL)
 	{
 		return;
 	}
@@ -3030,24 +3028,12 @@ GetTimeSystemVariables(TimeSystemVariables *timeVariables)
  *
  * Given these 2 rules, we evaluate every variable expression we find against an empty document, using the current variable spec we're building to evaluate it.
  * As we evaluate expressions we rewrite the variable spec into a constant bson and return it.
- * The example in item 2, would be rewritten to: {"let": { a: 1, b: 1, c: 2 } }.
- *
- * If EnableNowSystemVariable, the example in item 2 would be rewritten to: {"now": <current time>, "let": { a: 1, b: 1, c: 2 } }.
+ * The example in item 2 would be rewritten to: {"now": <current time>, "let": { a: 1, b: 1, c: 2 } }.
  */
 pgbson *
 ParseAndGetTopLevelVariableSpec(const bson_value_t *varSpec,
-								TimeSystemVariables *timeSystemVariables,
-								bool isWriteCommand)
+								TimeSystemVariables *timeSystemVariables)
 {
-	/* Short circuit here */
-	bool generateTimeVariables = EnableNowSystemVariable ||
-								 (isWriteCommand &&
-								  EnableVariablesSupportForWriteCommands);
-	if (varSpec->value_type == BSON_TYPE_EOD && !generateTimeVariables)
-	{
-		return PgbsonInitEmpty();
-	}
-
 	ParseAggregationExpressionContext parseContext = {
 		.validateParsedExpressionFunc = &DisallowExpressionsForTopLevelLet,
 	};
@@ -3055,13 +3041,10 @@ ParseAndGetTopLevelVariableSpec(const bson_value_t *varSpec,
 	pgbson_writer resultWriter;
 	PgbsonWriterInit(&resultWriter);
 
-	/* Write time system variables (e.g., $$NOW) to the result writer if required. */
-	if (generateTimeVariables)
-	{
-		bson_value_t nowVariableValue = GetTimeSystemVariables(timeSystemVariables);
-		PgbsonWriterAppendValue(&resultWriter, "now", 3, &nowVariableValue);
-		parseContext.timeSystemVariables.nowValue = nowVariableValue;
-	}
+	/* Write time system variables (e.g., $$NOW) to the result writer. */
+	bson_value_t nowVariableValue = GetTimeSystemVariables(timeSystemVariables);
+	PgbsonWriterAppendValue(&resultWriter, "now", 3, &nowVariableValue);
+	parseContext.timeSystemVariables.nowValue = nowVariableValue;
 
 	ExpressionVariableContext varContext = { 0 };
 	pgbson *emptyDoc = NULL;

@@ -4,6 +4,7 @@
 * Update file modification time in `DeserializeFileState` to prevent TTL-based cleanup from expiring actively-used cursor files *[Bugfix]*
 * Improved performance for `$first` and `$last` accumulators in `$group` pipeline stage (no preceding `$sort`) under flag `enableNewWithExprAccumulators`. *[Perf]* (#457)
 * Support `$db` field in wire protocol command specs for insert, update, delete, findAndModify, createIndexes, dropIndexes, collMod, and background index commands *[Feature]*
+* Removed feature flag `documentdb.enableNowSystemVariable` — `$$NOW` time system variable support is now always enabled
 * Fixes crash that occurs when `enableDebugQueryText` is enabled and certain commands (e.g., `count_query`, `find_cursor_first_page`) operate on queries whose query trees are mutated by the PostgreSQL planner. *[Bugfix]* (#484)
 * Map PostgreSQL `Gather Merge` plan node to `PARALLEL_SORT_MERGE` in explain output *[Bugfix]*
 * Fix crash in `BsonTextGenerateTSQueryCore` when `$text` search contains only stop words or empty string, causing `QT2QTN` to read past the end of an empty TSQuery *[Bugfix]*
