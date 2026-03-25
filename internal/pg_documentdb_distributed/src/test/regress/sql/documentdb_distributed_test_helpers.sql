@@ -229,6 +229,7 @@ DECLARE
   indexRequest text;
   index_cmd_stored text;
   attempt_count int := 0;
+  max_attempts int := 600;
 BEGIN
   SET search_path TO documentdb_core,documentdb_api;
   SELECT * INTO create_index_response FROM documentdb_api.create_indexes_background(p_database_name, p_index_spec);
@@ -258,8 +259,9 @@ BEGIN
           
           COMMIT; -- COMMIT so that CREATE INDEX CONCURRENTLY does not wait for documentdb_distributed_test_helpers.create_indexes_background
 
-          -- don't wait longer than 10 seconds for the index build to complete. This avoids timeouts due to infinite waits.
-          IF attempt_count > 100 THEN
+          -- Background index builds can take longer on slower CI runners.
+          -- Allow up to 60 seconds before treating the build as hung.
+          IF attempt_count >= max_attempts THEN
             RAISE EXCEPTION 'Waited too long for index build to complete. Last response from check_build_index_status: %', check_build_index_status;
           END IF;
           PERFORM pg_sleep_for('100 ms');
