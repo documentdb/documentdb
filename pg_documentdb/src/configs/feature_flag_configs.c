@@ -236,6 +236,11 @@ bool EnableNewMinMaxAccumulators = DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS;
 #define DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS false
 bool EnableNewWithExprAccumulators = DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS;
 
+/* Added in v111, enabled in v111, remove after v112 */
+#define DEFAULT_ENABLE_CURSOR_PLAN_BEFORE_RESTRICTION_PATH_UPDATE true
+bool EnableCursorPlanBeforeRestrictionPathUpdate =
+	DEFAULT_ENABLE_CURSOR_PLAN_BEFORE_RESTRICTION_PATH_UPDATE;
+
 /*
  * SECTION: Aggregation & Query feature flags
  */
@@ -247,11 +252,6 @@ bool EnablePrimaryKeyCursorScan = DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN;
 /* Added in v110, Pending stabilization */
 #define DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP false
 bool EnableContinuationFastBitmapLookup = DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP;
-
-/* Added in v111, enabled in v111, remove after v112 */
-#define DEFAULT_ENABLE_CURSOR_PLAN_BEFORE_RESTRICTION_PATH_UPDATE true
-bool EnableCursorPlanBeforeRestrictionPathUpdate =
-	DEFAULT_ENABLE_CURSOR_PLAN_BEFORE_RESTRICTION_PATH_UPDATE;
 
 /* Added in v108, Pending stabilization */
 #define DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS false
