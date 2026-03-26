@@ -725,7 +725,7 @@ impl PgDataClient for DocumentDBDataClient {
 
         if is_batch_commit {
             query = self.service_context.query_catalog().insert_bulk();
-        } else if enable_write_procedures {
+        } else if enable_write_procedures && connection_context.transaction.is_none() {
             query = self.service_context.query_catalog().insert_txn_proc();
         }
 
@@ -861,7 +861,7 @@ impl PgDataClient for DocumentDBDataClient {
             query_options_builder = query_options_builder
                 .retry_request(false)
                 .retry_deadlock(false); // turn off deadlock retry
-        } else if enable_write_procedures {
+        } else if enable_write_procedures && connection_context.transaction.is_none() {
             query_str = self.service_context.query_catalog().update_txn_proc();
         }
 
