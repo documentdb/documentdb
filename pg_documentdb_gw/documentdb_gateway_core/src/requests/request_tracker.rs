@@ -37,6 +37,9 @@ pub enum RequestIntervalKind {
     /// Time spent committing a Postgres transaction.
     PostgresCommitTransaction,
 
+    /// Time spent acquiring a connection from the Postgres connection pool.
+    OpenBackendConnection,
+
     /// Time spent writing the response to the stream.
     WriteResponse,
 

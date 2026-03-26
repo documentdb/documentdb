@@ -320,11 +320,16 @@ where
                 // SET statement_timeout will be issued, so the connection state
                 // is reset on return and won't leak the setting to other requests.
                 ConnectionSource::Pool(pool) => {
+                    let open_backend_connection_start = Instant::now();
                     let acquire = if needs_timeout_pool {
                         pool.acquire_timeout_connection().await
                     } else {
                         pool.acquire_connection().await
                     };
+                    request_tracker.record_duration(
+                        RequestIntervalKind::OpenBackendConnection,
+                        open_backend_connection_start,
+                    );
 
                     match acquire {
                         Ok(pool_conn) => Arc::new(Connection::new(pool_conn, false)),
