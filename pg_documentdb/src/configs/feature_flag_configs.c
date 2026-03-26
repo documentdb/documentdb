@@ -325,16 +325,6 @@ bool FailOnNonEmptyGroupCountArg = DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG;
  * SECTION: Let support feature flags
  */
 
-/* Added in v108, enabled in v108, unknown stabilization removal time */
-#define DEFAULT_ENABLE_LET_AND_COLLATION_FOR_QUERY_MATCH true
-bool EnableLetAndCollationForQueryMatch =
-	DEFAULT_ENABLE_LET_AND_COLLATION_FOR_QUERY_MATCH;
-
-/* Added in v108, enabled in v109, Unknown stabilization removal time */
-#define DEFAULT_ENABLE_VARIABLES_SUPPORT_FOR_WRITE_COMMANDS true
-bool EnableVariablesSupportForWriteCommands =
-	DEFAULT_ENABLE_VARIABLES_SUPPORT_FOR_WRITE_COMMANDS;
-
 /* Added in v109, Pending stabilization */
 #define DEFAULT_ENABLE_OPERATOR_VARIABLES_IN_LOOKUP false
 bool EnableOperatorVariablesInLookup =
@@ -523,22 +513,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		DEFAULT_ENABLE_COLLATION_WITH_NEW_GROUP_ACCUMULATORS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableLetAndCollationForQueryMatch", newGucPrefix),
-		gettext_noop(
-			"Whether or not to enable collation and let for query match."),
-		NULL, &EnableLetAndCollationForQueryMatch,
-		DEFAULT_ENABLE_LET_AND_COLLATION_FOR_QUERY_MATCH,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableVariablesSupportForWriteCommands", newGucPrefix),
-		gettext_noop(
-			"Whether or not to enable let variables and $$NOW support for write (update, delete, findAndModify) commands. Only support for delete is available now."),
-		NULL, &EnableVariablesSupportForWriteCommands,
-		DEFAULT_ENABLE_VARIABLES_SUPPORT_FOR_WRITE_COMMANDS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.EnableOperatorVariablesInLookup", newGucPrefix),

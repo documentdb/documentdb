@@ -3,8 +3,6 @@ SET citus.next_shard_id TO 949000;
 SET documentdb.next_collection_id TO 9490;
 SET documentdb.next_collection_index_id TO 9490;
 
-SET documentdb.EnableVariablesSupportForWriteCommands TO on;
-
 select 1 from documentdb_api.insert_one('procTxnDB', 'updateme', '{"a":1,"_id":1,"b":1}');
 select 1 from documentdb_api.insert_one('procTxnDB', 'updateme', '{"a":2,"_id":2,"b":2}');
 select 1 from documentdb_api.insert_one('procTxnDB', 'updateme', '{"a":3,"_id":3,"b":3}');

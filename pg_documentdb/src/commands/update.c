@@ -278,7 +278,6 @@ typedef struct
 
 
 extern bool UseLocalExecutionShardQueries;
-extern bool EnableVariablesSupportForWriteCommands;
 
 static BatchUpdateSpec * BuildBatchUpdateSpec(bson_iter_t *updateCommandIter,
 											  pgbsonsequence *updateDocs,
@@ -784,8 +783,6 @@ BuildBatchUpdateSpec(bson_iter_t *updateCommandIter, pgbsonsequence *updateDocs,
 	const char *collectionName = NULL;
 	bool isOrdered = true;
 	bool bypassDocumentValidation = false;
-	bool applyVariables = EnableVariablesSupportForWriteCommands &&
-						  IsClusterVersionAtleast(DocDB_V0, 106, 0);
 
 	bson_value_t let = { 0 };
 	bson_value_t updateValue = { 0 };
@@ -846,20 +843,12 @@ BuildBatchUpdateSpec(bson_iter_t *updateCommandIter, pgbsonsequence *updateDocs,
 		else if (strcmp(field, "let") == 0)
 		{
 			ReportFeatureUsage(FEATURE_LET_TOP_LEVEL);
-			if (applyVariables)
+			bool hasValue = EnsureTopLevelFieldTypeNullOkUndefinedOK("let",
+																	 updateCommandIter,
+																	 BSON_TYPE_DOCUMENT);
+			if (hasValue)
 			{
-				bool hasValue = EnsureTopLevelFieldTypeNullOkUndefinedOK("let",
-																		 updateCommandIter,
-																		 BSON_TYPE_DOCUMENT);
-				if (hasValue)
-				{
-					let = *bson_iter_value(updateCommandIter);
-				}
-			}
-			else
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-								errmsg("update.let is not yet supported")));
+				let = *bson_iter_value(updateCommandIter);
 			}
 		}
 		else if (strcmp(field, "$db") == 0)
@@ -904,12 +893,9 @@ BuildBatchUpdateSpec(bson_iter_t *updateCommandIter, pgbsonsequence *updateDocs,
 	batchSpec->bypassDocumentValidation = bypassDocumentValidation;
 
 	/* parse and set let and time system variables */
-	if (applyVariables)
-	{
-		TimeSystemVariables *timeSysVars = NULL;
-		pgbson *parsedVariables = ParseAndGetTopLevelVariableSpec(&let, timeSysVars);
-		batchSpec->variableSpec = ConvertPgbsonToBsonValue(parsedVariables);
-	}
+	TimeSystemVariables *timeSysVars = NULL;
+	pgbson *parsedVariables = ParseAndGetTopLevelVariableSpec(&let, timeSysVars);
+	batchSpec->variableSpec = ConvertPgbsonToBsonValue(parsedVariables);
 	return batchSpec;
 }
 
@@ -1791,7 +1777,7 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 
 	const bson_value_t *variableSpec = currentUpdate->variableSpec;
 	pgbson *variableSpecBson = NULL;
-	if (EnableVariablesSupportForWriteCommands && queryHasNonIdFilters)
+	if (queryHasNonIdFilters)
 	{
 		variableSpecBson = variableSpec != NULL &&
 						   variableSpec->value_type == BSON_TYPE_DOCUMENT ?
@@ -3395,7 +3381,7 @@ SelectUpdateCandidate(MongoCollection *collection, int64 shardKeyHash,
 
 	const bson_value_t *variableSpec = updateOneParams->variableSpec;
 	pgbson *variableSpecBson = NULL;
-	if (EnableVariablesSupportForWriteCommands && queryHasNonIdFilters)
+	if (queryHasNonIdFilters)
 	{
 		variableSpecBson = variableSpec != NULL &&
 						   variableSpec->value_type == BSON_TYPE_DOCUMENT ?
@@ -4119,7 +4105,7 @@ UpdateAllMatchingDocumentsLegacy(MongoCollection *collection,
 
 	const bson_value_t *variableSpec = currentUpdate->variableSpec;
 	pgbson *variableSpecBson = NULL;
-	if (EnableVariablesSupportForWriteCommands && queryHasNonIdFilters)
+	if (queryHasNonIdFilters)
 	{
 		variableSpecBson = variableSpec != NULL &&
 						   variableSpec->value_type == BSON_TYPE_DOCUMENT ?

@@ -2,7 +2,6 @@ SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documen
 SET citus.next_shard_id TO 649000;
 SET documentdb.next_collection_id TO 6490;
 SET documentdb.next_collection_index_id TO 6490;
-SET documentdb.EnableVariablesSupportForWriteCommands TO on;
 select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":1,"_id":1,"b":1}');
 NOTICE:  creating collection
  ?column? 
@@ -2138,12 +2137,6 @@ SELECT documentdb_api.insert_one('db', 'coll_update', '{"_id": 3, "a":"$$varRef"
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
--- EnableVariablesSupportForWriteCommands GUC off: ignore variableSpec
-SET documentdb.EnableVariablesSupportForWriteCommands TO off;
-SELECT documentdb_api.update('db', '{ "update": "coll_update", "updates": [ { "q": {"$expr": {"$eq": ["$a", "$$varRef"] } }, "u": {"$set": {"b": "zebra"}}, "multi": true}], "let": {"varRef": "ama"} }');
-ERROR:  update.let is not yet supported
--- EnableVariablesSupportForWriteCommands GUC on: user variableSpec
-SET documentdb.EnableVariablesSupportForWriteCommands TO on;
 -- variables accessed outside $expr will not evaluate to let variable value in 'q'
 SELECT documentdb_api.update('db', '{ "update": "coll_update", "updates": [ { "q": {"_id": "$$varRef" }, "u": {"$set": {"b": "zebra"}}, "multi": false}], "let": {"varRef": 2}} ');
                                                                update                                                               

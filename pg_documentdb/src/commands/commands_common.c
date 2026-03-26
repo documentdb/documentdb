@@ -33,7 +33,6 @@
 extern bool ThrowDeadlockOnCrud;
 extern bool EnableBackendStatementTimeout;
 extern int MaxCustomCommandTimeout;
-extern bool EnableVariablesSupportForWriteCommands;
 extern bool RumFailOnLostPath;
 
 /*
@@ -125,7 +124,7 @@ FindShardKeyValueForDocumentId(MongoCollection *collection, const bson_value_t *
 					 ApiDataSchemaName, collection->collectionId);
 
 	pgbson *variableSpecBson = NULL;
-	if (EnableVariablesSupportForWriteCommands && queryHasNonIdFilters)
+	if (queryHasNonIdFilters)
 	{
 		variableSpecBson = variableSpec != NULL &&
 						   variableSpec->value_type == BSON_TYPE_DOCUMENT ?

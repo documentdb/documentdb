@@ -3,8 +3,6 @@ SET citus.next_shard_id TO 639000;
 SET documentdb.next_collection_id TO 6390;
 SET documentdb.next_collection_index_id TO 6390;
 
-SET documentdb.EnableVariablesSupportForWriteCommands TO on;
-
 -- Call delete for a non existent collection.
 -- Note that this should not report any logs related to collection catalog lookup.
 SET citus.log_remote_commands TO ON;
@@ -419,13 +417,6 @@ SELECT documentdb_api.insert_one('db', 'coll_delete', '{"_id": 1, "a":"dog"}');
 SELECT documentdb_api.insert_one('db', 'coll_delete', '{"_id": 2, "a":"cat"}');
 SELECT documentdb_api.insert_one('db', 'coll_delete', '{"_id": 3, "a":"$$varRef"}');
 
--- enableVariablesSupportForWriteCommands GUC off: ignore variableSpec
-SET documentdb.enableVariablesSupportForWriteCommands TO off;
-SELECT documentdb_api.delete('db', '{ "delete": "coll_delete", "deletes": [ { "q": {"$expr": {"$eq": ["$a", "$$varRef"] } }, "limit": 0}], "let": {"varRef": "cat"} }');
-
--- enableVariablesSupportForWriteCommands GUC on: user variableSpec
-SET documentdb.enableVariablesSupportForWriteCommands TO on;
-
 -- variables accessed outside $expr will not evaluate to let variable value
 SELECT documentdb_api.delete('db', '{ "delete": "coll_delete", "deletes": [ { "q": {"_id": "$$varRef" }, "limit": 0}], "let": {"varRef": 2}} ');
 SELECT documentdb_api.delete('db', '{ "delete": "coll_delete", "deletes": [ { "q": {"_id": "$$varRef" }, "limit": 1}], "let": {"varRef": 2}} ');
@@ -591,5 +582,3 @@ EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_6391
 EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte" : 10}}', NULL, NULL::text);
 EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte" : 10}}', NULL, NULL::text);
 ROLLBACK;
-
-RESET documentdb.enableVariablesSupportForWriteCommands;

@@ -131,7 +131,6 @@ static pgbson * BuildResponseMessage(FindAndModifyResult *result);
 extern bool SkipFailOnCollation;
 extern bool EnableBypassDocumentValidation;
 extern bool EnableSchemaValidation;
-extern bool EnableVariablesSupportForWriteCommands;
 
 /*
  * command_find_and_modify implements findAndModify command.
@@ -241,8 +240,6 @@ ParseFindAndModifyMessage(pgbson *message, Datum *databaseNameDatum)
 	bson_value_t let = { 0 };
 	FindAndModifySpec spec = { 0 };
 	spec.bypassDocumentValidation = false;
-	bool applyVariableSpec = EnableVariablesSupportForWriteCommands &&
-							 IsClusterVersionAtleast(DocDB_V0, 106, 0);
 
 	bson_iter_t messageIter;
 	PgbsonInitIterator(message, &messageIter);
@@ -376,18 +373,10 @@ ParseFindAndModifyMessage(pgbson *message, Datum *databaseNameDatum)
 		else if (strcmp(key, "let") == 0)
 		{
 			ReportFeatureUsage(FEATURE_LET_TOP_LEVEL);
-			if (applyVariableSpec)
-			{
-				EnsureTopLevelFieldType("findAndModify.let", &messageIter,
-										BSON_TYPE_DOCUMENT);
+			EnsureTopLevelFieldType("findAndModify.let", &messageIter,
+									BSON_TYPE_DOCUMENT);
 
-				let = *bson_iter_value(&messageIter);
-			}
-			else
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-								errmsg("findAndModify.let is not yet supported")));
-			}
+			let = *bson_iter_value(&messageIter);
 		}
 		else if (strcmp(key, "$db") == 0)
 		{
@@ -489,12 +478,9 @@ ParseFindAndModifyMessage(pgbson *message, Datum *databaseNameDatum)
 		*spec.query = ConvertPgbsonToBsonValue(emptyQuery);
 	}
 
-	if (applyVariableSpec)
-	{
-		TimeSystemVariables *timeSysVars = NULL;
-		pgbson *parsedVariables = ParseAndGetTopLevelVariableSpec(&let, timeSysVars);
-		spec.variableSpec = ConvertPgbsonToBsonValue(parsedVariables);
-	}
+	TimeSystemVariables *timeSysVars = NULL;
+	pgbson *parsedVariables = ParseAndGetTopLevelVariableSpec(&let, timeSysVars);
+	spec.variableSpec = ConvertPgbsonToBsonValue(parsedVariables);
 
 	return spec;
 }

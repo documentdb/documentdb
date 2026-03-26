@@ -3,8 +3,6 @@ SET citus.next_shard_id TO 649000;
 SET documentdb.next_collection_id TO 6490;
 SET documentdb.next_collection_index_id TO 6490;
 
-SET documentdb.EnableVariablesSupportForWriteCommands TO on;
-
 select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":1,"_id":1,"b":1}');
 select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":2,"_id":2,"b":2}');
 select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":3,"_id":3,"b":3}');
@@ -783,13 +781,6 @@ SELECT document FROM documentdb_api.collection('update', 'test_update_one_sort')
 SELECT documentdb_api.insert_one('db', 'coll_update', '{"_id": 1, "a":"kofi"}');
 SELECT documentdb_api.insert_one('db', 'coll_update', '{"_id": 2, "a":"ama"}');
 SELECT documentdb_api.insert_one('db', 'coll_update', '{"_id": 3, "a":"$$varRef"}');
-
--- EnableVariablesSupportForWriteCommands GUC off: ignore variableSpec
-SET documentdb.EnableVariablesSupportForWriteCommands TO off;
-SELECT documentdb_api.update('db', '{ "update": "coll_update", "updates": [ { "q": {"$expr": {"$eq": ["$a", "$$varRef"] } }, "u": {"$set": {"b": "zebra"}}, "multi": true}], "let": {"varRef": "ama"} }');
-
--- EnableVariablesSupportForWriteCommands GUC on: user variableSpec
-SET documentdb.EnableVariablesSupportForWriteCommands TO on;
 
 -- variables accessed outside $expr will not evaluate to let variable value in 'q'
 SELECT documentdb_api.update('db', '{ "update": "coll_update", "updates": [ { "q": {"_id": "$$varRef" }, "u": {"$set": {"b": "zebra"}}, "multi": false}], "let": {"varRef": 2}} ');

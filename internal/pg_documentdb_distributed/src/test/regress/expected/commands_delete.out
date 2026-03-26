@@ -2,7 +2,6 @@ SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documen
 SET citus.next_shard_id TO 639000;
 SET documentdb.next_collection_id TO 6390;
 SET documentdb.next_collection_index_id TO 6390;
-SET documentdb.EnableVariablesSupportForWriteCommands TO on;
 -- Call delete for a non existent collection.
 -- Note that this should not report any logs related to collection catalog lookup.
 SET citus.log_remote_commands TO ON;
@@ -1001,12 +1000,6 @@ SELECT documentdb_api.insert_one('db', 'coll_delete', '{"_id": 3, "a":"$$varRef"
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
--- enableVariablesSupportForWriteCommands GUC off: ignore variableSpec
-SET documentdb.enableVariablesSupportForWriteCommands TO off;
-SELECT documentdb_api.delete('db', '{ "delete": "coll_delete", "deletes": [ { "q": {"$expr": {"$eq": ["$a", "$$varRef"] } }, "limit": 0}], "let": {"varRef": "cat"} }');
-ERROR:  'delete.let' is not yet supported
--- enableVariablesSupportForWriteCommands GUC on: user variableSpec
-SET documentdb.enableVariablesSupportForWriteCommands TO on;
 -- variables accessed outside $expr will not evaluate to let variable value
 SELECT documentdb_api.delete('db', '{ "delete": "coll_delete", "deletes": [ { "q": {"_id": "$$varRef" }, "limit": 0}], "let": {"varRef": 2}} ');
                                          delete                                         
@@ -1717,4 +1710,3 @@ EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_6391
 (6 rows)
 
 ROLLBACK;
-RESET documentdb.enableVariablesSupportForWriteCommands;

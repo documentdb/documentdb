@@ -80,10 +80,6 @@ typedef struct
 	UpdateType updateType;
 } QueryProjectionContext;
 
-
-extern bool EnableVariablesSupportForWriteCommands;
-
-
 /* --------------------------------------------------------- */
 /* Forward declaration */
 /* --------------------------------------------------------- */
@@ -125,7 +121,6 @@ static void ProcessQueryProjectionValue(void *context, const char *path, const
  */
 static bool LastBsonUpdateReturnedNewValue = false;
 
-
 /*
  * Throws an error that the _id has been detected as changed in the process of updating the document.
  * Call it when UpdateType is Replace Document and _id has changed.
@@ -162,7 +157,6 @@ ValidateIdForUpdateTypeReplacement(const bson_value_t *idValue)
 PG_FUNCTION_INFO_V1(bson_update_document);
 PG_FUNCTION_INFO_V1(bson_update_returned_value);
 PG_FUNCTION_INFO_V1(bson_update_document_with_update_desc);
-
 
 /*
  * bson_update_document processes the update operation on a given document.
@@ -225,14 +219,13 @@ bson_update_document(PG_FUNCTION_ARGS)
 	bson_value_t variableSpec = { 0 };
 	if (callerIsUpdateBsonDocument)
 	{
-		if (EnableVariablesSupportForWriteCommands && PG_NARGS() > 4 && !PG_ARGISNULL(4))
+		if (PG_NARGS() > 4 && !PG_ARGISNULL(4))
 		{
 			pgbson *variableSpecDoc = PG_GETARG_PGBSON(4);
 			variableSpec = ConvertPgbsonToBsonValue(variableSpecDoc);
 		}
 	}
-	else if (EnableVariablesSupportForWriteCommands && PG_NARGS() > 5 &&
-			 !PG_ARGISNULL(5))
+	else if (PG_NARGS() > 5 && !PG_ARGISNULL(5))
 	{
 		pgbson *variableSpecDoc = PG_GETARG_PGBSON(5);
 		variableSpec = ConvertPgbsonToBsonValue(variableSpecDoc);
@@ -578,8 +571,7 @@ BsonUpdateDocumentCore(pgbson *sourceDocument, const bson_value_t *updateSpec,
 		{
 			bool isReplacement = false;
 			document = ProcessAggregationPipelineUpdate(sourceDocument,
-														updateMetadata->
-														aggregationState,
+														updateMetadata->aggregationState,
 														isUpsert, &isReplacement);
 
 			/*
@@ -623,8 +615,7 @@ BsonUpdateDocumentCore(pgbson *sourceDocument, const bson_value_t *updateSpec,
 	if (document && build_update_description_hook != NULL)
 	{
 		updateDescResult = build_update_description_hook(updateTracker,
-														 updateMetadata->
-														 commandUpdateType);
+														 updateMetadata->commandUpdateType);
 	}
 
 	if (updateDescription != NULL)

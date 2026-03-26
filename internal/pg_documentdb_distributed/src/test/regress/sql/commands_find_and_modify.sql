@@ -243,13 +243,6 @@ SELECT documentdb_api.insert_one('db', 'find_and_modify_let', '{"_id": 3, "a":"o
 SELECT documentdb_api.insert_one('db', 'find_and_modify_let', '{"_id": 4, "a":"okra"}');
 SELECT documentdb_api.insert_one('db', 'find_and_modify_let', '{"_id": 5, "a":"$$varRef"}');
 
--- disable let support: turn off GUC
-SET documentdb.enableVariablesSupportForWriteCommands TO OFF;
-SELECT documentdb_api.find_and_modify('db', '{"findAndModify": "let_support", "query": {"a": 1}, "update": {"$inc": {"b": 1}}, "new": true, "let": {"x": 10}}');
-
--- enable let support: turn on GUC
-SET documentdb.enableVariablesSupportForWriteCommands TO ON;
-
 -- without $expr: variable won't evaluate to value
 SELECT documentdb_api.find_and_modify('db', '{"findAndModify": "find_and_modify_let", "query": {"_id": "$$varRef" }, "sort": {"a": 1}, "update": {"c": "ant"}, "let": {"varRef": "akura"}}');
 
@@ -321,5 +314,3 @@ SELECT documentdb_api.find_and_modify('db', '{"findAndModify": "find_and_modify_
 
 SELECT document from documentdb_api.collection('db', 'find_and_modify_let') ORDER BY document;
 ROLLBACK;
-
-RESET documentdb.enableVariablesSupportForWriteCommands;

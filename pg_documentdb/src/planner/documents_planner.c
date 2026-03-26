@@ -127,8 +127,6 @@ static void ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, 
 											isShardQuery);
 
 extern bool EnableCollation;
-extern bool EnableLetAndCollationForQueryMatch;
-extern bool EnableVariablesSupportForWriteCommands;
 extern bool ForceDisableSeqScan;
 extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
@@ -941,11 +939,7 @@ DocumentDbQueryFlagsWalker(Node *node, DocumentDbQueryFlagsState *queryFlags)
 			}
 		}
 
-		bool useQueryMatchWithLetAndCollation = EnableCollation ||
-												EnableLetAndCollationForQueryMatch ||
-												EnableVariablesSupportForWriteCommands;
-		if (useQueryMatchWithLetAndCollation &&
-			funcExpr->funcid == BsonQueryMatchWithLetAndCollationFunctionId())
+		if (funcExpr->funcid == BsonQueryMatchWithLetAndCollationFunctionId())
 		{
 			queryFlags->documentDbQueryFlags |= HAS_QUERY_MATCH_FUNCTION;
 		}

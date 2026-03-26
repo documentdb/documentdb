@@ -2,7 +2,6 @@ SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documen
 SET citus.next_shard_id TO 949000;
 SET documentdb.next_collection_id TO 9490;
 SET documentdb.next_collection_index_id TO 9490;
-SET documentdb.EnableVariablesSupportForWriteCommands TO on;
 select 1 from documentdb_api.insert_one('procTxnDB', 'updateme', '{"a":1,"_id":1,"b":1}');
 NOTICE:  creating collection
  ?column? 

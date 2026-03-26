@@ -93,7 +93,6 @@ typedef struct
 } BatchDeletionResult;
 
 extern bool UseLocalExecutionShardQueries;
-extern bool EnableVariablesSupportForWriteCommands;
 
 PG_FUNCTION_INFO_V1(command_delete);
 PG_FUNCTION_INFO_V1(command_delete_one);
@@ -330,20 +329,12 @@ BuildBatchDeletionSpec(bson_iter_t *deleteCommandIter, pgbsonsequence *deleteDoc
 		else if (strcmp(field, "let") == 0)
 		{
 			ReportFeatureUsage(FEATURE_LET_TOP_LEVEL);
-			if (EnableVariablesSupportForWriteCommands)
+			bool hasValue = EnsureTopLevelFieldTypeNullOkUndefinedOK("let",
+																	 deleteCommandIter,
+																	 BSON_TYPE_DOCUMENT);
+			if (hasValue)
 			{
-				bool hasValue = EnsureTopLevelFieldTypeNullOkUndefinedOK("let",
-																		 deleteCommandIter,
-																		 BSON_TYPE_DOCUMENT);
-				if (hasValue)
-				{
-					let = *bson_iter_value(deleteCommandIter);
-				}
-			}
-			else
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-								errmsg("'delete.let' is not yet supported")));
+				let = *bson_iter_value(deleteCommandIter);
 			}
 		}
 		else if (strcmp(field, "$db") == 0)
@@ -402,12 +393,10 @@ BuildBatchDeletionSpec(bson_iter_t *deleteCommandIter, pgbsonsequence *deleteDoc
 	batchSpec->deletionSequence = deleteDocs;
 
 	/* parse and set let and time system variables */
-	if (EnableVariablesSupportForWriteCommands)
-	{
-		TimeSystemVariables *timeSysVars = NULL;
-		pgbson *parsedVariables = ParseAndGetTopLevelVariableSpec(&let, timeSysVars);
-		batchSpec->variableSpec = ConvertPgbsonToBsonValue(parsedVariables);
-	}
+	TimeSystemVariables *timeSysVars = NULL;
+	pgbson *parsedVariables = ParseAndGetTopLevelVariableSpec(&let, timeSysVars);
+	batchSpec->variableSpec = ConvertPgbsonToBsonValue(parsedVariables);
+
 
 	return batchSpec;
 }
@@ -870,7 +859,7 @@ DeleteAllMatchingDocuments(MongoCollection *collection, pgbson *queryDoc,
 	}
 
 	pgbson *variableSpecBson = NULL;
-	if (EnableVariablesSupportForWriteCommands && queryHasNonIdFilters)
+	if (queryHasNonIdFilters)
 	{
 		variableSpecBson = variableSpec != NULL &&
 						   variableSpec->value_type == BSON_TYPE_DOCUMENT ?
@@ -1306,7 +1295,7 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 
 	const bson_value_t *variableSpec = deleteOneParams->variableSpec;
 	pgbson *variableSpecBson = NULL;
-	if (EnableVariablesSupportForWriteCommands && queryHasNonIdFilters)
+	if (queryHasNonIdFilters)
 	{
 		variableSpecBson = variableSpec != NULL &&
 						   variableSpec->value_type == BSON_TYPE_DOCUMENT ?

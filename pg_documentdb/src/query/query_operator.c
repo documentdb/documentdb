@@ -141,8 +141,6 @@ typedef struct MatchNamespaceFiltersContext
 } MatchNamespaceFiltersContext;
 
 extern bool EnableCollation;
-extern bool EnableLetAndCollationForQueryMatch;
-extern bool EnableVariablesSupportForWriteCommands;
 extern bool EnableIdIndexPushdown;
 extern bool EnableDollarInToScalarArrayOpExprConversion;
 extern bool EnableIdIndexPushdownForQueryOp;
@@ -301,13 +299,7 @@ bson_query_match(PG_FUNCTION_ARGS)
 	memset(&context, 0, sizeof(context));
 
 	Node *quals = NULL;
-	bool useQueryMatchWithLetAndCollation = EnableCollation ||
-											EnableLetAndCollationForQueryMatch ||
-											EnableVariablesSupportForWriteCommands;
-
-	/* if useQueryMatchWithLetAndCollation is off,  */
-	/* the collationString and variableSpec will be ignored  */
-	if (!useQueryMatchWithLetAndCollation || PG_NARGS() == 2)
+	if (PG_NARGS() == 2)
 	{
 		/* Expand the @@ operator into regular BSON operators */
 		OpExpr *queryExpr = makeNode(OpExpr);
@@ -320,7 +312,7 @@ bson_query_match(PG_FUNCTION_ARGS)
 
 		quals = ReplaceBsonQueryOperatorsMutator((Node *) queryExpr, &context);
 	}
-	else if (useQueryMatchWithLetAndCollation && PG_NARGS() == 4)
+	else if (PG_NARGS() == 4)
 	{
 		/* TODO: Remove after v0.110 when function has only STRICT forms */
 		if (PG_ARGISNULL(0) && PG_ARGISNULL(1))
@@ -1433,11 +1425,7 @@ ReplaceBsonQueryOperatorsMutator(Node *node, ReplaceBsonQueryOperatorsContext *c
 	{
 		FuncExpr *funcExpr = (FuncExpr *) node;
 
-		bool useQueryMatchWithLetAndCollation = EnableCollation ||
-												EnableLetAndCollationForQueryMatch ||
-												EnableVariablesSupportForWriteCommands;
-		if (useQueryMatchWithLetAndCollation &&
-			funcExpr->funcid == BsonQueryMatchWithLetAndCollationFunctionId())
+		if (funcExpr->funcid == BsonQueryMatchWithLetAndCollationFunctionId())
 		{
 			Node *queryNode = lsecond(funcExpr->args);
 			if (IsA(queryNode, Param))

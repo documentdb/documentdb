@@ -120,8 +120,6 @@ typedef struct AggregationPipelineUpdateState
 } AggregationPipelineUpdateState;
 
 
-extern bool EnableVariablesSupportForWriteCommands;
-
 /* --------------------------------------------------------- */
 /* Forward declaration */
 /* --------------------------------------------------------- */
@@ -227,8 +225,7 @@ GetAggregationPipelineUpdateState(const bson_value_t *updateSpec,
 			UpdateAggregationStageData *stageData = palloc0(
 				sizeof(UpdateAggregationStageData));
 			stageData->updateFunc = AggregationOperators[i].updateFunc;
-			stageData->state.variableSpec = EnableVariablesSupportForWriteCommands ?
-											variableSpec : NULL;
+			stageData->state.variableSpec = variableSpec;
 
 			AggregationOperators[i].populateFunc(&aggregationElement.bsonValue,
 												 &stageData->state);

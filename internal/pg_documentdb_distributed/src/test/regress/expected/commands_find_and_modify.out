@@ -705,12 +705,6 @@ SELECT documentdb_api.insert_one('db', 'find_and_modify_let', '{"_id": 5, "a":"$
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
--- disable let support: turn off GUC
-SET documentdb.enableVariablesSupportForWriteCommands TO OFF;
-SELECT documentdb_api.find_and_modify('db', '{"findAndModify": "let_support", "query": {"a": 1}, "update": {"$inc": {"b": 1}}, "new": true, "let": {"x": 10}}');
-ERROR:  findAndModify.let is not yet supported
--- enable let support: turn on GUC
-SET documentdb.enableVariablesSupportForWriteCommands TO ON;
 -- without $expr: variable won't evaluate to value
 SELECT documentdb_api.find_and_modify('db', '{"findAndModify": "find_and_modify_let", "query": {"_id": "$$varRef" }, "sort": {"a": 1}, "update": {"c": "ant"}, "let": {"varRef": "akura"}}');
                                                                          find_and_modify                                                                         
@@ -940,4 +934,3 @@ SELECT document from documentdb_api.collection('db', 'find_and_modify_let') ORDE
 (4 rows)
 
 ROLLBACK;
-RESET documentdb.enableVariablesSupportForWriteCommands;
