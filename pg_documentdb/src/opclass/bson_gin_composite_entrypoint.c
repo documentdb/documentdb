@@ -2537,6 +2537,11 @@ gin_bson_composite_path_options(PG_FUNCTION_ARGS)
 							IndexOptionsVersion_V1,          /* max */
 							offsetof(BsonGinCompositePathOptions, base.version));
 
+	add_local_string_reloption(relopts, "cl",
+							   "Collation of the index",
+							   "", &ValidateCollationSpec, &FillCollationSpec,
+							   offsetof(BsonGinCompositePathOptions, base.collation));
+
 	PG_RETURN_VOID();
 }
 
@@ -3762,9 +3767,21 @@ CreateSinglePathOptions(const char *indexPath, int32_t pathIndex, int32_t pathCo
 						BsonGinCompositePathOptions *compositeOptions,
 						bool *allowValueOnly)
 {
+	/* Determine the collation from composite options */
+	StringView compositeCollation = { 0 };
+	Get_Index_Collation_Option((&compositeOptions->base), collation,
+							   compositeCollation.string,
+							   compositeCollation.length);
+
+	Size collationSize = 0;
+	if (IsCollationValid(compositeCollation.string))
+	{
+		collationSize = FillCollationSpec(compositeCollation.string, NULL);
+	}
+
 	Size requiredSize = FillSinglePathSpec(indexPath, NULL);
-	BsonGinSinglePathOptions *singlePathOptions = palloc(
-		sizeof(BsonGinSinglePathOptions) + requiredSize + 1);
+	BsonGinSinglePathOptions *singlePathOptions = palloc0(
+		sizeof(BsonGinSinglePathOptions) + requiredSize + collationSize);
 	singlePathOptions->base.type = IndexOptionsType_SinglePath;
 	singlePathOptions->base.version = IndexOptionsVersion_V0;
 
@@ -3781,11 +3798,19 @@ CreateSinglePathOptions(const char *indexPath, int32_t pathIndex, int32_t pathCo
 		compositeOptions->base.wildcardIndexTruncatedPathLimit;
 	singlePathOptions->path = sizeof(BsonGinSinglePathOptions);
 
-	/* TODO: pass down collation from composite options */
-	singlePathOptions->base.collation = 0;
 
 	FillSinglePathSpec(indexPath, ((char *) singlePathOptions) +
 					   sizeof(BsonGinSinglePathOptions));
+
+	/* Pass down collation from composite options */
+	if (IsCollationValid(compositeCollation.string))
+	{
+		singlePathOptions->base.collation = sizeof(BsonGinSinglePathOptions) +
+											requiredSize;
+		FillCollationSpec(compositeCollation.string,
+						  ((char *) singlePathOptions) +
+						  singlePathOptions->base.collation);
+	}
 
 	*allowValueOnly = subMetadata.allowValueOnly;
 	return singlePathOptions;

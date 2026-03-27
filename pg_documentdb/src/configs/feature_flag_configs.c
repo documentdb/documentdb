@@ -503,7 +503,7 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Determines whether collation is supported for indexes."),
 		NULL, &EnableCollationWithIndexes,
 		DEFAULT_ENABLE_COLLATION_WITH_INDEXES,
-		PGC_USERSET, 0, NULL, NULL, NULL);
+		PGC_USERSET, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableCollationWithNewGroupAccumulators", newGucPrefix),

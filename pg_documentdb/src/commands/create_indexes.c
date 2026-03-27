@@ -2371,14 +2371,6 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 								"Index type 'cosmosSearch' does not support collation")));
 		}
 
-		/* We do not yet support collation with composite indexes */
-		if (indexDef->enableCompositeTerm == BoolIndexOption_True)
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg(
-								"Collation is not yet supported for composite indexes")));
-		}
-
 		/* We do not support collation with unique indexes yet */
 		if (isUniqueOrBuildAsUniqueIndex)
 		{
@@ -5777,7 +5769,15 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 									  (enableLargeIndexKeys ||
 									   isUsingCompositeOpClass);
 
-	bool hasApplicableCollation = IsCollationApplicable(collationString);
+	bool hasApplicableCollation = IsCollationValid(collationString);
+	char *collationArg = "";
+	if (hasApplicableCollation)
+	{
+		StringInfo collationArgStr = makeStringInfo();
+		appendStringInfo(collationArgStr, ",cl=%s",
+						 quote_literal_cstr(collationString));
+		collationArg = collationArgStr->data;
+	}
 
 	/* For unique with truncation, instead of creating a unique hash for every column, we simply create a single
 	 * value with a new operator that handles unique constraints. That way for a composite unique index, we support
@@ -5852,16 +5852,14 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 
 			appendStringInfo(indexExprStr,
 							 "%s document %s.bson_%s_single_path_ops"
-							 "(path='', iswildcard=true%s%s%s%s%s)",
+							 "(path='', iswildcard=true%s%s%s%s)",
 							 firstColumnWritten ? "," : "",
 							 indexAmOpClassCatalogSchema,
 							 indexAmSuffix,
 							 indexTermSizeLimitArg,
 							 wildcardIndexTruncatedPathLimit,
 							 useReducedWildcardOption,
-							 hasApplicableCollation ? ", collation=" : "",
-							 hasApplicableCollation ?
-							 quote_literal_cstr(collationString) : "");
+							 collationArg);
 
 			firstColumnWritten = true;
 		}
@@ -5884,16 +5882,14 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 			bool includeId = wpPathOps->idFieldInclusion == WP_IM_INCLUDE;
 			appendStringInfo(indexExprStr,
 							 "%s document %s.bson_%s_wildcard_project_path_ops"
-							 "(includeid=%s%s%s%s%s",
+							 "(includeid=%s%s%s%s",
 							 firstColumnWritten ? "," : "",
 							 indexAmOpClassCatalogSchema,
 							 indexAmSuffix,
 							 includeId ? "true" : "false",
 							 indexTermSizeLimitArg,
 							 wildcardIndexTruncatedPathLimit,
-							 hasApplicableCollation ? ", collation=" : "",
-							 hasApplicableCollation ?
-							 quote_literal_cstr(collationString) : "");
+							 collationArg);
 
 			firstColumnWritten = true;
 
@@ -6060,7 +6056,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		}
 
 		appendStringInfo(indexExprStr,
-						 "%s document %s.bson_%s_composite_path_ops(pathspec=%s%s%s%s%s)",
+						 "%s document %s.bson_%s_composite_path_ops(pathspec=%s%s%s%s%s%s)",
 						 firstColumnWritten ? "," : "",
 						 indexAmOpClassInternalCatalogSchema,
 						 indexAmSuffix,
@@ -6068,7 +6064,8 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 						 indexTermSizeLimitArg,
 						 wildcardIndexString,
 						 wildCardIndexPathLimit,
-						 reducedCorrelatedTermString);
+						 reducedCorrelatedTermString,
+						 collationArg);
 
 		if (indexExprStr->len >= MAX_INDEX_OPTIONS_LENGTH)
 		{
@@ -6165,7 +6162,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 					}
 
 					appendStringInfo(indexExprStr,
-									 "%s document %s.bson_%s_single_path_ops(path=%s%s%s%s%s%s%s)",
+									 "%s document %s.bson_%s_single_path_ops(path=%s%s%s%s%s%s)",
 									 firstColumnWritten ? "," : "",
 									 indexAmOpClassCatalogSchema,
 									 indexAmSuffix,
@@ -6174,9 +6171,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 									 indexTermSizeLimitArg,
 									 generateNotFoundTermOption,
 									 useReducedWildcardOption,
-									 hasApplicableCollation ? ",collation=" : "",
-									 hasApplicableCollation ?
-									 quote_literal_cstr(collationString) : "");
+									 collationArg);
 
 					if (unique)
 					{

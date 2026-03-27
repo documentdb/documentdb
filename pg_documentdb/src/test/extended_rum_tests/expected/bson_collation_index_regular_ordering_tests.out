@@ -86,7 +86,7 @@ SELECT documentdb_api.insert_one('coll_idx_db', 'coll_collated', '{"_id": 6, "na
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_8001" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_8002" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=name, tl='2699', "collation"='en-u-ks-level1'))
+    "documents_rum_index_8002" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=name, tl='2699', cl='en-u-ks-level1'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8001'::bigint)
 
@@ -187,7 +187,7 @@ SELECT documentdb_api.insert_one('coll_idx_db', 'coll_numeric_true', '{"_id": 5,
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_8002" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_8004" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=item, tl='2699', "collation"='en-u-ks-level3-kn-true'))
+    "documents_rum_index_8004" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=item, tl='2699', cl='en-u-ks-level3-kn-true'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8002'::bigint)
 
@@ -266,7 +266,7 @@ SELECT documentdb_api.insert_one('coll_idx_db', 'coll_numeric_false', '{"_id": 5
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_8003" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_8006" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=item, tl='2699', "collation"='en-u-ks-level3'))
+    "documents_rum_index_8006" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=item, tl='2699', cl='en-u-ks-level3'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8003'::bigint)
 
@@ -347,7 +347,7 @@ SELECT documentdb_api.insert_one('coll_idx_db', 'coll_nested', '{"_id": 5, "tags
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_8004" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_8008" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=tags, tl='2699', "collation"='en-u-ks-level1'))
+    "documents_rum_index_8008" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=tags, tl='2699', cl='en-u-ks-level1'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8004'::bigint)
 
@@ -431,7 +431,7 @@ SELECT documentdb_api.insert_one('coll_idx_db', 'coll_nested_s3', '{"_id": 5, "t
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_8005" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_8010" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=tags, tl='2699', "collation"='en-u-ks-level3'))
+    "documents_rum_index_8010" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=tags, tl='2699', cl='en-u-ks-level3'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8005'::bigint)
 
@@ -523,7 +523,7 @@ SELECT documentdb_api.insert_one('coll_idx_db', 'coll_wildcard_coll', '{"_id": 4
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_8006" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_8012" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path='', iswildcard='true', tl='2699', wkl='200', "collation"='en-u-ks-level2'))
+    "documents_rum_index_8012" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path='', iswildcard='true', tl='2699', wkl='200', cl='en-u-ks-level2'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8006'::bigint)
 
@@ -615,7 +615,7 @@ SELECT documentdb_api.insert_one('coll_idx_db', 'coll_wp_coll', '{"_id": 4, "tit
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_8007" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_8014" documentdb_rum (document bson_rum_wildcard_project_path_ops (includeid='false', tl='2699', wkl='200', "collation"='en-u-ks-level1', pathspec='[ "title" ]', isexclusion='false'))
+    "documents_rum_index_8014" documentdb_rum (document bson_rum_wildcard_project_path_ops (includeid='false', tl='2699', wkl='200', cl='en-u-ks-level1', pathspec='[ "title" ]', isexclusion='false'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8007'::bigint)
 
@@ -706,7 +706,7 @@ SELECT documentdb_api.insert_one('coll_idx_db', 'coll_truncated',
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_8008" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_8016" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=longfield, tl='2699', "collation"='en-u-ks-level1'))
+    "documents_rum_index_8016" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=longfield, tl='2699', cl='en-u-ks-level1'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8008'::bigint)
 
@@ -797,7 +797,7 @@ SELECT documentdb_api.insert_one('coll_idx_db', 'coll_truncated_s3',
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_8009" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_8018" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=longfield, tl='2699', "collation"='en-u-ks-level3'))
+    "documents_rum_index_8018" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=longfield, tl='2699', cl='en-u-ks-level3'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8009'::bigint)
 
@@ -891,7 +891,7 @@ SELECT documentdb_api.insert_one('coll_idx_db', 'coll_mixed_length', '{"_id": 6,
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_8010" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_8020" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=data, tl='2699', "collation"='en-u-ks-level1'))
+    "documents_rum_index_8020" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=data, tl='2699', cl='en-u-ks-level1'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8010'::bigint)
 
@@ -989,7 +989,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_8011" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_8022" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=name, tl='2699', "collation"='en-u-ks-level1'))
+    "documents_rum_index_8022" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=name, tl='2699', cl='en-u-ks-level1'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8011'::bigint)
 
@@ -1066,7 +1066,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_8012" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_8024" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=name, tl='2699', "collation"='en-u-ks-level3'))
+    "documents_rum_index_8024" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=name, tl='2699', cl='en-u-ks-level3'))
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8012'::bigint)
 
@@ -1161,8 +1161,8 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_8013" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_8026" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=name, tl='2699', "collation"='en-u-ks-level1')) WHERE document #= '{ "status" : "active", "collation" : "en-u-ks-level1" }'::bsonquery
-    "documents_rum_index_8027" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=details, iswildcard='true', tl='2699', "collation"='en-u-ks-level1')) WHERE document #= '{ "status" : "active", "collation" : "en-u-ks-level1" }'::bsonquery
+    "documents_rum_index_8026" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=name, tl='2699', cl='en-u-ks-level1')) WHERE document #= '{ "status" : "active", "collation" : "en-u-ks-level1" }'::bsonquery
+    "documents_rum_index_8027" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=details, iswildcard='true', tl='2699', cl='en-u-ks-level1')) WHERE document #= '{ "status" : "active", "collation" : "en-u-ks-level1" }'::bsonquery
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8013'::bigint)
 
@@ -1291,8 +1291,8 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
  document        | bson   |           | not null | 
 Indexes:
     "collection_pk_8014" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_8029" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=name, tl='2699', "collation"='en-u-ks-level3')) WHERE document #= '{ "status" : "active", "collation" : "en-u-ks-level3" }'::bsonquery
-    "documents_rum_index_8030" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=details, iswildcard='true', tl='2699', "collation"='en-u-ks-level3')) WHERE document #= '{ "status" : "active", "collation" : "en-u-ks-level3" }'::bsonquery
+    "documents_rum_index_8029" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=name, tl='2699', cl='en-u-ks-level3')) WHERE document #= '{ "status" : "active", "collation" : "en-u-ks-level3" }'::bsonquery
+    "documents_rum_index_8030" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=details, iswildcard='true', tl='2699', cl='en-u-ks-level3')) WHERE document #= '{ "status" : "active", "collation" : "en-u-ks-level3" }'::bsonquery
 Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8014'::bigint)
 

@@ -1,0 +1,1253 @@
+SET documentdb.next_collection_id TO 8100;
+SET documentdb.next_collection_index_id TO 8100;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithIndexes TO on;
+SET documentdb.defaultUseCompositeOpClass TO on;
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+CREATE SCHEMA IF NOT EXISTS collation_ordered_test_schema;
+CREATE FUNCTION collation_ordered_test_schema.gin_bson_index_term_to_bson(bytea) 
+RETURNS bson
+LANGUAGE c
+AS '$libdir/pg_documentdb', 'gin_bson_index_term_to_bson';
+-- ===== Section 1: Single-key ordered index with numericOrdering=true ======
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_numord_true",
+    "indexes": [{
+      "key": { "item": 1 },
+      "name": "item_numord_true_idx",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_numord_true', '{"_id": 1, "item": "item1"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_numord_true', '{"_id": 2, "item": "item10"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_numord_true', '{"_id": 3, "item": "item2"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_numord_true', '{"_id": 4, "item": "item20"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_numord_true', '{"_id": 5, "item": "item3"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+\d documentdb_data.documents_8101
+          Table "documentdb_data.documents_8101"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_8101" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_8102" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "item" ]', tl='2691', cl='en-u-ks-level3-kn-true'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '8101'::bigint)
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_numord_true"}');
+                                                                                                                                                                                                                                  cursorpage                                                                                                                                                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_numord_true", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" } }, "name" : "item_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- numericOrdering=true: sorted numerically as item1 < item2 < item3 < item10 < item20
+SELECT entry->>'offset' AS offset,
+       collation_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) AS index_term
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    public.get_raw_page('documentdb_data.documents_rum_index_8102', 1), 
+    'documentdb_data.documents_rum_index_8102'::regclass
+) entry;
+ offset |                      index_term                       
+--------+-------------------------------------------------------
+ 1      | { "$" : "item1", "$flags" : { "$numberInt" : "5" } }
+ 2      | { "$" : "item2", "$flags" : { "$numberInt" : "5" } }
+ 3      | { "$" : "item3", "$flags" : { "$numberInt" : "5" } }
+ 4      | { "$" : "item10", "$flags" : { "$numberInt" : "5" } }
+ 5      | { "$" : "item20", "$flags" : { "$numberInt" : "5" } }
+(5 rows)
+
+-- ===== Section 2: Single-key ordered index with numericOrdering=false ======
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_numord_false",
+    "indexes": [{
+      "key": { "item": 1 },
+      "name": "item_numord_false_idx",
+      "collation": { "locale": "en", "numericOrdering": false }
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_numord_false', '{"_id": 1, "item": "item1"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_numord_false', '{"_id": 2, "item": "item10"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_numord_false', '{"_id": 3, "item": "item2"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_numord_false', '{"_id": 4, "item": "item20"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_numord_false', '{"_id": 5, "item": "item3"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+\d documentdb_data.documents_8102
+          Table "documentdb_data.documents_8102"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_8102" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_8104" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "item" ]', tl='2691', cl='en-u-ks-level3'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '8102'::bigint)
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_numord_false"}');
+                                                                                                                                                                                                                                    cursorpage                                                                                                                                                                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_numord_false", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" } }, "name" : "item_numord_false_idx", "collation" : { "locale" : "en", "numericOrdering" : false }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- numericOrdering=false: sorted lexically as item1 < item10 < item2 < item20 < item3
+SELECT entry->>'offset' AS offset,
+       collation_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) AS index_term
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    public.get_raw_page('documentdb_data.documents_rum_index_8104', 1), 
+    'documentdb_data.documents_rum_index_8104'::regclass
+) entry;
+ offset |                      index_term                       
+--------+-------------------------------------------------------
+ 1      | { "$" : "item1", "$flags" : { "$numberInt" : "5" } }
+ 2      | { "$" : "item10", "$flags" : { "$numberInt" : "5" } }
+ 3      | { "$" : "item2", "$flags" : { "$numberInt" : "5" } }
+ 4      | { "$" : "item20", "$flags" : { "$numberInt" : "5" } }
+ 5      | { "$" : "item3", "$flags" : { "$numberInt" : "5" } }
+(5 rows)
+
+-- ===== Section 3: Compound ordered index with numericOrdering=true ======
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_compound_numord_true",
+    "indexes": [{
+      "key": { "item": 1, "qty": 1 },
+      "name": "item_qty_numord_true_idx",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_numord_true', '{"_id": 1, "item": "item1", "qty": 10}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_numord_true', '{"_id": 2, "item": "item10", "qty": 20}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_numord_true', '{"_id": 3, "item": "item2", "qty": 30}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_numord_true', '{"_id": 4, "item": "item20", "qty": 40}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_numord_true', '{"_id": 5, "item": "item3", "qty": 50}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+\d documentdb_data.documents_8103
+          Table "documentdb_data.documents_8103"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_8103" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_8106" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "item", "qty" ]', tl='2691', cl='en-u-ks-level3-kn-true'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '8103'::bigint)
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_compound_numord_true"}');
+                                                                                                                                                                                                                                                         cursorpage                                                                                                                                                                                                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_compound_numord_true", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" }, "qty" : { "$numberInt" : "1" } }, "name" : "item_qty_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- numericOrdering=true compound: item sorted numerically, qty is number so unaffected
+SELECT entry->>'offset' AS offset,
+       collation_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) AS index_term
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    public.get_raw_page('documentdb_data.documents_rum_index_8106', 1), 
+    'documentdb_data.documents_rum_index_8106'::regclass
+) entry;
+ offset |                                                                   index_term                                                                   
+--------+------------------------------------------------------------------------------------------------------------------------------------------------
+ 1      | { "$$COMP" : [ { "$" : "item1", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "10" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 2      | { "$$COMP" : [ { "$" : "item2", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "30" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 3      | { "$$COMP" : [ { "$" : "item3", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "50" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 4      | { "$$COMP" : [ { "$" : "item10", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "20" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 5      | { "$$COMP" : [ { "$" : "item20", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "40" }, "$flags" : { "$numberInt" : "5" } } ] }
+(5 rows)
+
+-- ===== Section 4: Compound ordered index with numericOrdering=false ======
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_compound_numord_false",
+    "indexes": [{
+      "key": { "item": 1, "qty": 1 },
+      "name": "item_qty_numord_false_idx",
+      "collation": { "locale": "en", "numericOrdering": false }
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_numord_false', '{"_id": 1, "item": "item1", "qty": 10}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_numord_false', '{"_id": 2, "item": "item10", "qty": 20}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_numord_false', '{"_id": 3, "item": "item2", "qty": 30}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_numord_false', '{"_id": 4, "item": "item20", "qty": 40}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_numord_false', '{"_id": 5, "item": "item3", "qty": 50}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+\d documentdb_data.documents_8104
+          Table "documentdb_data.documents_8104"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_8104" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_8108" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "item", "qty" ]', tl='2691', cl='en-u-ks-level3'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '8104'::bigint)
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_compound_numord_false"}');
+                                                                                                                                                                                                                                                          cursorpage                                                                                                                                                                                                                                                           
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_compound_numord_false", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" }, "qty" : { "$numberInt" : "1" } }, "name" : "item_qty_numord_false_idx", "collation" : { "locale" : "en", "numericOrdering" : false }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- numericOrdering=false compound: item sorted lexically
+SELECT entry->>'offset' AS offset,
+       collation_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) AS index_term
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    public.get_raw_page('documentdb_data.documents_rum_index_8108', 1), 
+    'documentdb_data.documents_rum_index_8108'::regclass
+) entry;
+ offset |                                                                   index_term                                                                   
+--------+------------------------------------------------------------------------------------------------------------------------------------------------
+ 1      | { "$$COMP" : [ { "$" : "item1", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "10" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 2      | { "$$COMP" : [ { "$" : "item10", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "20" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 3      | { "$$COMP" : [ { "$" : "item2", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "30" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 4      | { "$$COMP" : [ { "$" : "item20", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "40" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 5      | { "$$COMP" : [ { "$" : "item3", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "50" }, "$flags" : { "$numberInt" : "5" } } ] }
+(5 rows)
+
+-- ===== Section 5: Single-key ordered index with strength=1 ======
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_single_s1",
+    "indexes": [{
+      "key": { "name": 1 },
+      "name": "name_s1_idx",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_single_s1', '{"_id": 1, "name": "Apple"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_single_s1', '{"_id": 2, "name": "apple"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_single_s1', '{"_id": 3, "name": "APPLE"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_single_s1', '{"_id": 4, "name": "Banana"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_single_s1', '{"_id": 5, "name": "banana"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_single_s1', '{"_id": 6, "name": "cherry"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+\d documentdb_data.documents_8105
+          Table "documentdb_data.documents_8105"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_8105" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_8110" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "name" ]', tl='2691', cl='en-u-ks-level1'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '8105'::bigint)
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_single_s1"}');
+                                                                                                                                                                                                                                  cursorpage                                                                                                                                                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_single_s1", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "name" : { "$numberInt" : "1" } }, "name" : "name_s1_idx", "collation" : { "locale" : "en", "strength" : { "$numberInt" : "1" } }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Strength=1: Apple/apple/APPLE collapse to the same collation sort key
+SELECT entry->>'offset' AS offset,
+       collation_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) AS index_term
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    public.get_raw_page('documentdb_data.documents_rum_index_8110', 1), 
+    'documentdb_data.documents_rum_index_8110'::regclass
+) entry;
+ offset |                      index_term                       
+--------+-------------------------------------------------------
+ 1      | { "$" : "Apple", "$flags" : { "$numberInt" : "5" } }
+ 2      | { "$" : "Banana", "$flags" : { "$numberInt" : "5" } }
+ 3      | { "$" : "cherry", "$flags" : { "$numberInt" : "5" } }
+(3 rows)
+
+-- ===== Section 6: Compound ordered index with strength=1 and numericOrdering=true ======
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_compound_s1_numord",
+    "indexes": [{
+      "key": { "name": 1, "age": 1 },
+      "name": "name_age_s1_numord_idx",
+      "collation": { "locale": "en", "strength": 1, "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_s1_numord', '{"_id": 1, "name": "Apple", "age": 30}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_s1_numord', '{"_id": 2, "name": "apple", "age": 25}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_s1_numord', '{"_id": 3, "name": "APPLE", "age": 35}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_s1_numord', '{"_id": 4, "name": "Banana", "age": 20}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_s1_numord', '{"_id": 5, "name": "banana", "age": 40}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_s1_numord', '{"_id": 6, "name": "cherry", "age": 15}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+\d documentdb_data.documents_8106
+          Table "documentdb_data.documents_8106"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_8106" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_8112" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "name", "age" ]', tl='2691', cl='en-u-ks-level1-kn-true'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '8106'::bigint)
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_compound_s1_numord"}');
+                                                                                                                                                                                                                                                                         cursorpage                                                                                                                                                                                                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_compound_s1_numord", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "name" : { "$numberInt" : "1" }, "age" : { "$numberInt" : "1" } }, "name" : "name_age_s1_numord_idx", "collation" : { "locale" : "en", "strength" : { "$numberInt" : "1" }, "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Compound strength=1 + numericOrdering: case-insensitive name, numeric age
+SELECT entry->>'offset' AS offset,
+       collation_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) AS index_term
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    public.get_raw_page('documentdb_data.documents_rum_index_8112', 1), 
+    'documentdb_data.documents_rum_index_8112'::regclass
+) entry;
+ offset |                                                                   index_term                                                                   
+--------+------------------------------------------------------------------------------------------------------------------------------------------------
+ 1      | { "$$COMP" : [ { "$" : "apple", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "25" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 2      | { "$$COMP" : [ { "$" : "Apple", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "30" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 3      | { "$$COMP" : [ { "$" : "APPLE", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "35" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 4      | { "$$COMP" : [ { "$" : "Banana", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "20" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 5      | { "$$COMP" : [ { "$" : "banana", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "40" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 6      | { "$$COMP" : [ { "$" : "cherry", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "15" }, "$flags" : { "$numberInt" : "5" } } ] }
+(6 rows)
+
+-- ===== Section 7: Compound ordered index with strength=3 ======
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_compound_s3",
+    "indexes": [{
+      "key": { "name": 1, "age": 1 },
+      "name": "name_age_s3_idx",
+      "collation": { "locale": "en", "strength": 3 }
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_s3', '{"_id": 1, "name": "Apple", "age": 30}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_s3', '{"_id": 2, "name": "apple", "age": 25}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_s3', '{"_id": 3, "name": "APPLE", "age": 35}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_s3', '{"_id": 4, "name": "Banana", "age": 20}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_s3', '{"_id": 5, "name": "banana", "age": 40}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+\d documentdb_data.documents_8107
+          Table "documentdb_data.documents_8107"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_8107" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_8114" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "name", "age" ]', tl='2691', cl='en-u-ks-level3'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '8107'::bigint)
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_compound_s3"}');
+                                                                                                                                                                                                                                                     cursorpage                                                                                                                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_compound_s3", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "name" : { "$numberInt" : "1" }, "age" : { "$numberInt" : "1" } }, "name" : "name_age_s3_idx", "collation" : { "locale" : "en", "strength" : { "$numberInt" : "3" } }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Compound strength=3: case variants produce distinct composite terms
+SELECT entry->>'offset' AS offset,
+       collation_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) AS index_term
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    public.get_raw_page('documentdb_data.documents_rum_index_8114', 1), 
+    'documentdb_data.documents_rum_index_8114'::regclass
+) entry;
+ offset |                                                                   index_term                                                                   
+--------+------------------------------------------------------------------------------------------------------------------------------------------------
+ 1      | { "$$COMP" : [ { "$" : "apple", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "25" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 2      | { "$$COMP" : [ { "$" : "Apple", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "30" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 3      | { "$$COMP" : [ { "$" : "APPLE", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "35" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 4      | { "$$COMP" : [ { "$" : "banana", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "40" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 5      | { "$$COMP" : [ { "$" : "Banana", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "20" }, "$flags" : { "$numberInt" : "5" } } ] }
+(5 rows)
+
+-- ===== Section 8: Arrays in single-key ordered index with numericOrdering=true ======
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_array_numord",
+    "indexes": [{
+      "key": { "codes": 1 },
+      "name": "codes_numord_true_idx",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_array_numord', '{"_id": 1, "codes": ["code1", "code10"]}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_array_numord', '{"_id": 2, "codes": ["code2", "code20"]}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_array_numord', '{"_id": 3, "codes": ["code3"]}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_array_numord', '{"_id": 4, "codes": "code100"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+\d documentdb_data.documents_8108
+          Table "documentdb_data.documents_8108"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_8108" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_8116" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "codes" ]', tl='2691', cl='en-u-ks-level3-kn-true'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '8108'::bigint)
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_array_numord"}');
+                                                                                                                                                                                                                                    cursorpage                                                                                                                                                                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_array_numord", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "codes" : { "$numberInt" : "1" } }, "name" : "codes_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Array with numericOrdering=true: code1 < code2 < code3 < code10 < code20 < code100
+SELECT entry->>'offset' AS offset,
+       collation_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) AS index_term
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    public.get_raw_page('documentdb_data.documents_rum_index_8116', 1), 
+    'documentdb_data.documents_rum_index_8116'::regclass
+) entry;
+ offset |                       index_term                       
+--------+--------------------------------------------------------
+ 1      | { "" : [  ], "$flags" : { "$numberInt" : "2" } }
+ 2      | { "$" : "code1", "$flags" : { "$numberInt" : "5" } }
+ 3      | { "$" : "code2", "$flags" : { "$numberInt" : "5" } }
+ 4      | { "$" : "code3", "$flags" : { "$numberInt" : "5" } }
+ 5      | { "$" : "code10", "$flags" : { "$numberInt" : "5" } }
+ 6      | { "$" : "code20", "$flags" : { "$numberInt" : "5" } }
+ 7      | { "$" : "code100", "$flags" : { "$numberInt" : "5" } }
+(7 rows)
+
+-- ===== Section 9: Arrays in compound ordered index with numericOrdering=false ======
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_compound_array",
+    "indexes": [{
+      "key": { "codes": 1, "priority": 1 },
+      "name": "codes_priority_numord_false_idx",
+      "collation": { "locale": "en", "numericOrdering": false }
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_array', '{"_id": 1, "codes": ["code1", "code10"], "priority": 1}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_array', '{"_id": 2, "codes": ["code2", "code20"], "priority": 2}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_compound_array', '{"_id": 3, "codes": "code3", "priority": 3}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+\d documentdb_data.documents_8109
+          Table "documentdb_data.documents_8109"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_8109" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_8118" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "codes", "priority" ]', tl='2691', cl='en-u-ks-level3'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '8109'::bigint)
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_compound_array"}');
+                                                                                                                                                                                                                                                             cursorpage                                                                                                                                                                                                                                                             
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_compound_array", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "codes" : { "$numberInt" : "1" }, "priority" : { "$numberInt" : "1" } }, "name" : "codes_priority_numord_false_idx", "collation" : { "locale" : "en", "numericOrdering" : false }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Array compound numericOrdering=false: codes sorted lexically (code1 < code10 < code2 < code20 < code3)
+SELECT entry->>'offset' AS offset,
+       collation_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) AS index_term
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    public.get_raw_page('documentdb_data.documents_rum_index_8118', 1), 
+    'documentdb_data.documents_rum_index_8118'::regclass
+) entry;
+ offset |                                                                  index_term                                                                   
+--------+-----------------------------------------------------------------------------------------------------------------------------------------------
+ 1      | { "" : [  ], "$flags" : { "$numberInt" : "2" } }
+ 2      | { "$$COMP" : [ { "$" : "code1", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "1" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 3      | { "$$COMP" : [ { "$" : "code10", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "1" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 4      | { "$$COMP" : [ { "$" : "code2", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "2" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 5      | { "$$COMP" : [ { "$" : "code20", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "2" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 6      | { "$$COMP" : [ { "$" : "code3", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "3" }, "$flags" : { "$numberInt" : "5" } } ] }
+(6 rows)
+
+-- ===== Section 10: Index build — documents before index creation, numericOrdering=true ======
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_build_numord', '{"_id": 1, "item": "item1", "tag": "A"}', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_build_numord', '{"_id": 2, "item": "item10", "tag": "B"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_build_numord', '{"_id": 3, "item": "item2", "tag": "C"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_build_numord', '{"_id": 4, "item": "item20", "tag": "D"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_build_numord', '{"_id": 5, "item": "item3", "tag": "E"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Create the collated ordered index on existing documents
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_build_numord",
+    "indexes": [{
+      "key": { "item": 1, "tag": 1 },
+      "name": "item_tag_build_numord_idx",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+\d documentdb_data.documents_8110
+          Table "documentdb_data.documents_8110"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_8110" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_8120" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "item", "tag" ]', tl='2691', cl='en-u-ks-level3-kn-true'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '8110'::bigint)
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_build_numord"}');
+                                                                                                                                                                                                                                                     cursorpage                                                                                                                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_build_numord", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" }, "tag" : { "$numberInt" : "1" } }, "name" : "item_tag_build_numord_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Index build numericOrdering=true: item sorted numerically (item1 < item2 < item3 < item10 < item20)
+SELECT entry->>'offset' AS offset,
+       collation_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) AS index_term
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    public.get_raw_page('documentdb_data.documents_rum_index_8120', 1), 
+    'documentdb_data.documents_rum_index_8120'::regclass
+) entry;
+ offset |                                                         index_term                                                         
+--------+----------------------------------------------------------------------------------------------------------------------------
+ 1      | { "$$COMP" : [ { "$" : "item1", "$flags" : { "$numberInt" : "5" } }, { "$" : "A", "$flags" : { "$numberInt" : "5" } } ] }
+ 2      | { "$$COMP" : [ { "$" : "item2", "$flags" : { "$numberInt" : "5" } }, { "$" : "C", "$flags" : { "$numberInt" : "5" } } ] }
+ 3      | { "$$COMP" : [ { "$" : "item3", "$flags" : { "$numberInt" : "5" } }, { "$" : "E", "$flags" : { "$numberInt" : "5" } } ] }
+ 4      | { "$$COMP" : [ { "$" : "item10", "$flags" : { "$numberInt" : "5" } }, { "$" : "B", "$flags" : { "$numberInt" : "5" } } ] }
+ 5      | { "$$COMP" : [ { "$" : "item20", "$flags" : { "$numberInt" : "5" } }, { "$" : "D", "$flags" : { "$numberInt" : "5" } } ] }
+(5 rows)
+
+-- ===== Section 11: Missing fields and nulls with numericOrdering=true ======
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_missing",
+    "indexes": [{
+      "key": { "x": 1, "y": 1 },
+      "name": "x_y_numord_true_idx",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_missing', '{"_id": 1, "x": "item1", "y": "val1"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_missing', '{"_id": 2, "x": "item10"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_missing', '{"_id": 3, "y": "val2"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_missing', '{"_id": 4}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_missing', '{"_id": 5, "x": null, "y": "val3"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_missing', '{"_id": 6, "x": 42, "y": "val4"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+\d documentdb_data.documents_8111
+          Table "documentdb_data.documents_8111"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_8111" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_8122" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "x", "y" ]', tl='2691', cl='en-u-ks-level3-kn-true'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '8111'::bigint)
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_missing"}');
+                                                                                                                                                                                                                                             cursorpage                                                                                                                                                                                                                                              
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_missing", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "x" : { "$numberInt" : "1" }, "y" : { "$numberInt" : "1" } }, "name" : "x_y_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Missing/null: collation only applies to string values; missing and null use standard ordering
+SELECT entry->>'offset' AS offset,
+       collation_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) AS index_term
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    public.get_raw_page('documentdb_data.documents_rum_index_8122', 1), 
+    'documentdb_data.documents_rum_index_8122'::regclass
+) entry;
+ offset |                                                                          index_term                                                                           
+--------+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+ 1      | { "$$COMP" : [ { "$" : { "$undefined" : true }, "$flags" : { "$numberInt" : "8" } }, { "$" : { "$undefined" : true }, "$flags" : { "$numberInt" : "8" } } ] }
+ 2      | { "$$COMP" : [ { "$" : { "$undefined" : true }, "$flags" : { "$numberInt" : "8" } }, { "$" : "val2", "$flags" : { "$numberInt" : "5" } } ] }
+ 3      | { "$$COMP" : [ { "$" : null, "$flags" : { "$numberInt" : "5" } }, { "$" : "val3", "$flags" : { "$numberInt" : "5" } } ] }
+ 4      | { "$$COMP" : [ { "$" : { "$numberInt" : "42" }, "$flags" : { "$numberInt" : "5" } }, { "$" : "val4", "$flags" : { "$numberInt" : "5" } } ] }
+ 5      | { "$$COMP" : [ { "$" : "item1", "$flags" : { "$numberInt" : "5" } }, { "$" : "val1", "$flags" : { "$numberInt" : "5" } } ] }
+ 6      | { "$$COMP" : [ { "$" : "item10", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$undefined" : true }, "$flags" : { "$numberInt" : "8" } } ] }
+(6 rows)
+
+-- ===== Section 12: Multiple collations on same collection (numericOrdering true vs false) ======
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_multi_coll",
+    "indexes": [{
+      "key": { "item": 1, "value": 1 },
+      "name": "item_val_numord_true_idx",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_multi_coll",
+    "indexes": [{
+      "key": { "item": 1, "value": 1 },
+      "name": "item_val_numord_false_idx",
+      "collation": { "locale": "en", "numericOrdering": false }
+    }]
+  }',
+  TRUE
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_multi_coll', '{"_id": 1, "item": "item1", "value": 100}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_multi_coll', '{"_id": 2, "item": "item10", "value": 200}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_multi_coll', '{"_id": 3, "item": "item2", "value": 300}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+\d documentdb_data.documents_8112
+          Table "documentdb_data.documents_8112"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_8112" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_8124" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "item", "value" ]', tl='2691', cl='en-u-ks-level3-kn-true'))
+    "documents_rum_index_8125" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "item", "value" ]', tl='2691', cl='en-u-ks-level3'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '8112'::bigint)
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_multi_coll"}');
+                                                                                                                                                                                                                                                                                                                                                                                         cursorpage                                                                                                                                                                                                                                                                                                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_multi_coll", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" } }, "name" : "item_val_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" } }, "name" : "item_val_numord_false_idx", "collation" : { "locale" : "en", "numericOrdering" : false }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- numericOrdering=true index: item1 < item2 < item10
+SELECT entry->>'offset' AS offset,
+       collation_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) AS index_term
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    public.get_raw_page('documentdb_data.documents_rum_index_8124', 1), 
+    'documentdb_data.documents_rum_index_8124'::regclass
+) entry;
+ offset |                                                                   index_term                                                                    
+--------+-------------------------------------------------------------------------------------------------------------------------------------------------
+ 1      | { "$$COMP" : [ { "$" : "item1", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "100" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 2      | { "$$COMP" : [ { "$" : "item2", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "300" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 3      | { "$$COMP" : [ { "$" : "item10", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "200" }, "$flags" : { "$numberInt" : "5" } } ] }
+(3 rows)
+
+-- numericOrdering=false index: item1 < item10 < item2
+SELECT entry->>'offset' AS offset,
+       collation_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) AS index_term
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    public.get_raw_page('documentdb_data.documents_rum_index_8125', 1), 
+    'documentdb_data.documents_rum_index_8125'::regclass
+) entry;
+ offset |                                                                   index_term                                                                    
+--------+-------------------------------------------------------------------------------------------------------------------------------------------------
+ 1      | { "$$COMP" : [ { "$" : "item1", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "100" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 2      | { "$$COMP" : [ { "$" : "item10", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "200" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 3      | { "$$COMP" : [ { "$" : "item2", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "300" }, "$flags" : { "$numberInt" : "5" } } ] }
+(3 rows)
+
+-- ===== Section 13: Three-key compound with numericOrdering=true ======
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_three_key",
+    "indexes": [{
+      "key": { "region": 1, "code": 1, "seq": 1 },
+      "name": "region_code_seq_numord_idx",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_three_key', '{"_id": 1, "region": "us-east-1", "code": "code1", "seq": 10}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_three_key', '{"_id": 2, "region": "us-east-10", "code": "code2", "seq": 20}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_three_key', '{"_id": 3, "region": "us-east-2", "code": "code10", "seq": 30}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_three_key', '{"_id": 4, "region": "us-west-1", "code": "code3", "seq": 40}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+\d documentdb_data.documents_8113
+          Table "documentdb_data.documents_8113"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_8113" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_8127" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "region", "code", "seq" ]', tl='2691', cl='en-u-ks-level3-kn-true'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '8113'::bigint)
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_three_key"}');
+                                                                                                                                                                                                                                                                      cursorpage                                                                                                                                                                                                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_three_key", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "region" : { "$numberInt" : "1" }, "code" : { "$numberInt" : "1" }, "seq" : { "$numberInt" : "1" } }, "name" : "region_code_seq_numord_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Three-key numericOrdering=true: region sorted numerically (us-east-1 < us-east-2 < us-east-10 < us-west-1)
+SELECT entry->>'offset' AS offset,
+       collation_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) AS index_term
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    public.get_raw_page('documentdb_data.documents_rum_index_8127', 1), 
+    'documentdb_data.documents_rum_index_8127'::regclass
+) entry;
+ offset |                                                                                                index_term                                                                                                
+--------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ 1      | { "$$COMP" : [ { "$" : "us-east-1", "$flags" : { "$numberInt" : "5" } }, { "$" : "code1", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "10" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 2      | { "$$COMP" : [ { "$" : "us-east-2", "$flags" : { "$numberInt" : "5" } }, { "$" : "code10", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "30" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 3      | { "$$COMP" : [ { "$" : "us-east-10", "$flags" : { "$numberInt" : "5" } }, { "$" : "code2", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "20" }, "$flags" : { "$numberInt" : "5" } } ] }
+ 4      | { "$$COMP" : [ { "$" : "us-west-1", "$flags" : { "$numberInt" : "5" } }, { "$" : "code3", "$flags" : { "$numberInt" : "5" } }, { "$" : { "$numberInt" : "40" }, "$flags" : { "$numberInt" : "5" } } ] }
+(4 rows)
+
+-- ===== Section 14: Truncated long strings with numericOrdering=true ======
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_truncated",
+    "indexes": [{
+      "key": { "longfield": 1, "tag": 1 },
+      "name": "longfield_tag_numord_true_idx",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_truncated',
+  bson_build_document('_id'::text, 1, 'longfield'::text, ('item1' || repeat('x', 3000))::text, 'tag'::text, 'A'::text), NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_truncated',
+  bson_build_document('_id'::text, 2, 'longfield'::text, ('item10' || repeat('x', 3000))::text, 'tag'::text, 'B'::text), NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db', 'ord_truncated',
+  bson_build_document('_id'::text, 3, 'longfield'::text, ('item2' || repeat('y', 3000))::text, 'tag'::text, 'C'::text), NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+\d documentdb_data.documents_8114
+          Table "documentdb_data.documents_8114"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_8114" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_8129" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "longfield", "tag" ]', tl='2691', cl='en-u-ks-level3-kn-true'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '8114'::bigint)
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_truncated"}');
+                                                                                                                                                                                                                                                        cursorpage                                                                                                                                                                                                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_truncated", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "longfield" : { "$numberInt" : "1" }, "tag" : { "$numberInt" : "1" } }, "name" : "longfield_tag_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Truncated with numericOrdering=true: item1... < item2... < item10... ; $flags=1 indicates truncation
+SELECT entry->>'offset' AS offset,
+       collation_ordered_test_schema.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) AS index_term
+FROM documentdb_api_internal.documentdb_rum_page_get_entries(
+    public.get_raw_page('documentdb_data.documents_rum_index_8129', 1), 
+    'documentdb_data.documents_rum_index_8129'::regclass
+) entry;
+ offset |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              index_term                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
+--------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ 1      | { "" : { "$maxKey" : 1 }, "$flags" : { "$numberInt" : "1" } }
+ 2      | { "$$COMP" : [ { "$" : "item1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "$flags" : { "$numberInt" : "6" } }, { "$" : "A", "$flags" : { "$numberInt" : "5" } } ] }
+ 3      | { "$$COMP" : [ { "$" : "item2yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy", "$flags" : { "$numberInt" : "6" } }, { "$" : "C", "$flags" : { "$numberInt" : "5" } } ] }
+ 4      | { "$$COMP" : [ { "$" : "item10xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "$flags" : { "$numberInt" : "6" } }, { "$" : "B", "$flags" : { "$numberInt" : "5" } } ] }
+(4 rows)
+
+-- ===== Section 15: Query with matching collation (index pushdown not yet supported) ======
+BEGIN;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_numord_true", "filter": { "item": { "$eq": "item1" } }, "collation": { "locale": "en", "numericOrdering": true } }');
+                       document                       
+------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "item" : "item1" }
+(1 row)
+
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_numord_true", "filter": { "item": { "$eq": "item1" } }, "collation": { "locale": "en", "numericOrdering": true } }');
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documentdb_data.documents_8101 collection
+   Output: document
+   Recheck Cond: (collection.shard_key_value = '8101'::bigint)
+   Filter: (collection.document @= '{ "item" : "item1", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+   ->  Bitmap Index Scan on _id_
+         Index Cond: (collection.shard_key_value = '8101'::bigint)
+(6 rows)
+
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_compound_numord_true", "filter": { "item": { "$eq": "item1" } }, "collation": { "locale": "en", "numericOrdering": true } }');
+                                       document                                        
+---------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "item" : "item1", "qty" : { "$numberInt" : "10" } }
+(1 row)
+
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_compound_numord_true", "filter": { "item": { "$eq": "item1" } }, "collation": { "locale": "en", "numericOrdering": true } }');
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documentdb_data.documents_8103 collection
+   Output: document
+   Recheck Cond: (collection.shard_key_value = '8103'::bigint)
+   Filter: (collection.document @= '{ "item" : "item1", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+   ->  Bitmap Index Scan on _id_
+         Index Cond: (collection.shard_key_value = '8103'::bigint)
+(6 rows)
+
+ROLLBACK;
+-- ===== Section 16: Unsupported — unique ordered index with collation should fail ======
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_unique_fail",
+    "indexes": [{
+      "key": { "a": 1, "b": 1 },
+      "name": "a_b_unique_coll_idx",
+      "unique": true,
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+ERROR:  Collation is not supported for unique indexes
+DROP SCHEMA collation_ordered_test_schema CASCADE;
+NOTICE:  drop cascades to function collation_ordered_test_schema.gin_bson_index_term_to_bson(bytea)
+RESET documentdb.defaultUseCompositeOpClass;
+RESET documentdb.enableCollationWithIndexes;
+RESET documentdb_core.enableCollation;

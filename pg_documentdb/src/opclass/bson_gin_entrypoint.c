@@ -606,7 +606,7 @@ gin_bson_single_path_options(PG_FUNCTION_ARGS)
 							   "Prefix path for the index",
 							   NULL, &ValidateSinglePathSpec, &FillSinglePathSpec,
 							   offsetof(BsonGinSinglePathOptions, path));
-	add_local_string_reloption(relopts, "collation",
+	add_local_string_reloption(relopts, "cl",
 							   "Collation of the index",
 							   "", &ValidateCollationSpec, &FillCollationSpec,
 							   offsetof(BsonGinSinglePathOptions, base.collation));
@@ -703,7 +703,7 @@ gin_bson_wildcard_project_options(PG_FUNCTION_ARGS)
 							   &FillWildcardProjectPathSpec,
 							   offsetof(BsonGinWildcardProjectionPathOptions,
 										pathSpec));
-	add_local_string_reloption(relopts, "collation",
+	add_local_string_reloption(relopts, "cl",
 							   "Collation of the index",
 							   "", &ValidateCollationSpec,
 							   &FillCollationSpec,
