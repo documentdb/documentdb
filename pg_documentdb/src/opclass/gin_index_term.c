@@ -120,13 +120,21 @@ static int32_t CompareCompositeIndexTerms(const uint8_t *leftBuffer,
 										  uint32_t leftIndexTermSize,
 										  const uint8_t *rightBuffer,
 										  uint32_t rightIndexTermSize,
-										  const char *collation);
+										  const char *collation,
+										  bool isMetadataSame);
 static void InitializeBsonIndexTermFromBuffer(const uint8_t *buffer,
 											  uint32_t indexTermSize,
 											  BsonIndexTerm *indexTerm);
 static int32_t InitializeCompositeIndexTermBuffer(const uint8_t *buffer, uint32_t
 												  termSize,
 												  BsonIndexTerm indexTerm[INDEX_MAX_KEYS]);
+static int32_t CompareBsonGinIndexTerms(const uint8_t *leftBuffer, uint32_t leftSize,
+										const uint8_t *rightBuffer, uint32_t rightSize,
+										const char *collation);
+static int32_t CompareBsonIndexTermCore(const BsonIndexTerm *leftTerm, const
+										BsonIndexTerm *rightTerm,
+										bool *isComparisonValid, const char *collation,
+										bool isMetadataSame);
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -180,6 +188,7 @@ CompareBsonGinIndexTerms(const uint8_t *leftBuffer, uint32_t leftSize,
 						 const uint8_t *rightBuffer, uint32_t rightSize,
 						 const char *collation)
 {
+	bool isMetadataSame = leftBuffer[0] == rightBuffer[0];
 	bool isLeftComposite = IsIndexTermMetadataComposite(leftBuffer[0]);
 	bool isRightComposite = IsIndexTermMetadataComposite(rightBuffer[0]);
 	int32_t compareTerm;
@@ -187,7 +196,7 @@ CompareBsonGinIndexTerms(const uint8_t *leftBuffer, uint32_t leftSize,
 	{
 		/* Both are composite terms: Compare as composite */
 		compareTerm = CompareCompositeIndexTerms(leftBuffer, leftSize, rightBuffer,
-												 rightSize, collation);
+												 rightSize, collation, isMetadataSame);
 	}
 	else
 	{
@@ -196,8 +205,9 @@ CompareBsonGinIndexTerms(const uint8_t *leftBuffer, uint32_t leftSize,
 		InitializeBsonIndexTermFromBuffer(leftBuffer, leftSize, &leftTerm);
 		InitializeBsonIndexTermFromBuffer(rightBuffer, rightSize, &rightTerm);
 		bool isComparisonValidIgnore = false;
-		compareTerm = CompareBsonIndexTerm(&leftTerm, &rightTerm,
-										   &isComparisonValidIgnore, collation);
+		compareTerm = CompareBsonIndexTermCore(&leftTerm, &rightTerm,
+											   &isComparisonValidIgnore, collation,
+											   isMetadataSame);
 	}
 
 	return compareTerm;
@@ -228,21 +238,26 @@ CompareBsonIndexTerms(bytea *left, bytea *right)
 	const uint8_t *rightBuffer = (const uint8_t *) VARDATA_ANY(right);
 	uint32_t rightSize = VARSIZE_ANY_EXHDR(right);
 
-	const char *leftCollation = ExtractCollationAndUpdateBuffer(&leftBuffer, &leftSize);
-	const char *rightCollation = ExtractCollationAndUpdateBuffer(&rightBuffer,
-																 &rightSize);
+	const char *leftCollation = NULL;
+	if (leftBuffer[0] == IndexTermMetadataCollationPrefixed ||
+		rightBuffer[0] == IndexTermMetadataCollationPrefixed)
+	{
+		leftCollation = ExtractCollationAndUpdateBuffer(&leftBuffer, &leftSize);
+		const char *rightCollation = ExtractCollationAndUpdateBuffer(&rightBuffer,
+																	 &rightSize);
 
-	if ((leftCollation == NULL) ^ (rightCollation == NULL))
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-						errmsg(
-							"Cannot compare bson index terms with different collations")));
-	}
-	else if ((leftCollation != NULL) && strcmp(leftCollation, rightCollation) != 0)
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-						errmsg(
-							"Cannot compare bson index terms with different collations")));
+		if ((leftCollation == NULL) ^ (rightCollation == NULL))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"Cannot compare bson index terms with different collations")));
+		}
+		else if ((leftCollation != NULL) && strcmp(leftCollation, rightCollation) != 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"Cannot compare bson index terms with different collations")));
+		}
 	}
 
 	return CompareBsonGinIndexTerms(leftBuffer, leftSize, rightBuffer, rightSize,
@@ -267,25 +282,6 @@ CompareSerializedBsonIndexTermWithCollation(Datum a, Datum b, const char *collat
 
 
 /*
- * Populates the GinBsonCompareState from opclass options.
- */
-static void
-PopulateGinBsonCompareState(GinBsonCompareState *state, bytea *options)
-{
-	state->collationString = NULL;
-	if (options != NULL)
-	{
-		StringView collationView = { 0 };
-		GetCollationFromIndexOptions(options, &collationView);
-		if (collationView.string != NULL)
-		{
-			state->collationString = collationView.string;
-		}
-	}
-}
-
-
-/*
  * gin_bson_compare compares two elements to sort the values
  * when placed in the gin index. This is different from a regular BSON
  * compare as Bson compares are done as <type><path><value>
@@ -299,31 +295,13 @@ gin_bson_compare(PG_FUNCTION_ARGS)
 	bytea *right = PG_GETARG_BYTEA_PP(1);
 
 	const char *collationString = NULL;
-	if (EnableCollationWithIndexes)
+	if (EnableCollationWithIndexes && PG_HAS_OPCLASS_OPTIONS())
 	{
-		/* Get collation from fn_extra cache, or extract from opclass options and cache */
-		GinBsonCompareState *state = (GinBsonCompareState *) fcinfo->flinfo->fn_extra;
-
-		if (state != NULL)
-		{
-			Assert(!PG_HAS_OPCLASS_OPTIONS() ||
-				   state->options == (bytea *) PG_GET_OPCLASS_OPTIONS());
-
-			collationString = state->collationString;
-		}
-		else if (PG_HAS_OPCLASS_OPTIONS())
-		{
-			bytea *options = (bytea *) PG_GET_OPCLASS_OPTIONS();
-
-			MemoryContext oldContext = MemoryContextSwitchTo(fcinfo->flinfo->fn_mcxt);
-			state = palloc0(sizeof(GinBsonCompareState));
-			PopulateGinBsonCompareState(state, options);
-			state->options = options;
-			MemoryContextSwitchTo(oldContext);
-
-			fcinfo->flinfo->fn_extra = state;
-			collationString = state->collationString;
-		}
+		uint32_t collationStringLengthNotUsed;
+		BsonGinIndexOptionsBase *options =
+			(BsonGinIndexOptionsBase *) PG_GET_OPCLASS_OPTIONS();
+		Get_Index_Collation_Option(options, collation, collationString,
+								   collationStringLengthNotUsed);
 	}
 
 	const uint8_t *leftBuffer = (const uint8_t *) VARDATA_ANY(left);
@@ -331,8 +309,9 @@ gin_bson_compare(PG_FUNCTION_ARGS)
 
 	const uint8_t *rightBuffer = (const uint8_t *) VARDATA_ANY(right);
 	uint32_t rightSize = VARSIZE_ANY_EXHDR(right);
-	int32_t compareTerm = CompareBsonGinIndexTerms(leftBuffer, leftSize, rightBuffer,
-												   rightSize, collationString);
+	int32_t compareTerm =
+		CompareBsonGinIndexTerms(leftBuffer, leftSize, rightBuffer,
+								 rightSize, collationString);
 	PG_FREE_IF_COPY(left, 0);
 	PG_FREE_IF_COPY(right, 1);
 	PG_RETURN_INT32(compareTerm);
@@ -733,16 +712,24 @@ gin_bson_to_bsonindexterm(PG_FUNCTION_ARGS)
 }
 
 
+#define GetTermSizeAndNoExHdr(buffer, overallSize, termSize) \
+	if (VARATT_IS_1B(buffer)) \
+	{ \
+		overallSize = VARSIZE_1B(buffer); \
+		termSize = overallSize - VARHDRSZ_SHORT; \
+	} \
+	else { overallSize = VARSIZE_4B(buffer); termSize = overallSize - VARHDRSZ; }
+
+
 static int32_t
 CompareCompositeIndexTerms(const uint8_t *leftBuffer, uint32_t leftIndexTermSize,
 						   const uint8_t *rightBuffer, uint32_t rightIndexTermSize,
-						   const char *collation)
+						   const char *collation, bool isMetadataSame)
 {
 	Assert(leftIndexTermSize > (sizeof(uint8_t) + 2));
 	Assert(rightIndexTermSize > (sizeof(uint8_t) + 2));
 
-	if (!IsIndexTermMetadataComposite(leftBuffer[0]) ||
-		!IsIndexTermMetadataComposite(rightBuffer[0]))
+	if (!isMetadataSame)
 	{
 		/* One of them is composite - composite is greater than non-composite */
 		return IsIndexTermMetadataComposite(leftBuffer[0]) ? 1 : -1;
@@ -758,26 +745,35 @@ CompareCompositeIndexTerms(const uint8_t *leftBuffer, uint32_t leftIndexTermSize
 	{
 		bytea *leftBytes = (bytea *) leftBuffer;
 		bytea *rightBytes = (bytea *) rightBuffer;
-		uint32_t leftSize = VARSIZE_ANY(leftBytes);
-		uint32_t rightSize = VARSIZE_ANY(rightBytes);
+		uint32_t leftOverallSize, leftTermSize;
+		uint32_t rightOverallSize, rightTermSize;
+
+		GetTermSizeAndNoExHdr(leftBuffer, leftOverallSize, leftTermSize);
+		GetTermSizeAndNoExHdr(rightBuffer, rightOverallSize, rightTermSize);
+		const uint8_t *leftTermBuffer = (const uint8_t *) VARDATA_ANY(leftBytes);
+		const uint8_t *rightTermBuffer = (const uint8_t *) VARDATA_ANY(rightBytes);
 
 		BsonIndexTerm leftTerm;
 		BsonIndexTerm rightTerm;
-		InitializeBsonIndexTerm(leftBytes, &leftTerm);
-		InitializeBsonIndexTerm(rightBytes, &rightTerm);
+		InitializeBsonIndexTermFromBuffer(leftTermBuffer, leftTermSize, &leftTerm);
+		InitializeBsonIndexTermFromBuffer(rightTermBuffer, rightTermSize, &rightTerm);
+
 		bool isComparisonValidIgnore = false;
-		int32_t compareTerm = CompareBsonIndexTerm(&leftTerm, &rightTerm,
-												   &isComparisonValidIgnore, collation);
+		bool isMetadataSameInner = leftTerm.termMetadata == rightTerm.termMetadata;
+		int32_t compareTerm = CompareBsonIndexTermCore(&leftTerm, &rightTerm,
+													   &isComparisonValidIgnore,
+													   collation,
+													   isMetadataSameInner);
 		if (compareTerm != 0)
 		{
 			return compareTerm;
 		}
 
 		/* Proceed to the subsequent term */
-		leftBuffer += leftSize;
-		rightBuffer += rightSize;
-		leftIndexTermSize -= leftSize;
-		rightIndexTermSize -= rightSize;
+		leftBuffer += leftOverallSize;
+		rightBuffer += rightOverallSize;
+		leftIndexTermSize -= leftOverallSize;
+		rightIndexTermSize -= rightOverallSize;
 	}
 
 	return leftIndexTermSize > rightIndexTermSize ? 1 :
@@ -788,7 +784,8 @@ CompareCompositeIndexTerms(const uint8_t *leftBuffer, uint32_t leftIndexTermSize
 inline static int32_t
 CompareIndexTermPathAndValue(const BsonIndexTerm *leftTerm, const
 							 BsonIndexTerm *rightTerm,
-							 bool *isComparisonValid, const char *collation)
+							 bool *isComparisonValid, const char *collation,
+							 bool isMetadataSame)
 {
 	/* Compare path */
 	StringView leftView = {
@@ -809,7 +806,7 @@ CompareIndexTermPathAndValue(const BsonIndexTerm *leftTerm, const
 	cmp = CompareBsonValueAndTypeWithCollation(&leftTerm->element.bsonValue,
 											   &rightTerm->element.bsonValue,
 											   isComparisonValid, collation);
-	if (cmp != 0)
+	if (cmp != 0 || isMetadataSame)
 	{
 		return cmp;
 	}
@@ -842,6 +839,50 @@ CompareIndexTermPathAndValue(const BsonIndexTerm *leftTerm, const
 }
 
 
+static int32_t
+CompareBsonIndexTermCore(const BsonIndexTerm *leftTerm, const BsonIndexTerm *rightTerm,
+						 bool *isComparisonValid, const char *collation, bool
+						 isMetadataSame)
+{
+	bool isLeftDescending = IsIndexTermValueDescending(leftTerm);
+	if (!isMetadataSame)
+	{
+		/* First compare metadata - metadata terms are less than all terms */
+		if (IsIndexTermMetadata(leftTerm) ^ IsIndexTermMetadata(rightTerm))
+		{
+			/* If left is metadata and right is not metadata this will be
+			 * 1 - 0 == 1 so return -1 (left < right )
+			 */
+			return (int32_t) IsIndexTermMetadata(rightTerm) -
+				   (int32_t) IsIndexTermMetadata(leftTerm);
+		}
+
+		/* If it's not a metadata term, then ensure that we don't compare asc/desc mixed */
+		if (isLeftDescending ^ IsIndexTermValueDescending(rightTerm))
+		{
+			/* Special case here - the root truncated term is not metadata */
+			if (IsRootTruncationTerm(leftTerm) || IsRootTruncationTerm(rightTerm))
+			{
+				/* Treat similar to metadata terms */
+				return (int32_t) IsRootTruncationTerm(rightTerm) -
+					   (int32_t) IsRootTruncationTerm(leftTerm);
+			}
+
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"Cannot compare ascending and descending index terms: left %d, right %d",
+								leftTerm->termMetadata, rightTerm->termMetadata)));
+		}
+	}
+
+	int32_t compare = CompareIndexTermPathAndValue(leftTerm, rightTerm,
+												   isComparisonValid, collation,
+												   isMetadataSame);
+
+	return isLeftDescending ? -compare : compare;
+}
+
+
 /*
  * Implements the core logic for comparing index terms.
  * Index terms are compared first by path, then value.
@@ -853,37 +894,9 @@ CompareBsonIndexTerm(const BsonIndexTerm *leftTerm, const BsonIndexTerm *rightTe
 					 bool *isComparisonValid, const char *collation)
 {
 	/* First compare metadata - metadata terms are less than all terms */
-	if (IsIndexTermMetadata(leftTerm) ^ IsIndexTermMetadata(rightTerm))
-	{
-		/* If left is metadata and right is not metadata this will be
-		 * 1 - 0 == 1 so return -1 (left < right )
-		 */
-		return (int32_t) IsIndexTermMetadata(rightTerm) -
-			   (int32_t) IsIndexTermMetadata(leftTerm);
-	}
-
-	/* If it's not a metadata term, then ensure that we don't compare asc/desc mixed */
-	bool isLeftDescending = IsIndexTermValueDescending(leftTerm);
-	if (isLeftDescending ^ IsIndexTermValueDescending(rightTerm))
-	{
-		/* Special case here - the root truncated term is not metadata */
-		if (IsRootTruncationTerm(leftTerm) || IsRootTruncationTerm(rightTerm))
-		{
-			/* Treat similar to metadata terms */
-			return (int32_t) IsRootTruncationTerm(rightTerm) -
-				   (int32_t) IsRootTruncationTerm(leftTerm);
-		}
-
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-						errmsg(
-							"Cannot compare ascending and descending index terms: left %d, right %d",
-							leftTerm->termMetadata, rightTerm->termMetadata)));
-	}
-
-	int32_t compare = CompareIndexTermPathAndValue(leftTerm, rightTerm,
-												   isComparisonValid, collation);
-
-	return isLeftDescending ? -compare : compare;
+	bool isMetadataSame = leftTerm->termMetadata == rightTerm->termMetadata;
+	return CompareBsonIndexTermCore(leftTerm, rightTerm, isComparisonValid, collation,
+									isMetadataSame);
 }
 
 
@@ -994,23 +1007,13 @@ InitializeBsonIndexTermFromBuffer(const uint8_t *buffer, uint32_t indexTermSize,
 	indexTerm->termMetadata = buffer[0];
 	switch ((IndexTermMetadata) buffer[0])
 	{
-		case IndexTermIsMetadata:
-		{
-			/* Next is the bson data serialized */
-			BsonDocumentBytesToPgbsonElementUnsafe(
-				(const uint8_t *) &buffer[1], indexTermSize - 1, &indexTerm->element);
-			return;
-		}
-
 		case IndexTermValueOnly:
 		case IndexTermValueOnlyTruncated:
 		case IndexTermValueOnlyDescending:
 		case IndexTermValueOnlyDescendingTruncated:
 		{
-			bool skipLengthOffset = true;
-			BsonDocumentBytesToPgbsonElementWithOptionsUnsafe(
-				(const uint8_t *) &buffer[1], indexTermSize - 1, &indexTerm->element,
-				skipLengthOffset);
+			BsonDocumentBytesToPgbsonElementSkipLengthUnsafe(
+				(const uint8_t *) &buffer[1], indexTermSize - 1, &indexTerm->element);
 			indexTerm->element.path = "$";
 			indexTerm->element.pathLength = 1;
 			return;
@@ -2150,7 +2153,11 @@ BuildSerializedIndexTerm(pgbsonelement *indexElement, const
 	bool isValueOnly = false;
 
 	/* Only allow user terms to be value only */
+#if BSON_BYTE_ORDER == BSON_BIG_ENDIAN
+	bool allowValueOnly = false;
+#else
 	bool allowValueOnly = termMetadata == IndexTermNoMetadata || forceSetMetadata;
+#endif
 	bool isTermTruncated = SerializeTermToWriter(&writer, indexElement,
 												 createMetadata,
 												 allowValueOnly,

@@ -40,9 +40,8 @@ void BsonValueToPgbsonElementUnsafe(const bson_value_t *bsonValue,
 									pgbsonelement *element);
 void BsonDocumentBytesToPgbsonElementUnsafe(const uint8_t *bytes, uint32_t bytesLen,
 											pgbsonelement *element);
-void BsonDocumentBytesToPgbsonElementWithOptionsUnsafe(const uint8_t *bytes, int32_t
-													   bytesLen, pgbsonelement *element,
-													   bool skipLengthOffset);
+void BsonDocumentBytesToPgbsonElementSkipLengthUnsafe(const uint8_t *bytes, int32_t
+													  bytesLen, pgbsonelement *element);
 pgbson * PgbsonElementToPgbson(pgbsonelement *element);
 
 #endif

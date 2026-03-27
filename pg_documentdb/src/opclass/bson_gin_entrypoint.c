@@ -609,7 +609,7 @@ gin_bson_single_path_options(PG_FUNCTION_ARGS)
 	add_local_string_reloption(relopts, "collation",
 							   "Collation of the index",
 							   "", &ValidateCollationSpec, &FillCollationSpec,
-							   offsetof(BsonGinSinglePathOptions, collation));
+							   offsetof(BsonGinSinglePathOptions, base.collation));
 	add_local_string_reloption(relopts, "indexname",
 							   "[deprecated] The mongo specific name for the index",
 							   NULL, NULL, &FillDeprecatedStringSpec,
@@ -707,7 +707,8 @@ gin_bson_wildcard_project_options(PG_FUNCTION_ARGS)
 							   "Collation of the index",
 							   "", &ValidateCollationSpec,
 							   &FillCollationSpec,
-							   offsetof(BsonGinWildcardProjectionPathOptions, collation));
+							   offsetof(BsonGinWildcardProjectionPathOptions,
+										base.collation));
 	add_local_string_reloption(relopts, "indexname",
 							   "[deprecated] The mongo specific name for the index",
 							   NULL, NULL, &FillDeprecatedStringSpec,
@@ -1248,36 +1249,6 @@ GetIndexTermMetadata(void *indexOptions)
 			   .isWildcardProjection = false,
 			   .indexVersion = options->version
 	};
-}
-
-
-void
-GetCollationFromIndexOptions(void *indexOptions, StringView *collationView)
-{
-	BsonGinIndexOptionsBase *options = (BsonGinIndexOptionsBase *) indexOptions;
-	switch (options->type)
-	{
-		case IndexOptionsType_SinglePath:
-		{
-			Get_Index_Collation_Option(((BsonGinSinglePathOptions *) indexOptions),
-									   collation, collationView->string,
-									   collationView->length);
-			break;
-		}
-
-		case IndexOptionsType_Wildcard:
-		{
-			Get_Index_Collation_Option(
-				((BsonGinWildcardProjectionPathOptions *) indexOptions),
-				collation, collationView->string, collationView->length);
-			break;
-		}
-
-		default:
-		{
-			break;
-		}
-	}
 }
 
 
