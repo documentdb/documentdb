@@ -105,8 +105,8 @@ else
 fi
 
 if [ "$extraFeatures" != "" ]; then
-    installProfileArg="$installProfileArg --features \"$extraFeatures\""
-    packageProfileArg="$packageProfileArg --features \"$extraFeatures\""
+    installProfileArg="$installProfileArg --features $extraFeatures"
+    packageProfileArg="$packageProfileArg --features $extraFeatures"
 fi
 
 pushd $SOURCEDIR
