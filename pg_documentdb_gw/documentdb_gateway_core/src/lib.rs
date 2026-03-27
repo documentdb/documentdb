@@ -792,7 +792,7 @@ where
     request_tracker.record_duration(RequestIntervalKind::WriteResponse, write_response_start);
 
     // telemetry can block so do it after write and flush.
-    error.log_request_failure(connection_context, activity_id);
+    telemetry::log_request_failure(error, connection_context, activity_id, request);
 
     if let Some(telemetry) = connection_context.telemetry_provider.as_ref() {
         telemetry

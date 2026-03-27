@@ -6,7 +6,7 @@
  *-------------------------------------------------------------------------
  */
 
-use crate::{error::ErrorCode, responses::CommandError};
+use crate::{error::ErrorCode, requests::Request, responses::CommandError};
 
 // In case of no error (success), error_code passed here should be None and status code returned is 200
 #[must_use]
@@ -40,5 +40,21 @@ pub const fn get_status_code_u16(error: Option<&CommandError>) -> u16 {
     match error {
         None => 200,
         Some(command_error) => error_code_to_status_code(Some(command_error.code())),
+    }
+}
+
+/// Returns a safe operation name for telemetry dimensions.
+///
+/// If request context is missing, this returns `"unknown"`.
+/// If the operation name resolves to an empty string, this returns `"<empty>"`.
+#[must_use]
+pub fn get_safe_operation_name(request: Option<&Request<'_>>) -> String {
+    let operation_name =
+        request.map_or_else(|| "unknown".to_owned(), |r| r.request_type().to_string());
+
+    if operation_name.is_empty() {
+        "<empty>".to_owned()
+    } else {
+        operation_name
     }
 }
