@@ -311,6 +311,49 @@ SELECT documentdb_test_helpers.run_explain_and_trim(FORMAT($cmd$
     SELECT document FROM bson_aggregation_find('regex_db', '%s')
 $cmd$, :'q1'::text));
 
+-- === UTF-8 Codepoint Boundary Detection Tests ===
+-- These tests verify the inline UTF-8 codepoint tracking optimization
+
+-- Insert test data with various UTF-8 sequences
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 100, "a": "test世界", "b": true }');
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 101, "a": "test世界abc", "b": true }');
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 102, "a": "café😀", "b": true }');
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 103, "a": "café😀test", "b": true }');
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 104, "a": "éñ", "b": true }');
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 105, "a": "éñabc", "b": true }');
+
+-- Test: Multiple consecutive UTF-8 chars at end of prefix ^test世界
+-- Should correctly track to start of last codepoint (世界)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^test世界" } } }');
+
+-- Test: UTF-8 followed by ASCII - should reset tracking and only find exact matches
+-- ^test世界abc should match test世界abc exactly
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^test世界abc" } } }');
+
+-- Test: Mixed 2-byte and 4-byte UTF-8 chars ^café😀  
+-- Should correctly handle different UTF-8 byte lengths
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^café😀" } } }');
+
+-- Test: Two consecutive 2-byte UTF-8 chars at end ^éñ
+-- Should correctly identify start of last codepoint
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^éñ" } } }');
+
+-- Test: UTF-8 at end followed by meta character - should extract UTF-8 prefix properly
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^éñ." } } }');
+
+-- Explain plan verification: UTF-8 codepoint boundary optimization
+-- Should show tight range bounds for UTF-8 strings ending with multi-byte chars
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) 
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^test世界" } } }')
+$cmd$);
+
+-- Explain plan: Mixed UTF-8 with trailing ASCII reset
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^éñtest" } } }')
+$cmd$);
+
 -- string truncation case: short regex prefix still uses tight ASCII bounds
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)

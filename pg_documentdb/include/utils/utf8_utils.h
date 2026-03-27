@@ -26,6 +26,14 @@
 #define UTF8_MAX_2BYTE_CODEPOINT 0x7FF
 #define UTF8_MAX_3BYTE_CODEPOINT 0xFFFF
 
+
+static inline bool
+is_utf8_continuation_byte(pg_wchar c)
+{
+	return (c & 0xC0) == 0x80;
+}
+
+
 #if PG_VERSION_NUM < 170000
 
 /*

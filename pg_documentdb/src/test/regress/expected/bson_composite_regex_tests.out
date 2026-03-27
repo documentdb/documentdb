@@ -856,15 +856,15 @@ SELECT documentdb_test_helpers.run_explain_and_trim(FORMAT($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_find('regex_db', '%s')
 $cmd$, :'q1'::text));
-                                                                                                             run_explain_and_trim                                                                                                              
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                            run_explain_and_trim                                                                                                             
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
    namespaceName: regex_db.regex_coll
    indexName: idx_a_1_b_1
    indexKey: {"a": 1,"b": 1}
    isMultiKey: false
    hasTruncation: true
-   indexBounds: ["a": ["abc\x7F", "abc"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\x7F", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\x7F", "options" : "" } }], "b": (MinKey, MaxKey)]
+   indexBounds: ["a": ["abc\x7F", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^abc\x7F", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc\x7F", "options" : "" } }], "b": (MinKey, MaxKey)]
    ->  Bitmap Heap Scan on documents_1201 collection (actual rows=1 loops=1)
          Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^abc\x7F", "options" : "" } } }'::bson)
          Rows Removed by Index Recheck: 2
@@ -982,6 +982,132 @@ $cmd$, :'q1'::text));
                Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^smile😀", "options" : "" } } }'::bson)
 (13 rows)
 
+-- === UTF-8 Codepoint Boundary Detection Tests ===
+-- These tests verify the inline UTF-8 codepoint tracking optimization
+-- Insert test data with various UTF-8 sequences
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 100, "a": "test世界", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 101, "a": "test世界abc", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 102, "a": "café😀", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 103, "a": "café😀test", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 104, "a": "éñ", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regex_db', 'regex_coll', '{ "_id": 105, "a": "éñabc", "b": true }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Test: Multiple consecutive UTF-8 chars at end of prefix ^test世界
+-- Should correctly track to start of last codepoint (世界)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^test世界" } } }');
+                               document                                
+-----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "100" }, "a" : "test世界", "b" : true }
+ { "_id" : { "$numberInt" : "101" }, "a" : "test世界abc", "b" : true }
+(2 rows)
+
+-- Test: UTF-8 followed by ASCII - should reset tracking and only find exact matches
+-- ^test世界abc should match test世界abc exactly
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^test世界abc" } } }');
+                               document                                
+-----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "101" }, "a" : "test世界abc", "b" : true }
+(1 row)
+
+-- Test: Mixed 2-byte and 4-byte UTF-8 chars ^café😀  
+-- Should correctly handle different UTF-8 byte lengths
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^café😀" } } }');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "102" }, "a" : "café😀", "b" : true }
+ { "_id" : { "$numberInt" : "103" }, "a" : "café😀test", "b" : true }
+(2 rows)
+
+-- Test: Two consecutive 2-byte UTF-8 chars at end ^éñ
+-- Should correctly identify start of last codepoint
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^éñ" } } }');
+                            document                             
+-----------------------------------------------------------------
+ { "_id" : { "$numberInt" : "104" }, "a" : "éñ", "b" : true }
+ { "_id" : { "$numberInt" : "105" }, "a" : "éñabc", "b" : true }
+(2 rows)
+
+-- Test: UTF-8 at end followed by meta character - should extract UTF-8 prefix properly
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^éñ." } } }');
+                            document                             
+-----------------------------------------------------------------
+ { "_id" : { "$numberInt" : "105" }, "a" : "éñabc", "b" : true }
+(1 row)
+
+-- Explain plan verification: UTF-8 codepoint boundary optimization
+-- Should show tight range bounds for UTF-8 strings ending with multi-byte chars
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) 
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^test世界" } } }')
+$cmd$);
+                                                                                                                 run_explain_and_trim                                                                                                                  
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["test世界", "test世畍"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^test世界", "options" : "" } }, { "$regularExpression" : { "pattern" : "^test世界", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=2 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^test世界", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=4 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^test世界", "options" : "" } } }'::bson)
+(13 rows)
+
+-- Explain plan: Mixed UTF-8 with trailing ASCII reset
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^éñtest" } } }')
+$cmd$);
+                                                                                                             run_explain_and_trim                                                                                                              
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+   namespaceName: regex_db.regex_coll
+   indexName: idx_a_1_b_1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["a": ["éñtest", "éñtesu"), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^éñtest", "options" : "" } }, { "$regularExpression" : { "pattern" : "^éñtest", "options" : "" } }], "b": (MinKey, MaxKey)]
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=0 loops=1)
+         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^éñtest", "options" : "" } } }'::bson)
+         Rows Removed by Index Recheck: 2
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=2 loops=1)
+               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^éñtest", "options" : "" } } }'::bson)
+(13 rows)
+
 -- string truncation case: short regex prefix still uses tight ASCII bounds
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
@@ -1012,17 +1138,17 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 $cmd$);
                                                                                                            run_explain_and_trim                                                                                                            
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=21 loops=1)
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=27 loops=1)
    namespaceName: regex_db.regex_coll
    indexName: idx_a_1_b_1
    indexKey: {"a": 1,"b": 1}
    isMultiKey: false
    hasTruncation: true
    indexBounds: ["a": [MinKey, MaxKey], "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^string", "options" : "" } }, { "$regularExpression" : { "pattern" : "^string", "options" : "" } }], "b": (MinKey, MaxKey)]
-   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=21 loops=1)
+   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=27 loops=1)
          Recheck Cond: (document @!*= '{ "a" : [ { "$regularExpression" : { "pattern" : "^string", "options" : "" } } ] }'::bson)
          Heap Blocks: exact=1
-         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=21 loops=1)
+         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=27 loops=1)
                Index Cond: (document @!*= '{ "a" : [ { "$regularExpression" : { "pattern" : "^string", "options" : "" } } ] }'::bson)
 (12 rows)
 

@@ -1855,7 +1855,7 @@ OptimizeBoundaryForRegexExpression(RegexData *regexData,
 	strView = StringViewSubstring(&strView, 1); /* skip the '^' character */
 	char *anchorPrefixBuffer = palloc0(sizeof(char) * (strView.length + 1));
 	uint32_t prefixLength = 0;
-	int32_t firstNonAsciiByteIndex = -1;
+	int32_t lastNonAsciiCodepointStart = -1;
 
 	uint32_t i = 0;
 	for (; i < strView.length; i++)
@@ -1894,15 +1894,19 @@ OptimizeBoundaryForRegexExpression(RegexData *regexData,
 			break;
 		}
 
-		/* Record the first non-ASCII byte index in the prefix, in case the last codepoint in the prefix is non-ASCII.
-		 * If we find an ASCII character after a non-ASCII character, reset the index. */
-		if (firstNonAsciiByteIndex == -1 && !isascii(currentChar))
+		/* Track the start of non-ASCII UTF-8 codepoints as we build the prefix */
+		if (!isascii((unsigned char) currentChar))
 		{
-			firstNonAsciiByteIndex = i;
+			/* If this is a UTF-8 start byte (not continuation), update the position. We need to check this in case we have 2 UTF8 codepoints in a row at the end of the prefix i.e (^éñ.) */
+			if (!is_utf8_continuation_byte(currentChar))
+			{
+				lastNonAsciiCodepointStart = prefixLength;
+			}
 		}
-		else if (firstNonAsciiByteIndex >= 0 && isascii(currentChar))
+		else
 		{
-			firstNonAsciiByteIndex = -1;
+			/* ASCII character resets - we only care about trailing non-ASCII codepoints */
+			lastNonAsciiCodepointStart = -1;
 		}
 
 		anchorPrefixBuffer[prefixLength++] = currentChar;
@@ -1923,14 +1927,14 @@ OptimizeBoundaryForRegexExpression(RegexData *regexData,
 		char *upperBoundary = NULL;
 		uint32_t upperBoundaryLength = 0;
 		bool hasUpperBoundary = false;
-		if (firstNonAsciiByteIndex >= 0)
+		if (lastNonAsciiCodepointStart >= 0)
 		{
 			hasUpperBoundary = TryBuildNextUtf8PrefixBoundary(anchorPrefixBuffer,
-															  firstNonAsciiByteIndex,
+															  lastNonAsciiCodepointStart,
 															  &upperBoundary,
 															  &upperBoundaryLength);
 		}
-		else
+		else if (anchorPrefixBuffer[prefixLength - 1] < UTF8_MAX_1BYTE_CODEPOINT)
 		{
 			upperBoundary = pnstrdup(anchorPrefixBuffer, prefixLength);
 			upperBoundary[prefixLength - 1]++;
@@ -1955,6 +1959,8 @@ OptimizeBoundaryForRegexExpression(RegexData *regexData,
 		pfree(anchorPrefixBuffer);
 		return;
 	}
+
+	pfree(anchorPrefixBuffer);
 
 	/* If we can't optimize based on the regex expression, set the bounds to be all strings. */
 	CompositeSingleBound bounds = GetTypeLowerBound(BSON_TYPE_UTF8);
