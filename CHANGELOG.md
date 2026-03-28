@@ -13,6 +13,7 @@
 * Enable index only scan by default and move to the cost estimate function *[Feature]*
 * Optimize index boundaries for $regex when there is an anchored prefix *[Perf]*
 * Push $in filters on object_id to the primary key index, during evaluation of a streaming cursor query *[Bugfix]*
+* Improved performance for `$sum` and `$avg` accumulators in `$group` and `$setWindowFields` pipeline stages under flag `enableNewWithExprAccumulators`, with moving window support via inverse transition. (#457)
 * Fix segfault due to use after free in bson_dollar_project_find *[Bugfix]*
 
 

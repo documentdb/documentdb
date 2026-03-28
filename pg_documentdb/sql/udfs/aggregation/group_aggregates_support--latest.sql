@@ -462,3 +462,15 @@ CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL_V2__.bson_last_with_expr_final(
  LANGUAGE c
  STABLE
 AS 'MODULE_PATHNAME', $function$bson_last_with_expr_final$function$;
+
+CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL_V2__.bson_sum_avg_with_expr_transition(bytea, __CORE_SCHEMA__.bson, __CORE_SCHEMA__.bson, __CORE_SCHEMA__.bson, text)
+ RETURNS bytea
+ LANGUAGE c
+ STABLE
+AS 'MODULE_PATHNAME', $function$bson_sum_avg_with_expr_transition$function$;
+
+CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL_V2__.bson_sum_avg_with_expr_minvtransition(bytea, __CORE_SCHEMA__.bson, __CORE_SCHEMA__.bson, __CORE_SCHEMA__.bson, text)
+ RETURNS bytea
+ LANGUAGE c
+ STABLE
+AS 'MODULE_PATHNAME', $function$bson_sum_avg_with_expr_minvtransition$function$;

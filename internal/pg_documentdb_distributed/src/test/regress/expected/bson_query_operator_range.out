@@ -890,6 +890,21 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "range_and_
 (1 row)
 
 SET documentdb.enableNewWithExprAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "range_and_aggregation", "pipeline": [ { "$match" : { "$and" : [ { "f_insercion" : { "$gte" : { "$date" : { "$numberLong" : "0" } }}, "f_insercion" : { "$lt" : { "$date" : { "$numberLong" : "500000" } }} } ] }}, {"$project" : { "f_insercion" : 1, "n_18_velocidad": 1, "_id" : 0, "date" : { "$dateToParts" : { "date" : "$f_insercion" } }} }, { "$group" : { "_id" : { "year" : "$date.year", "month" : "$date.month", "day" : "$date.day", "hour" : "$date.hour" }, "speed_avg" : { "$avg" : "$n_18_velocidad" } , "speed_sum" : { "$sum" : "$n_18_velocidad" }} }], "cursor": {} }');
+                                                                                                                   document                                                                                                                    
+---------------------------------------------------------------------
+ { "_id" : { "year" : { "$numberInt" : "1970" }, "month" : { "$numberInt" : "1" }, "day" : { "$numberInt" : "1" }, "hour" : { "$numberInt" : "0" } }, "speed_avg" : { "$numberDouble" : "500.5" }, "speed_sum" : { "$numberInt" : "500500" } }
+(1 row)
+
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "range_and_aggregation", "pipeline": [ { "$match" : { "$and" : [ { "f_insercion" : { "$gte" : { "$date" : { "$numberLong" : "0" } }}, "f_insercion" : { "$lt" : { "$date" : { "$numberLong" : "500000" } }} } ] }}, {"$project" : { "f_insercion" : 1, "n_18_velocidad": 1, "_id" : 0, "date" : { "$dateToParts" : { "date" : "$f_insercion" } }} }, { "$group" : { "_id" : { "year" : "$date.year", "month" : "$date.month", "day" : "$date.day", "hour" : "$date.hour" }, "speed_avg" : { "$avg" : "$n_18_velocidad" } , "speed_sum" : { "$sum" : "$n_18_velocidad" }} }], "cursor": {} }');
+                                                                                                                   document                                                                                                                    
+---------------------------------------------------------------------
+ { "_id" : { "year" : { "$numberInt" : "1970" }, "month" : { "$numberInt" : "1" }, "day" : { "$numberInt" : "1" }, "hour" : { "$numberInt" : "0" } }, "speed_avg" : { "$numberDouble" : "500.5" }, "speed_sum" : { "$numberInt" : "500500" } }
+(1 row)
+
+SET documentdb.enableNewWithExprAccumulators TO off;
 -- full query 500K ( "idLinea": 1 filter ) 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "range_and_aggregation", "pipeline": [ { "$match" : { "idLinea": 1, "$and" : [ { "f_insercion" : { "$gte" : { "$date" : { "$numberLong" : "0" } }}, "f_insercion" : { "$lt" : { "$date" : { "$numberLong" : "500000" } }} } ] }}, {"$project" : { "f_insercion" : 1, "n_18_velocidad": 1, "_id": 0, "date" : { "$dateToParts" : { "date" : "$f_insercion" } }} }, { "$group" : { "_id" : { "year" : "$date.year", "month" : "$date.month", "day" : "$date.day", "hour" : "$date.hour" }, "speed_avg" : { "$avg" : "$n_18_velocidad" } , "speed_max" : { "$max" : "$n_18_velocidad" } , "speed_min" : { "$min" : "$n_18_velocidad" }} }], "cursor": {} }');
                                                                                                                                      document                                                                                                                                      
@@ -902,6 +917,20 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "range_and_
                                                                                                                                      document                                                                                                                                      
 ---------------------------------------------------------------------
  { "_id" : { "year" : { "$numberInt" : "1970" }, "month" : { "$numberInt" : "1" }, "day" : { "$numberInt" : "1" }, "hour" : { "$numberInt" : "0" } }, "speed_avg" : { "$numberDouble" : "500.5" }, "speed_max" : { "$numberInt" : "1000" }, "speed_min" : { "$numberInt" : "1" } }
+(1 row)
+
+SET documentdb.enableNewWithExprAccumulators TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "range_and_aggregation", "pipeline": [ { "$match" : { "idLinea": 1, "$and" : [ { "f_insercion" : { "$gte" : { "$date" : { "$numberLong" : "0" } }}, "f_insercion" : { "$lt" : { "$date" : { "$numberLong" : "500000" } }} } ] }}, {"$project" : { "f_insercion" : 1, "n_18_velocidad": 1, "_id" : 0, "date" : { "$dateToParts" : { "date" : "$f_insercion" } }} }, { "$group" : { "_id" : { "year" : "$date.year", "month" : "$date.month", "day" : "$date.day", "hour" : "$date.hour" }, "speed_avg" : { "$avg" : "$n_18_velocidad" } , "speed_sum" : { "$sum" : "$n_18_velocidad" }} }], "cursor": {} }');
+                                                                                                                   document                                                                                                                    
+---------------------------------------------------------------------
+ { "_id" : { "year" : { "$numberInt" : "1970" }, "month" : { "$numberInt" : "1" }, "day" : { "$numberInt" : "1" }, "hour" : { "$numberInt" : "0" } }, "speed_avg" : { "$numberDouble" : "500.5" }, "speed_sum" : { "$numberInt" : "500500" } }
+(1 row)
+
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "range_and_aggregation", "pipeline": [ { "$match" : { "idLinea": 1, "$and" : [ { "f_insercion" : { "$gte" : { "$date" : { "$numberLong" : "0" } }}, "f_insercion" : { "$lt" : { "$date" : { "$numberLong" : "500000" } }} } ] }}, {"$project" : { "f_insercion" : 1, "n_18_velocidad": 1, "_id" : 0, "date" : { "$dateToParts" : { "date" : "$f_insercion" } }} }, { "$group" : { "_id" : { "year" : "$date.year", "month" : "$date.month", "day" : "$date.day", "hour" : "$date.hour" }, "speed_avg" : { "$avg" : "$n_18_velocidad" } , "speed_sum" : { "$sum" : "$n_18_velocidad" }} }], "cursor": {} }');
+                                                                                                                   document                                                                                                                    
+---------------------------------------------------------------------
+ { "_id" : { "year" : { "$numberInt" : "1970" }, "month" : { "$numberInt" : "1" }, "day" : { "$numberInt" : "1" }, "hour" : { "$numberInt" : "0" } }, "speed_avg" : { "$numberDouble" : "500.5" }, "speed_sum" : { "$numberInt" : "500500" } }
 (1 row)
 
 SET documentdb.enableNewWithExprAccumulators TO off;

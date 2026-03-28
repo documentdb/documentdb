@@ -5343,7 +5343,8 @@ inline static List *
 AddSumGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 					   List *repathArgs, Const *accumulatorText,
 					   ParseState *parseState, char *identifiers,
-					   Expr *documentExpr, Expr *variableSpec, Expr *groupIdExpr)
+					   Expr *documentExpr, Expr *variableSpec, const
+					   char *collationString, Expr *groupIdExpr)
 {
 	bool canUseBsonCountAggregate = CanUseNewCountAggregates() &&
 									IsA(groupIdExpr, Const);
@@ -5359,11 +5360,24 @@ AddSumGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 
 	if (!useNewCountAggregate)
 	{
-		return AddSimpleGroupAccumulator(query, accumulatorValue, repathArgs,
-										 accumulatorText, parseState,
-										 identifiers, documentExpr,
-										 BsonSumAggregateFunctionOid(),
-										 variableSpec);
+		if (CanUseWithExprAggregates())
+		{
+			return AddSimpleGroupAccumulatorWithExpr(query, accumulatorValue,
+													 repathArgs, accumulatorText,
+													 parseState, identifiers,
+													 documentExpr,
+													 BsonSumWithExprAggregateFunctionOid(),
+													 variableSpec,
+													 collationString);
+		}
+		else
+		{
+			return AddSimpleGroupAccumulator(query, accumulatorValue, repathArgs,
+											 accumulatorText, parseState,
+											 identifiers, documentExpr,
+											 BsonSumAggregateFunctionOid(),
+											 variableSpec);
+		}
 	}
 
 	Expr *constValue = (Expr *) makeConst(INT4OID, -1, InvalidOid, 4, Int32GetDatum(1),
@@ -6047,13 +6061,29 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 		if (StringViewEqualsCString(&accumulatorName, "$avg"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_AVG);
-			repathArgs = AddSimpleGroupAccumulator(query, &accumulatorElement.bsonValue,
-												   repathArgs,
-												   accumulatorText, parseState,
-												   identifiers,
-												   origEntry->expr,
-												   BsonAvgAggregateFunctionOid(),
-												   context->variableSpec);
+
+			if (CanUseWithExprAggregates())
+			{
+				repathArgs = AddSimpleGroupAccumulatorWithExpr(
+					query, &accumulatorElement.bsonValue,
+					repathArgs,
+					accumulatorText, parseState,
+					identifiers, origEntry->expr,
+					BsonAvgWithExprAggregateFunctionOid(),
+					context->variableSpec,
+					context->collationString);
+			}
+			else
+			{
+				repathArgs = AddSimpleGroupAccumulator(query,
+													   &accumulatorElement.bsonValue,
+													   repathArgs,
+													   accumulatorText, parseState,
+													   identifiers,
+													   origEntry->expr,
+													   BsonAvgAggregateFunctionOid(),
+													   context->variableSpec);
+			}
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$sum"))
 		{
@@ -6064,6 +6094,7 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 												identifiers,
 												origEntry->expr,
 												context->variableSpec,
+												context->collationString,
 												groupIdDocumentExpr);
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$max"))

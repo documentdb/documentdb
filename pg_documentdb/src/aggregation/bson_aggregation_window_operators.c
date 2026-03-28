@@ -1807,6 +1807,12 @@ static WindowFunc *
 HandleDollarSumWindowOperator(const bson_value_t *opValue,
 							  WindowOperatorContext *context)
 {
+	if (CanUseWithExprAggregates())
+	{
+		return GetWindowFuncWithExprAggregate(opValue, context,
+											  BsonSumWithExprAggregateFunctionOid());
+	}
+
 	return GetSimpleBsonExpressionGetWindowFunc(opValue, context,
 												BsonSumAggregateFunctionOid());
 }
@@ -1820,6 +1826,12 @@ static WindowFunc *
 HandleDollarAvgWindowOperator(const bson_value_t *opValue,
 							  WindowOperatorContext *context)
 {
+	if (CanUseWithExprAggregates())
+	{
+		return GetWindowFuncWithExprAggregate(opValue, context,
+											  BsonAvgWithExprAggregateFunctionOid());
+	}
+
 	return GetSimpleBsonExpressionGetWindowFunc(opValue, context,
 												BsonAvgAggregateFunctionOid());
 }

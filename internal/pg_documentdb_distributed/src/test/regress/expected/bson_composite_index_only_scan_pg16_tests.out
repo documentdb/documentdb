@@ -893,7 +893,7 @@ SELECT documentdb_api.delete('idx_only_scan_db', '{ "delete": "idx_only_scan_col
 
 set client_min_messages to DEBUG1;
 VACUUM (FREEZE ON) documentdb_data.documents_69001;
-psql:sql/bson_composite_index_only_scan_tests.sql:155: LOG:  Vacuum[index=21521,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=0, numEntryPages=1, numDataPages=0, numVoidPages=0
+psql:sql/bson_composite_index_only_scan_tests.sql:157: LOG:  Vacuum[index=21529,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=0, numEntryPages=1, numDataPages=0, numVoidPages=0
 reset client_min_messages;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$eq": "Mexico"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
                                                    run_explain_and_trim                                                   
@@ -1018,7 +1018,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 set documentdb.enableNewCountAggregates to on;
 -- Sharded collections can't be supported with a shard key filter because in RUM indexes the shard_key_value becomes a runtime filter and for index only scans everything needs to be satisfied by the index. 
 SELECT COUNT(documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_sharded', bson_build_document('_id'::text, i, 'shardKey'::text, i % 10, 'value'::text, i))) FROM generate_series(1, 1000) i;
-psql:sql/bson_composite_index_only_scan_tests.sql:175: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:177: NOTICE:  creating collection
  count 
 ---------------------------------------------------------------------
   1000
@@ -1085,7 +1085,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 ROLLBACK;
 -- test index only scan is not enabled for wildcard indexes
 SELECT documentdb_api.insert_one('idx_only_scan_db', 'compwildcard2', '{ "a": { "b": 1, "c": 5 }}');
-psql:sql/bson_composite_index_only_scan_tests.sql:194: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:196: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1140,3 +1140,248 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                Index Cond: (collection.document @> '{ "a.b" : { "$numberInt" : "2" } }'::bson)
 (12 rows)
 
+RESET documentdb.forceIndexOnlyScanIfAvailable;
+-- test $sum/$avg on numeric field with ordered index (future index-only scan optimization candidate)
+SELECT documentdb_api.create_collection('idx_only_scan_db', 'idx_only_scan_numeric');
+psql:sql/bson_composite_index_only_scan_tests.sql:209: NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+select documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_numeric', '{"_id": 1, "dept": "eng", "age": 30}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+select documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_numeric', '{"_id": 2, "dept": "eng", "age": 25}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+select documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_numeric', '{"_id": 3, "dept": "eng", "age": 35}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+select documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_numeric', '{"_id": 4, "dept": "sales", "age": 40}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+select documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_numeric', '{"_id": 5, "dept": "sales", "age": 28}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+select documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_numeric', '{"_id": 6, "dept": "sales", "age": 45}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('idx_only_scan_db', '{ "createIndexes": "idx_only_scan_numeric", "indexes": [ { "key": { "dept": 1, "age": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "dept_age_1" }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE documentdb_data.documents_69003;
+VACUUM (FREEZE ON) documentdb_data.documents_69003;
+-- $sum on indexed numeric field with old accumulators (needs index scan, not IOS — reads document for field value)
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" } } }]}');
+                                                                                                                                                                        QUERY PLAN                                                                                                                                                                         
+---------------------------------------------------------------------
+ Subquery Scan on agg_stage_1 (actual rows=1 loops=1)
+   Output: bson_repath_and_build(agg_stage_1.c1, agg_stage_1.c2, agg_stage_1.c3, agg_stage_1.c4)
+   ->  GroupAggregate (actual rows=1 loops=1)
+         Output: '_id'::text, (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalAge'::text, bsonsum(bson_expression_get(collection.document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+               Output: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+               indexName: dept_age_1
+               indexKey: {"dept": 1,"age": 1}
+               isMultiKey: false
+               indexBounds: ["dept": ["eng", "eng"], "age": (MinKey, MaxKey)]
+               innerScanLoops: 4 loops
+               scanType: ordered
+               scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+               ->  Index Scan using dept_age_1 on documentdb_data.documents_69004_690016 collection (actual rows=3 loops=1)
+                     Output: collection.document
+                     Index Cond: (collection.document @= '{ "dept" : "eng" }'::bson)
+                     Order By: (collection.document |-<> '{ "dept" : { "$numberInt" : "1" } }'::bson)
+(18 rows)
+
+SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" } } }]}');
+                        document                         
+---------------------------------------------------------------------
+ { "_id" : "eng", "totalAge" : { "$numberInt" : "90" } }
+(1 row)
+
+-- $avg on indexed numeric field with old accumulators
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "avgAge": { "$avg": "$age" } } }]}');
+                                                                                                                                                                         QUERY PLAN                                                                                                                                                                          
+---------------------------------------------------------------------
+ Subquery Scan on agg_stage_1 (actual rows=1 loops=1)
+   Output: bson_repath_and_build(agg_stage_1.c1, agg_stage_1.c2, agg_stage_1.c3, agg_stage_1.c4)
+   ->  GroupAggregate (actual rows=1 loops=1)
+         Output: '_id'::text, (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgAge'::text, bsonaverage(bson_expression_get(collection.document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+               Output: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+               indexName: dept_age_1
+               indexKey: {"dept": 1,"age": 1}
+               isMultiKey: false
+               indexBounds: ["dept": ["eng", "eng"], "age": (MinKey, MaxKey)]
+               innerScanLoops: 4 loops
+               scanType: ordered
+               scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+               ->  Index Scan using dept_age_1 on documentdb_data.documents_69004_690016 collection (actual rows=3 loops=1)
+                     Output: collection.document
+                     Index Cond: (collection.document @= '{ "dept" : "eng" }'::bson)
+                     Order By: (collection.document |-<> '{ "dept" : { "$numberInt" : "1" } }'::bson)
+(18 rows)
+
+SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "avgAge": { "$avg": "$age" } } }]}');
+                          document                          
+---------------------------------------------------------------------
+ { "_id" : "eng", "avgAge" : { "$numberDouble" : "30.0" } }
+(1 row)
+
+-- $sum and $avg across all groups
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" }, "avgAge": { "$avg": "$age" } } }, { "$sort": { "_id": 1 } }]}');
+                                                                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                                                                  
+---------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Output: (bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4, agg_stage_0.c5, agg_stage_0.c6)), (bson_orderby(bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4, agg_stage_0.c5, agg_stage_0.c6), '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4, agg_stage_0.c5, agg_stage_0.c6), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: 25kB
+   ->  Subquery Scan on agg_stage_0 (actual rows=2 loops=1)
+         Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4, agg_stage_0.c5, agg_stage_0.c6), bson_orderby(bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4, agg_stage_0.c5, agg_stage_0.c6), '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=2 loops=1)
+               Output: '_id'::text, (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalAge'::text, bsonsum(bson_expression_get(collection.document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgAge'::text, bsonaverage(bson_expression_get(collection.document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     indexName: dept_age_1
+                     indexKey: {"dept": 1,"age": 1}
+                     isMultiKey: false
+                     indexBounds: ["dept": (MinKey, MaxKey), "age": (MinKey, MaxKey)]
+                     innerScanLoops: 6 loops
+                     scanType: ordered
+                     scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+                     ->  Index Scan using dept_age_1 on documentdb_data.documents_69004_690016 collection (actual rows=6 loops=1)
+                           Output: collection.document
+                           Index Cond: (collection.document @<> '{ "dept" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "dept" : { "$numberInt" : "1" } }'::bson)
+(22 rows)
+
+SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" }, "avgAge": { "$avg": "$age" } } }, { "$sort": { "_id": 1 } }]}');
+                                                       document                                                       
+---------------------------------------------------------------------
+ { "_id" : "eng", "totalAge" : { "$numberInt" : "90" }, "avgAge" : { "$numberDouble" : "30.0" } }
+ { "_id" : "sales", "totalAge" : { "$numberInt" : "113" }, "avgAge" : { "$numberDouble" : "37.666666666666664298" } }
+(2 rows)
+
+-- $sum on indexed numeric field with new accumulators
+SET documentdb.enableNewWithExprAccumulators TO on;
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" } } }]}');
+                                                                                                                                                               QUERY PLAN                                                                                                                                                               
+---------------------------------------------------------------------
+ Subquery Scan on agg_stage_1 (actual rows=1 loops=1)
+   Output: bson_repath_and_build(agg_stage_1.c1, agg_stage_1.c2, agg_stage_1.c3, agg_stage_1.c4)
+   ->  GroupAggregate (actual rows=1 loops=1)
+         Output: '_id'::text, (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalAge'::text, bsonsumwithexpr(collection.document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)
+         Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+               Output: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+               indexName: dept_age_1
+               indexKey: {"dept": 1,"age": 1}
+               isMultiKey: false
+               indexBounds: ["dept": ["eng", "eng"], "age": (MinKey, MaxKey)]
+               innerScanLoops: 4 loops
+               scanType: ordered
+               scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+               ->  Index Scan using dept_age_1 on documentdb_data.documents_69004_690016 collection (actual rows=3 loops=1)
+                     Output: collection.document
+                     Index Cond: (collection.document @= '{ "dept" : "eng" }'::bson)
+                     Order By: (collection.document |-<> '{ "dept" : { "$numberInt" : "1" } }'::bson)
+(18 rows)
+
+SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" } } }]}');
+                        document                         
+---------------------------------------------------------------------
+ { "_id" : "eng", "totalAge" : { "$numberInt" : "90" } }
+(1 row)
+
+-- $avg on indexed numeric field with new accumulators
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "avgAge": { "$avg": "$age" } } }]}');
+                                                                                                                                                                QUERY PLAN                                                                                                                                                                
+---------------------------------------------------------------------
+ Subquery Scan on agg_stage_1 (actual rows=1 loops=1)
+   Output: bson_repath_and_build(agg_stage_1.c1, agg_stage_1.c2, agg_stage_1.c3, agg_stage_1.c4)
+   ->  GroupAggregate (actual rows=1 loops=1)
+         Output: '_id'::text, (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgAge'::text, bsonaveragewithexpr(collection.document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)
+         Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+               Output: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+               indexName: dept_age_1
+               indexKey: {"dept": 1,"age": 1}
+               isMultiKey: false
+               indexBounds: ["dept": ["eng", "eng"], "age": (MinKey, MaxKey)]
+               innerScanLoops: 4 loops
+               scanType: ordered
+               scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+               ->  Index Scan using dept_age_1 on documentdb_data.documents_69004_690016 collection (actual rows=3 loops=1)
+                     Output: collection.document
+                     Index Cond: (collection.document @= '{ "dept" : "eng" }'::bson)
+                     Order By: (collection.document |-<> '{ "dept" : { "$numberInt" : "1" } }'::bson)
+(18 rows)
+
+SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "avgAge": { "$avg": "$age" } } }]}');
+                          document                          
+---------------------------------------------------------------------
+ { "_id" : "eng", "avgAge" : { "$numberDouble" : "30.0" } }
+(1 row)
+
+-- $sum and $avg across all groups with new accumulators
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" }, "avgAge": { "$avg": "$age" } } }, { "$sort": { "_id": 1 } }]}');
+                                                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                                               
+---------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Output: (bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4, agg_stage_0.c5, agg_stage_0.c6)), (bson_orderby(bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4, agg_stage_0.c5, agg_stage_0.c6), '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4, agg_stage_0.c5, agg_stage_0.c6), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: 25kB
+   ->  Subquery Scan on agg_stage_0 (actual rows=2 loops=1)
+         Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4, agg_stage_0.c5, agg_stage_0.c6), bson_orderby(bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4, agg_stage_0.c5, agg_stage_0.c6), '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=2 loops=1)
+               Output: '_id'::text, (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalAge'::text, bsonsumwithexpr(collection.document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'avgAge'::text, bsonaveragewithexpr(collection.document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)
+               Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     indexName: dept_age_1
+                     indexKey: {"dept": 1,"age": 1}
+                     isMultiKey: false
+                     indexBounds: ["dept": (MinKey, MaxKey), "age": (MinKey, MaxKey)]
+                     innerScanLoops: 6 loops
+                     scanType: ordered
+                     scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+                     ->  Index Scan using dept_age_1 on documentdb_data.documents_69004_690016 collection (actual rows=6 loops=1)
+                           Output: collection.document
+                           Index Cond: (collection.document @<> '{ "dept" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "dept" : { "$numberInt" : "1" } }'::bson)
+(22 rows)
+
+SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" }, "avgAge": { "$avg": "$age" } } }, { "$sort": { "_id": 1 } }]}');
+                                                       document                                                       
+---------------------------------------------------------------------
+ { "_id" : "eng", "totalAge" : { "$numberInt" : "90" }, "avgAge" : { "$numberDouble" : "30.0" } }
+ { "_id" : "sales", "totalAge" : { "$numberInt" : "113" }, "avgAge" : { "$numberDouble" : "37.666666666666664298" } }
+(2 rows)
+
+SET documentdb.enableNewWithExprAccumulators TO off;

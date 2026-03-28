@@ -96,6 +96,8 @@ SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$max": "$_id" } } }]}')$$, p_ignore_heap_fetches => true);
 SET documentdb.enableNewWithExprAccumulators TO off;
 
+
+
 -- now test with compound index
 SELECT documentdb_api_internal.create_indexes_non_concurrently('idx_only_scan_db', '{ "createIndexes": "idx_only_scan_coll", "indexes": [ { "key": { "country": 1, "provider": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "country_provider_1" }] }', true);
 
@@ -201,3 +203,45 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('idx_only_scan_db
 set documentdb.forceIndexOnlyScanIfAvailable to on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF)
     SELECT document FROM bson_aggregation_count('idx_only_scan_db', '{ "count" : "compwildcard2", "query" : { "a.b": { "$gt": 2 } } }')$$, p_ignore_heap_fetches => true);
+RESET documentdb.forceIndexOnlyScanIfAvailable;
+
+-- test $sum/$avg on numeric field with ordered index (future index-only scan optimization candidate)
+SELECT documentdb_api.create_collection('idx_only_scan_db', 'idx_only_scan_numeric');
+
+select documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_numeric', '{"_id": 1, "dept": "eng", "age": 30}');
+select documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_numeric', '{"_id": 2, "dept": "eng", "age": 25}');
+select documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_numeric', '{"_id": 3, "dept": "eng", "age": 35}');
+select documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_numeric', '{"_id": 4, "dept": "sales", "age": 40}');
+select documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_numeric', '{"_id": 5, "dept": "sales", "age": 28}');
+select documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_numeric', '{"_id": 6, "dept": "sales", "age": 45}');
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('idx_only_scan_db', '{ "createIndexes": "idx_only_scan_numeric", "indexes": [ { "key": { "dept": 1, "age": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "dept_age_1" }] }', true);
+
+ANALYZE documentdb_data.documents_69003;
+VACUUM (FREEZE ON) documentdb_data.documents_69003;
+
+-- $sum on indexed numeric field with old accumulators (needs index scan, not IOS — reads document for field value)
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" } } }]}');
+SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" } } }]}');
+
+-- $avg on indexed numeric field with old accumulators
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "avgAge": { "$avg": "$age" } } }]}');
+SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "avgAge": { "$avg": "$age" } } }]}');
+
+-- $sum and $avg across all groups
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" }, "avgAge": { "$avg": "$age" } } }, { "$sort": { "_id": 1 } }]}');
+SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" }, "avgAge": { "$avg": "$age" } } }, { "$sort": { "_id": 1 } }]}');
+
+-- $sum on indexed numeric field with new accumulators
+SET documentdb.enableNewWithExprAccumulators TO on;
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" } } }]}');
+SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" } } }]}');
+
+-- $avg on indexed numeric field with new accumulators
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "avgAge": { "$avg": "$age" } } }]}');
+SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$match" : {"dept": {"$eq": "eng"}} }, { "$group": { "_id": "$dept", "avgAge": { "$avg": "$age" } } }]}');
+
+-- $sum and $avg across all groups with new accumulators
+EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" }, "avgAge": { "$avg": "$age" } } }, { "$sort": { "_id": 1 } }]}');
+SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" }, "avgAge": { "$avg": "$age" } } }, { "$sort": { "_id": 1 } }]}');
+SET documentdb.enableNewWithExprAccumulators TO off;

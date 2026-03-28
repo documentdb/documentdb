@@ -35,6 +35,18 @@ SELECT BSONAVERAGE(document-> 'i32'), BSONAVERAGE(document-> 'i64'), BSONAVERAGE
  { "" : { "$numberDouble" : "9.6666666666666660745" } } | { "" : { "$numberDouble" : "9.6666666666666660745" } } | { "" : { "$numberDouble" : "9.6666666666666660745" } }
 (1 row)
 
+SELECT BSONSUMWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
+         bsonsumwithexpr          |          bsonsumwithexpr          |            bsonsumwithexpr            
+---------------------------------------------------------------------
+ { "" : { "$numberInt" : "29" } } | { "" : { "$numberLong" : "29" } } | { "" : { "$numberDouble" : "29.0" } }
+(1 row)
+
+SELECT BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
+                  bsonaveragewithexpr                   |                  bsonaveragewithexpr                   |                  bsonaveragewithexpr                   
+---------------------------------------------------------------------
+ { "" : { "$numberDouble" : "9.6666666666666660745" } } | { "" : { "$numberDouble" : "9.6666666666666660745" } } | { "" : { "$numberDouble" : "9.6666666666666660745" } }
+(1 row)
+
 -- Now add some values that are non numeric.
 SELECT documentdb_api.insert_one('db','testAggregates','{"_id":"4", "i32": "stringValue", "i64": "stringValue", "idbl": "stringValue"}');
                               insert_one                              
@@ -88,6 +100,19 @@ SELECT BSONAVERAGE(document-> 'i32'), BSONAVERAGE(document-> 'i64'), BSONAVERAGE
 
 SELECT BSONSUM(document), BSONAVERAGE(document) FROM documentdb_api.collection('db', 'testAggregates');
 ERROR:  invalid input BSON: Should have only 1 entry in the bson document
+-- BSONSUMWITHEXPR and BSONAVERAGEWITHEXPR versions for non-numeric values.
+SELECT BSONSUMWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
+         bsonsumwithexpr          |          bsonsumwithexpr          |            bsonsumwithexpr            
+---------------------------------------------------------------------
+ { "" : { "$numberInt" : "29" } } | { "" : { "$numberLong" : "29" } } | { "" : { "$numberDouble" : "29.0" } }
+(1 row)
+
+SELECT BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
+                  bsonaveragewithexpr                   |                  bsonaveragewithexpr                   |                  bsonaveragewithexpr                   
+---------------------------------------------------------------------
+ { "" : { "$numberDouble" : "9.6666666666666660745" } } | { "" : { "$numberDouble" : "9.6666666666666660745" } } | { "" : { "$numberDouble" : "9.6666666666666660745" } }
+(1 row)
+
 -- Now add values that cause int32/int64 to roll over to the next highest type (mixed type sum)
 SELECT documentdb_api.insert_one('db','testAggregates','{"_id":"7", "i32": { "$numberInt" : "2147483645" }, "i64": { "$numberLong" : "9223372036854775801" }, "idbl": { "$numberDouble" : "1e20" }}');
                               insert_one                              
@@ -104,6 +129,19 @@ SELECT BSONSUM(document-> 'i32'), BSONSUM(document-> 'i64'), BSONSUM(document ->
 
 SELECT BSONAVERAGE(document-> 'i32'), BSONAVERAGE(document-> 'i64'), BSONAVERAGE(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
                  bsonaverage                  |                      bsonaverage                       |                       bsonaverage                       
+---------------------------------------------------------------------
+ { "" : { "$numberDouble" : "536870918.5" } } | { "" : { "$numberDouble" : "2305843009213693952.0" } } | { "" : { "$numberDouble" : "25000000000000000000.0" } }
+(1 row)
+
+-- add BSONSUMWITHEXPR and BSONAVERAGEWITHEXPR versions for above queries
+SELECT BSONSUMWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
+              bsonsumwithexpr              |                    bsonsumwithexpr                     |            bsonsumwithexpr             
+---------------------------------------------------------------------
+ { "" : { "$numberLong" : "2147483674" } } | { "" : { "$numberDouble" : "9223372036854775808.0" } } | { "" : { "$numberDouble" : "1e+20" } }
+(1 row)
+
+SELECT BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
+             bsonaveragewithexpr              |                  bsonaveragewithexpr                   |                   bsonaveragewithexpr                   
 ---------------------------------------------------------------------
  { "" : { "$numberDouble" : "536870918.5" } } | { "" : { "$numberDouble" : "2305843009213693952.0" } } | { "" : { "$numberDouble" : "25000000000000000000.0" } }
 (1 row)
@@ -128,9 +166,29 @@ SELECT BSONAVERAGE(document-> 'i32'), BSONAVERAGE(document-> 'i64'), BSONAVERAGE
  { "" : { "$numberDouble" : "429496741.12000000477" } } | { "" : { "$numberDouble" : "2305843009213693952.0" } } | { "" : { "$numberDouble" : "25000000000000000000.0" } }
 (1 row)
 
+-- BSONSUMWITHEXPR and BSONAVERAGEWITHEXPR versions for above queries
+SELECT BSONSUMWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
+                    bsonsumwithexpr                     |                    bsonsumwithexpr                     |            bsonsumwithexpr             
+---------------------------------------------------------------------
+ { "" : { "$numberDouble" : "2147483705.5999999046" } } | { "" : { "$numberDouble" : "9223372036854775808.0" } } | { "" : { "$numberDouble" : "1e+20" } }
+(1 row)
+
+SELECT BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
+                  bsonaveragewithexpr                   |                  bsonaveragewithexpr                   |                   bsonaveragewithexpr                   
+---------------------------------------------------------------------
+ { "" : { "$numberDouble" : "429496741.12000000477" } } | { "" : { "$numberDouble" : "2305843009213693952.0" } } | { "" : { "$numberDouble" : "25000000000000000000.0" } }
+(1 row)
+
 -- Query non existent field.
 SELECT BSONSUM(document -> 'nao existe'), BSONAVERAGE(document -> 'nao existe') FROM documentdb_api.collection('db', 'testAggregates');
              bsonsum             |  bsonaverage  
+---------------------------------------------------------------------
+ { "" : { "$numberInt" : "0" } } | { "" : null }
+(1 row)
+
+-- BSONSUMWITHEXPR/BSONAVERAGEWITHEXPR version of the above
+SELECT BSONSUMWITHEXPR(document, '{ "": "$nao_existe" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$nao_existe" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
+         bsonsumwithexpr         | bsonaveragewithexpr 
 ---------------------------------------------------------------------
  { "" : { "$numberInt" : "0" } } | { "" : null }
 (1 row)
@@ -208,6 +266,32 @@ SELECT BSONMINWITHEXPR(document, '{ "": "$a.b" }', NULL, '') FROM documentdb_api
  { "" : { "$numberInt" : "1" } }
 (1 row)
 
+-- BSONSUM and BSONAVG equivalents of the below
+SELECT BSONSUM(bson_expression_get(document, '{ "": "$a.b" }')) FROM documentdb_api.collection('db', 'testAggregates') WHERE document @? '{ "a.b": 1}';
+             bsonsum             
+---------------------------------------------------------------------
+ { "" : { "$numberInt" : "3" } }
+(1 row)
+
+SELECT BSONAVERAGE(bson_expression_get(document, '{ "": "$a.b" }')) FROM documentdb_api.collection('db', 'testAggregates') WHERE document @? '{ "a.b": 1}';
+             bsonaverage              
+---------------------------------------------------------------------
+ { "" : { "$numberDouble" : "1.5" } }
+(1 row)
+
+-- BSONSUMWITHEXPR/BSONAVERAGEWITHEXPR parity tests for nested path
+SELECT BSONSUMWITHEXPR(document, '{ "": "$a.b" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates') WHERE document @? '{ "a.b": 1}';
+         bsonsumwithexpr         
+---------------------------------------------------------------------
+ { "" : { "$numberInt" : "3" } }
+(1 row)
+
+SELECT BSONAVERAGEWITHEXPR(document, '{ "": "$a.b" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates') WHERE document @? '{ "a.b": 1}';
+         bsonaveragewithexpr          
+---------------------------------------------------------------------
+ { "" : { "$numberDouble" : "1.5" } }
+(1 row)
+
 -- Rebuild bson objects from aggregates
 SELECT bson_repath_and_build('max'::text, BSONMAX(document-> 'i32'), 'sum'::text, BSONSUM(document-> 'i32'), 'average'::text, BSONAVERAGE(document-> 'i32')) FROM documentdb_api.collection('db', 'testAggregates');
                                                        bson_repath_and_build                                                        
@@ -227,6 +311,20 @@ SELECT BSONMAXWITHEXPR(document, '{ "": "$nao_existe" }', NULL, '') FROM documen
  bsonmaxwithexpr 
 ---------------------------------------------------------------------
  { "" : null }
+(1 row)
+
+-- BSONSUM / BSONAVG parity test for null/non-existent field
+SELECT BSONSUM(document-> 'nao_existe'), BSONAVERAGE(document-> 'nao_existe') FROM documentdb_api.collection('db', 'testAggregates');
+             bsonsum             |  bsonaverage  
+---------------------------------------------------------------------
+ { "" : { "$numberInt" : "0" } } | { "" : null }
+(1 row)
+
+-- BSONSUMWITHEXPR/BSONAVERAGEWITHEXPR parity test for null/non-existent field
+SELECT BSONSUMWITHEXPR(document, '{ "": "$nao_existe" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$nao_existe" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
+         bsonsumwithexpr         | bsonaveragewithexpr 
+---------------------------------------------------------------------
+ { "" : { "$numberInt" : "0" } } | { "" : null }
 (1 row)
 
 SELECT bson_repath_and_build('max'::text, BSONMAX(document-> 'nao existe'), 'sum'::text, BSONSUM(document-> 'i32')) FROM documentdb_api.collection('db', 'testAggregates');
@@ -304,6 +402,33 @@ SELECT BSONMAXWITHEXPR(document, '{ "": "$i32" }', NULL, ''), BSONMAXWITHEXPR(do
  { "" : true }   | { "" : false }  | { "" : true }
 (1 row)
 
+-- BSONSUM and BSONAVG equivalents of sharded collections
+SELECT BSONSUM(document-> 'i32'), BSONSUM(document-> 'i64'), BSONSUM(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
+                        bsonsum                         |                        bsonsum                         |                bsonsum                 
+---------------------------------------------------------------------
+ { "" : { "$numberDouble" : "2147483705.5999999046" } } | { "" : { "$numberDouble" : "9223372036854775808.0" } } | { "" : { "$numberDouble" : "1e+20" } }
+(1 row)
+
+SELECT BSONAVERAGE(document-> 'i32'), BSONAVERAGE(document-> 'i64'), BSONAVERAGE(document -> 'idbl') FROM documentdb_api.collection('db', 'testAggregates');
+                      bsonaverage                       |                      bsonaverage                       |                       bsonaverage                       
+---------------------------------------------------------------------
+ { "" : { "$numberDouble" : "429496741.12000000477" } } | { "" : { "$numberDouble" : "2305843009213693952.0" } } | { "" : { "$numberDouble" : "25000000000000000000.0" } }
+(1 row)
+
+-- BSONSUMWITHEXPR parity tests when sharded
+SELECT BSONSUMWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
+                    bsonsumwithexpr                     |                    bsonsumwithexpr                     |            bsonsumwithexpr             
+---------------------------------------------------------------------
+ { "" : { "$numberDouble" : "2147483705.5999999046" } } | { "" : { "$numberDouble" : "9223372036854775808.0" } } | { "" : { "$numberDouble" : "1e+20" } }
+(1 row)
+
+-- BSONAVERAGEWITHEXPR parity tests when sharded
+SELECT BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
+                  bsonaveragewithexpr                   |                  bsonaveragewithexpr                   |                   bsonaveragewithexpr                   
+---------------------------------------------------------------------
+ { "" : { "$numberDouble" : "429496741.12000000477" } } | { "" : { "$numberDouble" : "2305843009213693952.0" } } | { "" : { "$numberDouble" : "25000000000000000000.0" } }
+(1 row)
+
 -- shard on a path that not all documents have:
 SELECT documentdb_api.shard_collection('db', 'testAggregates', '{"_id":"hashed"}', false);
 NOTICE:  Skipping Sharding for collection db.testAggregates as the same options were passed in.
@@ -348,6 +473,20 @@ SELECT BSONMAXWITHEXPR(document, '{ "": "$i32" }', NULL, ''), BSONMAXWITHEXPR(do
  bsonmaxwithexpr | bsonmaxwithexpr | bsonmaxwithexpr 
 ---------------------------------------------------------------------
  { "" : true }   | { "" : false }  | { "" : true }
+(1 row)
+
+-- BSONSUMWITHEXPR parity tests (re-sharded)
+SELECT BSONSUMWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONSUMWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
+                    bsonsumwithexpr                     |                    bsonsumwithexpr                     |            bsonsumwithexpr             
+---------------------------------------------------------------------
+ { "" : { "$numberDouble" : "2147483705.5999999046" } } | { "" : { "$numberDouble" : "9223372036854775808.0" } } | { "" : { "$numberDouble" : "1e+20" } }
+(1 row)
+
+-- BSONAVERAGEWITHEXPR parity tests (re-sharded)
+SELECT BSONAVERAGEWITHEXPR(document, '{ "": "$i32" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$i64" }', NULL, NULL), BSONAVERAGEWITHEXPR(document, '{ "": "$idbl" }', NULL, NULL) FROM documentdb_api.collection('db', 'testAggregates');
+                  bsonaveragewithexpr                   |                  bsonaveragewithexpr                   |                   bsonaveragewithexpr                   
+---------------------------------------------------------------------
+ { "" : { "$numberDouble" : "429496741.12000000477" } } | { "" : { "$numberDouble" : "2305843009213693952.0" } } | { "" : { "$numberDouble" : "25000000000000000000.0" } }
 (1 row)
 
 -- validation from field_name_validation.js

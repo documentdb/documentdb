@@ -390,6 +390,8 @@ Oid BsonMinAggregateFunctionOid(void);
 Oid BsonMinWithExprAggregateFunctionOid(void);
 Oid BsonFirstWithExprAggregateFunctionOid(void);
 Oid BsonLastWithExprAggregateFunctionOid(void);
+Oid BsonSumWithExprAggregateFunctionOid(void);
+Oid BsonAvgWithExprAggregateFunctionOid(void);
 Oid PgRandomFunctionOid(void);
 Oid BsonArrayAggregateFunctionOid(void);
 Oid BsonArrayAggregateAllArgsFunctionOid(void);

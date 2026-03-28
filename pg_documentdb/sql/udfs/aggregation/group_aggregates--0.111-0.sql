@@ -460,3 +460,29 @@ CREATE OR REPLACE AGGREGATE __API_SCHEMA_INTERNAL_V2__.BSONLASTWITHEXPR(document
     PARALLEL = SAFE
     -- No MSSFUNC/MFINALFUNC/MINVFUNC as this aggregate is not invertible
 );
+
+CREATE OR REPLACE AGGREGATE __API_SCHEMA_INTERNAL_V2__.BSONSUMWITHEXPR(document __CORE_SCHEMA__.bson, expressionSpec __CORE_SCHEMA__.bson, variableSpec __CORE_SCHEMA__.bson, collationString text)
+(
+    SFUNC = __API_SCHEMA_INTERNAL_V2__.bson_sum_avg_with_expr_transition,
+    FINALFUNC = __API_CATALOG_SCHEMA__.bson_sum_final,
+    stype = bytea,
+    COMBINEFUNC = __API_CATALOG_SCHEMA__.bson_sum_avg_combine,
+    mstype = bytea,
+    MSFUNC = __API_SCHEMA_INTERNAL_V2__.bson_sum_avg_with_expr_transition,
+    MFINALFUNC = __API_CATALOG_SCHEMA__.bson_sum_final,
+    MINVFUNC = __API_SCHEMA_INTERNAL_V2__.bson_sum_avg_with_expr_minvtransition,
+    PARALLEL = SAFE
+);
+
+CREATE OR REPLACE AGGREGATE __API_SCHEMA_INTERNAL_V2__.BSONAVERAGEWITHEXPR(document __CORE_SCHEMA__.bson, expressionSpec __CORE_SCHEMA__.bson, variableSpec __CORE_SCHEMA__.bson, collationString text)
+(
+    SFUNC = __API_SCHEMA_INTERNAL_V2__.bson_sum_avg_with_expr_transition,
+    FINALFUNC = __API_CATALOG_SCHEMA__.bson_avg_final,
+    stype = bytea,
+    COMBINEFUNC = __API_CATALOG_SCHEMA__.bson_sum_avg_combine,
+    mstype = bytea,
+    MSFUNC = __API_SCHEMA_INTERNAL_V2__.bson_sum_avg_with_expr_transition,
+    MFINALFUNC = __API_CATALOG_SCHEMA__.bson_avg_final,
+    MINVFUNC = __API_SCHEMA_INTERNAL_V2__.bson_sum_avg_with_expr_minvtransition,
+    PARALLEL = SAFE
+);

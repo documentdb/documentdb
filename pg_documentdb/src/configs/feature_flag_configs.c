@@ -1003,7 +1003,7 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 	DefineCustomBoolVariable(
 		psprintf("%s.enableNewWithExprAccumulators", newGucPrefix),
 		gettext_noop(
-			"Whether to enable new WithExpr aggregate optimizations for min, max, first, and last accumulators."),
+			"Whether to enable new WithExpr aggregate optimizations for min, max, sum, avg, first, and last accumulators."),
 		NULL, &EnableNewWithExprAccumulators,
 		DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS,
 		PGC_USERSET, 0, NULL, NULL, NULL);

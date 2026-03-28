@@ -1941,6 +1941,20 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
  { "_id" : null, "count" : { "$numberInt" : "0" } }
 (1 row)
 
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": null, "count": { "$sum": 1 } } }], "cursor": {} }');
+                      document                      
+---------------------------------------------------------------------
+ { "_id" : null, "count" : { "$numberInt" : "5" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": null, "count": { "$sum": {} } } }], "cursor": {} }');
+                      document                      
+---------------------------------------------------------------------
+ { "_id" : null, "count" : { "$numberInt" : "0" } }
+(1 row)
+
+SET documentdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": null, "count": { "$sum": 1 } } }], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
 ---------------------------------------------------------------------

@@ -897,6 +897,12 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the BSONLASTWITHEXPR aggregate function */
 	Oid ApiInternalBsonLastWithExprAggregateFunctionOid;
 
+	/* OID of the BSONSUMWITHEXPR aggregate function */
+	Oid ApiInternalBsonSumWithExprAggregateFunctionOid;
+
+	/* OID of the BSONAVERAGEWITHEXPR aggregate function */
+	Oid ApiInternalBsonAvgWithExprAggregateFunctionOid;
+
 	/* OID of the BSONFIRSTONSORTED aggregate function */
 	Oid ApiCatalogBsonFirstOnSortedAggregateFunctionOid;
 
@@ -4263,6 +4269,24 @@ BsonLastWithExprAggregateFunctionOid(void)
 	return GetAggregateFunctionByName(
 		&Cache.ApiInternalBsonLastWithExprAggregateFunctionOid,
 		DocumentDBApiInternalSchemaName, "bsonlastwithexpr");
+}
+
+
+Oid
+BsonSumWithExprAggregateFunctionOid(void)
+{
+	return GetAggregateFunctionByName(
+		&Cache.ApiInternalBsonSumWithExprAggregateFunctionOid,
+		DocumentDBApiInternalSchemaName, "bsonsumwithexpr");
+}
+
+
+Oid
+BsonAvgWithExprAggregateFunctionOid(void)
+{
+	return GetAggregateFunctionByName(
+		&Cache.ApiInternalBsonAvgWithExprAggregateFunctionOid,
+		DocumentDBApiInternalSchemaName, "bsonaveragewithexpr");
 }
 
 

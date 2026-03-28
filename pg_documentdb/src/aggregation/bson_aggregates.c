@@ -152,6 +152,8 @@ PG_FUNCTION_INFO_V1(bson_max_with_expr_combine);
 PG_FUNCTION_INFO_V1(bson_min_with_expr_transition);
 PG_FUNCTION_INFO_V1(bson_min_with_expr_combine);
 PG_FUNCTION_INFO_V1(bson_min_max_with_expr_final);
+PG_FUNCTION_INFO_V1(bson_sum_avg_with_expr_transition);
+PG_FUNCTION_INFO_V1(bson_sum_avg_with_expr_minvtransition);
 
 /* BsonAggValue type I/O functions */
 PG_FUNCTION_INFO_V1(bsonaggvalue_in);
@@ -2367,6 +2369,205 @@ bson_min_max_with_expr_final(PG_FUNCTION_ARGS)
 	finalValue.pathLength = 0;
 	finalValue.bsonValue = state->value;
 	PG_RETURN_POINTER(PgbsonElementToPgbson(&finalValue));
+}
+
+
+/*
+ * Applies the "state transition" (SFUNC) for sum and average with inline
+ * expression evaluation. Instead of receiving a pre-evaluated bson value,
+ * this function takes the raw document and expression spec, evaluates the
+ * expression inline, and accumulates the numeric result.
+ *
+ * Arguments: (state bytea, document bson, expressionSpec bson, variableSpec bson)
+ */
+Datum
+bson_sum_avg_with_expr_transition(PG_FUNCTION_ARGS)
+{
+	MemoryContext aggregateContext;
+	if (!AggCheckCallContext(fcinfo, &aggregateContext))
+	{
+		ereport(ERROR, errmsg(
+					"aggregate function bson_sum_avg_with_expr_transition called in non-aggregate context"));
+	}
+
+	pgbson *inputDocument = PG_GETARG_MAYBE_NULL_PGBSON_PACKED(1);
+	pgbson *expressionBson = PG_GETARG_PGBSON(2);
+
+	/* If input document is null, return current accumulated state (or NULL if no state) */
+	if (inputDocument == NULL)
+	{
+		if (PG_ARGISNULL(0))
+		{
+			PG_RETURN_NULL();
+		}
+		PG_RETURN_POINTER(PG_GETARG_POINTER(0));
+	}
+
+	pgbson *variableSpec = NULL;
+	if (PG_NARGS() > 3)
+	{
+		variableSpec = PG_GETARG_MAYBE_NULL_PGBSON(3);
+	}
+
+	/* Collation string is optional 5th argument (index = 4). Needed so that
+	 * nested comparison operators in expressions respect collation. */
+	text *collationText = NULL;
+	if (PG_NARGS() > 4 && !PG_ARGISNULL(4))
+	{
+		collationText = PG_GETARG_TEXT_PP(4);
+	}
+
+	const BsonExpressionState *expressionState = GetOrCreateCachedExpressionState(
+		fcinfo->flinfo,
+		expressionBson,
+		variableSpec,
+		collationText);
+
+	/* Evaluate the expression on the document directly to bson_value_t */
+	ExpressionLifetimeTracker tracker = { 0 };
+	ExpressionResultPrivate resultPrivate;
+	memset(&resultPrivate, 0, sizeof(ExpressionResultPrivate));
+	resultPrivate.tracker = &tracker;
+	resultPrivate.variableContext.parent = expressionState->variableContext;
+
+	ExpressionResult expressionResult = { { 0 }, false, false, resultPrivate };
+
+	EvaluateAggregationExpressionData(expressionState->expressionData, inputDocument,
+									  &expressionResult, false /* isNullOnEmpty */);
+	bson_value_t evaluatedValue = expressionResult.value;
+
+
+	/* we need to allocate MaxAlignedVarlena rather than directly palloc on BsonNumericAggState, since type definition on SQL is bytea and not the type itself. */
+	/* this allows us to re-use the existing combine and final functions too. */
+	MaxAlignedVarlena *stateBytes;
+	BsonNumericAggState *currentState;
+
+	/* Initialize state if needed */
+	if (PG_ARGISNULL(0))
+	{
+		MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
+		stateBytes = AllocateBsonNumericAggState();
+		currentState = (BsonNumericAggState *) stateBytes->state;
+		currentState->count = 0;
+		currentState->sum.value_type = BSON_TYPE_INT32;
+		currentState->sum.value.v_int32 = 0;
+		MemoryContextSwitchTo(oldContext);
+	}
+	else
+	{
+		stateBytes = GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		currentState = (BsonNumericAggState *) stateBytes->state;
+	}
+
+	/* Skip EOD (missing field) and empty documents */
+	if (evaluatedValue.value_type == BSON_TYPE_EOD)
+	{
+		list_free_deep(tracker.itemsToFree);
+		PG_RETURN_POINTER(stateBytes);
+	}
+
+	bool overflowedFromInt64Ignore = false;
+	if (AddNumberToBsonValue(&currentState->sum, &evaluatedValue,
+							 &overflowedFromInt64Ignore))
+	{
+		currentState->count++;
+	}
+
+	list_free_deep(tracker.itemsToFree);
+	PG_RETURN_POINTER(stateBytes);
+}
+
+
+/*
+ * Applies the "inverse state transition" for sum and average with inline
+ * expression evaluation. Used for moving window aggregates to subtract
+ * values leaving the window frame.
+ *
+ * Arguments: (state bytea, document bson, expressionSpec bson, variableSpec bson)
+ */
+Datum
+bson_sum_avg_with_expr_minvtransition(PG_FUNCTION_ARGS)
+{
+	MemoryContext aggregateContext;
+	if (AggCheckCallContext(fcinfo, &aggregateContext) != AGG_CONTEXT_WINDOW)
+	{
+		ereport(ERROR, errmsg(
+					"window aggregate function called in non-window-aggregate context"));
+	}
+
+	MaxAlignedVarlena *stateBytes;
+	BsonNumericAggState *currentState;
+
+	if (PG_ARGISNULL(0))
+	{
+		/* Returning NULL indicates inverse can't be applied */
+		PG_RETURN_NULL();
+	}
+	else
+	{
+		stateBytes = GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		currentState = (BsonNumericAggState *) stateBytes->state;
+	}
+
+	pgbson *inputDocument = PG_GETARG_MAYBE_NULL_PGBSON_PACKED(1);
+	pgbson *expressionBson = PG_GETARG_PGBSON(2);
+
+	if (inputDocument == NULL)
+	{
+		PG_RETURN_POINTER(stateBytes);
+	}
+
+	pgbson *variableSpec = NULL;
+	if (PG_NARGS() > 3)
+	{
+		variableSpec = PG_GETARG_MAYBE_NULL_PGBSON(3);
+	}
+
+	/* Collation string is optional 5th argument (index = 4). Needed so that
+	 * nested comparison operators in expressions respect collation. */
+	text *collationText = NULL;
+	if (PG_NARGS() > 4 && !PG_ARGISNULL(4))
+	{
+		collationText = PG_GETARG_TEXT_PP(4);
+	}
+
+	const BsonExpressionState *expressionState = GetOrCreateCachedExpressionState(
+		fcinfo->flinfo,
+		expressionBson,
+		variableSpec,
+		collationText);
+
+	/* Evaluate the expression on the document */
+	ExpressionLifetimeTracker tracker = { 0 };
+	ExpressionResultPrivate resultPrivate;
+	memset(&resultPrivate, 0, sizeof(ExpressionResultPrivate));
+	resultPrivate.tracker = &tracker;
+	resultPrivate.variableContext.parent = expressionState->variableContext;
+
+	ExpressionResult expressionResult = { { 0 }, false, false, resultPrivate };
+
+	EvaluateAggregationExpressionData(expressionState->expressionData, inputDocument,
+									  &expressionResult, false /* isNullOnEmpty */);
+	bson_value_t evaluatedValue = expressionResult.value;
+
+	if (evaluatedValue.value_type == BSON_TYPE_EOD)
+	{
+		list_free_deep(tracker.itemsToFree);
+		PG_RETURN_POINTER(stateBytes);
+	}
+
+	bool overflowedFromInt64Ignore = false;
+
+	/* Apply the inverse of $sum and $avg */
+	if (currentState->count > 0 &&
+		SubtractNumberFromBsonValue(&currentState->sum, &evaluatedValue,
+									&overflowedFromInt64Ignore))
+	{
+		currentState->count--;
+	}
+
+	list_free_deep(tracker.itemsToFree);
+	PG_RETURN_POINTER(stateBytes);
 }
 
 
