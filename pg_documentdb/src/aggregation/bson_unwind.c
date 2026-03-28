@@ -473,7 +473,7 @@ BsonUnwindElement(pgbson *document, char *path, char *indexFieldName, long index
 	ProjectDocumentState projectDocState = {
 		.isPositionalAlreadyEvaluated = false,
 		.parentDocument = document,
-		.pendingProjectionState = NULL,
+		.topLevelPendingProjectionState = NULL,
 		.skipIntermediateArrayFields = false,
 	};
 

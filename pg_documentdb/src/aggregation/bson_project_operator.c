@@ -824,7 +824,7 @@ ElemMatchHandlerFunc(const bson_value_t *sourceValue,
 {
 	ElemMatchProjectionData *nodeState = (ElemMatchProjectionData *) state;
 	bool shouldWriteAtEnd = !projectDocState->hasExclusion &&
-							projectDocState->pendingProjectionState != NULL;
+							projectDocState->topLevelPendingProjectionState != NULL;
 	pgbson_heap_writer *heapWriter = NULL;
 	if (shouldWriteAtEnd)
 	{
@@ -890,7 +890,8 @@ ElemMatchHandlerFunc(const bson_value_t *sourceValue,
 	/* Save the writer in the list if projections are saved for end */
 	if (shouldWriteAtEnd)
 	{
-		PendingProjectionState *pendingState = projectDocState->pendingProjectionState;
+		PendingProjectionState *pendingState =
+			projectDocState->topLevelPendingProjectionState;
 		uint32_t index = nodeState->index;
 		pendingState->heapWriters[index] = heapWriter;
 	}

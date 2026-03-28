@@ -1531,13 +1531,13 @@ ProjectDocumentWithState(pgbson *sourceDocument,
 		.variableContext = state->variableContext,
 		.hasExclusion = state->hasExclusion,
 		.projectDocumentFuncs = state->projectDocumentFuncs,
-		.pendingProjectionState = NULL,
+		.topLevelPendingProjectionState = NULL,
 		.skipIntermediateArrayFields = false,
 	};
 
 	if (projectDocState.projectDocumentFuncs.initializePendingProjectionFunc != NULL)
 	{
-		projectDocState.pendingProjectionState =
+		projectDocState.topLevelPendingProjectionState =
 			projectDocState.projectDocumentFuncs.initializePendingProjectionFunc(
 				state->endTotalProjections);
 	}
@@ -1665,7 +1665,7 @@ TryInlineProjection(Node *currentExprNode, Oid functionOid, const
 			.parentDocument = sourceDoc,
 			.hasExclusion = contextCopy.hasExclusion,
 			.projectDocumentFuncs = { 0 },
-			.pendingProjectionState = NULL,
+			.topLevelPendingProjectionState = NULL,
 			.skipIntermediateArrayFields = false,
 		};
 
@@ -2042,7 +2042,7 @@ BsonLookUpProject(pgbson *sourceDocument, int numMatched, Datum *matchedDocument
 	ProjectDocumentState projectDocState = {
 		.isPositionalAlreadyEvaluated = false,
 		.parentDocument = sourceDocument,
-		.pendingProjectionState = NULL,
+		.topLevelPendingProjectionState = NULL,
 		.skipIntermediateArrayFields = false,
 	};
 
@@ -2447,12 +2447,25 @@ ProjectCurrentIteratorFieldToWriter(bson_iter_t *documentIterator,
 											  &childWriter);
 					if (bson_iter_recurse(documentIterator, &childIter))
 					{
+						/*
+						 * Save and clear topLevelPendingProjectionState before recursing into
+						 * nested documents. Pending projections (e.g. $elemMatch writers) are
+						 * only valid at the top level. Without this, the inner call to
+						 * TraverseObjectAndAppendToWriter would flush and free the pending
+						 * writers, causing a use-after-free when the outer call tries to
+						 * flush them again.
+						 */
+						void *savedPendingState =
+							projectDocState->topLevelPendingProjectionState;
+						projectDocState->topLevelPendingProjectionState = NULL;
 						TraverseObjectAndAppendToWriter(&childIter,
 														intermediateNode,
 														&childWriter,
 														projectNonMatchingFields,
 														projectDocState,
 														isInNestedArray);
+						projectDocState->topLevelPendingProjectionState =
+							savedPendingState;
 					}
 					PgbsonWriterEndDocument(writer, &childWriter);
 					isHandled = true;
@@ -2550,13 +2563,13 @@ TraverseObjectAndAppendToWriter(bson_iter_t *iterator,
 						   projectDocState->parentDocument,
 						   projectDocState->variableContext);
 
-	if (projectDocState->pendingProjectionState != NULL &&
+	if (projectDocState->topLevelPendingProjectionState != NULL &&
 		projectDocState->projectDocumentFuncs.writePendingProjectionFunc != NULL)
 	{
 		/* Write pending projections at the end */
 		projectDocState->projectDocumentFuncs.writePendingProjectionFunc(writer,
 																		 projectDocState->
-																		 pendingProjectionState);
+																		 topLevelPendingProjectionState);
 	}
 }
 
@@ -2864,7 +2877,7 @@ MergeDocumentWithArrayOverride(pgbson *sourceDocument, const
 	ProjectDocumentState projectDocState = {
 		.isPositionalAlreadyEvaluated = false,
 		.parentDocument = sourceDocument,
-		.pendingProjectionState = NULL,
+		.topLevelPendingProjectionState = NULL,
 		.skipIntermediateArrayFields = overrideNestedArrays,
 	};
 

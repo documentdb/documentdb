@@ -110,8 +110,12 @@ typedef struct ProjectDocumentState
 	/* Optional: Bson Project Document stage function hooks */
 	BsonProjectDocumentFunctions projectDocumentFuncs;
 
-	/* Pending projections for the document as a whole */
-	void *pendingProjectionState;
+	/*
+	 * Pending projections (e.g. $elemMatch) that are only valid at the top-level
+	 * document. Must be hidden (set to NULL) before recursing into nested documents
+	 * to prevent inner calls from prematurely flushing and freeing the pending writers.
+	 */
+	void *topLevelPendingProjectionState;
 
 	/* For projections that needs to avoid projecting for all elements of an intermediate array
 	 * e.g. $geoNear updates the document and for a conflicting intermediate array path it just overrides

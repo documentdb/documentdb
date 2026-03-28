@@ -70,6 +70,40 @@ SELECT * FROM bson_dollar_project_find(
     '{}'
 );
 
+-- $elemMatch with non-operator nested document in projection (no $ prefix)
+SELECT * FROM bson_dollar_project_find(
+    '{ "_id": 2, "a": [ 11, 21, 31 ], "b": [41, 51, 61], "d": 71, "e": {"f": "good"} }',
+    '{ "b": {"$elemMatch": {"$gt": 45} }, "d": 1, "e": {"foo": [2,3]} }',
+    '{}'
+);
+
+-- Multiple $elemMatch with non-operator nested document
+SELECT * FROM bson_dollar_project_find(
+    '{ "_id": 2, "a": [ 11, 21, 31 ], "b": [41, 51, 61], "d": 71, "e": {"f": "good"} }',
+    '{ "b": {"$elemMatch": {"$gt": 45} }, "a": {"$elemMatch": {"$lt": 25}}, "e": {"foo": [2,3]} }',
+    '{}'
+);
+
+-- $elemMatch with dotted path and non-operator nested document
+SELECT * FROM bson_dollar_project_find(
+    '{ "_id": 2, "a": [ 11, 21, 31 ], "b": { "c": [41, 51, 61] }, "d": 71, "e": {"f": "good"} }',
+    '{ "b.c": {"$elemMatch": {"$gt": 45} }, "d": 1, "e": {"foo": [2,3]} }',
+    '{}'
+);
+
+-- $elemMatch after non-operator nested document in projection spec order
+SELECT * FROM bson_dollar_project_find(
+    '{ "_id": 2, "a": [ 11, 21, 31 ], "b": [41, 51, 61], "d": 71, "e": {"f": "good"} }',
+    '{ "b": {"$elemMatch": {"$gt": 45} }, "e": {"foo": [2,3]}, "a": {"$elemMatch": {"$lt": 25}} }',
+    '{}'
+);
+
+-- $elemMatch with double nested non-operator document
+SELECT * FROM bson_dollar_project_find(
+    '{ "_id": 2, "a": [ 11, 21, 31 ], "b": [41, 51, 61], "d": 71, "e": {"f": {"g": "deep"}} }',
+    '{ "b": {"$elemMatch": {"$gt": 45} }, "d": 1, "e": {"f": {"h": 1}} }',
+    '{}'
+);
 SELECT * FROM bson_dollar_project_find(
     '{"x": [1, 2, 3], "y": [4, 5, 6], "z": [7, 8, 9]}',
     '{"z": {"$elemMatch": {"$eq": 8} }, "x": {"$elemMatch": {"$eq": 3} }, "y": {"$elemMatch": {"$eq": 4} }}',

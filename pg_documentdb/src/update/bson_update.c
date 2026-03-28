@@ -932,7 +932,7 @@ BuildBsonDocumentFromQuery(pgbson *sourceDoc, const bson_value_t *querySpec,
 	ProjectDocumentState projectDocState = {
 		.isPositionalAlreadyEvaluated = false,
 		.parentDocument = sourceDoc,
-		.pendingProjectionState = NULL,
+		.topLevelPendingProjectionState = NULL,
 		.skipIntermediateArrayFields = false,
 	};
 
