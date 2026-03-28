@@ -509,6 +509,17 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	}
 	else
 	{
+		if (supportsOrderedOperatorScans &&
+			totalPathTerms >= 100)
+		{
+			ReportFeatureUsage(FEATURE_QUERY_ORDERED_SAOP_100_TERMS);
+		}
+		else if (supportsOrderedOperatorScans &&
+				 totalPathTerms >= 50)
+		{
+			ReportFeatureUsage(FEATURE_QUERY_ORDERED_SAOP_50_TERMS);
+		}
+
 		entries = ProcessStandardCompositeQueryEntries(totalPathTerms,
 													   &singlePathMetadata,
 													   &compositeMetadata,

@@ -237,14 +237,14 @@ SELECT documentdb_api.validate('db', '{ "validate" : "validatecoll", "repair" : 
 ERROR:  Running the validate command with { repair: true } is not supported yet.
 -- Print without resetting the counters
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(false);
-                                                                                                                                                                                                                                                                                                                                                                               get_feature_counter_pretty                                                                                                                                                                                                                                                                                                                                                                               
+                                                                                                                                                                                                                                                                                                                                                                                              get_feature_counter_pretty                                                                                                                                                                                                                                                                                                                                                                                              
 ---------------------------------------------------------------------
  {"Feature_usage":[{"agg_operator_eq" : 1}, {"agg_operator_mod" : 6}, {"agg_operator_toint" : 6}, {"group_count" : 3}, {"group_count_with_arg" : 1}, {"group_first" : 1}, {"group_first_n" : 2}, {"group_last" : 1}, {"group_last_n" : 2}, {"group_max" : 2}, {"group_sum" : 1}, {"collation" : 2}, {"validate_repair" : 1}, {"create_index_composite_based_term" : 1}, {"create_index_ttl" : 1}, {"query_operator_eq" : 4}, {"query_operator_gt" : 4}, {"query_operator_or" : 2}, {"add_fields" : 5}, {"count" : 1}, {"group" : 7}, {"firstN_acc_GT10" : 1}, {"lastN_acc_GT10" : 1}, {"limit" : 3}, {"lookup" : 2}, {"match" : 6}, {"project" : 3}, {"replace_root" : 2}, {"replace_with" : 1}, {"skip" : 3}, {"sort" : 6}, {"sort_by_count" : 1}, {"sort_by_id" : 5}, {"unset" : 1}, {"vector_search_native" : 3}]}
 (1 row)
 
 -- print and reset the counters
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
-                                                                                                                                                                                                                                                                                                                                                                               get_feature_counter_pretty                                                                                                                                                                                                                                                                                                                                                                               
+                                                                                                                                                                                                                                                                                                                                                                                              get_feature_counter_pretty                                                                                                                                                                                                                                                                                                                                                                                              
 ---------------------------------------------------------------------
  {"Feature_usage":[{"agg_operator_eq" : 1}, {"agg_operator_mod" : 6}, {"agg_operator_toint" : 6}, {"group_count" : 3}, {"group_count_with_arg" : 1}, {"group_first" : 1}, {"group_first_n" : 2}, {"group_last" : 1}, {"group_last_n" : 2}, {"group_max" : 2}, {"group_sum" : 1}, {"collation" : 2}, {"validate_repair" : 1}, {"create_index_composite_based_term" : 1}, {"create_index_ttl" : 1}, {"query_operator_eq" : 4}, {"query_operator_gt" : 4}, {"query_operator_or" : 2}, {"add_fields" : 5}, {"count" : 1}, {"group" : 7}, {"firstN_acc_GT10" : 1}, {"lastN_acc_GT10" : 1}, {"limit" : 3}, {"lookup" : 2}, {"match" : 6}, {"project" : 3}, {"replace_root" : 2}, {"replace_with" : 1}, {"skip" : 3}, {"sort" : 6}, {"sort_by_count" : 1}, {"sort_by_id" : 5}, {"unset" : 1}, {"vector_search_native" : 3}]}
 (1 row)
@@ -668,7 +668,7 @@ CALL documentdb_api_internal.delete_expired_rows(3);
 CALL documentdb_api_internal.delete_expired_rows(3);
 CALL documentdb_api_internal.delete_expired_rows(3);
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
-                                                                                                                                get_feature_counter_pretty                                                                                                                                
+                                                                                                   get_feature_counter_pretty                                                                                                    
 ---------------------------------------------------------------------
  {"Feature_usage":[{"command_insert" : 10}, {"command_insert_one" : 10}, {"command_list_indexes_cursor_first_page" : 1}, {"create_index_composite_based_term" : 1}, {"create_index_ttl" : 1}, {"cursor_type_single_batch" : 1}]}
 (1 row)
@@ -869,5 +869,57 @@ SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
              get_feature_counter_pretty             
 ---------------------------------------------------------------------
  {"Feature_usage":[{"command_list_databases" : 2}]}
+(1 row)
+
+-- Test: Feature counter for saop queries that didn't meet the treshold for $in
+SELECT documentdb_api.insert_one('saop_feature', 'counter_value', '{"_id": 1, "a": 1, "b": 10}');
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('saop_feature', 'counter_value', '{"_id": 2, "a": 2, "b": 9}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- if documentdb_extended_rum exists, set alternate index handler
+SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extended_rum', false), extname FROM pg_extension WHERE extname = 'documentdb_extended_rum';
+  set_config  |         extname         
+---------------------------------------------------------------------
+ extended_rum | documentdb_extended_rum
+(1 row)
+
+set enable_seqscan to off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('saop_feature', '{ "createIndexes": "counter_value", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_1_b_1", "storageEngine": { "enableOrderedIndex": true }} ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('saop_feature', '{ "aggregate": "counter_value", "pipeline": [ { "$match": { "a": { "$in": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }, "b": { "$in": [10, 9, 8, 7, 6, 5, 4, 3, 2, 1] } } }, {"$sort": { "a": 1 } } ], "cursor": {} }');
+                                            document                                             
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "10" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "9" } }
+(2 rows)
+
+SELECT document FROM bson_aggregation_pipeline('saop_feature', '{ "aggregate": "counter_value", "pipeline": [ { "$match": { "a": { "$in": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }, "b": { "$in": [6, 5, 4, 3, 2, 1] } } }, {"$sort": { "a": 1 } } ], "cursor": {} }');
+ document 
+---------------------------------------------------------------------
+(0 rows)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                                                                               get_feature_counter_pretty                                                                                                                                
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_insert" : 2}, {"command_insert_one" : 2}, {"create_index_alternate_am" : 1}, {"create_index_composite_based_term" : 1}, {"query_operator_in" : 4}, {"query_ordered_saop_100_terms" : 1}, {"query_ordered_saop_50_terms" : 1}, {"match" : 2}, {"sort" : 2}]}
+(1 row)
+
+SELECT documentdb_api.drop_database('saop_feature');
+ drop_database 
+---------------------------------------------------------------------
+ 
 (1 row)
 

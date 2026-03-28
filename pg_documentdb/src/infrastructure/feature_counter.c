@@ -402,6 +402,9 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_QUERY_OPERATOR_TEXT] = "query_operator_text",
 	[FEATURE_QUERY_OPERATOR_TYPE] = "query_operator_type",
 
+	[FEATURE_QUERY_ORDERED_SAOP_100_TERMS] = "query_ordered_saop_100_terms",
+	[FEATURE_QUERY_ORDERED_SAOP_50_TERMS] = "query_ordered_saop_50_terms",
+
 	/* Feature mapping region - Role CRUD */
 	[FEATURE_ROLE_CREATE] = "role_create",
 
