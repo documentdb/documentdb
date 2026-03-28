@@ -2539,7 +2539,7 @@ gin_bson_composite_path_options(PG_FUNCTION_ARGS)
 
 	add_local_string_reloption(relopts, "cl",
 							   "Collation of the index",
-							   "", &ValidateCollationSpec, &FillCollationSpec,
+							   NULL, &ValidateCollationSpec, &FillCollationSpec,
 							   offsetof(BsonGinCompositePathOptions, base.collation));
 
 	PG_RETURN_VOID();

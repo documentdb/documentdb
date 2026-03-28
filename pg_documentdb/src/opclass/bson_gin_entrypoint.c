@@ -608,7 +608,7 @@ gin_bson_single_path_options(PG_FUNCTION_ARGS)
 							   offsetof(BsonGinSinglePathOptions, path));
 	add_local_string_reloption(relopts, "cl",
 							   "Collation of the index",
-							   "", &ValidateCollationSpec, &FillCollationSpec,
+							   NULL, &ValidateCollationSpec, &FillCollationSpec,
 							   offsetof(BsonGinSinglePathOptions, base.collation));
 	add_local_string_reloption(relopts, "indexname",
 							   "[deprecated] The mongo specific name for the index",
@@ -705,7 +705,7 @@ gin_bson_wildcard_project_options(PG_FUNCTION_ARGS)
 										pathSpec));
 	add_local_string_reloption(relopts, "cl",
 							   "Collation of the index",
-							   "", &ValidateCollationSpec,
+							   NULL, &ValidateCollationSpec,
 							   &FillCollationSpec,
 							   offsetof(BsonGinWildcardProjectionPathOptions,
 										base.collation));
