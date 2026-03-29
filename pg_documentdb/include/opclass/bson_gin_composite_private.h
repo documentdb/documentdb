@@ -155,6 +155,7 @@ typedef struct CompositeQueryMetaInfo
 	int32_t wildcardPathIndex;
 	CompositeOrderedScanEntryData *orderedScanEntryData;
 	bool isOrderedScan;
+	const char *collation;
 } CompositeQueryMetaInfo;
 
 typedef struct CompositeQueryRunData

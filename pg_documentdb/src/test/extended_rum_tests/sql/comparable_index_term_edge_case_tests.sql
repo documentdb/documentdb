@@ -1,0 +1,644 @@
+
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+
+SET documentdb.next_collection_id TO 1600;
+SET documentdb.next_collection_index_id TO 1600;
+
+-- ========================================================================
+-- Section 1: Numeric edge cases - round trip and ordering
+-- ========================================================================
+
+CREATE TABLE comparable_edge_test_nums (data bson);
+INSERT INTO comparable_edge_test_nums VALUES
+    -- Zero variants
+    ('{ "$": { "$numberInt": "0" }, "$flags": 5 }'),
+    ('{ "$": { "$numberLong": "0" }, "$flags": 5 }'),
+    ('{ "$": { "$numberDouble": "0.0" }, "$flags": 5 }'),
+    ('{ "$": { "$numberDouble": "-0.0" }, "$flags": 5 }'),
+    -- Negative numbers
+    ('{ "$": { "$numberInt": "-1" }, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "-42" }, "$flags": 5 }'),
+    ('{ "$": { "$numberLong": "-100" }, "$flags": 5 }'),
+    ('{ "$": { "$numberDouble": "-3.14" }, "$flags": 5 }'),
+    -- INT32 boundaries
+    ('{ "$": { "$numberInt": "2147483647" }, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "-2147483648" }, "$flags": 5 }'),
+    -- INT64 values within double fidelity range (< 2^52)
+    ('{ "$": { "$numberLong": "4503599627370495" }, "$flags": 5 }'),
+    -- INT64 values at/beyond double fidelity (>= 2^52) - should fall back to non-comparable
+    ('{ "$": { "$numberLong": "4503599627370496" }, "$flags": 5 }'),
+    ('{ "$": { "$numberLong": "9223372036854775807" }, "$flags": 5 }'),
+    -- Small positive numbers
+    ('{ "$": { "$numberInt": "1" }, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "2" }, "$flags": 5 }'),
+    -- Doubles: special values
+    ('{ "$": { "$numberDouble": "Infinity" }, "$flags": 5 }'),
+    ('{ "$": { "$numberDouble": "-Infinity" }, "$flags": 5 }'),
+    ('{ "$": { "$numberDouble": "NaN" }, "$flags": 5 }'),
+    -- Small fractional doubles
+    ('{ "$": { "$numberDouble": "0.001" }, "$flags": 5 }'),
+    ('{ "$": { "$numberDouble": "-0.001" }, "$flags": 5 }');
+
+-- Round trip test with comparable terms ON
+SET documentdb.enableComparableTerms TO on;
+SELECT documentdb_api_internal.bson_to_bsonindexterm(data),
+       documentdb_api_internal.bsonindexterm_to_bson(documentdb_api_internal.bson_to_bsonindexterm(data)),
+       documentdb_api_internal.bsonindexterm_to_bson(documentdb_api_internal.bson_to_bsonindexterm(data)) = data AS round_trips
+FROM comparable_edge_test_nums ORDER BY documentdb_api_internal.bson_to_bsonindexterm(data) ASC;
+
+-- ========================================================================
+-- Section 2: Binary comparison matches logical comparison for comparable numeric terms
+-- For comparable terms (metadata 0x07), memcmp ordering should match
+-- the logical CompareBsonIndexTerm ordering.
+-- We test this by comparing ORDER BY (which uses btree comparison via
+-- bsonindexterm_compare_btree) with the raw bytea comparison.
+-- ========================================================================
+
+-- Create a table with pairs of comparable terms and verify ordering consistency
+CREATE TABLE comparable_edge_test_numeric_pairs (id serial, data bson);
+INSERT INTO comparable_edge_test_numeric_pairs (data) VALUES
+    ('{ "$": { "$numberInt": "-2147483648" }, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "-42" }, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "-1" }, "$flags": 5 }'),
+    ('{ "$": { "$numberDouble": "-0.001" }, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "0" }, "$flags": 5 }'),
+    ('{ "$": { "$numberDouble": "0.001" }, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "1" }, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "2" }, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "42" }, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "2147483647" }, "$flags": 5 }'),
+    ('{ "$": { "$numberDouble": "Infinity" }, "$flags": 5 }');
+
+-- Verify: the btree ordering matches the raw binary (bytea) ordering for comparable terms.
+-- For every pair (a, b) where a appears before b in btree order,
+-- the bytea comparison a < b should also hold.
+SELECT
+    l.id AS left_id,
+    r.id AS right_id,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) AS btree_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS binary_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) =
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS matches
+FROM comparable_edge_test_numeric_pairs l, comparable_edge_test_numeric_pairs r
+WHERE l.id < r.id
+ORDER BY l.id, r.id;
+
+-- ========================================================================
+-- Section 3: String edge cases - round trip and ordering
+-- ========================================================================
+
+CREATE TABLE comparable_edge_test_strings (id serial, data bson);
+INSERT INTO comparable_edge_test_strings (data) VALUES
+    ('{ "$": "", "$flags": 5 }'),
+    ('{ "$": "a", "$flags": 5 }'),
+    ('{ "$": "aa", "$flags": 5 }'),
+    ('{ "$": "ab", "$flags": 5 }'),
+    ('{ "$": "b", "$flags": 5 }'),
+    ('{ "$": "hello", "$flags": 5 }'),
+    ('{ "$": "hello world", "$flags": 5 }'),
+    ('{ "$": "z", "$flags": 5 }');
+
+-- Round trip
+SELECT documentdb_api_internal.bsonindexterm_to_bson(documentdb_api_internal.bson_to_bsonindexterm(data)) = data AS round_trips
+FROM comparable_edge_test_strings;
+
+-- Verify binary ordering matches btree ordering for strings
+SELECT
+    l.id AS left_id,
+    r.id AS right_id,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) AS btree_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS binary_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) =
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS matches
+FROM comparable_edge_test_strings l, comparable_edge_test_strings r
+WHERE l.id < r.id
+ORDER BY l.id, r.id;
+
+-- ========================================================================
+-- Section 4: Cross-type ordering - BSON type ordering must be preserved
+-- The BSON comparison order is: MinKey < Null < Numbers < String < ... < MaxKey
+-- Comparable terms must preserve this ordering via memcmp.
+-- ========================================================================
+
+CREATE TABLE comparable_edge_test_cross_type (id serial, data bson);
+INSERT INTO comparable_edge_test_cross_type (data) VALUES
+    ('{ "$": { "$minKey": 1 }, "$flags": 5 }'),
+    ('{ "$": null, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "0" }, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "42" }, "$flags": 5 }'),
+    ('{ "$": "", "$flags": 5 }'),
+    ('{ "$": "hello", "$flags": 5 }'),
+    ('{ "$": false, "$flags": 5 }'),
+    ('{ "$": true, "$flags": 5 }'),
+    ('{ "$": { "$date": { "$numberLong": "0" } }, "$flags": 5 }'),
+    ('{ "$": { "$timestamp": { "t": 0, "i": 0 } }, "$flags": 5 }'),
+    ('{ "$": { "$maxKey": 1 }, "$flags": 5 }');
+
+-- Verify btree order matches binary order for cross-type comparable terms
+SELECT
+    l.id AS left_id,
+    r.id AS right_id,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) AS btree_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS binary_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) =
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS matches
+FROM comparable_edge_test_cross_type l, comparable_edge_test_cross_type r
+WHERE l.id < r.id
+ORDER BY l.id, r.id;
+
+-- ========================================================================
+-- Section 5: OID ordering edge cases
+-- ========================================================================
+
+CREATE TABLE comparable_edge_test_oid (id serial, data bson);
+INSERT INTO comparable_edge_test_oid (data) VALUES
+    ('{ "$": { "$oid": "000000000000000000000000" }, "$flags": 5 }'),
+    ('{ "$": { "$oid": "000000000000000000000001" }, "$flags": 5 }'),
+    ('{ "$": { "$oid": "507f1f77bcf86cd799439011" }, "$flags": 5 }'),
+    ('{ "$": { "$oid": "ffffffffffffffffffffffff" }, "$flags": 5 }');
+
+-- Round trip
+SELECT documentdb_api_internal.bsonindexterm_to_bson(documentdb_api_internal.bson_to_bsonindexterm(data)) = data AS round_trips
+FROM comparable_edge_test_oid;
+
+-- Binary ordering matches btree
+SELECT
+    l.id AS left_id,
+    r.id AS right_id,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) AS btree_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS binary_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) =
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS matches
+FROM comparable_edge_test_oid l, comparable_edge_test_oid r
+WHERE l.id < r.id
+ORDER BY l.id, r.id;
+
+-- ========================================================================
+-- Section 6: DateTime edge cases
+-- ========================================================================
+
+CREATE TABLE comparable_edge_test_datetime (id serial, data bson);
+INSERT INTO comparable_edge_test_datetime (data) VALUES
+    ('{ "$": { "$date": { "$numberLong": "-62135596800000" } }, "$flags": 5 }'),  -- year 0001 approx
+    ('{ "$": { "$date": { "$numberLong": "-1" } }, "$flags": 5 }'),               -- 1ms before epoch
+    ('{ "$": { "$date": { "$numberLong": "0" } }, "$flags": 5 }'),                -- epoch
+    ('{ "$": { "$date": { "$numberLong": "1" } }, "$flags": 5 }'),                -- 1ms after epoch
+    ('{ "$": { "$date": { "$numberLong": "1627846267000" } }, "$flags": 5 }'),    -- 2021 date
+    ('{ "$": { "$date": { "$numberLong": "4102444800000" } }, "$flags": 5 }');     -- 2100 date
+
+-- Round trip
+SELECT documentdb_api_internal.bsonindexterm_to_bson(documentdb_api_internal.bson_to_bsonindexterm(data)) = data AS round_trips
+FROM comparable_edge_test_datetime;
+
+-- Binary ordering matches btree
+SELECT
+    l.id AS left_id,
+    r.id AS right_id,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) AS btree_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS binary_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) =
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS matches
+FROM comparable_edge_test_datetime l, comparable_edge_test_datetime r
+WHERE l.id < r.id
+ORDER BY l.id, r.id;
+
+-- ========================================================================
+-- Section 7: Timestamp ordering edge cases
+-- ========================================================================
+
+CREATE TABLE comparable_edge_test_timestamp (id serial, data bson);
+INSERT INTO comparable_edge_test_timestamp (data) VALUES
+    ('{ "$": { "$timestamp": { "t": 0, "i": 0 } }, "$flags": 5 }'),
+    ('{ "$": { "$timestamp": { "t": 0, "i": 1 } }, "$flags": 5 }'),
+    ('{ "$": { "$timestamp": { "t": 1, "i": 0 } }, "$flags": 5 }'),
+    ('{ "$": { "$timestamp": { "t": 1627846267, "i": 1 } }, "$flags": 5 }'),
+    ('{ "$": { "$timestamp": { "t": 1627846267, "i": 2 } }, "$flags": 5 }'),
+    ('{ "$": { "$timestamp": { "t": 4294967295, "i": 4294967295 } }, "$flags": 5 }');
+
+-- Round trip
+SELECT documentdb_api_internal.bsonindexterm_to_bson(documentdb_api_internal.bson_to_bsonindexterm(data)) = data AS round_trips
+FROM comparable_edge_test_timestamp;
+
+-- Binary ordering matches btree
+SELECT
+    l.id AS left_id,
+    r.id AS right_id,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) AS btree_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS binary_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) =
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS matches
+FROM comparable_edge_test_timestamp l, comparable_edge_test_timestamp r
+WHERE l.id < r.id
+ORDER BY l.id, r.id;
+
+-- ========================================================================
+-- Section 8: Types that fall back to non-comparable (value-only) terms
+-- Verify NaN, large INT64, Decimal128, Binary, Document, Array, Code, Regex, DBPointer
+-- all produce non-comparable terms (metadata 0x05 instead of 0x07)
+-- ========================================================================
+
+CREATE TABLE comparable_edge_test_fallback (description text, data bson);
+INSERT INTO comparable_edge_test_fallback VALUES
+    ('NaN double',          '{ "$": { "$numberDouble": "NaN" }, "$flags": 5 }'),
+    ('INT64 >= 2^52',       '{ "$": { "$numberLong": "4503599627370496" }, "$flags": 5 }'),
+    ('Decimal128',          '{ "$": { "$numberDecimal": "123.456" }, "$flags": 5 }'),
+    ('Binary',              '{ "$": { "$binary": { "base64": "SGVsbG8=", "subType": "00" } }, "$flags": 5 }'),
+    ('Document',            '{ "$": { "a": 1 }, "$flags": 5 }'),
+    ('Array',               '{ "$": [1, 2, 3], "$flags": 5 }'),
+    ('Code',                '{ "$": { "$code": "x" }, "$flags": 5 }'),
+    ('Regex',               '{ "$": { "$regularExpression": { "pattern": "p", "options": "" } }, "$flags": 5 }'),
+    ('DBPointer',           '{ "$": { "$dbPointer": { "$ref": "c", "$id": { "$oid": "000000000000000000000000" } } }, "$flags": 5 }');
+
+-- With comparable ON, these should still produce 0x05 (value-only) not 0x07 (comparable)
+-- Verify by checking the first hex byte of the serialized term
+SELECT description,
+       documentdb_api_internal.bson_to_bsonindexterm(data) AS term,
+       documentdb_api_internal.bsonindexterm_to_bson(documentdb_api_internal.bson_to_bsonindexterm(data)) = data AS round_trips
+FROM comparable_edge_test_fallback;
+
+-- ========================================================================
+-- Section 9: Descending comparable terms - binary ordering is reversed
+-- For descending terms (metadata 0x87), the btree comparison returns the
+-- negative of the ascending comparison, so binary comparison order should
+-- still match btree comparison order.
+-- ========================================================================
+
+CREATE TABLE comparable_edge_test_desc (id serial, data bson);
+INSERT INTO comparable_edge_test_desc (data) VALUES
+    ('{ "$": { "$minKey": 1 }, "$flags": 133 }'),
+    ('{ "$": { "$numberInt": "-1" }, "$flags": 133 }'),
+    ('{ "$": { "$numberInt": "0" }, "$flags": 133 }'),
+    ('{ "$": { "$numberInt": "1" }, "$flags": 133 }'),
+    ('{ "$": "hello", "$flags": 133 }'),
+    ('{ "$": { "$maxKey": 1 }, "$flags": 133 }');
+
+-- Round trip
+SELECT documentdb_api_internal.bsonindexterm_to_bson(documentdb_api_internal.bson_to_bsonindexterm(data)) = data AS round_trips
+FROM comparable_edge_test_desc;
+
+-- Verify btree ordering is reversed compared to ascending
+-- (MaxKey should sort first in descending, MinKey last)
+SELECT documentdb_api_internal.bsonindexterm_to_bson(documentdb_api_internal.bson_to_bsonindexterm(data))
+FROM comparable_edge_test_desc
+ORDER BY documentdb_api_internal.bson_to_bsonindexterm(data) ASC;
+
+-- ========================================================================
+-- Section 10: Boolean ordering - false < true in BSON
+-- ========================================================================
+
+SELECT
+    documentdb_api_internal.bson_to_bsonindexterm('{ "$": false, "$flags": 5 }'::bson) <
+    documentdb_api_internal.bson_to_bsonindexterm('{ "$": true, "$flags": 5 }'::bson) AS false_lt_true_btree,
+    documentdb_api_internal.bson_to_bsonindexterm('{ "$": false, "$flags": 5 }'::bson)::bytea <
+    documentdb_api_internal.bson_to_bsonindexterm('{ "$": true, "$flags": 5 }'::bson)::bytea AS false_lt_true_binary;
+
+-- ========================================================================
+-- Section 11: Undefined value variants ordering
+-- undefined (0x08) < partial undefined (0x0C) < null (0x05 with null value)
+-- ========================================================================
+
+CREATE TABLE comparable_edge_test_undef (id serial, data bson);
+INSERT INTO comparable_edge_test_undef (data) VALUES
+    ('{ "$": { "$undefined": true }, "$flags": 8 }'),   -- full undefined
+    ('{ "$": { "$undefined": true }, "$flags": 12 }'),  -- partial undefined
+    ('{ "$": { "$undefined": true }, "$flags": 5 }'),   -- undefined as literal null
+    ('{ "$": null, "$flags": 5 }');                      -- actual null
+
+-- Verify ordering with btree
+SELECT documentdb_api_internal.bson_to_bsonindexterm(data),
+       documentdb_api_internal.bsonindexterm_to_bson(documentdb_api_internal.bson_to_bsonindexterm(data))
+FROM comparable_edge_test_undef
+ORDER BY documentdb_api_internal.bson_to_bsonindexterm(data) ASC;
+
+-- Verify binary ordering matches btree for undefined variants
+SELECT
+    l.id AS left_id,
+    r.id AS right_id,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) AS btree_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS binary_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) =
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS matches
+FROM comparable_edge_test_undef l, comparable_edge_test_undef r
+WHERE l.id < r.id
+ORDER BY l.id, r.id;
+
+-- ========================================================================
+-- Section 12: Cross-type numeric ordering within comparable terms
+-- INT32, INT64, and DOUBLE all become SORT_TYPE_NUMBER_DOUBLE (0x14)
+-- and should maintain correct numeric ordering via memcmp.
+-- ========================================================================
+
+CREATE TABLE comparable_edge_test_cross_numeric (id serial, data bson);
+INSERT INTO comparable_edge_test_cross_numeric (data) VALUES
+    ('{ "$": { "$numberDouble": "-100.5" }, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "-100" }, "$flags": 5 }'),
+    ('{ "$": { "$numberLong": "-1" }, "$flags": 5 }'),
+    ('{ "$": { "$numberDouble": "-0.5" }, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "0" }, "$flags": 5 }'),
+    ('{ "$": { "$numberDouble": "0.5" }, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "1" }, "$flags": 5 }'),
+    ('{ "$": { "$numberLong": "100" }, "$flags": 5 }'),
+    ('{ "$": { "$numberDouble": "100.5" }, "$flags": 5 }');
+
+-- Binary ordering should match btree ordering for cross-numeric types
+SELECT
+    l.id AS left_id,
+    r.id AS right_id,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) AS btree_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS binary_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) =
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS matches
+FROM comparable_edge_test_cross_numeric l, comparable_edge_test_cross_numeric r
+WHERE l.id < r.id
+ORDER BY l.id, r.id;
+
+-- ========================================================================
+-- Section 13: Equality checks - same logical value in different types
+-- INT32(42) and INT64(42) should produce the same comparable term
+-- ========================================================================
+
+SELECT
+    documentdb_api_internal.bson_to_bsonindexterm('{ "$": { "$numberInt": "42" }, "$flags": 5 }'::bson) =
+    documentdb_api_internal.bson_to_bsonindexterm('{ "$": { "$numberLong": "42" }, "$flags": 5 }'::bson) AS int32_eq_int64,
+    documentdb_api_internal.bson_to_bsonindexterm('{ "$": { "$numberInt": "42" }, "$flags": 5 }'::bson) =
+    documentdb_api_internal.bson_to_bsonindexterm('{ "$": { "$numberDouble": "42.0" }, "$flags": 5 }'::bson) AS int32_eq_double,
+    documentdb_api_internal.bson_to_bsonindexterm('{ "$": { "$numberInt": "0" }, "$flags": 5 }'::bson) =
+    documentdb_api_internal.bson_to_bsonindexterm('{ "$": { "$numberDouble": "0.0" }, "$flags": 5 }'::bson) AS zero_int_eq_double;
+
+-- ========================================================================
+-- Section 14: Composite index terms - 2-path round trip and ordering
+-- Composite terms use $$COMP with an array of inner term documents.
+-- Each inner term has "$": value, "$flags": metadata.
+-- The composite term metadata byte is 0x04.
+-- ========================================================================
+
+CREATE TABLE comparable_edge_test_comp2 (id serial, data bson);
+INSERT INTO comparable_edge_test_comp2 (data) VALUES
+    ('{ "$$COMP": [{ "$": { "$numberInt": "1" }, "$flags": 5 }, { "$": "a", "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "1" }, "$flags": 5 }, { "$": "b", "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "1" }, "$flags": 5 }, { "$": "z", "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "2" }, "$flags": 5 }, { "$": "a", "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "2" }, "$flags": 5 }, { "$": "b", "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "10" }, "$flags": 5 }, { "$": "a", "$flags": 5 }] }');
+
+-- Round trip
+SELECT documentdb_api_internal.bsonindexterm_to_bson(documentdb_api_internal.bson_to_bsonindexterm(data))
+FROM comparable_edge_test_comp2 ORDER BY id;
+
+-- Verify btree ordering is lexicographic: first path takes priority
+SELECT
+    l.id AS left_id,
+    r.id AS right_id,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) AS btree_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS binary_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) =
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS matches
+FROM comparable_edge_test_comp2 l, comparable_edge_test_comp2 r
+WHERE l.id < r.id
+ORDER BY l.id, r.id;
+
+-- ========================================================================
+-- Section 15: Composite index terms - 3-path round trip and ordering
+-- ========================================================================
+
+CREATE TABLE comparable_edge_test_comp3 (id serial, data bson);
+INSERT INTO comparable_edge_test_comp3 (data) VALUES
+    ('{ "$$COMP": [{ "$": { "$numberInt": "1" }, "$flags": 5 }, { "$": "a", "$flags": 5 }, { "$": true, "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "1" }, "$flags": 5 }, { "$": "a", "$flags": 5 }, { "$": false, "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "1" }, "$flags": 5 }, { "$": "b", "$flags": 5 }, { "$": false, "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "2" }, "$flags": 5 }, { "$": "a", "$flags": 5 }, { "$": false, "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "2" }, "$flags": 5 }, { "$": "a", "$flags": 5 }, { "$": true, "$flags": 5 }] }');
+
+-- Round trip
+SELECT documentdb_api_internal.bsonindexterm_to_bson(documentdb_api_internal.bson_to_bsonindexterm(data))
+FROM comparable_edge_test_comp3 ORDER BY id;
+
+-- Verify btree ordering matches binary ordering for 3-path composite
+SELECT
+    l.id AS left_id,
+    r.id AS right_id,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) AS btree_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS binary_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) =
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS matches
+FROM comparable_edge_test_comp3 l, comparable_edge_test_comp3 r
+WHERE l.id < r.id
+ORDER BY l.id, r.id;
+
+-- ========================================================================
+-- Section 16: Composite terms - mixed types across paths
+-- First path is numeric, second path varies across different BSON types.
+-- Validates cross-type ordering within composite terms.
+-- ========================================================================
+
+CREATE TABLE comparable_edge_test_comp_mixed (id serial, data bson);
+INSERT INTO comparable_edge_test_comp_mixed (data) VALUES
+    ('{ "$$COMP": [{ "$": { "$numberInt": "1" }, "$flags": 5 }, { "$": null, "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "1" }, "$flags": 5 }, { "$": { "$numberInt": "0" }, "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "1" }, "$flags": 5 }, { "$": "hello", "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "1" }, "$flags": 5 }, { "$": true, "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "1" }, "$flags": 5 }, { "$": { "$date": { "$numberLong": "0" } }, "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "2" }, "$flags": 5 }, { "$": null, "$flags": 5 }] }');
+
+-- Btree vs binary ordering
+SELECT
+    l.id AS left_id,
+    r.id AS right_id,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) AS btree_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS binary_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) =
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS matches
+FROM comparable_edge_test_comp_mixed l, comparable_edge_test_comp_mixed r
+WHERE l.id < r.id
+ORDER BY l.id, r.id;
+
+-- ========================================================================
+-- Section 17: Composite terms - first path descending, second ascending
+-- With descending on the first path ($flags: 133), the ordering of the
+-- first path is inverted while the second path remains ascending.
+-- ========================================================================
+
+CREATE TABLE comparable_edge_test_comp_desc (id serial, data bson);
+INSERT INTO comparable_edge_test_comp_desc (data) VALUES
+    ('{ "$$COMP": [{ "$": { "$numberInt": "1" }, "$flags": 133 }, { "$": "a", "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "1" }, "$flags": 133 }, { "$": "b", "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "2" }, "$flags": 133 }, { "$": "a", "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "2" }, "$flags": 133 }, { "$": "b", "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$numberInt": "10" }, "$flags": 133 }, { "$": "a", "$flags": 5 }] }');
+
+-- Verify the btree order: first path should be descending (10 < 2 < 1),
+-- second path ascending within the same first path value
+SELECT documentdb_api_internal.bsonindexterm_to_bson(documentdb_api_internal.bson_to_bsonindexterm(data))
+FROM comparable_edge_test_comp_desc
+ORDER BY documentdb_api_internal.bson_to_bsonindexterm(data) ASC;
+
+-- Btree vs binary ordering
+SELECT
+    l.id AS left_id,
+    r.id AS right_id,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) AS btree_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS binary_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) =
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS matches
+FROM comparable_edge_test_comp_desc l, comparable_edge_test_comp_desc r
+WHERE l.id < r.id
+ORDER BY l.id, r.id;
+
+-- ========================================================================
+-- Section 18: Composite terms - equality across numeric types
+-- INT32(5) and INT64(5) in the first path should produce equal composite terms
+-- when the second path is also identical.
+-- ========================================================================
+
+SELECT
+    documentdb_api_internal.bson_to_bsonindexterm(
+        '{ "$$COMP": [{ "$": { "$numberInt": "5" }, "$flags": 5 }, { "$": "x", "$flags": 5 }] }'::bson) =
+    documentdb_api_internal.bson_to_bsonindexterm(
+        '{ "$$COMP": [{ "$": { "$numberLong": "5" }, "$flags": 5 }, { "$": "x", "$flags": 5 }] }'::bson) AS comp_int32_eq_int64,
+    documentdb_api_internal.bson_to_bsonindexterm(
+        '{ "$$COMP": [{ "$": { "$numberInt": "5" }, "$flags": 5 }, { "$": "x", "$flags": 5 }] }'::bson) =
+    documentdb_api_internal.bson_to_bsonindexterm(
+        '{ "$$COMP": [{ "$": { "$numberDouble": "5.0" }, "$flags": 5 }, { "$": "x", "$flags": 5 }] }'::bson) AS comp_int32_eq_double;
+
+-- Inequality: same first path, different second path
+SELECT
+    documentdb_api_internal.bson_to_bsonindexterm(
+        '{ "$$COMP": [{ "$": { "$numberInt": "5" }, "$flags": 5 }, { "$": "a", "$flags": 5 }] }'::bson) <
+    documentdb_api_internal.bson_to_bsonindexterm(
+        '{ "$$COMP": [{ "$": { "$numberInt": "5" }, "$flags": 5 }, { "$": "b", "$flags": 5 }] }'::bson) AS same_first_diff_second;
+
+-- ========================================================================
+-- Section 19: Composite terms with gin_bson_get_composite_path_generated_terms
+-- Validates term generation from actual documents with 2 and 3 paths.
+-- ========================================================================
+
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.gin_bson_get_composite_path_generated_terms(
+    document documentdb_core.bson, pathSpec text, termLimit int4, addMetadata bool, wildcardIndex int4 = -1)
+    RETURNS SETOF documentdb_core.bson LANGUAGE C IMMUTABLE PARALLEL SAFE STRICT AS '$libdir/pg_documentdb',
+$$gin_bson_get_composite_path_generated_terms$$;
+
+-- 2-path composite term generation
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms(
+    '{ "a": 1, "b": "hello" }', '[ "a", "b" ]', 2000, false);
+
+-- 3-path composite term generation
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms(
+    '{ "a": 1, "b": "hello", "c": true }', '[ "a", "b", "c" ]', 2000, false);
+
+-- 2-path: verify ordering of generated terms across documents
+-- Insert documents and generate composite terms, then verify ordering
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms(
+    '{ "a": 1, "b": 10 }', '[ "a", "b" ]', 2000, false)
+UNION ALL
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms(
+    '{ "a": 1, "b": 20 }', '[ "a", "b" ]', 2000, false)
+UNION ALL
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms(
+    '{ "a": 2, "b": 5 }', '[ "a", "b" ]', 2000, false);
+
+-- 3-path: verify with arrays (cartesian product)
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms(
+    '{ "a": [1, 2], "b": "x", "c": true }', '[ "a", "b", "c" ]', 2000, false);
+
+-- 2-path: missing path generates undefined term
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms(
+    '{ "a": 1 }', '[ "a", "b" ]', 2000, false);
+
+-- ========================================================================
+-- Section 20: Composite terms - OID + DateTime 2-path ordering
+-- Tests non-numeric comparable types in composite terms.
+-- ========================================================================
+
+CREATE TABLE comparable_edge_test_comp_oid_dt (id serial, data bson);
+INSERT INTO comparable_edge_test_comp_oid_dt (data) VALUES
+    ('{ "$$COMP": [{ "$": { "$oid": "000000000000000000000001" }, "$flags": 5 }, { "$": { "$date": { "$numberLong": "0" } }, "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$oid": "000000000000000000000001" }, "$flags": 5 }, { "$": { "$date": { "$numberLong": "1000" } }, "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$oid": "000000000000000000000002" }, "$flags": 5 }, { "$": { "$date": { "$numberLong": "0" } }, "$flags": 5 }] }'),
+    ('{ "$$COMP": [{ "$": { "$oid": "ffffffffffffffffffffffff" }, "$flags": 5 }, { "$": { "$date": { "$numberLong": "-1" } }, "$flags": 5 }] }');
+
+-- Btree vs binary ordering
+SELECT
+    l.id AS left_id,
+    r.id AS right_id,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) AS btree_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS binary_lt,
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data) < documentdb_api_internal.bson_to_bsonindexterm(r.data)) =
+    (documentdb_api_internal.bson_to_bsonindexterm(l.data)::bytea < documentdb_api_internal.bson_to_bsonindexterm(r.data)::bytea) AS matches
+FROM comparable_edge_test_comp_oid_dt l, comparable_edge_test_comp_oid_dt r
+WHERE l.id < r.id
+ORDER BY l.id, r.id;
+
+
+-- now create a table that has all the different edge cases
+CREATE TABLE comparable_edge_test_all_edges (id serial, data bson);
+INSERT INTO comparable_edge_test_all_edges (data) SELECT data FROM comparable_edge_test_nums;
+INSERT INTO comparable_edge_test_all_edges (data) SELECT data FROM comparable_edge_test_timestamp;
+INSERT INTO comparable_edge_test_all_edges (data) SELECT data FROM comparable_edge_test_undef;
+INSERT INTO comparable_edge_test_all_edges (data) SELECT data FROM comparable_edge_test_strings;
+INSERT INTO comparable_edge_test_all_edges (data) SELECT data FROM comparable_edge_test_datetime;
+INSERT INTO comparable_edge_test_all_edges (data) SELECT data FROM comparable_edge_test_oid;
+
+-- now insert some basic type values
+INSERT INTO comparable_edge_test_all_edges (data) VALUES
+ ('{ "$": { "$minKey": 1 }, "$flags": 5 }'), ('{ "$": { "$maxKey": 1 }, "$flags": 5 }'),
+    ('{ "$": null, "$flags": 5 }'), ('{ "$": true, "$flags": 5 }'), ('{ "$": false, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "42" }, "$flags": 5 }'),
+    ('{ "$": "hello", "$flags": 5 }'), 
+    ('{ "$": { "$oid": "507f1f77bcf86cd799439011" }, "$flags": 5 }'),
+    ('{ "$": { "a": 10, "b": "text" }, "$flags": 5 }'),
+    ('{ "$": [ 105, "two", { "three": 3 } ], "$flags": 5 }'),
+    ('{ "$": { "$code": "mystringCode" }, "$flags": 5 }'),
+    ('{ "$": { "$binary": { "base64": "SGVsbG8=", "subType": "00" } }, "$flags": 5 }'), 
+    ('{ "$": { "$date": { "$numberLong": "1627846267000" } }, "$flags": 5 }'),
+    ('{ "$": { "$timestamp": { "t": 1627846267, "i": 1 } }, "$flags": 5 }'),
+    ('{ "$": { "$regularExpression": { "pattern": "pattern", "options": "i" } }, "$flags": 5 }'),
+    ('{ "$": { "$dbPointer": { "$ref": "collection", "$id": { "$oid": "507f1f77bcf86cd799439011" } } }, "$flags": 5 }'),
+    ('{ "$": { "$numberLong": "41" }, "$flags": 5 }'),
+    ('{ "$": { "$numberDouble": "3.14" }, "$flags": 5 }'), 
+    ('{ "$": { "$numberDecimal": "123.456" }, "$flags": 5 }');
+
+-- now create a table and insert the permutations of these into 2 fields.
+SELECT COUNT(documentdb_api.insert_one('compterm', 'comptermcoll', bson_build_document('_id', gen2.id * 100 + gen1.id, 'a', (gen2.data) -> '$', 'b', (gen1.data) -> '$'))) FROM comparable_edge_test_all_edges gen1, comparable_edge_test_all_edges gen2;
+
+-- do a runtime sort on the two fields and store it in a temp table.
+WITH r1 AS (SELECT document FROM bson_aggregation_find('compterm', '{ "find": "comptermcoll", "sort": { "a": 1, "b": 1 } }')),
+r2 AS (SELECT bson_build_document('_id', ROW_NUMBER() OVER (), 'data', gen.document) AS data FROM r1 gen)
+SELECT COUNT(documentdb_api.insert_one('compterm', 'compterm_sorted', data)) FROM r2;
+
+-- now create an index over the 2 columns and verify the ordering matches the runtime sort.
+SET documentdb.enableComparableTerms TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('compterm', '{ "createIndexes": "comptermcoll", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_1_b_1" } ] }', TRUE);
+
+-- ensure sort uses the index
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('compterm', '{ "find": "comptermcoll", "sort": { "a": 1, "b": 1 }, "hint": "a_1_b_1" }');
+WITH r1 AS (SELECT document FROM bson_aggregation_find('compterm', '{ "find": "comptermcoll", "sort": { "a": 1, "b": 1 }, "hint": "a_1_b_1" }')),
+r2 AS (SELECT bson_build_document('_id', ROW_NUMBER() OVER (), 'data', gen.document) AS data FROM r1 gen)
+SELECT COUNT(documentdb_api.insert_one('compterm', 'compterm_sorted_index', data)) FROM r2;
+
+SELECT runtime.document, idx.document FROM documentdb_api.collection('compterm', 'compterm_sorted') runtime
+    LEFT JOIN documentdb_api.collection('compterm', 'compterm_sorted_index') idx ON runtime.document ->> '_id' = idx.document ->> '_id'
+    WHERE runtime.document -> 'data.a' != idx.document -> 'data.a' OR runtime.document -> 'data.b' != idx.document -> 'data.b'
+ORDER BY runtime.document -> '_id';
+
+-- ========================================================================
+-- Cleanup
+-- ========================================================================
+SET documentdb.enableComparableTerms TO off;
+DROP TABLE comparable_edge_test_nums;
+DROP TABLE comparable_edge_test_numeric_pairs;
+DROP TABLE comparable_edge_test_strings;
+DROP TABLE comparable_edge_test_cross_type;
+DROP TABLE comparable_edge_test_oid;
+DROP TABLE comparable_edge_test_datetime;
+DROP TABLE comparable_edge_test_timestamp;
+DROP TABLE comparable_edge_test_fallback;
+DROP TABLE comparable_edge_test_desc;
+DROP TABLE comparable_edge_test_undef;
+DROP TABLE comparable_edge_test_cross_numeric;
+DROP TABLE comparable_edge_test_comp2;
+DROP TABLE comparable_edge_test_comp3;
+DROP TABLE comparable_edge_test_comp_mixed;
+DROP TABLE comparable_edge_test_comp_desc;
+DROP TABLE comparable_edge_test_comp_oid_dt;
+--DROP TABLE comparable_edge_test_all_edges;
+DROP FUNCTION documentdb_test_helpers.gin_bson_get_composite_path_generated_terms;

@@ -75,6 +75,16 @@ typedef struct IndexTermCreateMetadata
 	bool allowValueOnly;
 } IndexTermCreateMetadata;
 
+
+/*
+ * A wrapper struct that holds a serialized composite term and its corresponding BsonIndexTerm.
+ */
+typedef struct SerializedCompositeTermPair
+{
+	bytea *serializedTerm;
+	BsonIndexTerm term;
+} SerializedCompositeTermPair;
+
 bool IsIndexTermMetadata(const BsonIndexTerm *indexTerm);
 
 
@@ -103,14 +113,16 @@ bool IsSerializedIndexTermComposite(bytea *indexTermSerialized);
 bool IsSerializedIndexTermTruncated(bytea *indexTermSerialized);
 bool IsSerializedIndexTermMetadata(bytea *indexTermSerialized);
 bool IsSerializedRootTruncationTerm(bytea *indexTermSerialized);
+bool IsSerializedTermValueDescending(bytea *indexTermSerialized);
 
 void InitializeBsonIndexTerm(bytea *indexTermSerialized, BsonIndexTerm *indexTerm);
 
 int32_t InitializeCompositeIndexTerm(bytea *indexTermSerialized, BsonIndexTerm
 									 indexTerm[INDEX_MAX_KEYS]);
 
-int32_t InitializeSerializedCompositeIndexTerm(bytea *indexTermSerialized,
-											   bytea *termValues[INDEX_MAX_KEYS]);
+int32_t LazyInitializeSerializedCompositeIndexTerm(bytea *indexTermSerialized,
+												   SerializedCompositeTermPair termPairs[
+													   INDEX_MAX_KEYS]);
 
 BsonIndexTermSerialized SerializeBsonIndexTerm(pgbsonelement *indexElement,
 											   const IndexTermCreateMetadata *
@@ -143,6 +155,8 @@ int32_t CompareBsonIndexTerm(const BsonIndexTerm *left, const BsonIndexTerm *rig
 							 bool *isComparisonValid, const char *collation);
 int32_t CompareSerializedBsonIndexTermWithCollation(Datum a, Datum b, const
 													char *collation);
+int32_t CompareSerializedBsonIndexTerms(bytea *left, bytea *right, const char *collation,
+										bool *isComparisonValid);
 bytea * FormCollatedIndexTerm(bytea *sourceTerm, const char *collation, uint32_t
 							  collationLength);
 
@@ -153,6 +167,18 @@ IsRootTruncationTerm(const BsonIndexTerm *term)
 	return IsIndexTermTruncated(term) &&
 		   term->element.pathLength == 0 &&
 		   term->element.bsonValue.value_type == BSON_TYPE_MAXKEY;
+}
+
+
+inline static void
+InitializeBsonIndexTermIfNeeded(SerializedCompositeTermPair *termPair)
+{
+	if (termPair->term.element.bsonValue.value_type != BSON_TYPE_EOD)
+	{
+		return;
+	}
+
+	InitializeBsonIndexTerm(termPair->serializedTerm, &termPair->term);
 }
 
 

@@ -38,9 +38,8 @@ static bool FillPgbsonElementUnsafeNoLength(uint8_t *data, uint32_t data_len,
 											pgbsonelement *element);
 
 #if BSON_BYTE_ORDER != BSON_BIG_ENDIAN
-static bool FillBsonValueAndPathUnsafe(pgbsonelement *element, uint8_t *data, uint32_t
-									   length,
-									   uint32_t typeOffset, uint32_t minLength);
+static bool FillBsonElementValueAndPathUnsafe(pgbsonelement *element, uint8_t *data, int
+											  length);
 #endif
 
 /* --------------------------------------------------------- */
@@ -308,7 +307,6 @@ FillPgbsonElementUnsafeNoLength(uint8_t *data, uint32_t data_len, pgbsonelement 
 						"No length offset elements not supported on big endian machines")));
 #else
 	uint32_t minLength = 1;
-	uint32_t typeOffset = 0;
 	Assert(data != NULL);
 
 	if (data_len < minLength)
@@ -316,7 +314,12 @@ FillPgbsonElementUnsafeNoLength(uint8_t *data, uint32_t data_len, pgbsonelement 
 		ereport(ERROR, errmsg("invalid input BSON: Should not be empty document"));
 	}
 
-	return FillBsonValueAndPathUnsafe(element, data, data_len, typeOffset, minLength);
+	/* First byte is the value */
+	element->bsonValue.value_type = (bson_type_t) data[0];
+
+	/* Then the a single \0 and the value */
+	int lengthLeft = data_len - minLength;
+	return FillBsonElementValueAndPathUnsafe(element, &data[minLength + 1], lengthLeft);
 #endif
 }
 
@@ -355,16 +358,7 @@ FillPgbsonElementUnsafe(uint8_t *data, uint32_t data_len, pgbsonelement *element
 	/* First 4 bytes are the length */
 	uint32_t length;
 	memcpy(&length, data, sizeof(uint32_t));
-	return FillBsonValueAndPathUnsafe(element, data, length, typeOffset, minLength);
-#endif
-}
 
-
-#if BSON_BYTE_ORDER != BSON_BIG_ENDIAN
-static bool
-FillBsonValueAndPathUnsafe(pgbsonelement *element, uint8_t *data,
-						   uint32_t length, uint32_t typeOffset, uint32_t minLength)
-{
 	/* Fifth byte is the value */
 	element->bsonValue.value_type = (bson_type_t) data[typeOffset];
 
@@ -374,6 +368,15 @@ FillBsonValueAndPathUnsafe(pgbsonelement *element, uint8_t *data,
 	data += element->pathLength + minLength + 1;
 
 	int lengthLeft = length - element->pathLength - minLength;
+	return FillBsonElementValueAndPathUnsafe(element, data, lengthLeft);
+#endif
+}
+
+
+#if BSON_BYTE_ORDER != BSON_BIG_ENDIAN
+static bool
+FillBsonElementValueAndPathUnsafe(pgbsonelement *element, uint8_t *data, int lengthLeft)
+{
 	switch (element->bsonValue.value_type)
 	{
 		case BSON_TYPE_DATE_TIME:
@@ -416,10 +419,10 @@ FillBsonValueAndPathUnsafe(pgbsonelement *element, uint8_t *data,
 				return false;
 			}
 
-			memcpy(&element->bsonValue.value.v_timestamp.timestamp, data,
+			memcpy(&element->bsonValue.value.v_timestamp.increment, data,
 				   sizeof(uint32_t));
 			data += 4;
-			memcpy(&element->bsonValue.value.v_timestamp.increment, data,
+			memcpy(&element->bsonValue.value.v_timestamp.timestamp, data,
 				   sizeof(uint32_t));
 			return true;
 		}
@@ -597,6 +600,7 @@ FillBsonValueAndPathUnsafe(pgbsonelement *element, uint8_t *data,
 			element->bsonValue.value.v_dbpointer.collection_len = utf8Length - 1;
 
 			/* Next is object id */
+			data += utf8Length;
 			if (lengthLeft < utf8Length + 4 + 12)
 			{
 				return false;

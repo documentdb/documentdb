@@ -190,6 +190,10 @@ bool EnableRegexPrefixIndexBounds = DEFAULT_ENABLE_REGEX_PREFIX_INDEX_BOUNDS;
 #define DEFAULT_ENABLE_EXTENDED_INDEXES false
 bool EnableExtendedIndexes = DEFAULT_ENABLE_EXTENDED_INDEXES;
 
+/* Added in v111, Pending stabilization */
+#define DEFAULT_ENABLE_COMPARABLE_TERMS false
+bool EnableComparableTerms = DEFAULT_ENABLE_COMPARABLE_TERMS;
+
 /*
  * SECTION: Planner feature flags
  */
@@ -878,6 +882,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable extended indexes feature."),
 		NULL, &EnableExtendedIndexes,
 		DEFAULT_ENABLE_EXTENDED_INDEXES,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableComparableTerms", newGucPrefix),
+		gettext_noop(
+			"Whether to enable comparable terms feature."),
+		NULL, &EnableComparableTerms,
+		DEFAULT_ENABLE_COMPARABLE_TERMS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
