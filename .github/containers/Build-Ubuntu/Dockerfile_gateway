@@ -88,7 +88,8 @@ RUN sudo chown -R documentdb:documentdb /home/documentdb/code
 WORKDIR /home/documentdb/code/pg_documentdb_gw
 
 RUN CARGO_MANIFEST_DIR=/home/documentdb/code/pg_documentdb_gw cargo build --profile=release-with-symbols
-RUN upx --best --lzma /home/documentdb/code/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway
+RUN upx --best --lzma /home/documentdb/code/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway && \
+    /home/documentdb/code/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway --help || true
 
 # Install mongosh in a throwaway stage so the final image only copies the runtime files.
 FROM prebuild AS mongosh
@@ -97,7 +98,7 @@ RUN wget -qO- https://www.mongodb.org/static/pgp/server-8.0.asc | tee /etc/apt/t
     echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/debian bookworm/mongodb-org/8.0 main" > /etc/apt/sources.list.d/mongodb-org-8.0.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends binutils mongodb-mongosh && \
-    strip --strip-all /usr/bin/mongosh && \
+    strip --strip-debug /usr/bin/mongosh && \
     rm -rf /var/lib/apt/lists/*
 
 # ----------- Runtime Base Stage -----------
@@ -126,10 +127,12 @@ RUN apt-get update && \
     postgresql-${POSTGRES_VERSION}-pgvector \
     postgresql-${POSTGRES_VERSION}-postgis-3 \
     postgresql-${POSTGRES_VERSION}-rum && \
+    groupmod -g 103 postgres && usermod -u 105 -g 103 postgres && \
     dpkg -i /tmp/install_setup/$(basename "$DEB_PACKAGE_REL_PATH") && \
     useradd -ms /bin/bash documentdb -G sudo && \
     echo "%sudo ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/no-pass-ask && \
-    apt-get purge -y --auto-remove wget gnupg2 lsb-release && \
+    apt-get purge -y wget gnupg2 lsb-release && \
+    apt-get autoremove -y && \
     rm -rf \
     /etc/apt/keyrings/pgdg.asc \
     /etc/apt/sources.list.d/pgdg.list \
