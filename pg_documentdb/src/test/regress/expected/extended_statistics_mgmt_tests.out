@@ -1,0 +1,210 @@
+SET search_path TO documentdb_api_catalog, documentdb_api, documentdb_core, documentdb_api_internal, public;
+SET documentdb.next_collection_id TO 6400;
+SET documentdb.next_collection_index_id TO 6400;
+-- create a collection
+SELECT documentdb_api.create_collection('stats_db', 'planner_stats');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+\d documentdb_data.documents_6401
+          Table "documentdb_data.documents_6401"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_6401" PRIMARY KEY, btree (shard_key_value, object_id)
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '6401'::bigint)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('stats_db', '{ "createIndexes": "planner_stats", "indexes": [ { "key": { "b": 1, "c": 1 }, "name": "b_c_1" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- enable planner statistics for the collection (should fail)
+SELECT documentdb_api.coll_mod('stats_db', 'planner_stats', '{ "collMod": "planner_stats", "enableStats": true }');
+ERROR:  Per-collection planner statistics is not enabled
+-- enable the feature and try again (should succeed)
+set documentdb.enablePerCollectionPlannerStatistics to on;
+SELECT documentdb_api.coll_mod('stats_db', 'planner_stats', '{ "collMod": "planner_stats", "enableStats": true }');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- print list_indexes to see that the option is set
+SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "planner_stats" }') ORDER BY 1;
+                                                                                                                                                  bson_dollar_unwind                                                                                                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.planner_stats", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_", "statsEnabled" : true } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.planner_stats", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }, "name" : "b_c_1", "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+-- now create an index on the collection and verify that the planner statistics are updated for the index
+SELECT documentdb_api_internal.create_indexes_non_concurrently('stats_db', '{ "createIndexes": "planner_stats", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+\d documentdb_data.documents_6401
+          Table "documentdb_data.documents_6401"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_6401" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_6402" documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "b", "c" ]', tl='2691'))
+    "documents_rum_index_6403" documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "a" ]', tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '6401'::bigint)
+Statistics objects:
+    "documentdb_data.documents_rum_index_6402_stats" ON bson_stats_project(document, 'b'::text), bson_stats_project(document, 'c'::text) FROM documentdb_data.documents_6401
+    "documentdb_data.documents_rum_index_6403_stats" ON bson_stats_project(document, 'a'::text) FROM documentdb_data.documents_6401
+
+-- dropping the index should remove the stats.
+CALL documentdb_api.drop_indexes('stats_db', '{ "dropIndexes": "planner_stats", "index": "a_1" }');
+                          retval                          
+----------------------------------------------------------
+ { "ok" : true, "nIndexesWas" : { "$numberLong" : "3" } }
+(1 row)
+
+\d documentdb_data.documents_6401
+          Table "documentdb_data.documents_6401"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_6401" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_6402" documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "b", "c" ]', tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '6401'::bigint)
+Statistics objects:
+    "documentdb_data.documents_rum_index_6402_stats" ON bson_stats_project(document, 'b'::text), bson_stats_project(document, 'c'::text) FROM documentdb_data.documents_6401
+
+-- test the stats function
+SELECT documentdb_api_internal.bson_stats_project('{ "a": 1, "b": 1 }', 'b');
+       bson_stats_project        
+---------------------------------
+ { "" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.bson_stats_project('{ "a": 1, "b": { "c": 1 } }', 'b.c');
+       bson_stats_project        
+---------------------------------
+ { "" : { "$numberInt" : "1" } }
+(1 row)
+
+-- sort of works for top level arrays
+SELECT documentdb_api_internal.bson_stats_project('{ "a": 1, "b": { "c": [ 1, 2, 3 ] } }', 'b.c');
+                                 bson_stats_project                                  
+-------------------------------------------------------------------------------------
+ { "" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }
+(1 row)
+
+-- doesn't really work for parent arrays
+SELECT documentdb_api_internal.bson_stats_project('{ "a": 1, "b": [ { "c": 1 }, { "c": 2 } ] }', 'b.c');
+ bson_stats_project 
+--------------------
+ 
+(1 row)
+
+-- now test the stats usage.
+SELECT COUNT(documentdb_api.insert_one('stats_db', 'planner_stats', bson_build_document('_id', i, 'b', 1, 'c', i, 'padding', repeat('x', 1010)))) FROM generate_series(1, 1000) i;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one('stats_db', 'planner_stats', bson_build_document('_id', i, 'b', i, 'c', i, 'padding', repeat('x', 1010)))) FROM generate_series(1, 10) i;
+ count 
+-------
+    10
+(1 row)
+
+-- the selectivity for 'b': 1 is ~50% - without custom stats it assumes that it's 1% and it should pick the index on b,c
+ANALYZE documentdb_data.documents_6401;
+set documentdb.enableCompositeIndexPlanner to on;
+set documentdb.enablePerCollectionPlannerStatistics to off;
+EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_find('stats_db', '{ "find": "planner_stats", "filter": { "b": 1 } }');
+                                 QUERY PLAN                                 
+----------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_6401 collection
+   Recheck Cond: (document @= '{ "b" : { "$numberInt" : "1" } }'::bson)
+   ->  Bitmap Index Scan on b_c_1
+         Index Cond: (document @= '{ "b" : { "$numberInt" : "1" } }'::bson)
+(4 rows)
+
+-- with stats on this is now correctly reflected and will pick a seqscan.
+set documentdb.enablePerCollectionPlannerStatistics to on;
+EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_find('stats_db', '{ "find": "planner_stats", "filter": { "b": 1 } }');
+                            QUERY PLAN                            
+------------------------------------------------------------------
+ Seq Scan on documents_6401 collection
+   Filter: (document @= '{ "b" : { "$numberInt" : "1" } }'::bson)
+(2 rows)
+
+-- expr stats are created for the table post analyze
+SELECT expr, statistics_name, array_length(most_common_vals::text::bson[], 1), (most_common_vals::text::bson[])[1:5],
+    array_length(most_common_elems::text::bson[], 1),(most_common_elems::text::bson[])[1:5],
+    array_length(histogram_bounds::text::bson[], 1), (histogram_bounds::text::bson[])[1:5] FROM pg_stats_ext_exprs WHERE tablename = 'documents_6401' ORDER BY statistics_name;
+                  expr                   |        statistics_name         | array_length |             most_common_vals              | array_length | most_common_elems | array_length |                                                                                               histogram_bounds                                                                                                
+-----------------------------------------+--------------------------------+--------------+-------------------------------------------+--------------+-------------------+--------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ bson_stats_project(document, 'b'::text) | documents_rum_index_6402_stats |            1 | {"{ \"\" : { \"$numberInt\" : \"1\" } }"} |              |                   |              | 
+ bson_stats_project(document, 'c'::text) | documents_rum_index_6402_stats |              |                                           |              |                   |          101 | {"{ \"\" : { \"$numberInt\" : \"1\" } }","{ \"\" : { \"$numberInt\" : \"10\" } }","{ \"\" : { \"$numberInt\" : \"20\" } }","{ \"\" : { \"$numberInt\" : \"30\" } }","{ \"\" : { \"$numberInt\" : \"40\" } }"}
+(2 rows)
+
+-- for the compound index, correlation stats are collected as well.
+SELECT statistics_name, exprs, n_distinct FROM pg_stats_ext WHERE tablename = 'documents_6401';
+        statistics_name         |                                         exprs                                         |    n_distinct    
+--------------------------------+---------------------------------------------------------------------------------------+------------------
+ documents_rum_index_6402_stats | {"bson_stats_project(document, 'b'::text)","bson_stats_project(document, 'c'::text)"} | {"-1, -2": 1000}
+(1 row)
+
+-- validate now for other index types
+SELECT documentdb_api_internal.create_indexes_non_concurrently('stats_db', '{ "createIndexes": "planner_stats", "indexes": [ { "key": { "a.$**": 1 }, "name": "a_wk_1" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('stats_db', '{ "createIndexes": "planner_stats", "indexes": [ { "key": { "b": "hashed" }, "name": "b_hashed" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('stats_db', '{ "createIndexes": "planner_stats", "indexes": [ { "key": { "$**": 1 }, "wildcardProjection": { "a": 1 }, "name": "c_wp1" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "4" }, "numIndexesAfter" : { "$numberInt" : "5" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+\d documentdb_data.documents_6401
+          Table "documentdb_data.documents_6401"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_6401" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_6402" documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "b", "c" ]', tl='2691'))
+    "documents_rum_index_6404" documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "a" ]', tl='2691', wki='0', wkl='200'))
+    "documents_rum_index_6405" documentdb_rum (document documentdb_rum_hashed_ops (path=b))
+    "documents_rum_index_6406" documentdb_rum (document bson_rum_wildcard_project_path_ops (includeid='false', tl='2699', wkl='200', pathspec='[ "a" ]', isexclusion='false'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '6401'::bigint)
+Statistics objects:
+    "documentdb_data.documents_rum_index_6402_stats" ON bson_stats_project(document, 'b'::text), bson_stats_project(document, 'c'::text) FROM documentdb_data.documents_6401
+
