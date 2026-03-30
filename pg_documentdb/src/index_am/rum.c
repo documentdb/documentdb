@@ -41,10 +41,10 @@
 #include "utils/documentdb_errors.h"
 #include "planner/documentdb_planner.h"
 #include "utils/error_utils.h"
+#include "query/bson_dollar_selectivity.h"
 
 extern bool ForceUseIndexIfAvailable;
 extern bool EnableIndexOnlyScan;
-extern bool EnableCompositeIndexPlanner;
 extern bool EnableIndexOnlyScanOnCostFunction;
 extern bool DisableExtendedRumExplainPlans;
 extern bool EnableOrderedCostEstimator;
@@ -629,13 +629,17 @@ extension_rumcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 						  Selectivity *indexSelectivity, double *indexCorrelation,
 						  double *indexPages)
 {
-	bool forceIndexPushdownCostToZero = !EnableCompositeIndexPlanner &&
+	bool enableCompositePlannerCosts = EnablePlannerCostSelectivityFromRelOptInfo(root,
+																				  path->
+																				  indexinfo
+																				  ->rel);
+	bool forceIndexPushdownCostToZero = !enableCompositePlannerCosts &&
 										ForceUseIndexIfAvailable;
 	extension_rumcostestimate_core(root, path, loop_count, indexStartupCost,
 								   indexTotalCost,
 								   indexSelectivity, indexCorrelation, indexPages,
 								   &rum_index_routine, forceIndexPushdownCostToZero,
-								   RumOrderedCostEstimate);
+								   enableCompositePlannerCosts, RumOrderedCostEstimate);
 }
 
 
@@ -644,7 +648,8 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 							   Cost *indexStartupCost, Cost *indexTotalCost,
 							   Selectivity *indexSelectivity, double *indexCorrelation,
 							   double *indexPages, IndexAmRoutine *coreRoutine,
-							   bool forceIndexPushdownCostToZero,
+							   bool forceIndexPushdownCostToZero, bool
+							   enableCompositePlannerCosts,
 							   OrderedCostEstimateCoreFunc orderedCostEstimateCoreFunc)
 {
 	if (!IsIndexIsValidForQuery(path))
@@ -709,7 +714,7 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 		}
 	}
 
-	if (EnableCompositeIndexPlanner && EnableOrderedCostEstimator &&
+	if (enableCompositePlannerCosts && EnableOrderedCostEstimator &&
 		orderedCostEstimateCoreFunc != NULL && isCompositeOpFamily)
 	{
 		orderedCostEstimateCoreFunc(root, path, loop_count, indexStartupCost,
@@ -753,7 +758,8 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 		*indexSelectivity = *indexSelectivity * (1.0 - path->indexinfo->rel->allvisfrac);
 	}
 
-	if (EnableExplainScanIndexCosts && EnableExtendedExplainPlans)
+	if (EnableExplainScanIndexCosts && EnableExtendedExplainPlans &&
+		enableCompositePlannerCosts)
 	{
 		RangeTblEntry *rte = planner_rt_fetch(path->indexinfo->rel->relid, root);
 		RecordCostEstimateForIndex(path->indexinfo->indexoid,
@@ -1920,16 +1926,14 @@ ExplainRegularIndexScanToWriter(IndexScanDesc scan, pgbson_writer *writer)
 
 
 void
-RecordCostEstimateForIndex(Oid indexOid, Oid relOid, Cost indexStartupCost, Cost
-						   indexTotalCost,
-						   Selectivity indexSelectivity,
+RecordCostEstimateForIndex(Oid indexOid, Oid relOid, Cost indexStartupCost,
+						   Cost indexTotalCost, Selectivity indexSelectivity,
 						   double indexCorrelation, double indexPages, double
 						   totalIndexPages, double totalIndexTuples,
-						   double boundarySelectivity, int numBoundaryQuals, double
-						   dataPagesProportionFetched)
+						   double boundarySelectivity, int numBoundaryQuals,
+						   double dataPagesProportionFetched)
 {
-	if (!EnableExtendedExplainPlans || !EnableExplainScanIndexCosts ||
-		!EnableCompositeIndexPlanner)
+	if (!EnableExtendedExplainPlans || !EnableExplainScanIndexCosts)
 	{
 		return;
 	}
@@ -1975,15 +1979,15 @@ CompareIndexCostsByTotalCost(const void *left, const void *right)
 	IndexCostsData *rightData = (IndexCostsData *) right;
 
 	/* Sort by cost ascending */
-	return leftData->indexTotalCost - rightData->indexTotalCost;
+	return leftData->indexTotalCost > rightData->indexTotalCost ? 1 :
+		   (leftData->indexTotalCost < rightData->indexTotalCost ? -1 : 0);
 }
 
 
 void
 LogReportedIndexCosts(Oid relOid, struct ExplainState *es)
 {
-	if (!EnableExtendedExplainPlans || !EnableCompositeIndexPlanner ||
-		!EnableExplainScanIndexCosts)
+	if (!EnableExtendedExplainPlans || !EnableExplainScanIndexCosts)
 	{
 		return;
 	}

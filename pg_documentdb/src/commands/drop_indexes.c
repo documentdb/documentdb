@@ -722,6 +722,11 @@ DropPostgresIndex(uint64 collectionId, int indexId, bool unique, bool concurrent
 	char *cmd = CreateDropIndexCommand(collectionId, indexId, unique, concurrently,
 									   missingOk);
 	ExecuteDropIndexCommand(cmd, unique, concurrently, forceReadWrite);
+
+	if (concurrently)
+	{
+		DropIndexStatisticsForPlannerStatistics(collectionId, list_make1_int(indexId));
+	}
 }
 
 
@@ -772,10 +777,10 @@ DropPostgresIndexWithSuffix(uint64 collectionId, IndexDetails *index, bool concu
 		/* These are indexes */
 		appendStringInfo(cmdStr,
 						 "DROP INDEX %s %s %s."
-						 DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "%s",
+						 DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "%s%s",
 						 concurrently ? "CONCURRENTLY" : "",
 						 missingOk ? "IF EXISTS" : "", ApiDataSchemaName, index->indexId,
-						 suffix);
+						 suffix, concurrently ? "" : " CASCADE");
 
 		if (concurrently)
 		{
@@ -830,7 +835,8 @@ CreateDropIndexCommand(uint64 collectionId, int indexId, bool unique, bool concu
 	{
 		appendStringInfo(cmdStr,
 						 "ALTER TABLE %s." DOCUMENT_DATA_TABLE_NAME_FORMAT
-						 " DROP CONSTRAINT %s " DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT,
+						 " DROP CONSTRAINT %s " DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT
+						 " CASCADE",
 						 ApiDataSchemaName, collectionId, missingOk ? "IF EXISTS" : "",
 						 indexId);
 	}
@@ -838,9 +844,10 @@ CreateDropIndexCommand(uint64 collectionId, int indexId, bool unique, bool concu
 	{
 		appendStringInfo(cmdStr,
 						 "DROP INDEX %s %s %s."
-						 DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT,
+						 DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT " %s",
 						 concurrently ? "CONCURRENTLY" : "",
-						 missingOk ? "IF EXISTS" : "", ApiDataSchemaName, indexId);
+						 missingOk ? "IF EXISTS" : "", ApiDataSchemaName, indexId,
+						 concurrently ? "" : "CASCADE");
 	}
 	return cmdStr->data;
 }
@@ -910,6 +917,12 @@ HandleDropIndexConcurrently(uint64 collectionId, int indexId, bool unique, bool
 										   missingOk);
 		bool forceReadWrite = false;
 		ExecuteDropIndexCommand(cmd, unique, concurrently, forceReadWrite);
+		if (concurrently)
+		{
+			DropIndexStatisticsForPlannerStatistics(collectionId, list_make1_int(
+														indexId));
+		}
+
 		indexDropped = true;
 	}
 	PG_CATCH();

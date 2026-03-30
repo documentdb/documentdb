@@ -22,6 +22,7 @@
 
 #include "index_am/index_am_exports.h"
 #include "index_am/documentdb_rum.h"
+#include "query/bson_dollar_selectivity.h"
 
 
 PG_MODULE_MAGIC;
@@ -38,7 +39,6 @@ typedef struct DocumentDBRumOidCacheData
 	Oid DocumentDbExtendedRumUniquePathOperatorFamilyId;
 } DocumentDBRumOidCacheData;
 
-extern bool EnableCompositeIndexPlanner;
 
 /* Method Declarations */
 static Oid DocumentDBExtendedRumIndexAmId(void);
@@ -322,13 +322,18 @@ extension_documentdb_extended_rumcostestimate(PlannerInfo *root, IndexPath *path
 											  double *indexPages)
 {
 	/* Do not force index cost to zero unless explicitly requested */
-	bool forceIndexCostToZero = !EnableCompositeIndexPlanner;
+	bool enableCompositePlannerCosts = EnablePlannerCostSelectivityFromRelOptInfo(root,
+																				  path->
+																				  indexinfo
+																				  ->rel);
+	bool forceIndexCostToZero = !enableCompositePlannerCosts;
 	OrderedCostEstimateCoreFunc orderedCostEstimateFunc =
 		DocumentDBRumOrderedCostEstimate;
 	extension_rumcostestimate_core(root, path, loop_count, indexStartupCost,
 								   indexTotalCost, indexSelectivity, indexCorrelation,
 								   indexPages, &core_rum_routine,
-								   forceIndexCostToZero, orderedCostEstimateFunc);
+								   forceIndexCostToZero, enableCompositePlannerCosts,
+								   orderedCostEstimateFunc);
 }
 
 
