@@ -353,6 +353,9 @@ generate_unique_shard_document(PG_FUNCTION_ARGS)
 		singlePathOptions->base.indexTermTruncateLimit = INT32_MAX;
 		singlePathOptions->base.type = IndexOptionsType_SinglePath;
 		singlePathOptions->base.version = IndexOptionsVersion_V0;
+
+		/* TODO(Collation): what should be put here? */
+		singlePathOptions->base.collation = 0;
 		singlePathOptions->path = sizeof(BsonGinSinglePathOptions);
 		char *pathPrefix = buffer + sizeof(BsonGinSinglePathOptions);
 		uint32_t pathLength = pathIter.length;

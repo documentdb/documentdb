@@ -73,6 +73,9 @@ typedef struct IndexTermCreateMetadata
 
 	/* Whether the index supports value only terms */
 	bool allowValueOnly;
+
+	/* The collation string for the index, or NULL if no collation */
+	const char *collation;
 } IndexTermCreateMetadata;
 
 

@@ -67,8 +67,9 @@ typedef enum IndexTermMetadata
 	IndexTermMetadataCollationPrefixed = 0xFF,
 } IndexTermMetadata;
 
-bytea * WriteComparableIndexTermToWriter(pgbson_writer *writer, IndexTermMetadata
-										 termMetadata);
+bytea * WriteComparableIndexTermToWriter(const IndexTermCreateMetadata *createMetadata,
+										 pgbson_writer *writer,
+										 IndexTermMetadata termMetadata);
 void ComparableBufferToBsonIndexTerm(const uint8_t *buffer, uint32_t indexTermSize,
 									 BsonIndexTerm *bsonIndexTerm);
 

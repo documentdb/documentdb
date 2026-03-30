@@ -584,8 +584,35 @@ gin_bson_index_term_to_bson(PG_FUNCTION_ARGS)
 }
 
 
+static void
+ParseCollationIfApplicable(bson_iter_t *docIterator, const char **collation,
+						   uint32_t *collationLength)
+{
+	if (bson_iter_next(docIterator))
+	{
+		if (strcmp(bson_iter_key(docIterator), "$collation") == 0)
+		{
+			if (!BSON_ITER_HOLDS_UTF8(docIterator))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg("$collation must be a string")));
+			}
+			*collation = bson_iter_utf8(docIterator, collationLength);
+		}
+		else
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"Unexpected extra field in bson index term document: %s",
+								bson_iter_key(docIterator))));
+		}
+	}
+}
+
+
 static bytea *
-GetIndexTermFromBsonDocument(bson_iter_t *documentIter)
+GetIndexTermFromBsonDocument(bson_iter_t *documentIter, const char **collation,
+							 uint32_t *collationLength, bool allowCollationField)
 {
 	pgbsonelement termElement = { 0 };
 	if (!bson_iter_next(documentIter))
@@ -623,6 +650,11 @@ GetIndexTermFromBsonDocument(bson_iter_t *documentIter)
 						errmsg("$flags must be a valid value in the flags range")));
 	}
 
+	if (allowCollationField)
+	{
+		ParseCollationIfApplicable(documentIter, collation, collationLength);
+	}
+
 	BsonIndexTerm indexTerm = { 0 };
 	indexTerm.termMetadata = (IndexTermMetadata) flagsValue;
 	IndexTermCreateMetadata createMetadata = { 0 };
@@ -633,6 +665,7 @@ GetIndexTermFromBsonDocument(bson_iter_t *documentIter)
 	createMetadata.isWildcard = false;
 	createMetadata.pathPrefix.string = "$";
 	createMetadata.pathPrefix.length = 1;
+	createMetadata.collation = *collation;
 
 	bool forceSetMetadata = true;
 	bytea *indexTermVal = BuildSerializedIndexTerm(&termElement, &createMetadata,
@@ -666,6 +699,8 @@ gin_bson_to_bsonindexterm(PG_FUNCTION_ARGS)
 {
 	pgbson *bson = PG_GETARG_PGBSON(0);
 
+	uint32_t collationLength = 0;
+	const char *collation = NULL;
 	bson_iter_t docIterator;
 	PgbsonInitIterator(bson, &docIterator);
 
@@ -688,6 +723,8 @@ gin_bson_to_bsonindexterm(PG_FUNCTION_ARGS)
 							errmsg("$$COMP must be an array")));
 		}
 
+		/* Fetch the collation if any for a composite term */
+		ParseCollationIfApplicable(&docIterator, &collation, &collationLength);
 		bytea *individualTerms[INDEX_MAX_KEYS] = { 0 };
 
 		bson_iter_t compIterator;
@@ -705,7 +742,12 @@ gin_bson_to_bsonindexterm(PG_FUNCTION_ARGS)
 									"bson index term must be serialized as a bson document")));
 			}
 
-			individualTerms[termIndex] = GetIndexTermFromBsonDocument(&docIter);
+			/* For composite terms, collation should only be top level */
+			bool allowCollationField = false;
+			individualTerms[termIndex] = GetIndexTermFromBsonDocument(&docIter,
+																	  &collation,
+																	  &collationLength,
+																	  allowCollationField);
 			termIndex++;
 		}
 
@@ -715,29 +757,17 @@ gin_bson_to_bsonindexterm(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		/* Reset iterator to first element */
+		/* Reset iterator to first element - allow collation specification here  */
+		bool allowCollationField = true;
 		PgbsonInitIterator(bson, &docIterator);
-		termValue = GetIndexTermFromBsonDocument(&docIterator);
+		termValue = GetIndexTermFromBsonDocument(&docIterator, &collation,
+												 &collationLength, allowCollationField);
 	}
 
-	if (bson_iter_next(&docIterator))
+	if (collation != NULL)
 	{
-		BsonIterToPgbsonElement(&docIterator, &indexElement);
-		if (strcmp(indexElement.path, "$collation") == 0)
-		{
-			uint32_t collationLength = indexElement.bsonValue.value.v_utf8.len;
-			const char *collation = indexElement.bsonValue.value.v_utf8.str;
-
-			/* Prepend collation to the index term */
-			termValue = FormCollatedIndexTerm(termValue, collation, collationLength);
-		}
-		else
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-							errmsg(
-								"Unexpected extra field in bson index term document: %s",
-								indexElement.path)));
-		}
+		/* Prepend collation to the index term */
+		termValue = FormCollatedIndexTerm(termValue, collation, collationLength);
 	}
 
 	PG_RETURN_POINTER(termValue);
@@ -2327,7 +2357,9 @@ BuildSerializedIndexTerm(pgbsonelement *indexElement, const
 		if (isValueOnly || IsIndexTermMetadataValueUndefined(termMetadata) ||
 			IsIndexTermMetadataValueMaybeUndefined(termMetadata))
 		{
-			bytea *result = WriteComparableIndexTermToWriter(&writer, termMetadata);
+			bytea *result = WriteComparableIndexTermToWriter(createMetadata,
+															 &writer,
+															 termMetadata);
 			if (result != NULL)
 			{
 				indexTerm->termMetadata = termMetadata;

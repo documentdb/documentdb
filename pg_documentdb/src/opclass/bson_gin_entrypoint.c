@@ -1176,6 +1176,9 @@ GetIndexTermMetadata(void *indexOptions)
 		bool allowValueOnly = false;
 		int32_t truncationLimit = options->indexTermTruncateLimit;
 		uint32_t wildcardIndexTruncatedPathLimit = UINT32_MAX;
+		const char *collation = NULL;
+		uint32_t collationStringLength = 0;
+		Get_Index_Collation_Option(options, collation, collation, collationStringLength);
 		if (options->type == IndexOptionsType_SinglePath)
 		{
 			/* For single path indexes, we can elide the index path prefix */
@@ -1237,7 +1240,8 @@ GetIndexTermMetadata(void *indexOptions)
 				   .isWildcard = isWildcard,
 				   .isWildcardProjection = isWildcardProjection,
 				   .indexVersion = options->version,
-				   .allowValueOnly = allowValueOnly
+				   .allowValueOnly = allowValueOnly,
+				   .collation = collation
 		};
 	}
 
@@ -1247,7 +1251,8 @@ GetIndexTermMetadata(void *indexOptions)
 			   .pathPrefix = { 0 },
 			   .isWildcard = false,
 			   .isWildcardProjection = false,
-			   .indexVersion = options->version
+			   .indexVersion = options->version,
+			   .collation = NULL,
 	};
 }
 

@@ -188,4 +188,183 @@ SELECT id,
 FROM comparable_indexterm_test_schema.test_neg_int64_boundary
 ORDER BY id;
 
+-- ===================================================================
+-- Collation tests for comparable terms
+-- When a collation is set, string ordering depends on locale rules
+-- (not raw byte ordering), so strings must NOT get comparable terms.
+-- However, non-string types (numbers, booleans, dates, OIDs, etc.)
+-- are unaffected by collation and should still get comparable terms.
+--
+-- Collated term format: 0xFF | collation_string | 0x00 | metadata | term_data
+-- For "en-US-u-ks-level2" collation (17 chars), the metadata byte is at offset 19
+-- (1 byte for 0xFF + 17 bytes "en-US-u-ks-level2" + 1 byte null terminator).
+-- ===================================================================
+SET documentdb.enableComparableTerms TO on;
+
+CREATE TABLE comparable_indexterm_test_schema.test_collation (id serial, data bson);
+INSERT INTO comparable_indexterm_test_schema.test_collation (data) VALUES
+    -- Strings: should be comparable without collation, ValueOnly with collation
+    ('{ "$": "apple", "$flags": 5 }'),
+    ('{ "$": "apple", "$flags": 5, "$collation": "en-US-u-ks-level2" }'),
+    ('{ "$": "banana", "$flags": 5 }'),
+    ('{ "$": "banana", "$flags": 5, "$collation": "en-US-u-ks-level2" }'),
+    ('{ "$": "cherry", "$flags": 5 }'),
+    ('{ "$": "cherry", "$flags": 5, "$collation": "en-US-u-ks-level2" }'),
+    ('{ "$": "", "$flags": 5 }'),
+    ('{ "$": "", "$flags": 5, "$collation": "en-US-u-ks-level2" }'),
+    -- Numbers: should be comparable regardless of collation
+    ('{ "$": { "$numberInt": "42" }, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "42" }, "$flags": 5, "$collation": "en-US-u-ks-level2" }'),
+    ('{ "$": { "$numberInt": "-7" }, "$flags": 5 }'),
+    ('{ "$": { "$numberInt": "-7" }, "$flags": 5, "$collation": "en-US-u-ks-level2" }'),
+    ('{ "$": { "$numberDouble": "3.14" }, "$flags": 5 }'),
+    ('{ "$": { "$numberDouble": "3.14" }, "$flags": 5, "$collation": "en-US-u-ks-level2" }'),
+    ('{ "$": { "$numberLong": "123456789" }, "$flags": 5 }'),
+    ('{ "$": { "$numberLong": "123456789" }, "$flags": 5, "$collation": "en-US-u-ks-level2" }'),
+    -- Booleans: should be comparable regardless of collation
+    ('{ "$": true, "$flags": 5 }'),
+    ('{ "$": true, "$flags": 5, "$collation": "en-US-u-ks-level2" }'),
+    ('{ "$": false, "$flags": 5 }'),
+    ('{ "$": false, "$flags": 5, "$collation": "en-US-u-ks-level2" }'),
+    -- Null: should be comparable regardless of collation
+    ('{ "$": null, "$flags": 5 }'),
+    ('{ "$": null, "$flags": 5, "$collation": "en-US-u-ks-level2" }'),
+    -- DateTime: should be comparable regardless of collation
+    ('{ "$": { "$date": { "$numberLong": "1627846267000" } }, "$flags": 5 }'),
+    ('{ "$": { "$date": { "$numberLong": "1627846267000" } }, "$flags": 5, "$collation": "en-US-u-ks-level2" }'),
+    -- OID: should be comparable regardless of collation
+    ('{ "$": { "$oid": "507f1f77bcf86cd799439011" }, "$flags": 5 }'),
+    ('{ "$": { "$oid": "507f1f77bcf86cd799439011" }, "$flags": 5, "$collation": "en-US-u-ks-level2" }'),
+    -- Timestamp: should be comparable regardless of collation
+    ('{ "$": { "$timestamp": { "t": 1627846267, "i": 1 } }, "$flags": 5 }'),
+    ('{ "$": { "$timestamp": { "t": 1627846267, "i": 1 } }, "$flags": 5, "$collation": "en-US-u-ks-level2" }'),
+    -- MinKey/MaxKey: should be comparable regardless of collation
+    ('{ "$": { "$minKey": 1 }, "$flags": 5 }'),
+    ('{ "$": { "$minKey": 1 }, "$flags": 5, "$collation": "en-US-u-ks-level2" }'),
+    ('{ "$": { "$maxKey": 1 }, "$flags": 5 }'),
+    ('{ "$": { "$maxKey": 1 }, "$flags": 5, "$collation": "en-US-u-ks-level2" }');
+
+-- Verify term format: non-collated terms have the metadata as the first byte.
+-- Collated terms start with 0xFF (255) and have the actual metadata after
+-- the collation prefix. For "en-US-u-ks-level2" (17 chars), metadata is at byte offset 19.
+-- Strings with collation should have ValueOnly metadata (0x05);
+-- all other types should have ComparableV1 (0x07) regardless of collation.
+SELECT id,
+    CASE WHEN id % 2 = 1 THEN 'no_collation' ELSE 'en-US-u-ks-level2' END AS collation_setting,
+    get_byte(documentdb_api_internal.bson_to_bsonindexterm(data)::bytea, 0) AS first_byte,
+    CASE
+        WHEN id % 2 = 0
+        THEN get_byte(documentdb_api_internal.bson_to_bsonindexterm(data)::bytea, 19)
+        ELSE get_byte(documentdb_api_internal.bson_to_bsonindexterm(data)::bytea, 0)
+    END AS metadata_byte,
+    CASE
+        WHEN id % 2 = 0 THEN
+            CASE get_byte(documentdb_api_internal.bson_to_bsonindexterm(data)::bytea, 19)
+                WHEN 7 THEN 'ComparableV1'
+                WHEN 5 THEN 'ValueOnly'
+                ELSE 'Other'
+            END
+        ELSE
+            CASE get_byte(documentdb_api_internal.bson_to_bsonindexterm(data)::bytea, 0)
+                WHEN 7 THEN 'ComparableV1'
+                WHEN 5 THEN 'ValueOnly'
+                ELSE 'Other'
+            END
+    END AS term_type
+FROM comparable_indexterm_test_schema.test_collation
+ORDER BY id;
+
+-- Roundtrip test: all values must roundtrip correctly.
+-- Collated terms preserve the $collation field through roundtrip.
+SELECT id,
+    CASE WHEN id % 2 = 1 THEN 'no_collation' ELSE 'en-US-u-ks-level2' END AS collation_setting,
+    (documentdb_api_internal.bsonindexterm_to_bson(
+        documentdb_api_internal.bson_to_bsonindexterm(data)))::bson operator(documentdb_core.=) data AS round_trips
+FROM comparable_indexterm_test_schema.test_collation
+ORDER BY id;
+
+-- Ordering test: non-collated comparable string terms (0x07) should have
+-- btree ordering match binary ordering.
+-- Should return 0 rows (no mismatches).
+SELECT l.id AS left_id, r.id AS right_id,
+    (l.term < r.term) AS btree_lt,
+    (l.term::bytea < r.term::bytea) AS binary_lt
+FROM (SELECT id, documentdb_api_internal.bson_to_bsonindexterm(data) AS term
+      FROM comparable_indexterm_test_schema.test_collation
+      WHERE id IN (1, 3, 5, 7)) l,  -- non-collated strings only
+     (SELECT id, documentdb_api_internal.bson_to_bsonindexterm(data) AS term
+      FROM comparable_indexterm_test_schema.test_collation
+      WHERE id IN (1, 3, 5, 7)) r
+WHERE l.id < r.id
+  AND (l.term < r.term) != (l.term::bytea < r.term::bytea)
+ORDER BY l.id, r.id;
+
+-- Ordering test: collated non-string types should sort in the same order
+-- as their non-collated counterparts (btree comparison).
+SELECT
+    nc.id AS non_collated_id, c.id AS collated_id,
+    (nc.term < nc2.term) AS nc_btree_lt,
+    (c.term < c2.term) AS c_btree_lt,
+    (nc.term < nc2.term) = (c.term < c2.term) AS order_matches
+FROM
+    (SELECT id, documentdb_api_internal.bson_to_bsonindexterm(data) AS term
+     FROM comparable_indexterm_test_schema.test_collation WHERE id = 9) nc,   -- int 42 no collation
+    (SELECT id, documentdb_api_internal.bson_to_bsonindexterm(data) AS term
+     FROM comparable_indexterm_test_schema.test_collation WHERE id = 11) nc2,  -- int -7 no collation
+    (SELECT id, documentdb_api_internal.bson_to_bsonindexterm(data) AS term
+     FROM comparable_indexterm_test_schema.test_collation WHERE id = 10) c,   -- int 42 with collation
+    (SELECT id, documentdb_api_internal.bson_to_bsonindexterm(data) AS term
+     FROM comparable_indexterm_test_schema.test_collation WHERE id = 12) c2;  -- int -7 with collation
+
+-- ===================================================================
+-- Collation with descending terms
+-- Verify that descending terms also respect collation rules:
+-- strings fall back to DescValueOnly (0x85), non-strings stay
+-- DescComparableV1 (0x87). Collated terms have 0xFF prefix.
+-- ===================================================================
+CREATE TABLE comparable_indexterm_test_schema.test_collation_desc (id serial, data bson);
+INSERT INTO comparable_indexterm_test_schema.test_collation_desc (data) VALUES
+    -- Descending strings: comparable without collation (0x87), ValueOnly with (0x85)
+    ('{ "$": "hello", "$flags": 133 }'),
+    ('{ "$": "hello", "$flags": 133, "$collation": "en-US-u-ks-level2" }'),
+    -- Descending numbers: comparable regardless of collation (0x87)
+    ('{ "$": { "$numberInt": "99" }, "$flags": 133 }'),
+    ('{ "$": { "$numberInt": "99" }, "$flags": 133, "$collation": "en-US-u-ks-level2" }'),
+    -- Descending booleans: comparable regardless of collation (0x87)
+    ('{ "$": true, "$flags": 133 }'),
+    ('{ "$": true, "$flags": 133, "$collation": "en-US-u-ks-level2" }');
+
+SELECT id,
+    CASE WHEN id % 2 = 1 THEN 'no_collation' ELSE 'en-US-u-ks-level2' END AS collation_setting,
+    get_byte(documentdb_api_internal.bson_to_bsonindexterm(data)::bytea, 0) AS first_byte,
+    CASE
+        WHEN id % 2 = 0
+        THEN get_byte(documentdb_api_internal.bson_to_bsonindexterm(data)::bytea, 19)
+        ELSE get_byte(documentdb_api_internal.bson_to_bsonindexterm(data)::bytea, 0)
+    END AS metadata_byte,
+    CASE
+        WHEN id % 2 = 0 THEN
+            CASE get_byte(documentdb_api_internal.bson_to_bsonindexterm(data)::bytea, 19)
+                WHEN 135 THEN 'DescComparableV1'
+                WHEN 133 THEN 'DescValueOnly'
+                ELSE 'Other'
+            END
+        ELSE
+            CASE get_byte(documentdb_api_internal.bson_to_bsonindexterm(data)::bytea, 0)
+                WHEN 135 THEN 'DescComparableV1'
+                WHEN 133 THEN 'DescValueOnly'
+                ELSE 'Other'
+            END
+    END AS term_type
+FROM comparable_indexterm_test_schema.test_collation_desc
+ORDER BY id;
+
+-- Roundtrip for descending collation terms
+SELECT id,
+    CASE WHEN id % 2 = 1 THEN 'no_collation' ELSE 'en-US-u-ks-level2' END AS collation_setting,
+    (documentdb_api_internal.bsonindexterm_to_bson(
+        documentdb_api_internal.bson_to_bsonindexterm(data)))::bson operator(documentdb_core.=) data AS round_trips
+FROM comparable_indexterm_test_schema.test_collation_desc
+ORDER BY id;
+
 DROP SCHEMA comparable_indexterm_test_schema CASCADE;

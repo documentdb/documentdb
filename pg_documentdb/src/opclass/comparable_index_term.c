@@ -14,6 +14,7 @@
 #include <port/pg_bswap.h>
 
 #include "opclass/bson_gin_index_term_private.h"
+#include "collation/collation.h"
 
 
 #define MAX_FULL_FIDELITY_INT64 ((int64_t) 1 << 52)
@@ -216,7 +217,8 @@ EncodeSortableUint32(uint8_t *buffer, uint32_t value)
 
 
 bytea *
-WriteComparableIndexTermToWriter(pgbson_writer *writer, IndexTermMetadata termMetadata)
+WriteComparableIndexTermToWriter(const IndexTermCreateMetadata *createMetadata,
+								 pgbson_writer *writer, IndexTermMetadata termMetadata)
 {
 	IndexTermMetadata writtenMetadata;
 	switch (termMetadata)
@@ -321,6 +323,12 @@ WriteComparableIndexTermToWriter(pgbson_writer *writer, IndexTermMetadata termMe
 		case BSON_TYPE_UTF8:
 		case BSON_TYPE_SYMBOL:
 		{
+			if (IsCollationValid(createMetadata->collation))
+			{
+				/* Exclude strings from memcmp terms if collation is valid */
+				return NULL;
+			}
+
 			/* metadata code, sort code, string and the trailing \0 */
 			Size requiredSize = VARHDRSZ + 2 + currentValue.value.v_utf8.len + 1;
 			bytea *buffer = palloc(requiredSize);
