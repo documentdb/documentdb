@@ -178,6 +178,11 @@ bool EnableCompositeShardDocumentTerms = DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT
 bool EnableCompositeWildcardSkipEmptyEntries =
 	DEFAULT_ENABLE_COMPOSITE_WILDCARD_SKIP_EMPTY_ENTRIES;
 
+/* Added in v111, Pending stabilization */
+#define DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS false
+bool EnablePerCollectionPlannerStatistics =
+	DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS;
+
 /* Added in v111, enabled in v111, remove after v114 */
 #define DEFAULT_ENABLE_ORDERED_COMPOSITE_OPERATOR_SCAN true
 bool EnableOrderedCompositeOperatorScan = DEFAULT_ENABLE_ORDERED_COMPOSITE_OPERATOR_SCAN;
@@ -1002,6 +1007,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable new min and max aggregate optimizations."),
 		NULL, &EnableNewMinMaxAccumulators,
 		DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enablePerCollectionPlannerStatistics", newGucPrefix),
+		gettext_noop(
+			"Whether to enable per-collection planner statistics."),
+		NULL, &EnablePerCollectionPlannerStatistics,
+		DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

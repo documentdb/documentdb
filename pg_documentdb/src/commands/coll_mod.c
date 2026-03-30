@@ -35,6 +35,7 @@
 extern bool EnablePrepareUnique;
 extern bool EnableCollModUnique;
 extern bool ForceUpdateIndexInline;
+extern bool EnablePerCollectionPlannerStatistics;
 
 extern Datum command_reindex_index_background_internal(PG_FUNCTION_ARGS);
 
@@ -82,6 +83,8 @@ typedef struct
 	/* The validation action for the collection */
 	char *validationAction;
 
+	bson_value_t plannerStatistics;
+
 	/* TODO: Add more options when they are supported e.g.: Validators etc */
 } CollModOptions;
 
@@ -108,6 +111,9 @@ typedef enum CollModSpecFlags
 
 	/* reindex option */
 	HAS_INDEX_OPTION_REINDEX = 1 << 10,
+
+	/* Per-collection planner statistics */
+	HAS_COLLECTION_PLANNER_STATISTICS = 1 << 11,
 
 	/* TODO: More OPTIONS to follow */
 } CollModSpecFlags;
@@ -271,6 +277,27 @@ command_coll_mod(PG_FUNCTION_ARGS)
 		HandleColocation(collection, &collModOptions.colocationOptions);
 	}
 
+	if (specFlags & HAS_COLLECTION_PLANNER_STATISTICS)
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_COLLMOD_COLLECTION_PLANNER_STATISTICS);
+		if (collection->viewDefinition != NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
+							errmsg("Cannot specify planner statistics on a view")));
+		}
+
+		if (!EnablePerCollectionPlannerStatistics ||
+			!IsClusterVersionAtleast(DocDB_V0, 111, 0))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+							errmsg("Per-collection planner statistics is not enabled")));
+		}
+
+		UpdateCollectionPlannerStatistics(collection->collectionId,
+										  BsonValueAsBool(
+											  &collModOptions.plannerStatistics));
+	}
+
 	if (specFlags & HAS_VALIDATION_OPTION)
 	{
 		ReportFeatureUsage(FEATURE_COMMAND_COLLMOD_VALIDATION);
@@ -349,6 +376,12 @@ ParseSpecSetCollModOptions(const pgbson *collModSpec,
 			EnsureTopLevelFieldType("collMod.colocation", &iter, BSON_TYPE_DOCUMENT);
 			collModOptions->colocationOptions = *value;
 			specFlags |= HAS_COLOCATION;
+		}
+		else if (strcmp(key, "enableStats") == 0)
+		{
+			EnsureTopLevelFieldType("collMod.enableStats", &iter, BSON_TYPE_BOOL);
+			collModOptions->plannerStatistics = *value;
+			specFlags |= HAS_COLLECTION_PLANNER_STATISTICS;
 		}
 		else if (strcmp(key, "validator") == 0)
 		{

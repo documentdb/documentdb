@@ -9,25 +9,35 @@
  */
 #include <postgres.h>
 #include <fmgr.h>
+#include <miscadmin.h>
 #include <utils/lsyscache.h>
+#include <catalog/pg_collation.h>
 #include <nodes/pathnodes.h>
+#include <nodes/makefuncs.h>
 #include <utils/selfuncs.h>
+#include <parser/parsetree.h>
+#include <optimizer/pathnode.h>
 #include <metadata/metadata_cache.h>
 #include <planner/mongo_query_operator.h>
 
 #include "query/bson_dollar_selectivity.h"
 #include "aggregation/bson_query_common.h"
+#include "utils/docdb_make_funcs.h"
+#include "utils/version_utils.h"
 
+extern bool EnablePerCollectionPlannerStatistics;
 extern bool EnableCompositeIndexPlanner;
 extern bool LowSelectivityForLookup;
 
 static double GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double
-									   defaultExprSelectivity);
+									   defaultExprSelectivity,
+									   pgbsonelement *outputDollarElement);
 
 static double GetDisableStatisticSelectivity(List *args, double
 											 defaultDisabledSelectivity);
 
 PG_FUNCTION_INFO_V1(bson_dollar_selectivity);
+PG_FUNCTION_INFO_V1(bson_stats_project);
 
 
 static inline bool
@@ -67,6 +77,65 @@ bson_dollar_selectivity(PG_FUNCTION_ARGS)
 }
 
 
+inline static bool
+EnablePlannerCostSelectivityFromRelOptInfoCore(PlannerInfo *planner, RelOptInfo *rel,
+											   bool *isPerCollectionStatsEnabled)
+{
+	*isPerCollectionStatsEnabled = false;
+	bool enableOperatorSelectivity = EnableCompositeIndexPlanner;
+	if (EnablePerCollectionPlannerStatistics &&
+		IsClusterVersionAtleast(DocDB_V0, 111, 0) &&
+		rel != NULL)
+	{
+		*isPerCollectionStatsEnabled = list_length(rel->statlist) > 0;
+		enableOperatorSelectivity = enableOperatorSelectivity ||
+									*isPerCollectionStatsEnabled;
+	}
+
+	return enableOperatorSelectivity;
+}
+
+
+bool
+EnablePlannerCostSelectivityFromRelOptInfo(PlannerInfo *planner, RelOptInfo *rel)
+{
+	bool isPerCollectionStatsEnabled = false;
+	return EnablePlannerCostSelectivityFromRelOptInfoCore(planner, rel,
+														  &isPerCollectionStatsEnabled);
+}
+
+
+inline static bool
+EnablePlannerCostSelectivityExtended(PlannerInfo *planner, List *args,
+									 bool *isPerCollectionStatsEnabled)
+{
+	RelOptInfo *rel = NULL;
+	if (EnablePerCollectionPlannerStatistics &&
+		IsClusterVersionAtleast(DocDB_V0, 111, 0) &&
+		list_length(args) > 0)
+	{
+		Expr *firstArg = linitial(args);
+		if (IsA(firstArg, Var))
+		{
+			Var *firstVar = castNode(Var, firstArg);
+			rel = find_base_rel(planner, firstVar->varno);
+		}
+	}
+
+	return EnablePlannerCostSelectivityFromRelOptInfoCore(planner, rel,
+														  isPerCollectionStatsEnabled);
+}
+
+
+bool
+EnablePlannerCostSelectivity(PlannerInfo *planner, List *args)
+{
+	bool isPerCollectionStatsEnabled = false;
+	return EnablePlannerCostSelectivityExtended(planner, args,
+												&isPerCollectionStatsEnabled);
+}
+
+
 double
 GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 							 List *args, Oid collation, int varRelId,
@@ -88,26 +157,58 @@ GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 			 * yields a selectivity of 1.0 for small docs.
 			 * TODO: Once elemMatch runtime selectivity is enabled - remove this logic.
 			 */
+			pgbsonelement elemMatchElement;
 			return GetStatisticsNoStatsData(args, selectivityOpExpr,
-											defaultExprSelectivity);
+											defaultExprSelectivity, &elemMatchElement);
 		}
 	}
 
-	if (!EnableCompositeIndexPlanner)
+	bool isPerCollectionStatsEnabled = false;
+	if (!EnablePlannerCostSelectivityExtended(planner, args,
+											  &isPerCollectionStatsEnabled))
 	{
 		return GetDisableStatisticSelectivity(args, defaultExprSelectivity);
 	}
 
+	pgbsonelement dollarElement;
 	double defaultInputSelectivity = GetStatisticsNoStatsData(args, selectivityOpExpr,
-															  defaultExprSelectivity);
+															  defaultExprSelectivity,
+															  &dollarElement);
 
 	/*
 	 * This is Postgres's default selectivity implementation that looks at statistics
 	 * and gets the Most common values/ histograms and gets the overall selectivity
 	 * from the raw table.
 	 */
-	double selectivity = generic_restriction_selectivity(
-		planner, selectivityOpExpr, collation, args, varRelId, defaultInputSelectivity);
+	double selectivity;
+	if (isPerCollectionStatsEnabled &&
+		list_length(args) == 2 && dollarElement.bsonValue.value_type != BSON_TYPE_EOD)
+	{
+		/* update the args to contain the right value for the LHS to pick up the selectivity */
+		Const *pathValue = MakeTextConst(dollarElement.path,
+										 dollarElement.pathLength);
+		Const *bsonConst = MakeBsonConst(BsonValueToDocumentPgbson(
+											 &dollarElement.bsonValue));
+		List *pathArgs = list_make2(linitial(args), pathValue);
+		Node *updatedExpr = (Node *) makeFuncExpr(BsonStatsProjectFuncOid(),
+												  BsonTypeId(), pathArgs,
+												  InvalidOid,
+												  DEFAULT_COLLATION_OID,
+												  COERCE_EXPLICIT_CALL);
+		List *newArgs = list_make2(updatedExpr, bsonConst);
+		selectivity = generic_restriction_selectivity(
+			planner, selectivityOpExpr, collation, newArgs, varRelId,
+			defaultInputSelectivity);
+		list_free_deep(newArgs);
+		list_free(pathArgs);
+		pfree(pathValue);
+	}
+	else
+	{
+		selectivity = generic_restriction_selectivity(
+			planner, selectivityOpExpr, collation, args, varRelId,
+			defaultInputSelectivity);
+	}
 
 	return selectivity;
 }
@@ -118,8 +219,10 @@ GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
  * implementing selectivity.
  */
 static double
-GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double defaultExprSelectivity)
+GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double defaultExprSelectivity,
+						 pgbsonelement *outputDollarElement)
 {
+	outputDollarElement->bsonValue.value_type = BSON_TYPE_EOD;
 	if (list_length(args) != 2)
 	{
 		/* this is not one of the default operators - return Postgres's default values */
@@ -174,6 +277,7 @@ GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double defaultExprSe
 	PgbsonToSinglePgbsonElement(
 		DatumGetPgBson(secondConst->constvalue), &dollarElement);
 
+	*outputDollarElement = dollarElement;
 	switch (indexStrategy)
 	{
 		case BSON_INDEX_STRATEGY_DOLLAR_EQUAL:
@@ -292,4 +396,51 @@ GetDisableStatisticSelectivity(List *args, double defaultExprSelectivity)
 		/* These were the default Selectivity value for $operators */
 		return LowSelectivity;
 	}
+}
+
+
+/*
+ * This is the projection function that managed statistics for filters in the documents table.
+ * This provides a similar functionality to expression indexes against documentdb indexes for stats collections.
+ * Note: This varies from the projection function since allocations here must be managed extremely carefully
+ * and must be freed agressively to prevent OOMs in Analyze.
+ * Note that this OOM is fixed in Pg17 but any prior versions will need to exercise caution.
+ */
+Datum
+bson_stats_project(PG_FUNCTION_ARGS)
+{
+	pgbson *document = PG_GETARG_PGBSON_PACKED(0);
+	text *queryPath = PG_GETARG_TEXT_PP(1);
+
+	char *queryString = text_to_cstring(queryPath);
+
+	/* For now, we do direct projection of the incoming path. Any intermediate arrays
+	 * are not handled at the moment.
+	 * TODO: handle intermediate array paths as well.'
+	 * TODO: This is also lossy on array path indexes (e.g. a.b.0.1 will track as a field of 0): Fix this as well
+	 */
+	bson_iter_t iter;
+	pgbson *resultBson;
+	if (PgbsonInitIteratorAtPath(document, queryString, &iter))
+	{
+		pgbson_writer writer;
+		PgbsonWriterInit(&writer);
+		PgbsonWriterAppendValue(&writer, "", 0, bson_iter_value(&iter));
+		resultBson = PgbsonWriterGetPgbson(&writer);
+	}
+	else
+	{
+		resultBson = NULL;
+	}
+
+	pfree(queryString);
+	PG_FREE_IF_COPY(document, 0);
+	PG_FREE_IF_COPY(queryPath, 1);
+
+	if (resultBson == NULL)
+	{
+		PG_RETURN_NULL();
+	}
+
+	PG_RETURN_POINTER(resultBson);
 }
