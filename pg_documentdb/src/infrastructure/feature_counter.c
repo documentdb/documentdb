@@ -315,6 +315,8 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_COMMAND_COLLMOD_INDEX_HIDDEN] = "collMod_index_hidden",
 	[FEATURE_COMMAND_COLLMOD_INDEX_PREPARE_UNIQUE] = "collMod_index_prepare_unique",
 	[FEATURE_COMMAND_COLLMOD_UNIQUE] = "collMod_index_unique",
+	[FEATURE_COMMAND_COLLMOD_COLLECTION_PLANNER_STATISTICS] =
+		"collMod_collection_planner_statistics",
 
 	/* Feature Connection Status */
 	[FEATURE_CONNECTION_STATUS] = "connection_status",

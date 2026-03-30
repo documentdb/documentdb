@@ -88,6 +88,7 @@ void extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double
 									double *indexCorrelation,
 									double *indexPages, IndexAmRoutine *coreRoutine,
 									bool forceIndexPushdownCostToZero,
+									bool enableCompositePlannerCosts,
 									OrderedCostEstimateCoreFunc
 									orderedCostEstimateCoreFunc);
 

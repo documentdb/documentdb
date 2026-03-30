@@ -1235,6 +1235,9 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* Gets the oid of the bsonquery[] type */
 	Oid BsonQueryArrayTypeOid;
+
+	/* OID of the ApiInternalSchemaName.bson_stats_project function */
+	Oid BsonStatsProjectFunctionOid;
 } DocumentDBApiOidCacheData;
 
 static DocumentDBApiOidCacheData Cache;
@@ -3965,6 +3968,15 @@ BsonShiftFunctionOid(void)
 		"bson_shift",
 		BsonTypeId(), INT4OID,
 		BsonTypeId());
+}
+
+
+Oid
+BsonStatsProjectFuncOid(void)
+{
+	return GetBinaryOperatorFunctionIdWithSchema(
+		&Cache.BsonStatsProjectFunctionOid,
+		"bson_stats_project", BsonTypeId(), TEXTOID, DocumentDBApiInternalSchemaName);
 }
 
 

@@ -35,6 +35,7 @@
 #include "utils/list_utils.h"
 #include "index_am/index_am_extend.h"
 #include "index_am/index_am_utils.h"
+#include "metadata/index.h"
 
 extern bool EnableNativeColocation;
 extern int ShardingMaxChunks;
@@ -43,6 +44,7 @@ extern char *ApiGucPrefixV2;
 extern bool EnableRbacCompliantSchemas;
 extern bool EnablePrepareUnique;
 extern bool ForceUpdateIndexInline;
+extern bool EnablePerCollectionPlannerStatistics;
 
 /* Metadata about shard keys - this is unchanged through
  * iterating though the query for the shard key.
@@ -1457,6 +1459,10 @@ ShardCollectionCore(ShardCollectionArgs *args)
 		existingExtendedIndexesCmds = GetExtendedIndexCreationCmds(collection);
 	}
 
+	bool isCollectionStatisticsEnabled = EnablePerCollectionPlannerStatistics &&
+										 CollectionHasStatisticsEnabled(
+		collection->collectionId);
+
 	int nargs = 3;
 	Oid argTypes[3] = { BsonTypeId(), TEXTOID, TEXTOID };
 	bool isNull = true;
@@ -1489,11 +1495,18 @@ ShardCollectionCore(ShardCollectionArgs *args)
 	char tmpDataTableName[NAMEDATALEN + 20];
 	sprintf(tmpDataTableName, "%s.%s_reshard", ApiDataSchemaName, collection->tableName);
 
+	/* Before sharding, drop stats (they're created after) */
+	if (isCollectionStatisticsEnabled)
+	{
+		bool disableStats = false;
+		UpdateCollectionPlannerStatistics(collection->collectionId, disableStats);
+	}
+
 	/* create a new table to reinsert the data into */
 	StringInfo queryInfo = makeStringInfo();
 	bool readOnly = false;
 	appendStringInfo(queryInfo,
-					 "CREATE TABLE %s (LIKE %s INCLUDING ALL EXCLUDING INDEXES)",
+					 "CREATE TABLE %s (LIKE %s INCLUDING ALL EXCLUDING INDEXES EXCLUDING STATISTICS)",
 					 tmpDataTableName, qualifiedDataTableName);
 	ExtensionExecuteQueryViaSPI(queryInfo->data, readOnly, SPI_OK_UTILITY, &isNull);
 
@@ -1818,6 +1831,13 @@ ShardCollectionCore(ShardCollectionArgs *args)
 			RunPrepareUniqueForCollectionIndexes(args->databaseName,
 												 args->collectionName,
 												 prepareUniqueNamesArray);
+		}
+
+		if (isCollectionStatisticsEnabled)
+		{
+			/* Enable statistics on the collection if it was enabled before. */
+			UpdateCollectionPlannerStatistics(collection->collectionId,
+											  isCollectionStatisticsEnabled);
 		}
 	}
 }

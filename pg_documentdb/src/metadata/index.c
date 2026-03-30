@@ -19,8 +19,12 @@
 #include <utils/syscache.h>
 #include <nodes/makefuncs.h>
 #include <catalog/namespace.h>
-
+#include <utils/relcache.h>
 #include <miscadmin.h>
+#include <statistics/statistics.h>
+#include <catalog/pg_statistic_ext.h>
+#include <catalog/dependency.h>
+
 #include "api_hooks.h"
 #include "io/bson_core.h"
 #include "query/bson_compare.h"
@@ -289,8 +293,8 @@ FindIndexWithSpecOptions(uint64 collectionId, const IndexSpec *targetIndexSpec)
  * returns an IndexDetails object if found or NULL if there is
  * no such index.
  */
-IndexDetails *
-IndexIdGetIndexDetails(int indexId)
+static IndexDetails *
+IndexIdGetIndexDetailsCore(int indexId, bool includeCurrentTransactions)
 {
 	const char *cmdStr =
 		FormatSqlQuery(
@@ -307,7 +311,11 @@ IndexIdGetIndexDetails(int indexId)
 
 	/* all args are non-null */
 	char *argNulls = NULL;
-	bool readOnly = true;
+
+	/* readOnly only gives durably committed writes - for including current transactions
+	 * readonly needs to be false.
+	 */
+	bool readOnly = !includeCurrentTransactions;
 
 	int numValues = 3;
 	bool isNull[3];
@@ -328,6 +336,14 @@ IndexIdGetIndexDetails(int indexId)
 	indexDetails->isIndexBuildInProgress = DatumGetBool(results[2]);
 
 	return indexDetails;
+}
+
+
+IndexDetails *
+IndexIdGetIndexDetails(int indexId)
+{
+	bool includeCurrentTransactions = false;
+	return IndexIdGetIndexDetailsCore(indexId, includeCurrentTransactions);
 }
 
 
@@ -2899,4 +2915,389 @@ GetOptionsEquivalencyFromIndexOptions(HTAB *bsonElementHash,
 	}
 
 	return IndexOptionsEquivalency_Equivalent;
+}
+
+
+/*
+ * Checks if a collection has extended stats enabled. We do this by checking the index option
+ * for the primary key index in the index catalog.
+ */
+bool
+CollectionHasStatisticsEnabled(uint64 collectionId)
+{
+	/* Find the _id index (the primary key index for the collection) */
+	IndexDetails *details = IndexNameGetIndexDetails(collectionId, "_id_");
+	if (details == NULL)
+	{
+		return false;
+	}
+
+	pgbson *indexOptions = details->indexSpec.indexOptions;
+	if (indexOptions == NULL)
+	{
+		return false;
+	}
+
+	bson_iter_t iter;
+	if (!PgbsonInitIteratorAtPath(indexOptions, "statsEnabled", &iter))
+	{
+		return false;
+	}
+
+	return bson_iter_as_bool(&iter);
+}
+
+
+static void
+UpdateIndexStatisticsForPlannerStatisticsCore(uint64 collectionId, List *indexIdList,
+											  bool isIndexIdList)
+{
+	StringInfoData indexExprStringInfo;
+	initStringInfo(&indexExprStringInfo);
+	ListCell *cell;
+	foreach(cell, indexIdList)
+	{
+		int indexId;
+		if (isIndexIdList)
+		{
+			indexId = lfirst_int(cell);
+		}
+		else
+		{
+			IndexDetails *innerDetails = lfirst(cell);
+
+			/* Double check that the details exist includin the current transaction
+			 * given the details, fetch the indexId and recheck the details.
+			 */
+			indexId = innerDetails->indexId;
+		}
+
+		bool includeCurrentTransaction = true;
+		IndexDetails *details = IndexIdGetIndexDetailsCore(indexId,
+														   includeCurrentTransaction);
+		if (details == NULL || details->indexSpec.indexKeyDocument == NULL)
+		{
+			continue;
+		}
+
+		/* Don't bother if it's a wildcard index */
+		if (details->indexSpec.indexWPDocument != NULL)
+		{
+			continue;
+		}
+
+		if (strcmp(details->indexSpec.indexName, "_id_") == 0)
+		{
+			/*
+			 * Don't create stats for _id index since it's always present
+			 * and is just on the object_id column.
+			 */
+			continue;
+		}
+
+		/* Create the stats object for this index */
+		resetStringInfo(&indexExprStringInfo);
+		appendStringInfo(&indexExprStringInfo,
+						 "CREATE STATISTICS IF NOT EXISTS %s."
+						 DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "_stats ON ",
+						 ApiDataSchemaName,
+						 details->indexId);
+
+		bson_iter_t iter;
+		bool isSupported = true;
+		bool hasKeys = false;
+		PgbsonInitIterator(details->indexSpec.indexKeyDocument, &iter);
+		const char *separator = "";
+
+		int numStatsColumns = 0;
+		while (bson_iter_next(&iter))
+		{
+			const char *key = bson_iter_key(&iter);
+			const bson_value_t *value = bson_iter_value(&iter);
+
+			/* Statistics only allows up to STATS_MAX_DIMENSIONS columns. */
+			if (numStatsColumns >= STATS_MAX_DIMENSIONS)
+			{
+				break;
+			}
+
+			if (!BsonValueIsNumber(value))
+			{
+				/* This is not a regular index - skip this index */
+				isSupported = false;
+				break;
+			}
+
+			/* Check for wildcard: not supported */
+			if (strstr(key, "$**") != NULL)
+			{
+				isSupported = false;
+				break;
+			}
+
+			hasKeys = true;
+			char *escapedKey = quote_literal_cstr(key);
+			appendStringInfo(&indexExprStringInfo,
+							 "%s %s.bson_stats_project(document, %s)", separator,
+							 ApiInternalSchemaNameV2,
+							 escapedKey);
+			pfree(escapedKey);
+			separator = ", ";
+			numStatsColumns++;
+		}
+
+		/* Root wildcard index or unsupported index (text, geospatial etc) - skip create */
+		if (!isSupported || !hasKeys)
+		{
+			continue;
+		}
+
+		appendStringInfo(&indexExprStringInfo,
+						 " FROM %s." DOCUMENT_DATA_TABLE_NAME_FORMAT,
+						 ApiDataSchemaName, collectionId);
+
+		bool readOnly = false;
+		bool isNull = false;
+		ExtensionExecuteQueryViaSPI(indexExprStringInfo.data, readOnly, SPI_OK_UTILITY,
+									&isNull);
+
+		bool missingOk = false;
+		char statsName[NAMEDATALEN];
+		sprintf(statsName, DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "_stats",
+				details->indexId);
+		List *statNamesList = list_make2(makeString(ApiDataSchemaName), makeString(
+											 statsName));
+		Oid statOid = get_statistics_object_oid(statNamesList, missingOk);
+
+		char indexName[NAMEDATALEN];
+		sprintf(indexName, DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT, details->indexId);
+		Oid indexOid = get_relname_relid(indexName, ApiDataNamespaceOid());
+
+		/* Once created, add a dependency from this stats to the main index. The dependency is marked auto so that the stat
+		 * object is automatically dropped when the main index is dropped.
+		 */
+		ObjectAddress statsAddr, indexAddr;
+		ObjectAddressSet(statsAddr, StatisticExtRelationId, statOid);
+		ObjectAddressSet(indexAddr, RelationRelationId, indexOid);
+		recordDependencyOn(&statsAddr, &indexAddr, DEPENDENCY_AUTO);
+	}
+}
+
+
+static void
+DropIndexStatisticsForPlannerStatisticsWithIndexDetails(uint64 collectionId,
+														List *indexDetailsList)
+{
+	StringInfoData indexExprStringInfo;
+	initStringInfo(&indexExprStringInfo);
+	ListCell *cell;
+	foreach(cell, indexDetailsList)
+	{
+		IndexDetails *details = lfirst(cell);
+		resetStringInfo(&indexExprStringInfo);
+		appendStringInfo(&indexExprStringInfo,
+						 "DROP STATISTICS IF EXISTS %s."
+						 DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "_stats",
+						 ApiDataSchemaName,
+						 details->indexId);
+		bool readOnly = false;
+		bool isNull = false;
+		ExtensionExecuteQueryViaSPI(indexExprStringInfo.data, readOnly, SPI_OK_UTILITY,
+									&isNull);
+	}
+}
+
+
+void
+DropIndexStatisticsForPlannerStatistics(uint64 collectionId, List *indexIdList)
+{
+	if (!CollectionHasStatisticsEnabled(collectionId))
+	{
+		return;
+	}
+
+	ListCell *cell;
+	List *indexDetailsList = NIL;
+	foreach(cell, indexIdList)
+	{
+		int indexId = lfirst_int(cell);
+
+		bool includeCurrentTransaction = true;
+		IndexDetails *details = IndexIdGetIndexDetailsCore(indexId,
+														   includeCurrentTransaction);
+		if (details != NULL)
+		{
+			indexDetailsList = lappend(indexDetailsList, details);
+		}
+	}
+	DropIndexStatisticsForPlannerStatisticsWithIndexDetails(collectionId,
+															indexDetailsList);
+	list_free_deep(indexDetailsList);
+}
+
+
+static void
+UpdateIdIndexToSetStatsState(uint64 collectionId, bool enableStats)
+{
+	StringInfoData queryStringInfo;
+	initStringInfo(&queryStringInfo);
+
+	appendStringInfo(&queryStringInfo,
+					 "SELECT index_id, index_spec FROM %s.collection_indexes"
+					 " WHERE collection_id = %lu AND (index_spec).index_name = '_id_' LIMIT 1 FOR UPDATE",
+					 ApiCatalogSchemaName, collectionId);
+
+	/* all args are non-null */
+	bool readOnly = false;
+	int numValues = 2;
+	bool isNull[2];
+	Datum results[2];
+	ExtensionExecuteMultiValueQueryViaSPI(queryStringInfo.data, readOnly,
+										  SPI_OK_SELECT, results, isNull,
+										  numValues);
+
+	if (isNull[0] || isNull[1])
+	{
+		ereport(ERROR, (errmsg(
+							"Could not find primary key index for collection. This is unexpected")));
+	}
+
+	IndexDetails indexDetails = { 0 };
+	indexDetails.indexId = DatumGetInt32(results[0]);
+	indexDetails.indexSpec = *DatumGetIndexSpec(results[1]);
+	indexDetails.collectionId = collectionId;
+
+	pgbson *indexOptions = indexDetails.indexSpec.indexOptions;
+	if (indexOptions == NULL)
+	{
+		indexOptions = PgbsonInitEmpty();
+	}
+
+	bson_iter_t iter;
+	pgbson_writer optionsWriter;
+	PgbsonWriterInit(&optionsWriter);
+	PgbsonInitIterator(indexOptions, &iter);
+	bool foundStatsEnabled = false;
+	while (bson_iter_next(&iter))
+	{
+		const char *key = bson_iter_key(&iter);
+		const bson_value_t *value = bson_iter_value(&iter);
+		if (strcmp(key, "statsEnabled") == 0)
+		{
+			foundStatsEnabled = true;
+
+			/* Skip writing the field if it's false (disabled) */
+			if (enableStats)
+			{
+				PgbsonWriterAppendBool(&optionsWriter, key, -1, true);
+			}
+		}
+		else
+		{
+			PgbsonWriterAppendValue(&optionsWriter, key, -1, value);
+		}
+	}
+
+	if (!foundStatsEnabled && enableStats)
+	{
+		PgbsonWriterAppendBool(&optionsWriter, "statsEnabled", -1, true);
+	}
+
+	if (IsPgbsonWriterEmptyDocument(&optionsWriter))
+	{
+		/* Handle empty document case */
+		indexDetails.indexSpec.indexOptions = NULL;
+	}
+	else
+	{
+		indexDetails.indexSpec.indexOptions = PgbsonWriterGetPgbson(&optionsWriter);
+	}
+
+	Datum indexSpecDatum = IndexSpecGetDatum(&indexDetails.indexSpec);
+	resetStringInfo(&queryStringInfo);
+	appendStringInfo(&queryStringInfo,
+					 "UPDATE %s.collection_indexes SET index_spec = $1"
+					 " WHERE index_id = %d",
+					 ApiCatalogSchemaName, indexDetails.indexId);
+
+	Oid argTypes[1] = { IndexSpecTypeId() };
+	Datum argValues[1] = { indexSpecDatum };
+	char argNulls[1] = { ' ' };
+	ExtensionExecuteQueryWithArgsViaSPI(queryStringInfo.data, 1, argTypes, argValues,
+										argNulls,
+										readOnly, SPI_OK_UPDATE, &isNull[0]);
+}
+
+
+void
+UpdateIndexStatisticsForPlannerStatistics(uint64 collectionId, List *indexIdList)
+{
+	/* First, given the collection_id, check if the collection has stats collection
+	 * enabled.
+	 */
+	if (!CollectionHasStatisticsEnabled(collectionId))
+	{
+		return;
+	}
+
+	bool isIndexIdList = true;
+	UpdateIndexStatisticsForPlannerStatisticsCore(collectionId, indexIdList,
+												  isIndexIdList);
+}
+
+
+static void
+EnableCollectionPlannerStatistics(uint64 collectionId)
+{
+	/* First set the collection as being stats enabled. This involves setting
+	 * a flag in the index options of the _id index for the collection. We use the
+	 * presence of this flag to determine whether to update stats for this collection or not.
+	 */
+	bool enabled = true;
+	UpdateIdIndexToSetStatsState(collectionId, enabled);
+
+	/* Next add stats for all indexes added to the collection */
+	bool includeIdIndex = false;
+	bool enableNestedDistribution = false;
+	List *indexIdList = CollectionIdGetIndexes(collectionId, includeIdIndex,
+											   enableNestedDistribution);
+	bool isIndexIdList = false;
+	UpdateIndexStatisticsForPlannerStatisticsCore(collectionId, indexIdList,
+												  isIndexIdList);
+	list_free_deep(indexIdList);
+}
+
+
+static void
+DisableCollectionPlannerStatistics(uint64 collectionId)
+{
+	/* First set the collection as being stats disabled. This involves setting
+	 * a flag in the index options of the _id index for the collection. We use the
+	 * presence of this flag to determine whether to update stats for this collection or not.
+	 */
+	bool enabled = false;
+	UpdateIdIndexToSetStatsState(collectionId, enabled);
+
+	/* Next add stats for all indexes added to the collection */
+	bool includeIdIndex = false;
+	bool enableNestedDistribution = false;
+	List *indexDetailsList = CollectionIdGetIndexes(collectionId, includeIdIndex,
+													enableNestedDistribution);
+	DropIndexStatisticsForPlannerStatisticsWithIndexDetails(collectionId,
+															indexDetailsList);
+	list_free_deep(indexDetailsList);
+}
+
+
+void
+UpdateCollectionPlannerStatistics(uint64 collectionId, bool enableStats)
+{
+	if (enableStats)
+	{
+		EnableCollectionPlannerStatistics(collectionId);
+	}
+	else
+	{
+		DisableCollectionPlannerStatistics(collectionId);
+	}
 }

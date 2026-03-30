@@ -470,4 +470,8 @@ Oid DocumentDBCoreBsonToBsonFunctionOId(void);
 /* Helper functions */
 TypeName * ParseTypeNameCore(const char *typeName);
 
+
+/* Statistics functions */
+Oid BsonStatsProjectFuncOid(void);
+
 #endif
