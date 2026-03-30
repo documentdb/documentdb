@@ -325,6 +325,11 @@ char * GetIndexQueueName(void);
 void CreateIndexQueueIfNotExists(bool includeOptions, bool includeDropCommandType);
 const char * GetIndexTypeFromKeyDocument(pgbson *keyDocument);
 
+void UpdateIndexStatisticsForPlannerStatistics(uint64 collectionId, List *indexIdList);
+void UpdateCollectionPlannerStatistics(uint64 collectionId, bool enableStats);
+void DropIndexStatisticsForPlannerStatistics(uint64 collectionId, List *indexIdList);
+bool CollectionHasStatisticsEnabled(uint64 collectionId);
+
 /* Static utilities */
 
 static inline bool
