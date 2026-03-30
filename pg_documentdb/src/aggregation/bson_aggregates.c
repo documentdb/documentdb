@@ -2199,7 +2199,6 @@ BsonMinMaxWithExprTransitionCore(PG_FUNCTION_ARGS, bool isMax)
 	/* Check for empty/missing property in document with BSON_TYPE_EOD */
 	if (evaluatedValue.value_type == BSON_TYPE_EOD)
 	{
-		list_free_deep(tracker.itemsToFree);
 		if (PG_ARGISNULL(0))
 		{
 			PG_RETURN_NULL();
@@ -2219,7 +2218,6 @@ BsonMinMaxWithExprTransitionCore(PG_FUNCTION_ARGS, bool isMax)
 									pstrdup(collationString) : NULL;
 		MemoryContextSwitchTo(oldContext);
 
-		list_free_deep(tracker.itemsToFree);
 		PG_RETURN_POINTER(newState);
 	}
 
@@ -2239,7 +2237,6 @@ BsonMinMaxWithExprTransitionCore(PG_FUNCTION_ARGS, bool isMax)
 	if (!shouldReplace)
 	{
 		/* Current state wins - no allocation needed */
-		list_free_deep(tracker.itemsToFree);
 		PG_RETURN_POINTER(existingState);
 	}
 
@@ -2249,7 +2246,6 @@ BsonMinMaxWithExprTransitionCore(PG_FUNCTION_ARGS, bool isMax)
 	bson_value_copy(&evaluatedValue, &existingState->value);
 	MemoryContextSwitchTo(oldContext);
 
-	list_free_deep(tracker.itemsToFree);
 	PG_RETURN_POINTER(existingState);
 }
 
@@ -2462,7 +2458,6 @@ bson_sum_avg_with_expr_transition(PG_FUNCTION_ARGS)
 	/* Skip EOD (missing field) and empty documents */
 	if (evaluatedValue.value_type == BSON_TYPE_EOD)
 	{
-		list_free_deep(tracker.itemsToFree);
 		PG_RETURN_POINTER(stateBytes);
 	}
 
@@ -2473,7 +2468,6 @@ bson_sum_avg_with_expr_transition(PG_FUNCTION_ARGS)
 		currentState->count++;
 	}
 
-	list_free_deep(tracker.itemsToFree);
 	PG_RETURN_POINTER(stateBytes);
 }
 
@@ -2552,7 +2546,6 @@ bson_sum_avg_with_expr_minvtransition(PG_FUNCTION_ARGS)
 
 	if (evaluatedValue.value_type == BSON_TYPE_EOD)
 	{
-		list_free_deep(tracker.itemsToFree);
 		PG_RETURN_POINTER(stateBytes);
 	}
 
@@ -2566,7 +2559,6 @@ bson_sum_avg_with_expr_minvtransition(PG_FUNCTION_ARGS)
 		currentState->count--;
 	}
 
-	list_free_deep(tracker.itemsToFree);
 	PG_RETURN_POINTER(stateBytes);
 }
 
