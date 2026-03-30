@@ -7,9 +7,32 @@
  */
 
 use std::path::Path;
+use std::time::Duration;
 
 use bson::doc;
 use documentdb_tests::test_setup::initialize;
+use mongodb::Client;
+use tokio::time::sleep;
+
+async fn wait_for_unix_client_ready(unix_client: &Client) -> Result<(), mongodb::error::Error> {
+    let mut last_error = None;
+
+    for _attempt in 0..20 {
+        match unix_client.list_database_names().await {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                last_error = Some(error);
+                sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+
+    let Some(error) = last_error else {
+        unreachable!("readiness loop should have returned early on success");
+    };
+
+    Err(error)
+}
 
 #[tokio::test]
 async fn test_unix_socket_enabled() -> Result<(), mongodb::error::Error> {
@@ -24,8 +47,7 @@ async fn test_unix_socket_enabled() -> Result<(), mongodb::error::Error> {
     let unix_client = unix.expect("Unix client should exist");
 
     // Verify we can connect and make requests
-    let db_names = unix_client.list_database_names().await;
-    db_names.unwrap();
+    wait_for_unix_client_ready(&unix_client).await?;
     Ok(())
 }
 
@@ -36,6 +58,7 @@ async fn test_tcp_and_unix_both_work() -> Result<(), mongodb::error::Error> {
         initialize::initialize_with_config_and_unix(Some(socket_path.to_owned())).await?;
 
     let unix_client = unix.expect("Unix client should exist");
+    wait_for_unix_client_ready(&unix_client).await?;
     let tcp_db = tcp.database("test_both");
     let unix_db = unix_client.database("test_both");
 
