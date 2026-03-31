@@ -5964,6 +5964,14 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 						errmsg("_id is missing from group specification")));
 	}
 
+	/* Group by is valid for pushdown iff it's a string expression of a path that's not a variable */
+	bool isGroupByValidForIndexPushdown =
+		idValue.value_type == BSON_TYPE_UTF8 &&
+		idValue.value.v_utf8.len > 1 &&
+		idValue.value.v_utf8.str[0] == '$' &&
+		idValue.value.v_utf8.str[1] != '$' &&
+		CanPushSortFilterToIndex(query, context);
+
 	pgbson *groupValue = BsonValueToDocumentPgbson(&idValue);
 
 
@@ -5975,22 +5983,36 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 	Oid bsonExpressionGetFunction;
 	Expr *groupIdDocumentExpr = GetDocumentExprForGroupAccumulatorValue(&idValue,
 																		origEntry->expr);
+
+	FuncExpr *groupFunc;
 	if (context->variableSpec != NULL)
 	{
 		bsonExpressionGetFunction = BsonExpressionGetWithLetFunctionOid();
 		groupArgs = list_make4(groupIdDocumentExpr, MakeBsonConst(groupValue),
 							   MakeBoolValueConst(true), context->variableSpec);
+		groupFunc = makeFuncExpr(
+			bsonExpressionGetFunction, BsonTypeId(), groupArgs, InvalidOid,
+			InvalidOid, COERCE_EXPLICIT_CALL);
+		if (isGroupByValidForIndexPushdown && context->mongoCollection != NULL &&
+			context->mongoCollection->shardKey != NULL &&
+			BsonTypeId() != DocumentDBCoreBsonTypeId())
+		{
+			groupFunc = makeFuncExpr(
+				DocumentDBCoreBsonToBsonFunctionOId(), BsonTypeId(), list_make1(
+					groupFunc),
+				InvalidOid,
+				InvalidOid, COERCE_EXPLICIT_CALL);
+		}
 	}
 	else
 	{
 		bsonExpressionGetFunction = BsonExpressionGetFunctionOid();
 		groupArgs = list_make3(groupIdDocumentExpr, MakeBsonConst(groupValue),
 							   MakeBoolValueConst(true));
+		groupFunc = makeFuncExpr(
+			bsonExpressionGetFunction, BsonTypeId(), groupArgs, InvalidOid,
+			InvalidOid, COERCE_EXPLICIT_CALL);
 	}
-
-	FuncExpr *groupFunc = makeFuncExpr(
-		bsonExpressionGetFunction, BsonTypeId(), groupArgs, InvalidOid,
-		InvalidOid, COERCE_EXPLICIT_CALL);
 
 	/* Now do the projector / accumulators
 	 * We do this in 2 stages to handle citus query generation.
@@ -6612,19 +6634,11 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 	grpcl->hashable = true;
 	query->groupClause = list_make1(grpcl);
 
-	/* Group by is valid for pushdown iff it's a string expression of a path that's not a variable */
-	bool isGroupByValidForIndexPushdown =
-		idValue.value_type == BSON_TYPE_UTF8 &&
-		idValue.value.v_utf8.len > 1 &&
-		idValue.value.v_utf8.str[0] == '$' &&
-		idValue.value.v_utf8.str[1] != '$';
-
 	/*
 	 * If there's an orderby pushdown to the index, add a full scan clause iff
 	 * the query has no filters yet.
 	 */
-	if (isGroupByValidForIndexPushdown &&
-		CanPushSortFilterToIndex(query, context))
+	if (isGroupByValidForIndexPushdown)
 	{
 		pgbsonelement sortElement = { 0 };
 		sortElement.path = idValue.value.v_utf8.str + 1;
