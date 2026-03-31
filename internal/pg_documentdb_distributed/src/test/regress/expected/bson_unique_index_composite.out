@@ -1062,6 +1062,7 @@ set documentdb.defaultUniqueIndexKeyhashOverride to 1;
 SET client_min_messages TO DEBUG1;
 -- works
 SELECT documentdb_api.insert_one('db', 'queryuniquecomposite', '{ "a": "thiskeyisalittlelargerthanthemaximumallowedsizeof60characters", "b": "thiskeyisalotorinotherwordsmuchmuchlargerthanthemaximumallowedsizeof60characters" }');
+DEBUG:  Using single insert with subtransaction
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1069,6 +1070,7 @@ SELECT documentdb_api.insert_one('db', 'queryuniquecomposite', '{ "a": "thiskeyi
 
 -- should succeed with hash collision and truncation
 SELECT documentdb_api.insert_one('db', 'queryuniquecomposite', '{ "a": "thiskeyisalittlelargerthanthemaximumallowedsizeof60characters2", "b": "thiskeyisalotorinotherwordsmuchmuchlargerthanthemaximumallowedsizeof60characters2" }');
+DEBUG:  Using single insert with subtransaction
 DEBUG:  Executing unique index runtime recheck.
                               insert_one                              
 ---------------------------------------------------------------------
@@ -1076,6 +1078,7 @@ DEBUG:  Executing unique index runtime recheck.
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'queryuniquecomposite', '{ "a": "thiskeyisalittlelargerthanthemaximumallowedsizeof60characters3", "b": "thiskeyisalotorinotherwordsmuchmuchlargerthanthemaximumallowedsizeof60characters3" }');
+DEBUG:  Using single insert with subtransaction
 DEBUG:  Executing unique index runtime recheck.
 DEBUG:  Executing unique index runtime recheck.
                               insert_one                              
@@ -1084,6 +1087,7 @@ DEBUG:  Executing unique index runtime recheck.
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'queryuniquecomposite', '{ "a": "thiskeyisalittlelargerthanthemaximumallowedsizeof60characters4", "b": "thiskeyisalotorinotherwordsmuchmuchlargerthanthemaximumallowedsizeof60characters4" }');
+DEBUG:  Using single insert with subtransaction
 DEBUG:  Executing unique index runtime recheck.
 DEBUG:  Executing unique index runtime recheck.
 DEBUG:  Executing unique index runtime recheck.
@@ -1149,6 +1153,7 @@ set documentdb.defaultUniqueIndexKeyhashOverride to 0;
 SET client_min_messages TO DEBUG1;
 -- works -
 SELECT documentdb_api.insert_one('db', 'queryuniquecomposite', '{ "a": "thiskeyisalittlelargerthanthemaximumallowedsizeof60characters", "b": "thiskeyisalotorinotherwordsmuchmuchlargerthanthemaximumallowedsizeof60characters" }');
+DEBUG:  Using single insert with subtransaction
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1156,18 +1161,21 @@ SELECT documentdb_api.insert_one('db', 'queryuniquecomposite', '{ "a": "thiskeyi
 
 -- should succeed without recheck logs
 SELECT documentdb_api.insert_one('db', 'queryuniquecomposite', '{ "a": "thiskeyisalittlelargerthanthemaximumallowedsizeof60characters2", "b": "thiskeyisalotorinotherwordsmuchmuchlargerthanthemaximumallowedsizeof60characters2" }');
+DEBUG:  Using single insert with subtransaction
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'queryuniquecomposite', '{ "a": "thiskeyisalittlelargerthanthemaximumallowedsizeof60characters3", "b": "thiskeyisalotorinotherwordsmuchmuchlargerthanthemaximumallowedsizeof60characters3" }');
+DEBUG:  Using single insert with subtransaction
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'queryuniquecomposite', '{ "a": "thiskeyisalittlelargerthanthemaximumallowedsizeof60characters4", "b": "thiskeyisalotorinotherwordsmuchmuchlargerthanthemaximumallowedsizeof60characters4" }');
+DEBUG:  Using single insert with subtransaction
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

@@ -57,6 +57,41 @@ extern int BatchWriteSubTransactionCount;
 extern int MaxWriteBatchSize;
 
 /*
+ * Specifies how write commands (insert/update) are executed, controlling
+ * their transactional behavior.
+ */
+typedef enum WriteMode
+{
+	/*
+	 * Called via insert()/update() SQL *functions*.
+	 * Uses subtransactions for all writes. single-document write, wrapped in a subtransaction;
+	 * on failure the subtransaction is rolled back.
+	 * For batch writes, multiple documents are first attempted together in a
+	 * single subtransaction (optimistic path). If that fails, the subtransaction
+	 * is rolled back and the documents are retried one-by-one, each in its own
+	 * subtransaction, to identify exactly which document(s) failed.
+	 */
+	WriteMode_Txn_Func = 0,
+
+	/*
+	 * Called via insert_txn_proc()/update_txn_proc() SQL *procedures*.
+	 * Optimized for single-document writes: skips subtransactions, which
+	 * reduces WAL overhead compared to Txn_Func. Batch and error-handling
+	 * behavior is otherwise the same as Txn_Func.
+	 * Cannot be used inside an explicit client transaction block.
+	 */
+	WriteMode_Txn_Proc = 1,
+
+	/*
+	 * Called via insert_bulk()/update_bulk() SQL *procedures*.
+	 * Designed for large batch writes. Commits after smaller sub-batches
+	 * and starts a new transaction, reducing the time locks are held and
+	 * allowing other operations to proceed.
+	 */
+	WriteMode_Bulk_Proc = 2,
+} WriteMode;
+
+/*
  * WriteError can be part of the response of a batch write operation.
  */
 typedef struct WriteError
