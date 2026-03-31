@@ -84,7 +84,7 @@ impl CommandError {
             }
             DocumentDBError::PostgresDocumentDBError(error_code, msg, _) => {
                 if let Ok(state) = responses::i32_to_postgres_sqlstate(*error_code) {
-                    let mapped_response = responses::known_pg_error(
+                    let mapped_response = responses::map_pg_error(
                         connection_context,
                         &state,
                         msg.as_str(),
@@ -155,7 +155,7 @@ impl CommandError {
         activity_id: &str,
     ) -> Self {
         if let Some(state) = e.code() {
-            let mapped_result = responses::known_pg_error(
+            let mapped_result = responses::map_pg_error(
                 context,
                 state,
                 e.as_db_error().map_or("", |e| e.message()),

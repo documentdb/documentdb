@@ -11,15 +11,17 @@ use bson::{rawdoc, Document, RawDocument};
 use crate::{error::Result, protocol::OK_SUCCEEDED};
 
 pub mod constant;
+pub mod custom_error_mapping;
 mod error;
 mod pg;
 mod raw;
 pub mod writer;
 
+pub use custom_error_mapping::CustomPostgresErrorMapper;
 pub use error::CommandError;
 pub use pg::{
-    from_known_external_error_code, i32_to_postgres_sqlstate, known_pg_error,
-    postgres_sqlstate_to_i32, PgResponse,
+    from_known_external_error_code, i32_to_postgres_sqlstate, map_pg_error,
+    postgres_sqlstate_to_i32, PgResponse, PostgresErrorMappedResult,
 };
 pub use raw::RawResponse;
 

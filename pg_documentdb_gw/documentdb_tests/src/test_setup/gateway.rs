@@ -62,6 +62,7 @@ pub async fn run_test_gateway(
         dynamic_configuration,
         connection_pool_manager,
         tls_provider,
+        None, // custom_pg_error_mapper
     );
 
     ready_flag.store(true, Ordering::SeqCst);
