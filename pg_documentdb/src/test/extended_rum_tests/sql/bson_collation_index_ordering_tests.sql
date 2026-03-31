@@ -2,10 +2,120 @@ SET documentdb.next_collection_id TO 8100;
 SET documentdb.next_collection_index_id TO 8100;
 
 SET documentdb_core.enableCollation TO on;
-SET documentdb.enableCollationWithIndexes TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
 SET documentdb.defaultUseCompositeOpClass TO on;
 
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+
+-- ===== Section 0: Negative tests ======
+
+-- ordered/composite index with collation should fail when
+-- enableCollationWithNonUniqueOrderedIndexes is OFF
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO off;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_guc_off_fail",
+    "indexes": [{
+      "key": { "a": 1 },
+      "name": "a_coll_guc_off_idx",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+
+-- unique ordered index with collation should fail
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_unique_fail",
+    "indexes": [{
+      "key": { "a": 1, "b": 1 },
+      "name": "a_b_unique_coll_idx",
+      "unique": true,
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+
+-- non-ordered index with collation should fail
+SET documentdb.defaultUseCompositeOpClass TO off;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_non_ordered_fail",
+    "indexes": [{
+      "key": { "a": 1 },
+      "name": "a_non_ordered_coll_idx",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+SET documentdb.defaultUseCompositeOpClass TO on;
+
+-- hashed index with collation should fail
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_hashed_fail",
+    "indexes": [{
+      "key": { "a": "hashed" },
+      "name": "a_hashed_coll_idx",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+-- 2d index with collation should fail
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_2d_fail",
+    "indexes": [{
+      "key": { "loc": "2d" },
+      "name": "loc_2d_coll_idx",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+-- text index with collation should fail
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_text_fail",
+    "indexes": [{
+      "key": { "content": "text" },
+      "name": "content_text_coll_idx",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+-- 2dsphere index with collation should fail
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_2dsphere_fail",
+    "indexes": [{
+      "key": { "loc": "2dsphere" },
+      "name": "loc_2dsphere_coll_idx",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
 
 CREATE SCHEMA IF NOT EXISTS collation_ordered_test_schema;
 
@@ -497,24 +607,8 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('ord_
 ROLLBACK;
 
 
--- ===== Section 16: Unsupported — unique ordered index with collation should fail ======
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-  'ord_coll_ordered_db',
-  '{
-    "createIndexes": "ord_unique_fail",
-    "indexes": [{
-      "key": { "a": 1, "b": 1 },
-      "name": "a_b_unique_coll_idx",
-      "unique": true,
-      "collation": { "locale": "en", "numericOrdering": true }
-    }]
-  }',
-  TRUE
-);
-
-
 DROP SCHEMA collation_ordered_test_schema CASCADE;
 
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
 RESET documentdb.defaultUseCompositeOpClass;
-RESET documentdb.enableCollationWithIndexes;
 RESET documentdb_core.enableCollation;

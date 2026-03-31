@@ -353,8 +353,9 @@ bool EnableLookupIdJoinOptimizationOnCollation =
 	DEFAULT_ENABLE_LOOKUP_ID_JOIN_OPTIMIZATION_ON_COLLATION;
 
 /* Added in v110, Pending stabilization */
-#define DEFAULT_ENABLE_COLLATION_WITH_INDEXES false
-bool EnableCollationWithIndexes = DEFAULT_ENABLE_COLLATION_WITH_INDEXES;
+#define DEFAULT_ENABLE_COLLATION_WITH_NON_UNIQUE_ORDERED_INDEXES false
+bool EnableCollationWithNonUniqueOrderedIndexes =
+	DEFAULT_ENABLE_COLLATION_WITH_NON_UNIQUE_ORDERED_INDEXES;
 
 /* Added in v110, Pending stabilization */
 #define DEFAULT_ENABLE_COLLATION_WITH_NEW_GROUP_ACCUMULATORS false
@@ -507,11 +508,11 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableCollationWithIndexes", newGucPrefix),
+		psprintf("%s.enableCollationWithNonUniqueOrderedIndexes", newGucPrefix),
 		gettext_noop(
-			"Determines whether collation is supported for indexes."),
-		NULL, &EnableCollationWithIndexes,
-		DEFAULT_ENABLE_COLLATION_WITH_INDEXES,
+			"Determines whether collation is supported for non-unique ordered/composite indexes."),
+		NULL, &EnableCollationWithNonUniqueOrderedIndexes,
+		DEFAULT_ENABLE_COLLATION_WITH_NON_UNIQUE_ORDERED_INDEXES,
 		PGC_USERSET, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -521,7 +522,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL, &EnableCollationWithNewGroupAccumulators,
 		DEFAULT_ENABLE_COLLATION_WITH_NEW_GROUP_ACCUMULATORS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
-
 
 	DefineCustomBoolVariable(
 		psprintf("%s.EnableOperatorVariablesInLookup", newGucPrefix),
