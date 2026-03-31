@@ -94,6 +94,7 @@
 #include "utils/feature_counter.h"
 #include "utils/query_utils.h"
 #include "utils/version_utils.h"
+#include "utils/index_utils.h"
 #include "schema_validation/schema_validation.h"
 
 #include "api_hooks.h"
@@ -294,13 +295,13 @@ static void ProcessBatchUpdate(MongoCollection *collection,
 							   text *transactionId,
 							   BatchUpdateResult *batchResult,
 							   ExprEvalState *stateForSchemaValidation,
-							   bool isTransactional);
+							   WriteMode writeMode);
 static void ProcessBatchUpdateCore(MongoCollection *collection, List *updates,
 								   text *transactionId,
 								   BatchUpdateResult *batchResult,
 								   bool isOrdered, bool forceInlineWrites,
 								   ExprEvalState *stateForSchemaValidation,
-								   bool isTransactional);
+								   WriteMode writeMode);
 static pgbson * ProcessBatchUpdateUnsharded(MongoCollection *collection,
 											BatchUpdateSpec *batchSpec,
 											text *transactionId, bool *hasWriteErrors);
@@ -394,7 +395,7 @@ static void CallUpdateWorkerForUpdateOne(MongoCollection *collection,
 
 static HeapTuple PerformUpdateCore(Datum *databaseNameDatum, pgbson *updateSpec,
 								   pgbsonsequence *updateDocs, text *transactionId,
-								   TupleDesc resultTupleDesc, bool isTransactional,
+								   TupleDesc resultTupleDesc, WriteMode writeMode,
 								   MemoryContext allocContext);
 
 static pgbson * SerializeUpdateBatchParams(int *updateIndex, List *updates,
@@ -441,7 +442,7 @@ command_update_bulk(PG_FUNCTION_ARGS)
 	bool isTopLevel = true;
 	if (IsInTransactionBlock(isTopLevel))
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_OPERATIONNOTSUPPORTEDINTRANSACTION),
 						errmsg("the bulk update procedure cannot be used in transactions."
 							   " Please use the update function instead")));
 	}
@@ -461,10 +462,10 @@ command_update_bulk(PG_FUNCTION_ARGS)
 
 	/* For results we need a stable memory context across transactions */
 	MemoryContext stableContext = fcinfo->flinfo->fn_mcxt;
-	bool isTransactional = false;
+
 	HeapTuple resultTuple = PerformUpdateCore(&databaseNameDatum, updateSpec, updateDocs,
 											  transactionId, resultTupDesc,
-											  isTransactional, stableContext);
+											  WriteMode_Bulk_Proc, stableContext);
 	PG_RETURN_DATUM(HeapTupleGetDatum(resultTuple));
 }
 
@@ -494,6 +495,14 @@ command_update_txn_proc(PG_FUNCTION_ARGS)
 
 	ReportFeatureUsage(FEATURE_COMMAND_UPDATE);
 
+	bool isTopLevel = true;
+	if (IsInTransactionBlock(isTopLevel))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_OPERATIONNOTSUPPORTEDINTRANSACTION),
+						errmsg("the update procedure cannot be used in transactions."
+							   " Please use the update function instead")));
+	}
+
 	/* fetch TupleDesc for return value, not interested in resultTypeId */
 	Oid *resultTypeId = NULL;
 	TupleDesc resultTupDesc;
@@ -505,10 +514,11 @@ command_update_txn_proc(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errmsg("return type must be a row type")));
 	}
 
-	bool isTransactional = true;
+	/* Use function context as a stable memory context to store errors across transaction aborts */
 	HeapTuple resultTuple = PerformUpdateCore(&databaseNameDatum, updateSpec, updateDocs,
 											  transactionId, resultTupDesc,
-											  isTransactional, CurrentMemoryContext);
+											  WriteMode_Txn_Proc,
+											  fcinfo->flinfo->fn_mcxt);
 	PG_RETURN_DATUM(HeapTupleGetDatum(resultTuple));
 }
 
@@ -548,10 +558,9 @@ command_update(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errmsg("return type must be a row type")));
 	}
 
-	bool isTransactional = true;
 	HeapTuple resultTuple = PerformUpdateCore(&databaseNameDatum, updateSpec, updateDocs,
 											  transactionId, resultTupDesc,
-											  isTransactional, CurrentMemoryContext);
+											  WriteMode_Txn_Func, CurrentMemoryContext);
 	PG_RETURN_DATUM(HeapTupleGetDatum(resultTuple));
 }
 
@@ -567,7 +576,7 @@ IsUnshardedRemoteCollection(MongoCollection *collection)
 static HeapTuple
 PerformUpdateCore(Datum *databaseNameDatum, pgbson *updateSpec,
 				  pgbsonsequence *updateDocs, text *transactionId,
-				  TupleDesc resultTupDesc, bool isTransactional,
+				  TupleDesc resultTupDesc, WriteMode writeMode,
 				  MemoryContext allocContext)
 {
 	ThrowIfServerOrTransactionReadOnly();
@@ -664,11 +673,11 @@ PerformUpdateCore(Datum *databaseNameDatum, pgbson *updateSpec,
 		}
 
 		ProcessBatchUpdate(collection, batchSpec, transactionId,
-						   &batchResult, state, isTransactional);
+						   &batchResult, state, writeMode);
 		result = BuildResponseMessage(&batchResult);
 		hasWriteErrors = batchResult.writeErrors != NIL;
 	}
-	else if (!isTransactional)
+	else if (writeMode == WriteMode_Bulk_Proc)
 	{
 		/* Non transaction with an unsharded remote collection: Process in coordinator */
 		oldContext = MemoryContextSwitchTo(allocContext);
@@ -1204,9 +1213,11 @@ DoMultiUpdate(MongoCollection *collection, List *updates, text *transactionId,
  * Updates a single update in a single sub-transaction.
  */
 static bool
-DoSingleUpdate(MongoCollection *collection, UpdateSpec *updateSpec, text *transactionId,
-			   BatchUpdateResult *batchResult, int updateIndex, bool forceInlineWrites,
-			   ExprEvalState *volatile stateForSchemaValidation)
+DoSingleUpdateWithSubTxn(MongoCollection *collection, UpdateSpec *updateSpec,
+						 text *transactionId,
+						 BatchUpdateResult *batchResult, int updateIndex, bool
+						 forceInlineWrites,
+						 ExprEvalState *volatile stateForSchemaValidation)
 {
 	/*
 	 * Execute the query inside a sub-transaction, so we can restore order
@@ -1254,6 +1265,59 @@ DoSingleUpdate(MongoCollection *collection, UpdateSpec *updateSpec, text *transa
 		}
 
 		MemoryContextSwitchTo(batchResult->resultMemoryContext);
+		batchResult->writeErrors = lappend(batchResult->writeErrors,
+										   GetWriteErrorFromErrorData(errorData,
+																	  updateIndex));
+		MemoryContextSwitchTo(oldContext);
+		FreeErrorData(errorData);
+		isSuccess = false;
+	}
+	PG_END_TRY();
+
+	return isSuccess;
+}
+
+
+/*
+ * Updates a single update and rollback on failures.
+ * Applicable only for update invoked via a procedure.
+ */
+static bool
+DoSingleUpdate(MongoCollection *collection, UpdateSpec *updateSpec, text *transactionId,
+			   BatchUpdateResult *batchResult, int updateIndex, bool forceInlineWrites,
+			   ExprEvalState *volatile stateForSchemaValidation)
+{
+	/* declared volatile because of the longjmp in PG_CATCH */
+	volatile bool isSuccess = false;
+
+	UpdateResult updateResult;
+	memset(&updateResult, 0, sizeof(updateResult));
+
+	PG_TRY();
+	{
+		ProcessUpdate(collection, updateSpec, transactionId, &updateResult,
+					  forceInlineWrites, stateForSchemaValidation);
+		UpdateResultInBatch(batchResult, &updateResult,
+							batchResult->resultMemoryContext, updateIndex);
+		isSuccess = true;
+	}
+	PG_CATCH();
+	{
+		MemoryContext oldContext = MemoryContextSwitchTo(
+			batchResult->resultMemoryContext);
+		ErrorData *errorData = CopyErrorDataAndFlush();
+		MemoryContextSwitchTo(oldContext);
+
+		if (IsOperatorInterventionError(errorData))
+		{
+			ReThrowError(errorData);
+		}
+
+		PopAllActiveSnapshots();
+		AbortCurrentTransaction();
+		StartTransactionCommand();
+
+		oldContext = MemoryContextSwitchTo(batchResult->resultMemoryContext);
 		batchResult->writeErrors = lappend(batchResult->writeErrors,
 										   GetWriteErrorFromErrorData(errorData,
 																	  updateIndex));
@@ -1432,7 +1496,7 @@ static void
 ProcessBatchUpdateCore(MongoCollection *collection, List *updates, text *transactionId,
 					   BatchUpdateResult *batchResult, bool isOrdered,
 					   bool forceInlineWrites, ExprEvalState *stateForSchemaValidation,
-					   bool isTransactional)
+					   WriteMode writeMode)
 {
 	batchResult->ok = 1;
 	batchResult->rowsMatched = 0;
@@ -1441,7 +1505,25 @@ ProcessBatchUpdateCore(MongoCollection *collection, List *updates, text *transac
 	batchResult->upserted = NIL;
 
 	text *subTransactionId = transactionId;
-	if (list_length(updates) > 1)
+
+	if (list_length(updates) == 1)
+	{
+		int updateIndex = 0;
+		if (writeMode == WriteMode_Txn_Proc && transactionId == NULL)
+		{
+			DoSingleUpdate(collection, linitial(updates), subTransactionId,
+						   batchResult, updateIndex, forceInlineWrites,
+						   stateForSchemaValidation);
+			return;
+		}
+
+		ereport(DEBUG1, (errmsg("Using single update with subtransaction")));
+		DoSingleUpdateWithSubTxn(collection, linitial(updates), subTransactionId,
+								 batchResult, updateIndex, forceInlineWrites,
+								 stateForSchemaValidation);
+		return;
+	}
+	else
 	{
 		/*
 		 * We cannot pass the same transactionId to ProcessUpdate when there are
@@ -1459,7 +1541,7 @@ ProcessBatchUpdateCore(MongoCollection *collection, List *updates, text *transac
 	while (updateIndex < list_length(updates))
 	{
 		CHECK_FOR_INTERRUPTS();
-		if (!isTransactional && updateIndex > 0)
+		if (writeMode == WriteMode_Bulk_Proc && updateIndex > 0)
 		{
 			/* For each iteration of the loop, commit prior work */
 			bool setSnapshot = false;
@@ -1494,12 +1576,13 @@ ProcessBatchUpdateCore(MongoCollection *collection, List *updates, text *transac
 
 		updateCell = list_nth_cell(updates, updateIndex);
 		UpdateSpec *updateSpec = lfirst(updateCell);
-		isSuccess = DoSingleUpdate(collection, updateSpec, subTransactionId,
-								   batchResult, updateIndex, forceInlineWrites,
-								   stateForSchemaValidation);
+		isSuccess = DoSingleUpdateWithSubTxn(collection, updateSpec, subTransactionId,
+											 batchResult, updateIndex,
+											 forceInlineWrites,
+											 stateForSchemaValidation);
 		updateIndex++;
 
-		if (hasBatchUpdateFailed && !isTransactional &&
+		if (hasBatchUpdateFailed && writeMode == WriteMode_Bulk_Proc &&
 			(updateIndex > nextBatchAttemptIndex))
 		{
 			nextBatchAttemptIndex = -1;
@@ -1530,7 +1613,7 @@ static void
 ProcessBatchUpdate(MongoCollection *collection, BatchUpdateSpec *batchSpec,
 				   text *transactionId, BatchUpdateResult *batchResult,
 				   ExprEvalState *stateForSchemaValidation,
-				   bool isTransactional)
+				   WriteMode writeMode)
 {
 	MemoryContext oldContext = MemoryContextSwitchTo(batchResult->resultMemoryContext);
 	BuildUpdates(batchSpec);
@@ -1553,7 +1636,7 @@ ProcessBatchUpdate(MongoCollection *collection, BatchUpdateSpec *batchSpec,
 	bool forceInlineWrites = false;
 	ProcessBatchUpdateCore(collection, updates, transactionId, batchResult, isOrdered,
 						   forceInlineWrites, stateForSchemaValidation,
-						   isTransactional);
+						   writeMode);
 }
 
 
@@ -2531,10 +2614,9 @@ ProcessUnshardedUpdateBatchWorker(MongoCollection *collection, List *updates,
 	batchUpdateResult.resultMemoryContext = CurrentMemoryContext;
 
 	/* In the worker we're always transactional */
-	bool isTransactional = true;
 	ProcessBatchUpdateCore(collection, updates, transactionId, &batchUpdateResult,
 						   isOrdered, forceInlineWrites, stateForSchemaValidation,
-						   isTransactional);
+						   WriteMode_Txn_Func);
 
 	return SerializeBatchUpdateResult(&batchUpdateResult);
 }

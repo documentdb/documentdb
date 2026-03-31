@@ -1836,6 +1836,7 @@ DEBUG:  Commiting intermediate state and reacquiring collection lock
 DEBUG:  executing " SELECT documentdb_api_internal.update_worker($1, $2, $3, $4::documentdb_core.bson, $5::documentdb_core.bsonsequence, $6) FROM documentdb_data.documents_8501 WHERE shard_key_value = 8501" via SPI
 DEBUG:  Commiting intermediate state and reacquiring collection lock
 DEBUG:  executing " SELECT documentdb_api_internal.update_worker($1, $2, $3, $4::documentdb_core.bson, $5::documentdb_core.bsonsequence, $6) FROM documentdb_data.documents_8501 WHERE shard_key_value = 8501" via SPI
+DEBUG:  Using single update with subtransaction
                                                    p_result                                                   | p_success 
 ---------------------------------------------------------------------
  { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "10" }, "n" : { "$numberInt" : "10" } } | t
