@@ -1,8 +1,9 @@
 #!/bin/bash
 
 test_dir=$1
+start_idx=${2:-100}
 
-collection_id_candidate=100
+collection_id_candidate=$start_idx
 
 while true; do
     collection_id_string="SET \w+.next_collection_id TO $collection_id_candidate"
