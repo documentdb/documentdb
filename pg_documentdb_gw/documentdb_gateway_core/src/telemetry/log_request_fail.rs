@@ -101,7 +101,7 @@ pub fn log_request_failure(
                     );
                 }
 
-                let error_message_loggable = responses::known_pg_error(
+                let error_message_loggable = responses::map_pg_error(
                     connection_context,
                     dbe.code(),
                     dbe.message(),
@@ -138,7 +138,7 @@ pub fn log_request_failure(
             let (sql_state, error_message_loggable): (Option<SqlState>, Option<String>) =
                 match responses::i32_to_postgres_sqlstate(*pg_code) {
                     Ok(state) => {
-                        let mapped_response = responses::known_pg_error(
+                        let mapped_response = responses::map_pg_error(
                             connection_context,
                             &state,
                             msg.as_str(),

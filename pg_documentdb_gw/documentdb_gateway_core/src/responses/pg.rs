@@ -15,9 +15,12 @@ use crate::{
     context::{ConnectionContext, Cursor},
     error::{DocumentDBError, ErrorCode, Result},
     postgres::{document::ColumnByteLen, PgDocument},
-    responses::constant::{
-        duplicate_key_violation_message, generic_internal_error_message,
-        pg_returned_invalid_response_message,
+    responses::{
+        constant::{
+            duplicate_key_violation_message, generic_internal_error_message,
+            pg_returned_invalid_response_message,
+        },
+        CustomPostgresErrorMapper,
     },
 };
 
@@ -62,14 +65,70 @@ pub fn postgres_sqlstate_to_i32(sql_state: &SqlState) -> i32 {
 
 documentdb_int_error_mapping!();
 
-#[expect(clippy::too_many_lines, reason = "complex error mapping logic")]
-pub fn known_pg_error<'a>(
+/// First applies any custom error mapping logic provided
+/// by the consumer of the documentdb gateway.
+///
+/// Then falls back to the generic error mapping logic in `map_pg_error_generic`
+/// if the custom mapper returns `None`.
+///
+/// Errors which are related to open sourced documentdb extension functionality
+/// should be mapped in `map_pg_error_generic`.
+#[must_use]
+pub fn map_pg_error<'a>(
     connection_context: &'a ConnectionContext,
-    state: &'a SqlState,
+    sql_state: &'a SqlState,
     msg: &'a str,
     activity_id: &str,
 ) -> PostgresErrorMappedResult<'a> {
-    if let Some(known) = from_known_external_error_code(state) {
+    let is_in_transaction = connection_context.transaction.is_some();
+    let is_replica_cluster = connection_context
+        .dynamic_configuration()
+        .is_replica_cluster();
+    let custom_pg_error_mapper = connection_context.service_context.custom_pg_error_mapper();
+    map_pg_error_helper(
+        is_in_transaction,
+        is_replica_cluster,
+        sql_state,
+        msg,
+        activity_id,
+        custom_pg_error_mapper,
+    )
+}
+
+fn map_pg_error_helper<'a>(
+    is_in_transaction: bool,
+    is_replica_cluster: bool,
+    sql_state: &'a SqlState,
+    msg: &'a str,
+    activity_id: &str,
+    custom_pg_error_mapper: Option<&dyn CustomPostgresErrorMapper>,
+) -> PostgresErrorMappedResult<'a> {
+    if let Some(mapper) = custom_pg_error_mapper {
+        // Check `CustomPostgresErrorMapper` trait definition for more details.
+        if let Some(mapped_error) = mapper.map_postgres_error(sql_state, msg, activity_id) {
+            return mapped_error;
+        }
+    }
+
+    map_pg_error_generic(
+        is_in_transaction,
+        is_replica_cluster,
+        sql_state,
+        msg,
+        activity_id,
+    )
+}
+
+/// Errors which are related to open sourced documentdb extension functionality should be mapped in this function.
+#[expect(clippy::too_many_lines, reason = "complex error mapping logic")]
+fn map_pg_error_generic<'a>(
+    is_in_transaction: bool,
+    is_replica_cluster: bool,
+    sql_state: &'a SqlState,
+    msg: &'a str,
+    activity_id: &str,
+) -> PostgresErrorMappedResult<'a> {
+    if let Some(known) = from_known_external_error_code(sql_state) {
         let message = "This may be due to the database disk being full";
         if known == ErrorCode::NotWritablePrimary as i32 {
             return PostgresErrorMappedResult {
@@ -100,9 +159,9 @@ pub fn known_pg_error<'a>(
     }
 
     // Handle specific pg states and map them to DocumentDB error codes
-    match *state {
+    match *sql_state {
         SqlState::UNIQUE_VIOLATION | SqlState::EXCLUSION_VIOLATION => {
-            if connection_context.transaction.is_some() {
+            if is_in_transaction {
                 tracing::error!(
                     activity_id = activity_id,
                     "Duplicate key error during transaction."
@@ -134,7 +193,7 @@ pub fn known_pg_error<'a>(
             internal_note: Some("undefined table error."),
         },
         SqlState::QUERY_CANCELED => {
-            if connection_context.transaction.is_some() {
+            if is_in_transaction {
                 tracing::error!(
                     activity_id = activity_id,
                     "Query canceled during transaction."
@@ -154,7 +213,7 @@ pub fn known_pg_error<'a>(
             }
         }
         SqlState::LOCK_NOT_AVAILABLE => {
-            if connection_context.transaction.is_some() {
+            if is_in_transaction {
                 tracing::error!(
                     activity_id = activity_id,
                     "Lock not available error during transaction."
@@ -196,13 +255,22 @@ pub fn known_pg_error<'a>(
             }
         }
         SqlState::PROGRAM_LIMIT_EXCEEDED => {
-            if msg.contains("MB, maintenance_work_mem is") {
-                tracing::error!(activity_id = activity_id, "Index creation requires resources too large to fit in the resource memory limit.");
+            if msg.contains("index row requires") {
+                let error_message = "Index key is too large.";
+                tracing::error!(activity_id = activity_id, "{error_message}");
                 PostgresErrorMappedResult {
-                        error_code: ErrorCode::ExceededMemoryLimit,
-                        error_message: "index creation requires resources too large to fit in the resource memory limit, please try creating index with less number of documents or creating index before inserting documents into collection",
-                        internal_note: Some(msg),
-                    }
+                    error_code: ErrorCode::CannotBuildIndexKeys,
+                    error_message,
+                    internal_note: Some(msg),
+                }
+            } else if msg.contains("index row size") && msg.contains("exceeds btree version") {
+                let error_message = "Index key is too large for _id.";
+                tracing::error!(activity_id = activity_id, "{error_message}");
+                PostgresErrorMappedResult {
+                    error_code: ErrorCode::CannotBuildIndexKeys,
+                    error_message,
+                    internal_note: Some(msg),
+                }
             } else if msg.contains("index row size") && msg.contains("exceeds maximum") {
                 let error_message = "Index key is too large.";
                 tracing::error!(activity_id = activity_id, "{error_message}");
@@ -211,6 +279,14 @@ pub fn known_pg_error<'a>(
                     error_message,
                     internal_note: Some(msg),
                 }
+            } else if msg.contains("MB, maintenance_work_mem is") {
+                // PG Vector hardcodes this as an exceeded memory limit error, replace the original message with a more comprehensive error message.
+                tracing::error!(activity_id = activity_id, "Index creation requires resources too large to fit in the resource memory limit.");
+                PostgresErrorMappedResult {
+                        error_code: ErrorCode::ExceededMemoryLimit,
+                        error_message: "index creation requires resources too large to fit in the resource memory limit, please try creating index with less number of documents or creating index before inserting documents into collection",
+                        internal_note: Some(msg),
+                    }
             } else {
                 PostgresErrorMappedResult {
                     error_code: ErrorCode::InternalError,
@@ -259,6 +335,18 @@ pub fn known_pg_error<'a>(
                     error_message,
                     internal_note: Some(error_message),
                 }
+            } else if msg.contains("EXPLAIN ANALYZE is currently not supported for MERGE INTO") {
+                PostgresErrorMappedResult::new(
+                    ErrorCode::IllegalOperation,
+                    "Explain is not supported with certain Merge commands.",
+                    Some(msg),
+                )
+            } else if msg.contains("out of dynamic memory in yy_create_buffer() at file") {
+                PostgresErrorMappedResult::new(
+                    ErrorCode::ExceededMemoryLimit,
+                    "Exceeded available memory on the server.",
+                    Some(msg),
+                )
             } else {
                 PostgresErrorMappedResult {
                     error_code: ErrorCode::InternalError,
@@ -282,11 +370,7 @@ pub fn known_pg_error<'a>(
             error_message: msg,
             internal_note: Some("invalid argument for nth value error."),
         },
-        SqlState::READ_ONLY_SQL_TRANSACTION
-            if connection_context
-                .dynamic_configuration()
-                .is_replica_cluster() =>
-        {
+        SqlState::READ_ONLY_SQL_TRANSACTION if is_replica_cluster => {
             let error_message = "Cannot execute the operation on this replica cluster";
             tracing::error!(activity_id = activity_id, "{error_message}");
             PostgresErrorMappedResult {
@@ -311,15 +395,111 @@ pub fn known_pg_error<'a>(
             internal_note: Some(msg),
         },
         SqlState::UNDEFINED_OBJECT => PostgresErrorMappedResult {
-            error_code: ErrorCode::UserNotFound,
+            error_code: ErrorCode::RoleNotFound,
             error_message: msg,
-            internal_note: Some("undefined object error."),
+            internal_note: Some("The specified role does not exist."),
         },
         SqlState::DUPLICATE_OBJECT => PostgresErrorMappedResult {
             error_code: ErrorCode::Location51003,
             error_message: msg,
             internal_note: Some("duplicate object error."),
         },
+        SqlState::CARDINALITY_VIOLATION => {
+            if msg.contains("MERGE command cannot affect row a second time") {
+                let error_message = "$merge cannot update a row a second time";
+                PostgresErrorMappedResult {
+                    error_code: ErrorCode::CommandNotSupported,
+                    error_message,
+                    internal_note: Some(error_message),
+                }
+            } else {
+                PostgresErrorMappedResult {
+                    error_code: ErrorCode::InternalError,
+                    error_message: generic_internal_error_message(),
+                    internal_note: Some("generic cardinality violation error."),
+                }
+            }
+        }
+        SqlState::DUPLICATE_TABLE => PostgresErrorMappedResult {
+            error_code: ErrorCode::NamespaceExists,
+            error_message: msg,
+            internal_note: Some("duplicate table error."),
+        },
+        SqlState::TOO_MANY_CONNECTIONS => PostgresErrorMappedResult {
+            error_code: ErrorCode::TooManyLogicalSessions,
+            error_message: msg,
+            internal_note: Some(msg),
+        },
+        SqlState::T_R_SERIALIZATION_FAILURE => {
+            let error_message =
+                "Could not complete operation due to conflict with internal apply operation";
+            tracing::error!(activity_id = activity_id, "{error_message}");
+            PostgresErrorMappedResult {
+                error_code: ErrorCode::ConflictingOperationInProgress,
+                error_message,
+                internal_note: Some(msg),
+            }
+        }
+        SqlState::IN_FAILED_SQL_TRANSACTION => {
+            let error_message = "Operation was attempted in a transaction that was aborted";
+            PostgresErrorMappedResult {
+                error_code: ErrorCode::OperationNotSupportedInTransaction,
+                error_message,
+                internal_note: Some(msg),
+            }
+        }
+        SqlState::OUT_OF_MEMORY => {
+            let error_message = "Exceeded available memory on the server.";
+            tracing::error!(activity_id = activity_id, "{error_message}");
+            PostgresErrorMappedResult {
+                error_code: ErrorCode::ExceededMemoryLimit,
+                error_message,
+                internal_note: Some(msg),
+            }
+        }
+        SqlState::INSUFFICIENT_RESOURCES => {
+            // Closest proxy — all cases seen so far have been OOM for this error code.
+            let error_message = "Exceeded available resources on the server.";
+            tracing::error!(activity_id = activity_id, "{error_message}");
+            PostgresErrorMappedResult {
+                error_code: ErrorCode::ExceededMemoryLimit,
+                error_message,
+                internal_note: Some(msg),
+            }
+        }
+        SqlState::CANNOT_CONNECT_NOW => {
+            let error_message = "Request terminated due to shutdown on the server.";
+            tracing::error!(activity_id = activity_id, "{error_message}");
+            PostgresErrorMappedResult {
+                error_code: ErrorCode::ShutdownInProgress,
+                error_message,
+                internal_note: Some(msg),
+            }
+        }
+        SqlState::TOO_MANY_COLUMNS => {
+            let error_message = "Too many compound keys for index.";
+            PostgresErrorMappedResult::new(
+                ErrorCode::Location13103,
+                error_message,
+                Some(error_message),
+            )
+        }
+        SqlState::DUPLICATE_COLUMN => {
+            let error_message = "Entity already exists.";
+            PostgresErrorMappedResult::new(
+                ErrorCode::DuplicateKey,
+                error_message,
+                Some(error_message),
+            )
+        }
+        SqlState::INVALID_PASSWORD => {
+            let error_message = "Invalid password.";
+            PostgresErrorMappedResult::new(
+                ErrorCode::InvalidPassword,
+                error_message,
+                Some(error_message),
+            )
+        }
         _ => PostgresErrorMappedResult {
             error_code: ErrorCode::InternalError,
             error_message: generic_internal_error_message(),
@@ -345,7 +525,7 @@ fn transform_error(
 
     let pg_code = i32_to_postgres_sqlstate(*code)?;
 
-    let mapped_response = known_pg_error(context, &pg_code, &msg, activity_id);
+    let mapped_response = map_pg_error(context, &pg_code, &msg, activity_id);
 
     if mapped_response.error_code() == ErrorCode::WriteConflict
         || mapped_response.error_code() == ErrorCode::InternalError
@@ -490,15 +670,105 @@ pub struct PostgresErrorMappedResult<'a> {
 }
 
 impl<'a> PostgresErrorMappedResult<'a> {
+    #[must_use]
+    pub const fn new(
+        error_code: ErrorCode,
+        error_message: &'a str,
+        internal_note: Option<&'a str>,
+    ) -> Self {
+        Self {
+            error_code,
+            error_message,
+            internal_note,
+        }
+    }
+
+    #[must_use]
     pub const fn error_code(&self) -> ErrorCode {
         self.error_code
     }
 
+    #[must_use]
     pub const fn error_message(&self) -> &'a str {
         self.error_message
     }
 
+    #[must_use]
     pub const fn internal_note(&self) -> Option<&'a str> {
         self.internal_note
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio_postgres::error::SqlState;
+
+    use crate::error::ErrorCode;
+    use crate::responses::CustomPostgresErrorMapper;
+
+    use super::{map_pg_error_helper, PostgresErrorMappedResult};
+
+    #[derive(Debug)]
+    struct TestMapper;
+
+    impl CustomPostgresErrorMapper for TestMapper {
+        fn map_postgres_error<'a>(
+            &self,
+            sql_state: &'a SqlState,
+            _msg: &'a str,
+            _activity_id: &str,
+        ) -> Option<PostgresErrorMappedResult<'a>> {
+            (*sql_state == SqlState::DISK_FULL).then(|| {
+                PostgresErrorMappedResult::new(
+                    ErrorCode::CommandNotSupported,
+                    "custom mapped error",
+                    None,
+                )
+            })
+        }
+    }
+
+    #[test]
+    fn test_custom_postgres_error_mapper() {
+        let mapper = TestMapper;
+
+        // Custom mapper handles DISK_FULL and overrides the default OutOfDiskSpace mapping.
+        let result = map_pg_error_helper(
+            false,
+            false,
+            &SqlState::DISK_FULL,
+            "could not extend file: No space left on device",
+            "test-activity",
+            Some(&mapper),
+        );
+        assert_eq!(result.error_code(), ErrorCode::CommandNotSupported);
+        assert_eq!(result.error_message(), "custom mapped error");
+
+        // For a state the custom mapper doesn't handle, it falls through to the generic logic.
+        let result = map_pg_error_helper(
+            false,
+            false,
+            &SqlState::FEATURE_NOT_SUPPORTED,
+            "this feature is not supported",
+            "test-activity",
+            Some(&mapper),
+        );
+        assert_eq!(result.error_code(), ErrorCode::CommandNotSupported);
+        assert_eq!(result.error_message(), "this feature is not supported");
+    }
+
+    #[test]
+    fn test_no_custom_mapper_falls_through_to_generic() {
+        // When no custom mapper is provided, the generic mapping is used directly.
+        let result = map_pg_error_helper(
+            false,
+            false,
+            &SqlState::DISK_FULL,
+            "disk full",
+            "test-activity",
+            None,
+        );
+        assert_eq!(result.error_code(), ErrorCode::OutOfDiskSpace);
+        assert_eq!(result.error_message(), "disk full");
     }
 }
