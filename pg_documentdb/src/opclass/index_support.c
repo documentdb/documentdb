@@ -2186,6 +2186,36 @@ GetSortDetails(PlannerInfo *root, Index rti,
 
 			*hasGroupby = true;
 		}
+		else if (func->funcid == DocumentDBCoreBsonToBsonFunctionOId())
+		{
+			Expr *firstArg = linitial(func->args);
+			if (!IsA(firstArg, FuncExpr))
+			{
+				return NIL;
+			}
+
+			FuncExpr *firstArgFunc = (FuncExpr *) firstArg;
+			if (firstArgFunc->funcid == BsonExpressionGetWithLetFunctionOid())
+			{
+				func = firstArgFunc;
+			}
+			else
+			{
+				return NIL;
+			}
+
+			/* This is a special function that we allow for group by pushdown - it is used for the case
+			 * where we have a group by with an expression that can be rewritten to a path and we want
+			 * to be able to push down the path extraction to the index. We only allow this for group by
+			 * because for order by we want to be more strict and only allow direct paths.
+			 */
+			if (*hasOrderBy)
+			{
+				return NIL;
+			}
+
+			*hasGroupby = true;
+		}
 		else
 		{
 			return NIL;
@@ -2194,6 +2224,16 @@ GetSortDetails(PlannerInfo *root, Index rti,
 		/* This is an order by function */
 		Expr *firstArg = linitial(func->args);
 		Expr *secondArg = lsecond(func->args);
+
+		if (IsA(firstArg, RelabelType))
+		{
+			firstArg = ((RelabelType *) firstArg)->arg;
+		}
+
+		if (IsA(secondArg, RelabelType))
+		{
+			secondArg = ((RelabelType *) secondArg)->arg;
+		}
 
 		if (!IsA(firstArg, Var) || !IsA(secondArg, Const))
 		{
@@ -2205,8 +2245,11 @@ GetSortDetails(PlannerInfo *root, Index rti,
 
 		if (firstVar->varno != (int) rti ||
 			firstVar->varattno != DOCUMENT_DATA_TABLE_DOCUMENT_VAR_ATTR_NUMBER ||
-			firstVar->vartype != BsonTypeId() ||
-			secondConst->consttype != BsonTypeId() || secondConst->constisnull)
+			(firstVar->vartype != BsonTypeId() && firstVar->vartype !=
+			 DocumentDBCoreBsonTypeId()) ||
+			(secondConst->consttype != BsonTypeId() && secondConst->consttype !=
+			 DocumentDBCoreBsonTypeId()) ||
+			secondConst->constisnull)
 		{
 			return NIL;
 		}
