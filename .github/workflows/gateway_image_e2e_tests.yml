@@ -1,0 +1,96 @@
+name: Gateway image E2E tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'main'
+      - 'release/**'
+    paths-ignore:
+      - 'docs/**'
+      - '.devcontainer/**'
+      - '*.md'
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - '.github/containers/Build-Ubuntu/Dockerfile_gateway'
+      - '.github/containers/Build-Ubuntu/Dockerfile_prebuild'
+      - 'scripts/emulator_entrypoint.sh'
+      - 'scripts/start_oss_server.sh'
+      - 'scripts/build_and_start_gateway.sh'
+      - 'scripts/init_documentdb_data.sh'
+      - 'scripts/utils.sh'
+      - 'sample-data/**'
+      - 'test-init-data/**'
+      - 'packaging/**'
+      - '.github/workflows/gateway_image_e2e_tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  gateway-e2e:
+    name: Gateway E2E (PG${{ matrix.pg_version }} / ${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        pg_version: [16, 17, 18]
+        arch: [amd64]
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install mongosh
+        run: |
+          wget -qO- https://www.mongodb.org/static/pgp/server-8.0.asc | \
+            sudo gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
+          echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/8.0 multiverse" | \
+            sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mongodb-mongosh
+          mongosh --version
+
+      - name: Build Debian package
+        run: |
+          ./packaging/build_packages.sh \
+            --os deb13 \
+            --pg ${{ matrix.pg_version }} \
+            --output-dir downloaded-artifacts
+          ls -la downloaded-artifacts/
+
+      - name: Build gateway image
+        run: |
+          DEB_FILE=$(ls downloaded-artifacts/ | grep -v 'dbgsym' | head -1)
+          docker build \
+            --build-arg BASE_IMAGE=debian:trixie-slim \
+            --build-arg POSTGRES_VERSION=${{ matrix.pg_version }} \
+            --build-arg DEB_PACKAGE_REL_PATH=downloaded-artifacts/${DEB_FILE} \
+            -t documentdb-e2e:pg${{ matrix.pg_version }} \
+            -f .github/containers/Build-Ubuntu/Dockerfile_gateway .
+
+      - name: Run E2E tests
+        run: |
+          bash test-init-data/test_gateway_e2e.sh \
+            --image documentdb-e2e:pg${{ matrix.pg_version }} \
+            --port $((10260 + ${{ matrix.pg_version }}))
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs-pg${{ matrix.pg_version }}-${{ matrix.arch }}
+          path: |
+            /tmp/e2e_*.txt
+            /tmp/shutdown_*.txt
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker ps -a --format '{{.Names}}' | grep '^e2e-' | xargs -r docker rm -f || true
+          docker ps -a --format '{{.Names}}' | grep 'documentdb' | xargs -r docker rm -f || true
