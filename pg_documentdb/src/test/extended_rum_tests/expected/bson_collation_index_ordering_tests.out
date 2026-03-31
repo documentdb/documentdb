@@ -1,9 +1,114 @@
 SET documentdb.next_collection_id TO 8100;
 SET documentdb.next_collection_index_id TO 8100;
 SET documentdb_core.enableCollation TO on;
-SET documentdb.enableCollationWithIndexes TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
 SET documentdb.defaultUseCompositeOpClass TO on;
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+-- ===== Section 0: Negative tests ======
+-- ordered/composite index with collation should fail when
+-- enableCollationWithNonUniqueOrderedIndexes is OFF
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_guc_off_fail",
+    "indexes": [{
+      "key": { "a": 1 },
+      "name": "a_coll_guc_off_idx",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+ERROR:  Error in specification { "key" : { "a" : 1 }, "name" : "a_coll_guc_off_idx", "collation" : { "locale" : "en", "strength" : 1 } }:createIndex.collation is not implemented yet
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+-- unique ordered index with collation should fail
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_unique_fail",
+    "indexes": [{
+      "key": { "a": 1, "b": 1 },
+      "name": "a_b_unique_coll_idx",
+      "unique": true,
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+ERROR:  Collation is not yet supported for unique indexes
+-- non-ordered index with collation should fail
+SET documentdb.defaultUseCompositeOpClass TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_non_ordered_fail",
+    "indexes": [{
+      "key": { "a": 1 },
+      "name": "a_non_ordered_coll_idx",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+ERROR:  Error in specification { "key" : { "a" : 1 }, "name" : "a_non_ordered_coll_idx", "collation" : { "locale" : "en", "strength" : 1 } }:Collation is only supported with ordered (or composite) indexes
+SET documentdb.defaultUseCompositeOpClass TO on;
+-- hashed index with collation should fail
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_hashed_fail",
+    "indexes": [{
+      "key": { "a": "hashed" },
+      "name": "a_hashed_coll_idx",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+ERROR:  Error in specification { "key" : { "a" : "hashed" }, "name" : "a_hashed_coll_idx", "collation" : { "locale" : "en", "strength" : 1 } }:Index type 'hashed' does not support collation
+-- 2d index with collation should fail
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_2d_fail",
+    "indexes": [{
+      "key": { "loc": "2d" },
+      "name": "loc_2d_coll_idx",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+ERROR:  Error in specification { "key" : { "loc" : "2d" }, "name" : "loc_2d_coll_idx", "collation" : { "locale" : "en", "strength" : 1 } }:Index type '2d' does not support collation
+-- text index with collation should fail
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_text_fail",
+    "indexes": [{
+      "key": { "content": "text" },
+      "name": "content_text_coll_idx",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+ERROR:  Error in specification { "key" : { "content" : "text" }, "name" : "content_text_coll_idx", "collation" : { "locale" : "en", "strength" : 1 } }:Index type 'text' does not support collation
+-- 2dsphere index with collation should fail
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_2dsphere_fail",
+    "indexes": [{
+      "key": { "loc": "2dsphere" },
+      "name": "loc_2dsphere_coll_idx",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+ERROR:  Error in specification { "key" : { "loc" : "2dsphere" }, "name" : "loc_2dsphere_coll_idx", "collation" : { "locale" : "en", "strength" : 1 } }:Index type '2dsphere' does not support collation
 CREATE SCHEMA IF NOT EXISTS collation_ordered_test_schema;
 CREATE FUNCTION collation_ordered_test_schema.gin_bson_index_term_to_bson(bytea) 
 RETURNS bson
@@ -72,7 +177,7 @@ Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8101'::bigint)
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_numord_true"}');
-                                                                                                                                                                                                                                  cursorpage                                                                                                                                                                                                                                   
+                                                                                                                                                                                                                                      cursorpage                                                                                                                                                                                                                                       
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_numord_true", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" } }, "name" : "item_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -156,7 +261,7 @@ Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8102'::bigint)
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_numord_false"}');
-                                                                                                                                                                                                                                    cursorpage                                                                                                                                                                                                                                    
+                                                                                                                                                                                                                                        cursorpage                                                                                                                                                                                                                                        
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_numord_false", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" } }, "name" : "item_numord_false_idx", "collation" : { "locale" : "en", "numericOrdering" : false }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -240,7 +345,7 @@ Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8103'::bigint)
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_compound_numord_true"}');
-                                                                                                                                                                                                                                                         cursorpage                                                                                                                                                                                                                                                         
+                                                                                                                                                                                                                                                             cursorpage                                                                                                                                                                                                                                                             
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_compound_numord_true", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" }, "qty" : { "$numberInt" : "1" } }, "name" : "item_qty_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -324,7 +429,7 @@ Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8104'::bigint)
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_compound_numord_false"}');
-                                                                                                                                                                                                                                                          cursorpage                                                                                                                                                                                                                                                           
+                                                                                                                                                                                                                                                              cursorpage                                                                                                                                                                                                                                                               
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_compound_numord_false", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" }, "qty" : { "$numberInt" : "1" } }, "name" : "item_qty_numord_false_idx", "collation" : { "locale" : "en", "numericOrdering" : false }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -414,7 +519,7 @@ Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8105'::bigint)
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_single_s1"}');
-                                                                                                                                                                                                                                  cursorpage                                                                                                                                                                                                                                   
+                                                                                                                                                                                                                                      cursorpage                                                                                                                                                                                                                                       
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_single_s1", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "name" : { "$numberInt" : "1" } }, "name" : "name_s1_idx", "collation" : { "locale" : "en", "strength" : { "$numberInt" : "1" } }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -502,7 +607,7 @@ Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8106'::bigint)
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_compound_s1_numord"}');
-                                                                                                                                                                                                                                                                         cursorpage                                                                                                                                                                                                                                                                          
+                                                                                                                                                                                                                                                                             cursorpage                                                                                                                                                                                                                                                                              
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_compound_s1_numord", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "name" : { "$numberInt" : "1" }, "age" : { "$numberInt" : "1" } }, "name" : "name_age_s1_numord_idx", "collation" : { "locale" : "en", "strength" : { "$numberInt" : "1" }, "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -587,7 +692,7 @@ Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8107'::bigint)
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_compound_s3"}');
-                                                                                                                                                                                                                                                     cursorpage                                                                                                                                                                                                                                                      
+                                                                                                                                                                                                                                                         cursorpage                                                                                                                                                                                                                                                          
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_compound_s3", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "name" : { "$numberInt" : "1" }, "age" : { "$numberInt" : "1" } }, "name" : "name_age_s3_idx", "collation" : { "locale" : "en", "strength" : { "$numberInt" : "3" } }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -665,7 +770,7 @@ Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8108'::bigint)
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_array_numord"}');
-                                                                                                                                                                                                                                    cursorpage                                                                                                                                                                                                                                    
+                                                                                                                                                                                                                                        cursorpage                                                                                                                                                                                                                                        
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_array_numord", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "codes" : { "$numberInt" : "1" } }, "name" : "codes_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -739,7 +844,7 @@ Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8109'::bigint)
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_compound_array"}');
-                                                                                                                                                                                                                                                             cursorpage                                                                                                                                                                                                                                                             
+                                                                                                                                                                                                                                                                 cursorpage                                                                                                                                                                                                                                                                 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_compound_array", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "codes" : { "$numberInt" : "1" }, "priority" : { "$numberInt" : "1" } }, "name" : "codes_priority_numord_false_idx", "collation" : { "locale" : "en", "numericOrdering" : false }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -825,7 +930,7 @@ Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8110'::bigint)
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_build_numord"}');
-                                                                                                                                                                                                                                                     cursorpage                                                                                                                                                                                                                                                      
+                                                                                                                                                                                                                                                         cursorpage                                                                                                                                                                                                                                                          
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_build_numord", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" }, "tag" : { "$numberInt" : "1" } }, "name" : "item_tag_build_numord_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -915,7 +1020,7 @@ Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8111'::bigint)
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_missing"}');
-                                                                                                                                                                                                                                             cursorpage                                                                                                                                                                                                                                              
+                                                                                                                                                                                                                                                 cursorpage                                                                                                                                                                                                                                                  
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_missing", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "x" : { "$numberInt" : "1" }, "y" : { "$numberInt" : "1" } }, "name" : "x_y_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -1006,7 +1111,7 @@ Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8112'::bigint)
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_multi_coll"}');
-                                                                                                                                                                                                                                                                                                                                                                                         cursorpage                                                                                                                                                                                                                                                                                                                                                                                         
+                                                                                                                                                                                                                                                                                                                                                                                             cursorpage                                                                                                                                                                                                                                                                                                                                                                                             
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_multi_coll", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" } }, "name" : "item_val_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" } }, "name" : "item_val_numord_false_idx", "collation" : { "locale" : "en", "numericOrdering" : false }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -1096,7 +1201,7 @@ Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8113'::bigint)
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_three_key"}');
-                                                                                                                                                                                                                                                                      cursorpage                                                                                                                                                                                                                                                                      
+                                                                                                                                                                                                                                                                          cursorpage                                                                                                                                                                                                                                                                          
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_three_key", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "region" : { "$numberInt" : "1" }, "code" : { "$numberInt" : "1" }, "seq" : { "$numberInt" : "1" } }, "name" : "region_code_seq_numord_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -1170,7 +1275,7 @@ Check constraints:
     "shard_key_value_check" CHECK (shard_key_value = '8114'::bigint)
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_truncated"}');
-                                                                                                                                                                                                                                                        cursorpage                                                                                                                                                                                                                                                         
+                                                                                                                                                                                                                                                            cursorpage                                                                                                                                                                                                                                                             
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_truncated", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "longfield" : { "$numberInt" : "1" }, "tag" : { "$numberInt" : "1" } }, "name" : "longfield_tag_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -1231,23 +1336,8 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('ord_
 (6 rows)
 
 ROLLBACK;
--- ===== Section 16: Unsupported — unique ordered index with collation should fail ======
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-  'ord_coll_ordered_db',
-  '{
-    "createIndexes": "ord_unique_fail",
-    "indexes": [{
-      "key": { "a": 1, "b": 1 },
-      "name": "a_b_unique_coll_idx",
-      "unique": true,
-      "collation": { "locale": "en", "numericOrdering": true }
-    }]
-  }',
-  TRUE
-);
-ERROR:  Collation is not supported for unique indexes
 DROP SCHEMA collation_ordered_test_schema CASCADE;
 NOTICE:  drop cascades to function collation_ordered_test_schema.gin_bson_index_term_to_bson(bytea)
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
 RESET documentdb.defaultUseCompositeOpClass;
-RESET documentdb.enableCollationWithIndexes;
 RESET documentdb_core.enableCollation;

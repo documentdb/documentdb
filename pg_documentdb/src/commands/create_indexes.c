@@ -170,7 +170,7 @@ extern bool EnableUniqueCompositeReducedCorrelatedTerms;
 extern bool EnableCompositeShardDocumentTerms;
 extern bool EnablePerCollectionPlannerStatistics;
 
-extern bool EnableCollationWithIndexes;
+extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool SkipFailOnCollation;
 
 extern char *AlternateIndexHandler;
@@ -1979,7 +1979,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 		else if (strcmp(indexDefDocKey, "collation") == 0)
 		{
 			ReportFeatureUsage(FEATURE_COLLATION_CREATE_INDEX);
-			if (EnableCollationWithIndexes)
+			if (EnableCollationWithNonUniqueOrderedIndexes)
 			{
 				EnsureTopLevelFieldType("collation", &indexDefDocIter,
 										BSON_TYPE_DOCUMENT);
@@ -2336,7 +2336,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 
 	/*
 	 * Validate collation compatibility with index types and options.
-	 * TODO: For now, plumb collation through only for single-path and wildcard indexes.
+	 * TODO (COLLATION): Collation is only supported for non-unique ordered (or composite) indexes.
 	 */
 	bool isUniqueOrBuildAsUniqueIndex = IsUniqueOrBuildAsUniqueIndex(indexDef);
 	bool hasApplicableCollation = IsCollationApplicable(indexDef->collationString);
@@ -2374,12 +2374,20 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 								"Index type 'cosmosSearch' does not support collation")));
 		}
 
+		/* Collation is only supported for ordered (composite) indexes */
+		if (indexDef->enableCompositeTerm != BoolIndexOption_True)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+							errmsg(
+								"Collation is only supported with ordered (or composite) indexes")));
+		}
+
 		/* We do not support collation with unique indexes yet */
 		if (isUniqueOrBuildAsUniqueIndex)
 		{
 			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							errmsg(
-								"Collation is not supported for unique indexes")));
+								"Collation is not yet supported for unique indexes")));
 		}
 	}
 
