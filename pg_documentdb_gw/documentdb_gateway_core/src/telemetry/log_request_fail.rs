@@ -173,7 +173,24 @@ pub fn log_request_failure(
             });
         }
         DocumentDBError::PoolError(error, backtrace) => {
-            let error_message_loggable = error.to_string();
+            let error_message_loggable = match error {
+                deadpool_postgres::PoolError::Backend(e) => {
+                    if let Some(dbe) = e.as_db_error() {
+                        format!(
+                            "PoolError caused by Postgres error with code: {}, message: {}: hint: {}, file: {}, line: {}.",
+                            dbe.code().code(),
+                            dbe.message(),
+                            dbe.hint().unwrap_or_default(),
+                            dbe.file().unwrap_or_default(),
+                            dbe.line().unwrap_or_default()
+                        )
+                    } else {
+                        error.to_string()
+                    }
+                }
+                _ => error.to_string(),
+            };
+
             log_request_failure_inner(&RequestFailureLogFields {
                 activity_id,
                 error_source: "PoolError",
@@ -205,12 +222,13 @@ pub fn log_request_failure(
                 ..Default::default()
             });
         }
-        DocumentDBError::RawBsonError(_error, backtrace) => {
+        DocumentDBError::RawBsonError(error, backtrace) => {
             log_request_failure_inner(&RequestFailureLogFields {
                 activity_id,
                 error_source: "RawBsonError",
                 operation_name: &operation_name,
                 backtrace: Some(backtrace),
+                error_message_loggable: Some(error.to_string().as_str()),
                 ..Default::default()
             });
         }
@@ -236,12 +254,13 @@ pub fn log_request_failure(
                 ..Default::default()
             });
         }
-        DocumentDBError::ValueAccessError(_error, backtrace) => {
+        DocumentDBError::ValueAccessError(error, backtrace) => {
             log_request_failure_inner(&RequestFailureLogFields {
                 activity_id,
                 error_source: "ValueAccessError",
                 operation_name: &operation_name,
                 backtrace: Some(backtrace),
+                error_message_loggable: Some(error.to_string().as_str()),
                 ..Default::default()
             });
         }
