@@ -1,7 +1,7 @@
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
-SET citus.next_shard_id TO 949000;
-SET documentdb.next_collection_id TO 9490;
-SET documentdb.next_collection_index_id TO 9490;
+SET citus.next_shard_id TO 990000;
+SET documentdb.next_collection_id TO 9900;
+SET documentdb.next_collection_index_id TO 9900;
 
 select 1 from documentdb_api.insert_one('procTxnDB', 'updateme', '{"a":1,"_id":1,"b":1}');
 select 1 from documentdb_api.insert_one('procTxnDB', 'updateme', '{"a":2,"_id":2,"b":2}');
@@ -726,3 +726,49 @@ CALL documentdb_api.update_txn_proc('update_txn_proc', :'update_query3');
 
 -- still increments
 SELECT document FROM documentdb_api.collection('update_txn_proc', 'test_update_batch') ORDER BY object_id;
+
+-- these all tests are with native colocation off on db
+RESET documentdb.useLocalExecutionShardQueries;
+RESET client_min_messages;
+
+SELECT documentdb_api.insert('db', '{"insert":"subtransupdate", "documents":[{"_id":3, "b":4}]}');
+
+-- as this is native colocation off, single update with transaction id should use subtransactional path as usage update_worker
+SET  client_min_messages TO 'DEBUG1';
+CALL documentdb_api.update_txn_proc('db', '{"update":"subtransupdate", "updates":[{"q":{"_id":3},"u":{"$inc":{"b":1}},"multi":false}]}', NULL, 'subtxn-test');
+
+-- as this is native colocation off, single update without transaction id should use subtransactional path as usage update_worker
+CALL documentdb_api.update_txn_proc('db', '{"update":"subtransupdate", "updates":[{"q":{"_id":3},"u":{"$inc":{"b":1}},"multi":false}]}');
+
+-- Run inside transaction should fail
+BEGIN;
+CALL documentdb_api.update_txn_proc('db', '{"update":"subtransupdate", "updates":[{"q":{"_id":3},"u":{"$set":{"b":0}}}]}');
+END;
+
+-- let's verify final doc
+select document from documentdb_api.collection('db', 'subtransupdate');
+
+RESET client_min_messages;
+-- now use same set of test with another db which will have native colocation
+SELECT documentdb_api.insert('db1', '{"insert":"subtransupdate", "documents":[{"_id":3, "b":4}]}');
+
+SET  client_min_messages TO 'DEBUG1';
+-- single update but with transaction id should use subtransactions
+CALL documentdb_api.update_txn_proc('db1', '{"update":"subtransupdate", "updates":[{"q":{"_id":3},"u":{"$inc":{"b":1}},"multi":false}]}', NULL, 'subtxn-test');
+
+-- Single update without transaction id should not use subtransactions and should commit in one go
+CALL documentdb_api.update_txn_proc('db1', '{"update":"subtransupdate", "updates":[{"q":{"_id":3},"u":{"$inc":{"b":1}},"multi":false}]}');
+
+-- Run inside transaction should fail
+BEGIN;
+CALL documentdb_api.update_txn_proc('db1', '{"update":"subtransupdate", "updates":[{"q":{"_id":3},"u":{"$set":{"b":0}}}]}');
+END;
+
+
+-- This fails inside ProcessUpdate, exercising DoSingleUpdate's PG_CATCH
+CALL documentdb_api.update_txn_proc('db1', '{"update":"subtransupdate", "updates":[{"q":{"_id":3}, "u":{"_id":999, "a":1}}]}');
+
+-- let's verify final doc
+select document from documentdb_api.collection('db1', 'subtransupdate');
+
+RESET client_min_messages;

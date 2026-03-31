@@ -137,8 +137,19 @@ CALL documentdb_api.insert_txn_proc('commitDb1', '{"insert":"commitColl", "docum
 -- total doc count should be 10+9 
 SELECT count(document) FROM documentdb_api.collection('commitDb1','commitColl');
 
+-- single insert but with transaction id uses subtransactions
+SET  client_min_messages TO 'DEBUG1';
+CALL documentdb_api.insert_txn_proc('db', '{"insert":"collection0", "documents":[{"_id":40,"a":99}]}',NULL, '1');
 
--- clean the collections
+-- Single insert without transaction id not uses subtransactions
+CALL documentdb_api.insert_txn_proc('db', '{"insert":"collection0", "documents":[{"_id":123}]}');
+
+-- test failed insert with non subtransactional path 
+CALL documentdb_api.insert_txn_proc('db', '{"insert":"collection0", "documents":[{"_id":123}]}');
+
+RESET client_min_messages;
+
+---- clean the collections
 SELECT documentdb_api.drop_collection('db', 'collection0');
 SELECT documentdb_api.drop_collection('db', 'collection1');
 SELECT documentdb_api.drop_collection('db', 'collection2');

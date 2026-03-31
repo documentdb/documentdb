@@ -52,22 +52,6 @@
 
 
 /*
- * Specifies how the insert command was invoked and which transactional
- * semantics to apply.
- */
-typedef enum InsertMode
-{
-	/* insert invoked via insert() — transactional insert */
-	InsertMode_Txn_Func = 0,
-
-	/* insert invoked via insert_txn_proc() — transactional insert */
-	InsertMode_Txn_Proc = 1,
-
-	/* insert invoked via insert_bulk() — non-transactional insert */
-	InsertMode_Bulk_Proc = 2,
-} InsertMode;
-
-/*
  * BatchInsertionSpec describes a batch of insert operations.
  */
 typedef struct BatchInsertionSpec
@@ -124,12 +108,12 @@ static List * BuildInsertionListFromPgbsonSequence(pgbsonsequence *docSequence,
 static void ProcessBatchInsertion(MongoCollection *collection,
 								  BatchInsertionSpec *batchSpec,
 								  text *transactionId, BatchInsertionResult *batchResult,
-								  InsertMode insertMode);
+								  WriteMode writeMode);
 static void DoBatchInsertNoTransactionId(MongoCollection *collection,
 										 BatchInsertionSpec *batchSpec,
 										 BatchInsertionResult *batchResult,
 										 ExprEvalState *evalState,
-										 InsertMode insertMode);
+										 WriteMode writeMode);
 
 static uint64 ProcessInsertion(MongoCollection *collection, Oid insertShardOid, const
 							   bson_value_t *document,
@@ -149,7 +133,7 @@ static uint64 InsertOneWithTransactionCore(uint64 collectionId, const
 static uint64 CallInsertWorkerForInsertOne(MongoCollection *collection, int64
 										   shardKeyHash,
 										   pgbson *document, text *transactionId);
-static Datum CommandInsertCore(PG_FUNCTION_ARGS, InsertMode insertMode, MemoryContext
+static Datum CommandInsertCore(PG_FUNCTION_ARGS, WriteMode writeMode, MemoryContext
 							   allocContext);
 static inline List * CreateValuesListForInsert(Const *shardKey, Expr *objectId,
 											   Expr *document, AttrNumber
@@ -186,7 +170,7 @@ Datum
 command_insert(PG_FUNCTION_ARGS)
 {
 	ReportFeatureUsage(FEATURE_COMMAND_INSERT);
-	PG_RETURN_DATUM(CommandInsertCore(fcinfo, InsertMode_Txn_Func, CurrentMemoryContext));
+	PG_RETURN_DATUM(CommandInsertCore(fcinfo, WriteMode_Txn_Func, CurrentMemoryContext));
 }
 
 
@@ -200,7 +184,7 @@ command_insert_bulk(PG_FUNCTION_ARGS)
 	bool isTopLevel = true;
 	if (IsInTransactionBlock(isTopLevel))
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_OPERATIONNOTSUPPORTEDINTRANSACTION),
 						errmsg("the insert procedure cannot be used in transactions."
 							   " Please use the insert function instead")));
 	}
@@ -208,7 +192,7 @@ command_insert_bulk(PG_FUNCTION_ARGS)
 
 	/* For results we need a stable memory context across transactions */
 	MemoryContext stableContext = fcinfo->flinfo->fn_mcxt;
-	Datum result = CommandInsertCore(fcinfo, InsertMode_Bulk_Proc, stableContext);
+	Datum result = CommandInsertCore(fcinfo, WriteMode_Bulk_Proc, stableContext);
 
 	/* If it's not transactional, pop the active snapshot created during the transaction start */
 	if (ActiveSnapshotSet())
@@ -234,7 +218,18 @@ Datum
 command_insert_txn_proc(PG_FUNCTION_ARGS)
 {
 	ReportFeatureUsage(FEATURE_COMMAND_INSERT);
-	PG_RETURN_DATUM(CommandInsertCore(fcinfo, InsertMode_Txn_Proc, CurrentMemoryContext));
+
+	bool isTopLevel = true;
+	if (IsInTransactionBlock(isTopLevel))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_OPERATIONNOTSUPPORTEDINTRANSACTION),
+						errmsg("the insert procedure cannot be used in transactions."
+							   " Please use the insert function instead")));
+	}
+
+	/* Use function context as a stable memory context to store errors across transaction aborts */
+	PG_RETURN_DATUM(CommandInsertCore(fcinfo, WriteMode_Txn_Proc,
+									  fcinfo->flinfo->fn_mcxt));
 }
 
 
@@ -725,8 +720,6 @@ DoSingleInsert(MongoCollection *collection,
 	volatile bool isSuccess = false;
 	volatile uint64 numDocsInserted = 0;
 
-	/* use a subtransaction to correctly handle failures */
-	MemoryContext oldContext = CurrentMemoryContext;
 
 	PG_TRY();
 	{
@@ -737,14 +730,21 @@ DoSingleInsert(MongoCollection *collection,
 	}
 	PG_CATCH();
 	{
-		MemoryContextSwitchTo(oldContext);
+		MemoryContext oldContext = MemoryContextSwitchTo(
+			batchResult->resultMemoryContext);
 		ErrorData *errorData = CopyErrorDataAndFlush();
+		MemoryContextSwitchTo(oldContext);
+
+		if (IsOperatorInterventionError(errorData))
+		{
+			ReThrowError(errorData);
+		}
 
 		PopAllActiveSnapshots();
 		AbortCurrentTransaction();
 		StartTransactionCommand();
 
-		MemoryContextSwitchTo(batchResult->resultMemoryContext);
+		oldContext = MemoryContextSwitchTo(batchResult->resultMemoryContext);
 		batchResult->writeErrors = lappend(batchResult->writeErrors,
 										   GetWriteErrorFromErrorData(errorData,
 																	  insertIndex));
@@ -829,7 +829,7 @@ DoSingleInsertWithSubTxn(MongoCollection *collection,
 static void
 ProcessBatchInsertion(MongoCollection *collection, BatchInsertionSpec *batchSpec,
 					  text *transactionId, BatchInsertionResult *batchResult,
-					  InsertMode insertMode)
+					  WriteMode writeMode)
 {
 	batchResult->ok = 1;
 	batchResult->rowsInserted = 0;
@@ -856,14 +856,15 @@ ProcessBatchInsertion(MongoCollection *collection, BatchInsertionSpec *batchSpec
 	{
 		/* So at this point, we have a single document */
 		int insertIndex = 0;
-		if (insertMode == InsertMode_Txn_Proc)
+		if (writeMode == WriteMode_Txn_Proc && transactionId == NULL)
 		{
 			DoSingleInsert(collection, batchSpec->insertShardOid,
 						   linitial(batchSpec->documents), transactionId,
-						   batchResult, 0, evalState);
+						   batchResult, insertIndex, evalState);
 		}
 		else
 		{
+			ereport(DEBUG1, (errmsg("Using single insert with subtransaction")));
 			DoSingleInsertWithSubTxn(collection, batchSpec->insertShardOid,
 									 linitial(batchSpec->documents), transactionId,
 									 batchResult, insertIndex, evalState);
@@ -875,7 +876,7 @@ ProcessBatchInsertion(MongoCollection *collection, BatchInsertionSpec *batchSpec
 		 * and/or we have more than 1 document. Do a batch insert directly.
 		 */
 		DoBatchInsertNoTransactionId(collection, batchSpec, batchResult, evalState,
-									 insertMode);
+									 writeMode);
 	}
 
 	if (evalState != NULL)
@@ -891,7 +892,7 @@ ProcessBatchInsertion(MongoCollection *collection, BatchInsertionSpec *batchSpec
 static void
 DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *batchSpec,
 							 BatchInsertionResult *batchResult, ExprEvalState *evalState,
-							 InsertMode insertMode)
+							 WriteMode writeMode)
 {
 	List *insertions = batchSpec->documents;
 	bool isOrdered = batchSpec->isOrdered;
@@ -904,7 +905,7 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 	{
 		CHECK_FOR_INTERRUPTS();
 
-		if (insertMode == InsertMode_Bulk_Proc && insertIndex > 0)
+		if (writeMode == WriteMode_Bulk_Proc && insertIndex > 0)
 		{
 			/* For each iteration of the loop, commit prior work */
 			bool setSnapshot = true;
@@ -1046,7 +1047,7 @@ ProcessInsertion(MongoCollection *collection,
 
 /* core implementation of insert command */
 static Datum
-CommandInsertCore(PG_FUNCTION_ARGS, InsertMode insertMode, MemoryContext allocContext)
+CommandInsertCore(PG_FUNCTION_ARGS, WriteMode writeMode, MemoryContext allocContext)
 {
 	if (PG_ARGISNULL(1))
 	{
@@ -1118,7 +1119,7 @@ CommandInsertCore(PG_FUNCTION_ARGS, InsertMode insertMode, MemoryContext allocCo
 
 		/* execute data inserts */
 		ProcessBatchInsertion(collection, batchSpec, transactionId, &batchResult,
-							  insertMode);
+							  writeMode);
 	}
 
 	Datum values[2];

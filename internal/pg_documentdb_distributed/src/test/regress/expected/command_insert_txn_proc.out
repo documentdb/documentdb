@@ -5,12 +5,7 @@ SET documentdb.next_collection_index_id TO 1390;
 -- Run inside transaction
 BEGIN;
 CALL documentdb_api.insert_txn_proc('db', '{"insert":"salaries", "documents":[{ "_id" : 1 }]}');
-NOTICE:  creating collection
-                               p_result                               | p_success 
----------------------------------------------------------------------
- { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } } | t
-(1 row)
-
+ERROR:  the insert procedure cannot be used in transactions. Please use the insert function instead
 END;
 -- exercise invalid insert syntax errors
 CALL documentdb_api.insert_txn_proc('db', NULL);
@@ -404,7 +399,32 @@ SELECT count(document) FROM documentdb_api.collection('commitDb1','commitColl');
     19
 (1 row)
 
--- clean the collections
+-- single insert but with transaction id uses subtransactions
+SET  client_min_messages TO 'DEBUG1';
+CALL documentdb_api.insert_txn_proc('db', '{"insert":"collection0", "documents":[{"_id":40,"a":99}]}',NULL, '1');
+DEBUG:  Using single insert with subtransaction
+DEBUG:  executing " SELECT documentdb_api_internal.insert_worker($1, $2, $3, $4::documentdb_core.bson, $5::documentdb_core.bsonsequence, $6) FROM documentdb_data.documents_1392 WHERE shard_key_value = 1392" via SPI
+                               p_result                               | p_success 
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } } | t
+(1 row)
+
+-- Single insert without transaction id not uses subtransactions
+CALL documentdb_api.insert_txn_proc('db', '{"insert":"collection0", "documents":[{"_id":123}]}');
+                               p_result                               | p_success 
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } } | t
+(1 row)
+
+-- test failed insert with non subtransactional path 
+CALL documentdb_api.insert_txn_proc('db', '{"insert":"collection0", "documents":[{"_id":123}]}');
+                                                                                                                        p_result                                                                                                                         | p_success 
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "319029277" }, "errmsg" : "Duplicate key violation on the requested collection: Index '_id_'" } ] } | f
+(1 row)
+
+RESET client_min_messages;
+---- clean the collections
 SELECT documentdb_api.drop_collection('db', 'collection0');
  drop_collection 
 ---------------------------------------------------------------------

@@ -1,7 +1,7 @@
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
-SET citus.next_shard_id TO 949000;
-SET documentdb.next_collection_id TO 9490;
-SET documentdb.next_collection_index_id TO 9490;
+SET citus.next_shard_id TO 990000;
+SET documentdb.next_collection_id TO 9900;
+SET documentdb.next_collection_index_id TO 9900;
 select 1 from documentdb_api.insert_one('procTxnDB', 'updateme', '{"a":1,"_id":1,"b":1}');
 NOTICE:  creating collection
  ?column? 
@@ -502,7 +502,7 @@ select count(*) from documentdb_api.collection('procTxnDB', 'updateme') where do
 -- test pruning logic in update
 set citus.log_remote_commands to on;
 CALL documentdb_api.update_txn_proc('procTxnDB', '{"update":"updateme", "updates":[{"q":{"a":{"$eq":5}},"u":{"$set":{"b":0}},"multi":true}]}');
-NOTICE:  executing the command locally: WITH u AS (UPDATE documentdb_data.documents_9491_949010 documents_9491 SET document = COALESCE(documentdb_api_internal.update_bson_document(documents_9491.document, ($1)::documentdb_core.bson, $2::documentdb_core.bson, ($3)::documentdb_core.bson, $4::documentdb_core.bson, NULL::text, documents_9491.ctid, documents_9491.tableoid), documents_9491.document) WHERE (((documents_9491.document OPERATOR(documentdb_api_catalog.#=) '{ "a" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND (documents_9491.shard_key_value OPERATOR(pg_catalog.=) '1786987034919379147'::bigint)) AND (documents_9491.shard_key_value OPERATOR(pg_catalog.=) $6)) RETURNING documentdb_api_internal.bson_update_returned_value(documents_9491.shard_key_value) AS updated) SELECT count(*) AS count, sum(updated) AS sum FROM u WHERE true
+NOTICE:  executing the command locally: WITH u AS (UPDATE documentdb_data.documents_9901_990010 documents_9901 SET document = COALESCE(documentdb_api_internal.update_bson_document(documents_9901.document, ($1)::documentdb_core.bson, $2::documentdb_core.bson, ($3)::documentdb_core.bson, $4::documentdb_core.bson, NULL::text, documents_9901.ctid, documents_9901.tableoid), documents_9901.document) WHERE (((documents_9901.document OPERATOR(documentdb_api_catalog.#=) '{ "a" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND (documents_9901.shard_key_value OPERATOR(pg_catalog.=) '1786987034919379147'::bigint)) AND (documents_9901.shard_key_value OPERATOR(pg_catalog.=) $6)) RETURNING documentdb_api_internal.bson_update_returned_value(documents_9901.shard_key_value) AS updated) SELECT count(*) AS count, sum(updated) AS sum FROM u WHERE true
                                                   p_result                                                  | p_success 
 ---------------------------------------------------------------------
  { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "1" } } | t
@@ -523,7 +523,7 @@ select count(*) from documentdb_api.collection('procTxnDB', 'updateme') where do
 
 set citus.log_remote_commands to on;
 CALL documentdb_api.update_txn_proc('procTxnDB', '{"update":"updateme", "updates":[{"q":{"$and":[{"a":5},{"a":{"$gt":0}}]},"u":{"$set":{"b":0}},"multi":true}]}');
-NOTICE:  executing the command locally: WITH u AS (UPDATE documentdb_data.documents_9491_949010 documents_9491 SET document = COALESCE(documentdb_api_internal.update_bson_document(documents_9491.document, ($1)::documentdb_core.bson, $2::documentdb_core.bson, ($3)::documentdb_core.bson, $4::documentdb_core.bson, NULL::text, documents_9491.ctid, documents_9491.tableoid), documents_9491.document) WHERE ((((documents_9491.document OPERATOR(documentdb_api_catalog.#=) '{ "a" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND (documents_9491.document OPERATOR(documentdb_api_catalog.#>) '{ "a" : { "$numberInt" : "0" } }'::documentdb_core.bsonquery)) AND (documents_9491.shard_key_value OPERATOR(pg_catalog.=) '1786987034919379147'::bigint)) AND (documents_9491.shard_key_value OPERATOR(pg_catalog.=) $6)) RETURNING documentdb_api_internal.bson_update_returned_value(documents_9491.shard_key_value) AS updated) SELECT count(*) AS count, sum(updated) AS sum FROM u WHERE true
+NOTICE:  executing the command locally: WITH u AS (UPDATE documentdb_data.documents_9901_990010 documents_9901 SET document = COALESCE(documentdb_api_internal.update_bson_document(documents_9901.document, ($1)::documentdb_core.bson, $2::documentdb_core.bson, ($3)::documentdb_core.bson, $4::documentdb_core.bson, NULL::text, documents_9901.ctid, documents_9901.tableoid), documents_9901.document) WHERE ((((documents_9901.document OPERATOR(documentdb_api_catalog.#=) '{ "a" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND (documents_9901.document OPERATOR(documentdb_api_catalog.#>) '{ "a" : { "$numberInt" : "0" } }'::documentdb_core.bsonquery)) AND (documents_9901.shard_key_value OPERATOR(pg_catalog.=) '1786987034919379147'::bigint)) AND (documents_9901.shard_key_value OPERATOR(pg_catalog.=) $6)) RETURNING documentdb_api_internal.bson_update_returned_value(documents_9901.shard_key_value) AS updated) SELECT count(*) AS count, sum(updated) AS sum FROM u WHERE true
                                                   p_result                                                  | p_success 
 ---------------------------------------------------------------------
  { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "1" } } | t
@@ -552,7 +552,7 @@ CALL documentdb_api.update_txn_proc('procTxnDB', '{"update":"updateme", "updates
 -- update 1 with shard key filters is supported for sharded collections
 set citus.log_remote_commands to on;
 CALL documentdb_api.update_txn_proc('procTxnDB', '{"update":"updateme", "updates":[{"q":{"a":{"$eq":5}},"u":{"$set":{"b":0}},"multi":false}]}');
-NOTICE:  executing the command locally: SELECT documentdb_api_internal.update_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS update_worker FROM documentdb_data.documents_9491_949010 documents_9491 WHERE (shard_key_value OPERATOR(pg_catalog.=) '1786987034919379147'::bigint)
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.update_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS update_worker FROM documentdb_data.documents_9901_990010 documents_9901 WHERE (shard_key_value OPERATOR(pg_catalog.=) '1786987034919379147'::bigint)
                                                   p_result                                                  | p_success 
 ---------------------------------------------------------------------
  { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "1" } } | t
@@ -843,7 +843,7 @@ select count(*) from documentdb_api.collection('procTxnDB', 'updateme') where do
 
 set citus.log_remote_commands to on;
 CALL documentdb_api.update_txn_proc('procTxnDB', '{"update":"updateme", "updates":[{"q":{"_id":33, "a": 10 },"u":{"$set":{"b":4}},"multi":false,"upsert":true}]}');
-NOTICE:  executing the command locally: SELECT documentdb_api_internal.update_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS update_worker FROM documentdb_data.documents_9491_949011 documents_9491 WHERE (shard_key_value OPERATOR(pg_catalog.=) '5243071450131145979'::bigint)
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.update_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS update_worker FROM documentdb_data.documents_9901_990011 documents_9901 WHERE (shard_key_value OPERATOR(pg_catalog.=) '5243071450131145979'::bigint)
                                                   p_result                                                  | p_success 
 ---------------------------------------------------------------------
  { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } } | t
@@ -870,7 +870,7 @@ select count(*) from documentdb_api.collection('procTxnDB', 'updateme') where do
 
 set citus.log_remote_commands to on;
 CALL documentdb_api.update_txn_proc('procTxnDB', '{"update":"updateme", "updates":[{"q":{"_id":33, "a": 10 },"u":{"$set":{"b":2}},"multi":true,"upsert":true}]}');
-NOTICE:  executing the command locally: WITH u AS (UPDATE documentdb_data.documents_9491_949011 documents_9491 SET document = COALESCE(documentdb_api_internal.update_bson_document(documents_9491.document, ($1)::documentdb_core.bson, $2::documentdb_core.bson, ($3)::documentdb_core.bson, $4::documentdb_core.bson, NULL::text, documents_9491.ctid, documents_9491.tableoid), documents_9491.document) WHERE (((documents_9491.document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : { "$numberInt" : "33" } }'::documentdb_core.bsonquery) AND (documents_9491.document OPERATOR(documentdb_api_catalog.#=) '{ "a" : { "$numberInt" : "10" } }'::documentdb_core.bsonquery) AND (documents_9491.shard_key_value OPERATOR(pg_catalog.=) '5243071450131145979'::bigint) AND (documents_9491.object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "33" } }'::documentdb_core.bson)) AND (documents_9491.shard_key_value OPERATOR(pg_catalog.=) $6) AND (documents_9491.object_id OPERATOR(documentdb_core.=) ($7)::documentdb_core.bson)) RETURNING documentdb_api_internal.bson_update_returned_value(documents_9491.shard_key_value) AS updated) SELECT count(*) AS count, sum(updated) AS sum FROM u WHERE true
+NOTICE:  executing the command locally: WITH u AS (UPDATE documentdb_data.documents_9901_990011 documents_9901 SET document = COALESCE(documentdb_api_internal.update_bson_document(documents_9901.document, ($1)::documentdb_core.bson, $2::documentdb_core.bson, ($3)::documentdb_core.bson, $4::documentdb_core.bson, NULL::text, documents_9901.ctid, documents_9901.tableoid), documents_9901.document) WHERE (((documents_9901.document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : { "$numberInt" : "33" } }'::documentdb_core.bsonquery) AND (documents_9901.document OPERATOR(documentdb_api_catalog.#=) '{ "a" : { "$numberInt" : "10" } }'::documentdb_core.bsonquery) AND (documents_9901.shard_key_value OPERATOR(pg_catalog.=) '5243071450131145979'::bigint) AND (documents_9901.object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "33" } }'::documentdb_core.bson)) AND (documents_9901.shard_key_value OPERATOR(pg_catalog.=) $6) AND (documents_9901.object_id OPERATOR(documentdb_core.=) ($7)::documentdb_core.bson)) RETURNING documentdb_api_internal.bson_update_returned_value(documents_9901.shard_key_value) AS updated) SELECT count(*) AS count, sum(updated) AS sum FROM u WHERE true
                                                   p_result                                                  | p_success 
 ---------------------------------------------------------------------
  { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } } | t
@@ -1498,7 +1498,7 @@ CALL documentdb_api.update_txn_proc('update_txn_proc', '{"update":"NonID", "upda
 (1 row)
 
 SELECT document from documentdb_api.collection('update_txn_proc', 'NonID');
-NOTICE:  executing the command locally: SELECT document FROM documentdb_data.documents_9497_949022 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '9497'::bigint)
+NOTICE:  executing the command locally: SELECT document FROM documentdb_data.documents_9907_990022 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '9907'::bigint)
                              document                             
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } }
@@ -1542,7 +1542,7 @@ CALL documentdb_api.update_txn_proc('update_txn_proc', '{"update":"NonID", "upda
 (1 row)
 
 SELECT document from documentdb_api.collection('update_txn_proc', 'NonID');
-NOTICE:  executing the command locally: SELECT document FROM documentdb_data.documents_9497_949022 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '9497'::bigint)
+NOTICE:  executing the command locally: SELECT document FROM documentdb_data.documents_9907_990022 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '9907'::bigint)
                              document                             
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "7" } }
@@ -1784,21 +1784,21 @@ SELECT document FROM documentdb_api.collection('update_txn_proc', 'test_update_b
 set documentdb.useLocalExecutionShardQueries to off;
 -- These should all have 4 commit message (1 for each batchsize of 3, and 1 for the last one)
 CALL documentdb_api.update_txn_proc('update_txn_proc', :'update_query');
-DEBUG:  executing " SELECT documentdb_api_internal.update_worker($1, $2, $3, $4::documentdb_core.bson, $5::documentdb_core.bsonsequence, $6) FROM documentdb_data.documents_9499 WHERE shard_key_value = 9499" via SPI
+DEBUG:  executing " SELECT documentdb_api_internal.update_worker($1, $2, $3, $4::documentdb_core.bson, $5::documentdb_core.bsonsequence, $6) FROM documentdb_data.documents_9909 WHERE shard_key_value = 9909" via SPI
                                                    p_result                                                   | p_success 
 ---------------------------------------------------------------------
  { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "10" }, "n" : { "$numberInt" : "10" } } | t
 (1 row)
 
 CALL documentdb_api.update_txn_proc('update_txn_proc', :'update_query2');
-DEBUG:  executing " SELECT documentdb_api_internal.update_worker($1, $2, $3, $4::documentdb_core.bson, $5::documentdb_core.bsonsequence, $6) FROM documentdb_data.documents_9499 WHERE shard_key_value = 9499" via SPI
+DEBUG:  executing " SELECT documentdb_api_internal.update_worker($1, $2, $3, $4::documentdb_core.bson, $5::documentdb_core.bsonsequence, $6) FROM documentdb_data.documents_9909 WHERE shard_key_value = 9909" via SPI
                                                                                                                                                                          p_result                                                                                                                                                                          | p_success 
 ---------------------------------------------------------------------
  { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "5" }, "n" : { "$numberInt" : "5" }, "writeErrors" : [ { "index" : { "$numberInt" : "5" }, "code" : { "$numberInt" : "16777245" }, "errmsg" : "unknown top level operator: $a. If you have a field name that starts with a '$' symbol, consider using $getField or $setField." } ] } | f
 (1 row)
 
 CALL documentdb_api.update_txn_proc('update_txn_proc', :'update_query3');
-DEBUG:  executing " SELECT documentdb_api_internal.update_worker($1, $2, $3, $4::documentdb_core.bson, $5::documentdb_core.bsonsequence, $6) FROM documentdb_data.documents_9499 WHERE shard_key_value = 9499" via SPI
+DEBUG:  executing " SELECT documentdb_api_internal.update_worker($1, $2, $3, $4::documentdb_core.bson, $5::documentdb_core.bsonsequence, $6) FROM documentdb_data.documents_9909 WHERE shard_key_value = 9909" via SPI
                                                                                                                                                                           p_result                                                                                                                                                                           | p_success 
 ---------------------------------------------------------------------
  { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "10" }, "n" : { "$numberInt" : "10" }, "writeErrors" : [ { "index" : { "$numberInt" : "5" }, "code" : { "$numberInt" : "16777245" }, "errmsg" : "unknown top level operator: $a. If you have a field name that starts with a '$' symbol, consider using $getField or $setField." } ] } | f
@@ -1813,3 +1813,89 @@ SELECT document FROM documentdb_api.collection('update_txn_proc', 'test_update_b
  { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "41" } }
 (3 rows)
 
+-- these all tests are with native colocation off on db
+RESET documentdb.useLocalExecutionShardQueries;
+RESET client_min_messages;
+SELECT documentdb_api.insert('db', '{"insert":"subtransupdate", "documents":[{"_id":3, "b":4}]}');
+NOTICE:  creating collection
+                                         insert                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+-- as this is native colocation off, single update with transaction id should use subtransactional path as usage update_worker
+SET  client_min_messages TO 'DEBUG1';
+CALL documentdb_api.update_txn_proc('db', '{"update":"subtransupdate", "updates":[{"q":{"_id":3},"u":{"$inc":{"b":1}},"multi":false}]}', NULL, 'subtxn-test');
+DEBUG:  executing " SELECT documentdb_api_internal.update_worker($1, $2, $3, $4::documentdb_core.bson, $5::documentdb_core.bsonsequence, $6) FROM documentdb_data.documents_9910 WHERE shard_key_value = 9910" via SPI
+DEBUG:  Using single update with subtransaction
+                                                  p_result                                                  | p_success 
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } } | t
+(1 row)
+
+-- as this is native colocation off, single update without transaction id should use subtransactional path as usage update_worker
+CALL documentdb_api.update_txn_proc('db', '{"update":"subtransupdate", "updates":[{"q":{"_id":3},"u":{"$inc":{"b":1}},"multi":false}]}');
+DEBUG:  executing " SELECT documentdb_api_internal.update_worker($1, $2, $3, $4::documentdb_core.bson, $5::documentdb_core.bsonsequence, $6) FROM documentdb_data.documents_9910 WHERE shard_key_value = 9910" via SPI
+DEBUG:  Using single update with subtransaction
+                                                  p_result                                                  | p_success 
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } } | t
+(1 row)
+
+-- Run inside transaction should fail
+BEGIN;
+CALL documentdb_api.update_txn_proc('db', '{"update":"subtransupdate", "updates":[{"q":{"_id":3},"u":{"$set":{"b":0}}}]}');
+ERROR:  the update procedure cannot be used in transactions. Please use the update function instead
+END;
+-- let's verify final doc
+select document from documentdb_api.collection('db', 'subtransupdate');
+                             document                             
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "b" : { "$numberInt" : "6" } }
+(1 row)
+
+RESET client_min_messages;
+-- now use same set of test with another db which will have native colocation
+SELECT documentdb_api.insert('db1', '{"insert":"subtransupdate", "documents":[{"_id":3, "b":4}]}');
+NOTICE:  creating collection
+                                         insert                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SET  client_min_messages TO 'DEBUG1';
+-- single update but with transaction id should use subtransactions
+CALL documentdb_api.update_txn_proc('db1', '{"update":"subtransupdate", "updates":[{"q":{"_id":3},"u":{"$inc":{"b":1}},"multi":false}]}', NULL, 'subtxn-test');
+DEBUG:  Using single update with subtransaction
+                                                  p_result                                                  | p_success 
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } } | t
+(1 row)
+
+-- Single update without transaction id should not use subtransactions and should commit in one go
+CALL documentdb_api.update_txn_proc('db1', '{"update":"subtransupdate", "updates":[{"q":{"_id":3},"u":{"$inc":{"b":1}},"multi":false}]}');
+                                                  p_result                                                  | p_success 
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "1" }, "n" : { "$numberInt" : "1" } } | t
+(1 row)
+
+-- Run inside transaction should fail
+BEGIN;
+CALL documentdb_api.update_txn_proc('db1', '{"update":"subtransupdate", "updates":[{"q":{"_id":3},"u":{"$set":{"b":0}}}]}');
+ERROR:  the update procedure cannot be used in transactions. Please use the update function instead
+END;
+-- This fails inside ProcessUpdate, exercising DoSingleUpdate's PG_CATCH
+CALL documentdb_api.update_txn_proc('db1', '{"update":"subtransupdate", "updates":[{"q":{"_id":3}, "u":{"_id":999, "a":1}}]}');
+                                                                                                                                    p_result                                                                                                                                    | p_success 
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "0" }, "n" : { "$numberInt" : "0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "486539293" }, "errmsg" : "Cannot modify '_id' field as part of the operation" } ] } | f
+(1 row)
+
+-- let's verify final doc
+select document from documentdb_api.collection('db1', 'subtransupdate');
+                             document                             
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "b" : { "$numberInt" : "6" } }
+(1 row)
+
+RESET client_min_messages;
