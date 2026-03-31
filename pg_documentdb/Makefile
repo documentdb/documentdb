@@ -28,6 +28,7 @@ API_SCHEMA_NAME=documentdb_api
 API_SCHEMA_NAME_V2=documentdb_api
 CORE_SCHEMA_NAME=documentdb_core
 POSTGIS_SCHEMA_NAME=public
+ENABLE_RBAC_SCHEMA=1
 
 # Built-in roles
 API_ADMIN_ROLE=documentdb_admin_role
