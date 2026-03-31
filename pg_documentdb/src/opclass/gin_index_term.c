@@ -20,7 +20,7 @@
 #include "types/decimal128.h"
 #include "io/bsonvalue_utils.h"
 
-extern bool EnableCollationWithIndexes;
+extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool EnableComparableTerms;
 
 
@@ -326,7 +326,7 @@ gin_bson_compare(PG_FUNCTION_ARGS)
 	bytea *right = PG_GETARG_BYTEA_PP(1);
 
 	const char *collationString = NULL;
-	if (EnableCollationWithIndexes && PG_HAS_OPCLASS_OPTIONS())
+	if (EnableCollationWithNonUniqueOrderedIndexes && PG_HAS_OPCLASS_OPTIONS())
 	{
 		uint32_t collationStringLengthNotUsed;
 		BsonGinIndexOptionsBase *options =
