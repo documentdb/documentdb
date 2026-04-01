@@ -598,7 +598,7 @@ where
         return Ok(response);
     }
 
-    if !*connection_context.auth_state.is_authorized().read().await {
+    if !connection_context.auth_state.is_authorized() {
         if connection_context.auth_state.auth_kind() == Some(&auth::AuthKind::ExternalIdentity) {
             return Err(DocumentDBError::reauthentication_required(
                 "External identity token has expired.".to_owned(),
