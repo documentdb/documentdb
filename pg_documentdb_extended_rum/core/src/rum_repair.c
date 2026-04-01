@@ -282,16 +282,32 @@ CheckTreeAtLevel(RumState *rumState, BlockNumber blockNumber, int level,
 		{
 			if (childBufferHasIncompleteSplit)
 			{
-				elog(INFO, "Rum tree is in an incomplete split state. "
-						   "parentPage %u has child %u with rightLink %u, but parent right link is %u",
-					 blockNumber, childBlock, childRightBlock, nextSibling);
+				if (message_level_is_interesting(NOTICE))
+				{
+					elog(INFO, "Rum tree is in an incomplete split state. "
+							   "parentPage %u has child %u with rightLink %u, but parent right link is %u",
+						 blockNumber, childBlock, childRightBlock, nextSibling);
+				}
+				else
+				{
+					elog(WARNING, "Rum tree is in an incomplete split state.");
+				}
+
 				shouldFixPage = false;
 			}
 			else
 			{
-				elog(INFO, "Rum tree is in an inconsistent state. "
-						   "parentPage %u has child %u with rightLink %u, but parent right link is %u",
-					 blockNumber, childBlock, childRightBlock, nextSibling);
+				if (message_level_is_interesting(NOTICE))
+				{
+					elog(INFO, "Rum tree is in an inconsistent state. "
+							   "parentPage %u has child %u with rightLink %u, but parent right link is %u",
+						 blockNumber, childBlock, childRightBlock, nextSibling);
+				}
+				else
+				{
+					elog(WARNING, "Rum tree is in an inconsistent state.");
+				}
+
 
 				shouldFixPage = RumTrackIncompleteSplit && !dryrunMode;
 			}
