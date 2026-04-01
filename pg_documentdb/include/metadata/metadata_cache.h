@@ -187,6 +187,7 @@ Oid GetClusterBsonQueryArrayTypeId(void);
 Oid GetBsonArrayTypeOid(void);
 Oid BsonIndexBoundsTypeId(void);
 Oid GetBsonIndexBoundsArrayTypeOid(void);
+Oid BsonIndexTermTypeId(void);
 
 /* sequences */
 Oid ApiCatalogCollectionIdSequenceId(void);
@@ -195,6 +196,10 @@ Oid ApiCatalogCollectionIndexIdSequenceId(void);
 /* order by */
 Oid BsonOrderByFunctionOid(void);
 Oid BsonOrderByWithCollationFunctionOid(void);
+Oid BsonOrderByIndexFunctionOid(void);
+Oid BsonOrderByIndexReverseFunctionOid(void);
+Oid BsonOrderByIndexWithCollationFunctionOid(void);
+Oid BsonOrderByIndexWithCollationReverseFunctionOid(void);
 Oid BsonOrderByPartitionFunctionOid(void);
 Oid BsonOrderByPartitionWithCollationFunctionOid(void);
 Oid BsonOrderByCompareFunctionOId(void);
@@ -206,6 +211,7 @@ Oid BsonOrderyByEqOperatorId(void);
 Oid BsonOrderyByGtOperatorId(void);
 Oid BsonOrderByIndexOperatorId(void);
 Oid BsonOrderByReverseIndexOperatorId(void);
+Oid BsonOrderByBsonIndexTypeOperatorId(void);
 
 /* Postgres internal functions */
 Oid PostgresDrandomFunctionId(void);

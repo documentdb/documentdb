@@ -219,6 +219,7 @@ struct PathKey;
 struct Expr;
 typedef struct SortIndexInputDetails
 {
+	Oid funcOid;
 	const char *sortPath;
 	struct Expr *sortVar;
 	struct Expr *sortDatum;

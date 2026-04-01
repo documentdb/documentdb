@@ -162,6 +162,7 @@ int32_t CompareSerializedBsonIndexTerms(bytea *left, bytea *right, const char *c
 										bool *isComparisonValid);
 bytea * FormCollatedIndexTerm(bytea *sourceTerm, const char *collation, uint32_t
 							  collationLength);
+bytea * FormReversedIndexTerm(bytea *sourceTerm);
 
 /* Check if the term is a root truncation term */
 inline static bool

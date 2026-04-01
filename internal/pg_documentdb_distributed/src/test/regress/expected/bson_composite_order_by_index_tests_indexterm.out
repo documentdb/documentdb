@@ -1,7 +1,8 @@
 SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_api_internal,documentdb_core;
-SET citus.next_shard_id TO 680000;
-SET documentdb.next_collection_id TO 68000;
-SET documentdb.next_collection_index_id TO 68000;
+SET citus.next_shard_id TO 6920000;
+SET documentdb.next_collection_id TO 69200;
+SET documentdb.next_collection_index_id TO 69200;
+set documentdb.enableOrderByIndexTerm to on;
 \i sql/bson_composite_order_by_index_tests_core.sql
 set documentdb.enableExtendedExplainPlans to on;
 -- if documentdb_extended_rum exists, set alternate index handler
@@ -32,17 +33,17 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db',
 
 SELECT collection_id FROM documentdb_api_catalog.collections WHERE collection_name = 'query_orderby' AND database_name = 'comp_ordind_db' \gset
 \d documentdb_data.documents_:collection_id
-          Table "documentdb_data.documents_68001"
+          Table "documentdb_data.documents_69201"
      Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
  shard_key_value | bigint |           | not null | 
  object_id       | bson   |           | not null | 
  document        | bson   |           | not null | 
 Indexes:
-    "collection_pk_68001" PRIMARY KEY, btree (shard_key_value, object_id)
-    "documents_rum_index_68002" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a", "c" ]', tl='2691'))
+    "collection_pk_69201" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_69202" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a", "c" ]', tl='2691'))
 Check constraints:
-    "shard_key_value_check" CHECK (shard_key_value = '68001'::bigint)
+    "shard_key_value_check" CHECK (shard_key_value = '69201'::bigint)
 
 -- now insert some sample docs
 SELECT documentdb_api.insert_one('comp_ordind_db', 'query_orderby', '{ "_id": 1, "a": 1, "c": 1 }');
@@ -91,7 +92,7 @@ ANALYZE documentdb_data.documents_:collection_id;
 set enable_seqscan to off;
 -- no pushdown
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "a": { "$exists": true }}, "sort": { "a": 1 } }');
-                                       QUERY PLAN                                        
+                                        QUERY PLAN                                        
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
    indexName: a_c
@@ -101,14 +102,14 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 7 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 7)]
-   ->  Index Scan using a_c on documents_68001_680002 collection (actual rows=7 loops=1)
+   ->  Index Scan using a_c on documents_69201_6920002 collection (actual rows=7 loops=1)
          Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
 -- now the order by succeeds with an index scan
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "a": { "$exists": true }}, "sort": { "a": 1 } }');
-                                       QUERY PLAN                                        
+                                        QUERY PLAN                                        
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
    indexName: a_c
@@ -118,22 +119,22 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 7 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 7)]
-   ->  Index Scan using a_c on documents_68001_680002 collection (actual rows=7 loops=1)
+   ->  Index Scan using a_c on documents_69201_6920002 collection (actual rows=7 loops=1)
          Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
 -- point read on _id with order by was broken initially and was fixed in 108 
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "_id": 1}, "sort": { "_id": 1 } }');
                                                   QUERY PLAN                                                   
 ---------------------------------------------------------------------
- Index Scan using _id_ on documents_68001_680002 collection (actual rows=1 loops=1)
-   Index Cond: ((shard_key_value = '68001'::bigint) AND (object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
+ Index Scan using _id_ on documents_69201_6920002 collection (actual rows=1 loops=1)
+   Index Cond: ((shard_key_value = '69201'::bigint) AND (object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
 (2 rows)
 
 -- do a reverse walk
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby", "filter": { "a": { "$exists": true }}, "sort": { "a": -1 } }');
-                                       QUERY PLAN                                        
+                                        QUERY PLAN                                        
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
    indexName: a_c
@@ -144,9 +145,9 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 7 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 7)]
-   ->  Index Scan using a_c on documents_68001_680002 collection (actual rows=7 loops=1)
+   ->  Index Scan using a_c on documents_69201_6920002 collection (actual rows=7 loops=1)
          Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-         Order By: (document <>-| '{ "a" : { "$numberInt" : "-1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "-1" } }'::bson)
 (12 rows)
 
 -- now check the correctness (things are ordered)
@@ -323,10 +324,10 @@ set documentdb.forceDisableSeqScan to on;
 ANALYZE documentdb_data.documents_:collection_id_2;
 -- should not use the index for sort (since it's a multi-key index)
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }');
-                                             QUERY PLAN                                             
+                                             QUERY PLAN                                              
 ---------------------------------------------------------------------
  Sort (actual rows=5 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: 25kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          indexName: a_1_id_1
@@ -336,7 +337,7 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          innerScanLoops: 8 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
-         ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=5 loops=1)
+         ->  Index Scan using a_1_id_1 on documents_69202_6920004 collection (actual rows=5 loops=1)
                Index Cond: (document @< '{ "a" : { "$numberInt" : "3" } }'::bson)
 (13 rows)
 
@@ -392,7 +393,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
                                                                                 QUERY PLAN                                                                                 
 ---------------------------------------------------------------------
  Sort (actual rows=6 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: 25kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
          indexName: a_1_id_1
@@ -402,16 +403,16 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          innerScanLoops: 6 loops
          scanType: regular
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2), (isInequality: true, estimatedEntryCount: 2), (isInequality: true, estimatedEntryCount: 2)]
-         ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=6 loops=1)
+         ->  Index Scan using a_1_id_1 on documents_69202_6920004 collection (actual rows=6 loops=1)
                Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "3" }, { "$numberInt" : "49" }, { "$numberInt" : "90" } ] }'::bson)
 (13 rows)
 
 -- scans 1 loop for checking multi-key - then scans 4 loops for entries 0, 1, 2, 3.
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }');
-                                             QUERY PLAN                                             
+                                             QUERY PLAN                                              
 ---------------------------------------------------------------------
  Sort (actual rows=5 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: 25kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          indexName: a_1_id_1
@@ -421,16 +422,16 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          innerScanLoops: 8 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
-         ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=5 loops=1)
+         ->  Index Scan using a_1_id_1 on documents_69202_6920004 collection (actual rows=5 loops=1)
                Index Cond: (document @< '{ "a" : { "$numberInt" : "3" } }'::bson)
 (13 rows)
 
 -- scans 1 loop for checking multi-key - then scans 5 loops for entries 96, 97, 98, 99, 100.
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf_arr", "filter": { "a": { "$gt": 96 }}, "sort": { "a": 1 } }');
-                                             QUERY PLAN                                             
+                                             QUERY PLAN                                              
 ---------------------------------------------------------------------
  Sort (actual rows=7 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: 25kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
          indexName: a_1_id_1
@@ -440,7 +441,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          innerScanLoops: 10 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 7)]
-         ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=7 loops=1)
+         ->  Index Scan using a_1_id_1 on documents_69202_6920004 collection (actual rows=7 loops=1)
                Index Cond: (document @> '{ "a" : { "$numberInt" : "96" } }'::bson)
 (13 rows)
 
@@ -449,7 +450,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
                                                                    QUERY PLAN                                                                   
 ---------------------------------------------------------------------
  Sort (actual rows=5 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: 25kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          indexName: a_1_id_1
@@ -459,7 +460,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          innerScanLoops: 7 loops
          scanType: regular
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5), (isInequality: true, estimatedEntryCount: 7)]
-         ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=5 loops=1)
+         ->  Index Scan using a_1_id_1 on documents_69202_6920004 collection (actual rows=5 loops=1)
                Index Cond: ((document @< '{ "a" : { "$numberInt" : "3" } }'::bson) AND (document @> '{ "a" : { "$numberInt" : "96" } }'::bson))
 (13 rows)
 
@@ -486,7 +487,7 @@ set documentdb.forceDisableSeqScan to on;
 ANALYZE documentdb_data.documents_:collection_id_3;
 -- should use the index for sort
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }');
-                                       QUERY PLAN                                        
+                                        QUERY PLAN                                        
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    indexName: a_1
@@ -496,13 +497,13 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 4 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
-   ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=2 loops=1)
+   ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=2 loops=1)
          Index Cond: (document @< '{ "a" : { "$numberInt" : "3" } }'::bson)
-         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": -1 } }');
-                                       QUERY PLAN                                        
+                                        QUERY PLAN                                        
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    indexName: a_1
@@ -513,9 +514,9 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 4 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
-   ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=2 loops=1)
+   ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=2 loops=1)
          Index Cond: (document @< '{ "a" : { "$numberInt" : "3" } }'::bson)
-         Order By: (document <>-| '{ "a" : { "$numberInt" : "-1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "-1" } }'::bson)
 (12 rows)
 
 -- now check correctness.
@@ -605,9 +606,9 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 6 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1), (isInequality: true, estimatedEntryCount: 1), (isInequality: true, estimatedEntryCount: 1)]
-   ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=3 loops=1)
+   ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=3 loops=1)
          Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "3" }, { "$numberInt" : "49" }, { "$numberInt" : "90" } ] }'::bson)
-         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$in": [ 3, 49, 90 ] }}, "sort": { "a": -1 } }');
@@ -622,14 +623,14 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 9 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1), (isInequality: true, estimatedEntryCount: 1), (isInequality: true, estimatedEntryCount: 1)]
-   ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=3 loops=1)
+   ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=3 loops=1)
          Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "3" }, { "$numberInt" : "49" }, { "$numberInt" : "90" } ] }'::bson)
-         Order By: (document <>-| '{ "a" : { "$numberInt" : "-1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "-1" } }'::bson)
 (12 rows)
 
 -- scans 1 loop for checking multi-key - then scans 4 loops for entries 0, 1, 2, 3.
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": 1 } }');
-                                       QUERY PLAN                                        
+                                        QUERY PLAN                                        
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    indexName: a_1
@@ -639,13 +640,13 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 4 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
-   ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=2 loops=1)
+   ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=2 loops=1)
          Index Cond: (document @< '{ "a" : { "$numberInt" : "3" } }'::bson)
-         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3 }}, "sort": { "a": -1 } }');
-                                       QUERY PLAN                                        
+                                        QUERY PLAN                                        
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    indexName: a_1
@@ -656,14 +657,14 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 4 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
-   ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=2 loops=1)
+   ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=2 loops=1)
          Index Cond: (document @< '{ "a" : { "$numberInt" : "3" } }'::bson)
-         Order By: (document <>-| '{ "a" : { "$numberInt" : "-1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "-1" } }'::bson)
 (12 rows)
 
 -- scans 1 loop for checking multi-key - then scans 5 loops for entries 96, 97, 98, 99, 100.
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$gt": 96 }}, "sort": { "a": 1 } }');
-                                       QUERY PLAN                                        
+                                        QUERY PLAN                                        
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
    indexName: a_1
@@ -673,13 +674,13 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 5 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
-   ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=4 loops=1)
+   ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=4 loops=1)
          Index Cond: (document @> '{ "a" : { "$numberInt" : "96" } }'::bson)
-         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$gt": 96 }}, "sort": { "a": -1 } }');
-                                       QUERY PLAN                                        
+                                        QUERY PLAN                                        
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
    indexName: a_1
@@ -690,9 +691,9 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 6 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
-   ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=4 loops=1)
+   ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=4 loops=1)
          Index Cond: (document @> '{ "a" : { "$numberInt" : "96" } }'::bson)
-         Order By: (document <>-| '{ "a" : { "$numberInt" : "-1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "-1" } }'::bson)
 (12 rows)
 
 -- only scans th relevant entries
@@ -707,9 +708,9 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 6 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
-   ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=3 loops=1)
+   ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=3 loops=1)
          Index Cond: ((document @< '{ "a" : { "$numberInt" : "94" } }'::bson) AND (document @> '{ "a" : { "$numberInt" : "90" } }'::bson))
-         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 94, "$gt": 90 }}, "sort": { "a": -1 } }');
@@ -724,9 +725,9 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 7 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
-   ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=3 loops=1)
+   ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=3 loops=1)
          Index Cond: ((document @< '{ "a" : { "$numberInt" : "94" } }'::bson) AND (document @> '{ "a" : { "$numberInt" : "90" } }'::bson))
-         Order By: (document <>-| '{ "a" : { "$numberInt" : "-1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "-1" } }'::bson)
 (12 rows)
 
 -- scans only > 96 and stops.
@@ -741,9 +742,9 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 2 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
-   ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=0 loops=1)
+   ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=0 loops=1)
          Index Cond: ((document @< '{ "a" : { "$numberInt" : "3" } }'::bson) AND (document @> '{ "a" : { "$numberInt" : "96" } }'::bson))
-         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "query_orderby_perf", "filter": { "a": { "$lt": 3, "$gt": 96 }}, "sort": { "a": -1 } }');
@@ -758,9 +759,9 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 1 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
-   ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=0 loops=1)
+   ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=0 loops=1)
          Index Cond: ((document @< '{ "a" : { "$numberInt" : "3" } }'::bson) AND (document @> '{ "a" : { "$numberInt" : "96" } }'::bson))
-         Order By: (document <>-| '{ "a" : { "$numberInt" : "-1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "-1" } }'::bson)
 (12 rows)
 
 -- groupby pushdown works for non-multi-key indexes
@@ -778,7 +779,7 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
                innerScanLoops: 100 loops
                scanType: ordered
                scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
-               ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=100 loops=1)
+               ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=100 loops=1)
                      Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
                      Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (14 rows)
@@ -798,7 +799,7 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
                innerScanLoops: 100 loops
                scanType: ordered
                scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
-               ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=100 loops=1)
+               ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=100 loops=1)
                      Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                      Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (14 rows)
@@ -820,7 +821,7 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
                innerScanLoops: 201 loops
                scanType: ordered
                scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 201)]
-               ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=101 loops=1)
+               ->  Index Scan using a_1_id_1 on documents_69202_6920004 collection (actual rows=101 loops=1)
                      Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
 (15 rows)
 
@@ -834,7 +835,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
                                                          QUERY PLAN                                                          
 ---------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Key: (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: 25kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          indexName: a_1
@@ -844,7 +845,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
          innerScanLoops: 2 loops
          scanType: regular
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1), (isInequality: true, estimatedEntryCount: 1)]
-         ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=2 loops=1)
+         ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=2 loops=1)
                Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson)
 (13 rows)
 
@@ -854,7 +855,7 @@ psql:sql/bson_composite_order_by_index_tests_core.sql:187: ERROR:  Could not fin
 -- can push this
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$eq": 1 } } }, { "$sort": { "_id": 1 } } ] }');
-                                       QUERY PLAN                                        
+                                        QUERY PLAN                                        
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
    indexName: a_1
@@ -864,14 +865,14 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
    innerScanLoops: 2 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
-   ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=1 loops=1)
+   ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=1 loops=1)
          Index Cond: (document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-         Order By: (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "a": 1, "_id": 1 } } ] }');
-                                                                 QUERY PLAN                                                                  
+                                                                QUERY PLAN                                                                 
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    indexName: a_1
@@ -881,14 +882,14 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
    innerScanLoops: 3 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2), (isInequality: true, estimatedEntryCount: 0)]
-   ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=2 loops=1)
+   ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=2 loops=1)
          Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson)
-         Order By: ((document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson))
+         Order By: ((document |<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "_id" : { "$numberInt" : "1" } }'::bson))
 (11 rows)
 
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sort": { "a": 1, "_id": 1 } } ] }');
-                                                                 QUERY PLAN                                                                  
+                                                                QUERY PLAN                                                                 
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
    indexName: a_1
@@ -898,9 +899,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
    innerScanLoops: 100 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
-   ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=100 loops=1)
+   ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=100 loops=1)
          Index Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
-         Order By: ((document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson))
+         Order By: ((document |<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "_id" : { "$numberInt" : "1" } }'::bson))
 (11 rows)
 
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
@@ -915,18 +916,18 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
    innerScanLoops: 100 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
-   ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=100 loops=1)
+   ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=100 loops=1)
          Index Cond: ((document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "_id" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-         Order By: ((document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson))
+         Order By: ((document |<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "_id" : { "$numberInt" : "1" } }'::bson))
 (11 rows)
 
 -- but not these
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "_id": 1, "a": 1 } } ] }');
-                                                                                  QUERY PLAN                                                                                  
+                                                                                        QUERY PLAN                                                                                        
 ---------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Key: (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: 25kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          indexName: a_1
@@ -936,7 +937,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
          innerScanLoops: 2 loops
          scanType: regular
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1), (isInequality: true, estimatedEntryCount: 1)]
-         ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=2 loops=1)
+         ->  Index Scan using a_1 on documents_69203_6920006 collection (actual rows=2 loops=1)
                Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson)
 (13 rows)
 
@@ -946,7 +947,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
                                                          QUERY PLAN                                                          
 ---------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
-   Sort Key: (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Key: (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: 25kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          indexName: a_1_id_1
@@ -956,7 +957,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
          innerScanLoops: 4 loops
          scanType: regular
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2), (isInequality: true, estimatedEntryCount: 2)]
-         ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=4 loops=1)
+         ->  Index Scan using a_1_id_1 on documents_69202_6920004 collection (actual rows=4 loops=1)
                Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson)
 (13 rows)
 
@@ -966,7 +967,7 @@ psql:sql/bson_composite_order_by_index_tests_core.sql:208: ERROR:  Could not fin
 -- can push this
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$eq": 1 } } }, { "$sort": { "_id": 1 } } ] }');
-                                          QUERY PLAN                                          
+                                          QUERY PLAN                                           
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    indexName: a_1_id_1
@@ -976,9 +977,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
    innerScanLoops: 3 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
-   ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=2 loops=1)
+   ->  Index Scan using a_1_id_1 on documents_69202_6920004 collection (actual rows=2 loops=1)
          Index Cond: (document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-         Order By: (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
@@ -994,9 +995,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
    innerScanLoops: 201 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 201)]
-   ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=101 loops=1)
+   ->  Index Scan using a_1_id_1 on documents_69202_6920004 collection (actual rows=101 loops=1)
          Index Cond: ((document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "_id" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-         Order By: ((document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson))
+         Order By: ((document |<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "_id" : { "$numberInt" : "1" } }'::bson))
 (12 rows)
 
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
@@ -1012,18 +1013,18 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
    innerScanLoops: 201 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 201)]
-   ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=101 loops=1)
+   ->  Index Scan using a_1_id_1 on documents_69202_6920004 collection (actual rows=101 loops=1)
          Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (12 rows)
 
 -- but not these
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2 ] } } }, { "$sort": { "a": 1, "_id": 1 } } ] }');
-                                                                                  QUERY PLAN                                                                                  
+                                                                                        QUERY PLAN                                                                                        
 ---------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: 25kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          indexName: a_1_id_1
@@ -1033,17 +1034,17 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
          innerScanLoops: 4 loops
          scanType: regular
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2), (isInequality: true, estimatedEntryCount: 2)]
-         ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=4 loops=1)
+         ->  Index Scan using a_1_id_1 on documents_69202_6920004 collection (actual rows=4 loops=1)
                Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson)
 (13 rows)
 
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sort": { "a": 1, "_id": 1 } } ] }');
-                                                                                  QUERY PLAN                                                                                  
+                                                                                        QUERY PLAN                                                                                        
 ---------------------------------------------------------------------
  Sort (actual rows=100 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 35kB
+   Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: 33kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
@@ -1053,7 +1054,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
          innerScanLoops: 199 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 198)]
-         ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=100 loops=1)
+         ->  Index Scan using a_1_id_1 on documents_69202_6920004 collection (actual rows=100 loops=1)
                Index Cond: (document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
 (14 rows)
 
@@ -1080,6 +1081,39 @@ ANALYZE documentdb_data.documents_:collection_id_4;
 set documentdb.forceUseIndexIfAvailable to on;
 set enable_bitmapscan to off;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": 1 } } ] }');
+                                QUERY PLAN                                 
+---------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: b_1
+   indexKey: {"b": 1,"c": 1}
+   isMultiKey: false
+   hasTruncation: true
+   indexBounds: ["b": [MinKey, MaxKey], "c": (MinKey, MaxKey)]
+   ->  Index Scan using b_1 on documents_69204_6920008 collection
+         Index Cond: (document @>= '{ "b" : { "$minKey" : 1 } }'::bson)
+         Order By: (document |<> '{ "b" : { "$numberInt" : "1" } }'::bson)
+(9 rows)
+
+EXPLAIN (COSTS OFF) WITH s1 AS (SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": 1 } } ] }')),
+s2 AS (SELECT COALESCE(document -> 'b' >= (LAG(document, 1) OVER ()) -> 'b', true) AS greater_check FROM s1)
+SELECT MIN(greater_check::int4), MAX(greater_check::int4) FROM s2;
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------
+ Aggregate
+   ->  WindowAgg
+         ->  Subquery Scan on s1
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     indexName: b_1
+                     indexKey: {"b": 1,"c": 1}
+                     isMultiKey: false
+                     hasTruncation: true
+                     indexBounds: ["b": [MinKey, MaxKey], "c": (MinKey, MaxKey)]
+                     ->  Index Scan using b_1 on documents_69204_6920008 collection
+                           Index Cond: (document @>= '{ "b" : { "$minKey" : 1 } }'::bson)
+                           Order By: (document |<> '{ "b" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": -1 } } ] }');
                                  QUERY PLAN                                 
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
@@ -1088,13 +1122,13 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_
    isMultiKey: false
    hasTruncation: true
    indexBounds: ["b": [MinKey, MaxKey], "c": (MinKey, MaxKey)]
-   ->  Index Scan using b_1 on documents_68004_680008 collection
+   ->  Index Scan using b_1 on documents_69204_6920008 collection
          Index Cond: (document @>= '{ "b" : { "$minKey" : 1 } }'::bson)
-         Order By: (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |<> '{ "b" : { "$numberInt" : "-1" } }'::bson)
 (9 rows)
 
-EXPLAIN (COSTS OFF) WITH s1 AS (SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": 1 } } ] }')),
-s2 AS (SELECT COALESCE(document -> 'b' >= (LAG(document, 1) OVER ()) -> 'b', true) AS greater_check FROM s1)
+EXPLAIN (COSTS OFF) WITH s1 AS (SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": -1 } } ] }')),
+s2 AS (SELECT COALESCE(document -> 'b' <= (LAG(document, 1) OVER ()) -> 'b', true) AS greater_check FROM s1)
 SELECT MIN(greater_check::int4), MAX(greater_check::int4) FROM s2;
                                           QUERY PLAN                                          
 ---------------------------------------------------------------------
@@ -1107,42 +1141,9 @@ SELECT MIN(greater_check::int4), MAX(greater_check::int4) FROM s2;
                      isMultiKey: false
                      hasTruncation: true
                      indexBounds: ["b": [MinKey, MaxKey], "c": (MinKey, MaxKey)]
-                     ->  Index Scan using b_1 on documents_68004_680008 collection
+                     ->  Index Scan using b_1 on documents_69204_6920008 collection
                            Index Cond: (document @>= '{ "b" : { "$minKey" : 1 } }'::bson)
-                           Order By: (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
-
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": -1 } } ] }');
-                                 QUERY PLAN                                  
----------------------------------------------------------------------
- Custom Scan (DocumentDBApiExplainQueryScan)
-   indexName: b_1
-   indexKey: {"b": 1,"c": 1}
-   isMultiKey: false
-   hasTruncation: true
-   indexBounds: ["b": [MinKey, MaxKey], "c": (MinKey, MaxKey)]
-   ->  Index Scan using b_1 on documents_68004_680008 collection
-         Index Cond: (document @>= '{ "b" : { "$minKey" : 1 } }'::bson)
-         Order By: (document <>-| '{ "b" : { "$numberInt" : "-1" } }'::bson)
-(9 rows)
-
-EXPLAIN (COSTS OFF) WITH s1 AS (SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf2", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$sort": { "b": -1 } } ] }')),
-s2 AS (SELECT COALESCE(document -> 'b' <= (LAG(document, 1) OVER ()) -> 'b', true) AS greater_check FROM s1)
-SELECT MIN(greater_check::int4), MAX(greater_check::int4) FROM s2;
-                                          QUERY PLAN                                           
----------------------------------------------------------------------
- Aggregate
-   ->  WindowAgg
-         ->  Subquery Scan on s1
-               ->  Custom Scan (DocumentDBApiExplainQueryScan)
-                     indexName: b_1
-                     indexKey: {"b": 1,"c": 1}
-                     isMultiKey: false
-                     hasTruncation: true
-                     indexBounds: ["b": [MinKey, MaxKey], "c": (MinKey, MaxKey)]
-                     ->  Index Scan using b_1 on documents_68004_680008 collection
-                           Index Cond: (document @>= '{ "b" : { "$minKey" : 1 } }'::bson)
-                           Order By: (document <>-| '{ "b" : { "$numberInt" : "-1" } }'::bson)
+                           Order By: (document |<> '{ "b" : { "$numberInt" : "-1" } }'::bson)
 (12 rows)
 
 -- validate the order is correct
@@ -1315,9 +1316,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 33 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 33)]
-   ->  Index Scan using "a.b_1" on documents_68005_680010 collection (actual rows=21 loops=1)
+   ->  Index Scan using "a.b_1" on documents_69205_6920010 collection (actual rows=21 loops=1)
          Index Cond: (document @<> '{ "a.b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-         Order By: (document |-<> '{ "a.b" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |<> '{ "a.b" : { "$numberInt" : "1" } }'::bson)
 (12 rows)
 
 SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$sort": { "a.b": 1 } } ] }');
@@ -1377,10 +1378,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 psql:sql/bson_composite_order_by_index_tests_core.sql:303: ERROR:  Could not find any valid index to push down for query
 -- can't push order by down here:
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$exists": true } } }, { "$sort": { "_id": 1 } } ] }');
-                                             QUERY PLAN                                             
+                                             QUERY PLAN                                              
 ---------------------------------------------------------------------
  Sort (actual rows=17 loops=1)
-   Sort Key: (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Key: (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: 26kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
          indexName: a.b_1
@@ -1391,15 +1392,15 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          innerScanLoops: 33 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 29)]
-         ->  Index Scan using "a.b_1" on documents_68005_680010 collection (actual rows=17 loops=1)
+         ->  Index Scan using "a.b_1" on documents_69205_6920010 collection (actual rows=17 loops=1)
                Index Cond: (document @>= '{ "a.b" : { "$minKey" : 1 } }'::bson)
 (14 rows)
 
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$gt": 5 } } }, { "$sort": { "_id": 1 } } ] }');
-                                            QUERY PLAN                                             
+                                             QUERY PLAN                                             
 ---------------------------------------------------------------------
  Sort (actual rows=0 loops=1)
-   Sort Key: (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Key: (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: 25kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
          indexName: a.b_1
@@ -1409,13 +1410,13 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          innerScanLoops: 1 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
-         ->  Index Scan using "a.b_1" on documents_68005_680010 collection (actual rows=0 loops=1)
+         ->  Index Scan using "a.b_1" on documents_69205_6920010 collection (actual rows=0 loops=1)
                Index Cond: (document @> '{ "a.b" : { "$numberInt" : "5" } }'::bson)
 (13 rows)
 
 -- but this is okay
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$eq": 1 } } }, { "$sort": { "_id": 1 } } ] }');
-                                         QUERY PLAN                                          
+                                          QUERY PLAN                                          
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
    indexName: a.b_1
@@ -1425,9 +1426,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 5 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
-   ->  Index Scan using "a.b_1" on documents_68005_680010 collection (actual rows=4 loops=1)
+   ->  Index Scan using "a.b_1" on documents_69205_6920010 collection (actual rows=4 loops=1)
          Index Cond: (document @= '{ "a.b" : { "$numberInt" : "1" } }'::bson)
-         Order By: (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
 -- this one isn't okay since we need to resort across a.b
@@ -1435,7 +1436,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
                                                          QUERY PLAN                                                          
 ---------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
-   Sort Key: (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Key: (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: 25kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          indexName: a.b_1
@@ -1445,13 +1446,13 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          innerScanLoops: 4 loops
          scanType: regular
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4), (isInequality: true, estimatedEntryCount: 1)]
-         ->  Index Scan using "a.b_1" on documents_68005_680010 collection (actual rows=4 loops=1)
+         ->  Index Scan using "a.b_1" on documents_69205_6920010 collection (actual rows=4 loops=1)
                Index Cond: (document @*= '{ "a.b" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson)
 (13 rows)
 
 -- but this is fine:
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$in": [ 1 ] } } }, { "$sort": { "_id": 1 } } ] }');
-                                         QUERY PLAN                                          
+                                          QUERY PLAN                                          
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
    indexName: a.b_1
@@ -1461,19 +1462,19 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 5 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
-   ->  Index Scan using "a.b_1" on documents_68005_680010 collection (actual rows=4 loops=1)
+   ->  Index Scan using "a.b_1" on documents_69205_6920010 collection (actual rows=4 loops=1)
          Index Cond: (document @= '{ "a.b" : { "$numberInt" : "1" } }'::bson)
-         Order By: (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
 (11 rows)
 
 -- allows incremental sorting
 set enable_sort to off;
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$eq": 1 } } }, { "$sort": { "_id": 1, "c": 1 } } ] }');
-                                                                                  QUERY PLAN                                                                                  
+                                                                                        QUERY PLAN                                                                                        
 ---------------------------------------------------------------------
  Incremental Sort (actual rows=4 loops=1)
-   Sort Key: (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "c" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Presorted Key: (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index(document, '{ "c" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Presorted Key: (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
    Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          indexName: a.b_1
@@ -1483,15 +1484,15 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          innerScanLoops: 5 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
-         ->  Index Scan using "a.b_1" on documents_68005_680010 collection (actual rows=4 loops=1)
+         ->  Index Scan using "a.b_1" on documents_69205_6920010 collection (actual rows=4 loops=1)
                Index Cond: (document @= '{ "a.b" : { "$numberInt" : "1" } }'::bson)
-               Order By: (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
+               Order By: (document |<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
 (15 rows)
 
 -- forced order by pushdown respects ordering when there is none.
 set documentdb_rum.forceRumOrderedIndexScan to on;
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "sortcoll", "pipeline": [ { "$match": { "a.b": { "$exists": true } } } ] }');
-                                          QUERY PLAN                                          
+                                          QUERY PLAN                                           
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
    indexName: a.b_1
@@ -1502,7 +1503,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 33 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 29)]
-   ->  Index Scan using "a.b_1" on documents_68005_680010 collection (actual rows=17 loops=1)
+   ->  Index Scan using "a.b_1" on documents_69205_6920010 collection (actual rows=17 loops=1)
          Index Cond: (document @>= '{ "a.b" : { "$minKey" : 1 } }'::bson)
 (11 rows)
 
@@ -1559,9 +1560,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
                      innerScanLoops: 10 loops
                      scanType: ordered
                      scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 10)]
-                     ->  Index Scan using id_2 on documents_68006_680012 collection (actual rows=10 loops=1)
+                     ->  Index Scan using id_2 on documents_69206_6920012 collection (actual rows=10 loops=1)
                            Index Cond: ((document @>= '{ "_id" : { "$numberInt" : "10" } }'::bson) AND (document @<= '{ "_id" : { "$numberInt" : "25" } }'::bson))
-                           Order By: (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
+                           Order By: (document |<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
                            Filter: ((object_id >= '{ "" : { "$numberInt" : "10" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (object_id <= '{ "" : { "$numberInt" : "25" } }'::bson) AND (object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
 (15 rows)
 
@@ -1730,10 +1731,10 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 1 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4), (isInequality: false, estimatedEntryCount: 0)]
-   ->  Index Scan using a_2 on documents_68008_680016 collection (actual rows=3 loops=1)
+   ->  Index Scan using a_2 on documents_69208_6920016 collection (actual rows=3 loops=1)
          Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : ".+b$", "options" : "" } } }'::bson)
          Rows Removed by Index Recheck: 1
-         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (13 rows)
 
 SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "large_keys", "pipeline": [ { "$match": { "a": { "$regex": ".+b$" } } }, { "$sort": { "a": 1 } }, { "$project": { "_id": 1 } } ] }');
@@ -1770,9 +1771,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
    innerScanLoops: 19 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
-   ->  Index Scan using "a.b.c_-1" on documents_68007_680014 collection (actual rows=13 loops=1)
+   ->  Index Scan using "a.b.c_-1" on documents_69207_6920014 collection (actual rows=13 loops=1)
          Index Cond: ((document @<> '{ "a.b.c" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson) AND (document @<> '{ "_id" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson))
-         Order By: ((document |-<> '{ "a.b.c" : { "$numberInt" : "-1" } }'::bson) AND (document |-<> '{ "_id" : { "$numberInt" : "-1" } }'::bson))
+         Order By: ((document |<> '{ "a.b.c" : { "$numberInt" : "-1" } }'::bson) AND (document |<> '{ "_id" : { "$numberInt" : "-1" } }'::bson))
 (12 rows)
 
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": -1 } }');
@@ -1787,9 +1788,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
    innerScanLoops: 33 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 33)]
-   ->  Index Scan using "a.b_-1" on documents_68005_680010 collection (actual rows=21 loops=1)
+   ->  Index Scan using "a.b_-1" on documents_69205_6920010 collection (actual rows=21 loops=1)
          Index Cond: ((document @<> '{ "a.b" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson) AND (document @<> '{ "_id" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson))
-         Order By: ((document |-<> '{ "a.b" : { "$numberInt" : "-1" } }'::bson) AND (document |-<> '{ "_id" : { "$numberInt" : "-1" } }'::bson))
+         Order By: ((document |<> '{ "a.b" : { "$numberInt" : "-1" } }'::bson) AND (document |<> '{ "_id" : { "$numberInt" : "-1" } }'::bson))
 (12 rows)
 
 SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": -1, "_id": -1 } }');
@@ -1838,11 +1839,11 @@ SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "fi
 
 -- partial sort pushdown
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": -1, "_id": 1 } }');
-                                                                                           QUERY PLAN                                                                                           
+                                                                                                QUERY PLAN                                                                                                
 ---------------------------------------------------------------------
  Incremental Sort (actual rows=13 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a.b.c" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Presorted Key: (bson_orderby(document, '{ "a.b.c" : { "$numberInt" : "-1" } }'::bson))
+   Sort Key: (bson_orderby_index_reverse(document, '{ "a.b.c" : { "$numberInt" : "1" } }'::bson)) DESC NULLS LAST, (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Presorted Key: (bson_orderby_index_reverse(document, '{ "a.b.c" : { "$numberInt" : "1" } }'::bson))
    Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 26kB  Peak Memory: 26kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=13 loops=1)
          indexName: a.b.c_-1
@@ -1853,18 +1854,18 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
          innerScanLoops: 19 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
-         ->  Index Scan using "a.b.c_-1" on documents_68007_680014 collection (actual rows=13 loops=1)
+         ->  Index Scan using "a.b.c_-1" on documents_69207_6920014 collection (actual rows=13 loops=1)
                Index Cond: ((document @<> '{ "a.b.c" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson) AND (document @<> '{ "_id" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-               Order By: (document |-<> '{ "a.b.c" : { "$numberInt" : "-1" } }'::bson)
+               Order By: (document |<> '{ "a.b.c" : { "$numberInt" : "-1" } }'::bson)
 (16 rows)
 
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": 1 } }');
-                                                                                          QUERY PLAN                                                                                          
+                                                                                               QUERY PLAN                                                                                               
 ---------------------------------------------------------------------
  Incremental Sort (actual rows=21 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a.b" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Presorted Key: (bson_orderby(document, '{ "a.b" : { "$numberInt" : "-1" } }'::bson))
-   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 27kB  Peak Memory: 27kB
+   Sort Key: (bson_orderby_index_reverse(document, '{ "a.b" : { "$numberInt" : "1" } }'::bson)) DESC NULLS LAST, (bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Presorted Key: (bson_orderby_index_reverse(document, '{ "a.b" : { "$numberInt" : "1" } }'::bson))
+   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 26kB  Peak Memory: 26kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=21 loops=1)
          indexName: a.b_-1
          indexKey: {"a.b": -1,"_id": -1}
@@ -1874,9 +1875,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
          innerScanLoops: 33 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 33)]
-         ->  Index Scan using "a.b_-1" on documents_68005_680010 collection (actual rows=21 loops=1)
+         ->  Index Scan using "a.b_-1" on documents_69205_6920010 collection (actual rows=21 loops=1)
                Index Cond: ((document @<> '{ "a.b" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson) AND (document @<> '{ "_id" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-               Order By: (document |-<> '{ "a.b" : { "$numberInt" : "-1" } }'::bson)
+               Order By: (document |<> '{ "a.b" : { "$numberInt" : "-1" } }'::bson)
 (16 rows)
 
 -- mixed asc/desc indexes
@@ -1919,9 +1920,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
    innerScanLoops: 19 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
-   ->  Index Scan using "a.b.c_1_id-1" on documents_68007_680014 collection (actual rows=13 loops=1)
+   ->  Index Scan using "a.b.c_1_id-1" on documents_69207_6920014 collection (actual rows=13 loops=1)
          Index Cond: ((document @<> '{ "a.b.c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "_id" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson))
-         Order By: ((document |-<> '{ "a.b.c" : { "$numberInt" : "1" } }'::bson) AND (document |-<> '{ "_id" : { "$numberInt" : "-1" } }'::bson))
+         Order By: ((document |<> '{ "a.b.c" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "_id" : { "$numberInt" : "-1" } }'::bson))
 (12 rows)
 
 EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll", "filter": {}, "sort": { "a.b": -1, "_id": 1 } }');
@@ -1936,9 +1937,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
    innerScanLoops: 33 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 33)]
-   ->  Index Scan using "a.b_-1_id_1" on documents_68005_680010 collection (actual rows=21 loops=1)
+   ->  Index Scan using "a.b_-1_id_1" on documents_69205_6920010 collection (actual rows=21 loops=1)
          Index Cond: ((document @<> '{ "a.b" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson) AND (document @<> '{ "_id" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-         Order By: ((document |-<> '{ "a.b" : { "$numberInt" : "-1" } }'::bson) AND (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson))
+         Order By: ((document |<> '{ "a.b" : { "$numberInt" : "-1" } }'::bson) AND (document |<> '{ "_id" : { "$numberInt" : "1" } }'::bson))
 (12 rows)
 
 SELECT * FROM bson_aggregation_find('comp_ordind_db', '{ "find": "sortcoll3", "filter": {}, "sort": { "a.b.c": 1, "_id": -1 } }');
@@ -2018,7 +2019,7 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
                innerScanLoops: 3 loops
                scanType: ordered
                scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
-               ->  Index Scan using a_1 on documents_68009_680018 collection (actual rows=100 loops=1)
+               ->  Index Scan using a_1 on documents_69209_6920018 collection (actual rows=100 loops=1)
                      Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                      Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (14 rows)
@@ -2057,9 +2058,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
    innerScanLoops: 2 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0)]
-   ->  Index Scan using idx1 on documents_68010_680020 collection (actual rows=1 loops=1)
+   ->  Index Scan using idx1 on documents_69210_6920020 collection (actual rows=1 loops=1)
          Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson) AND (document @*= '{ "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson) AND (document @= '{ "c" : { "$numberInt" : "2" } }'::bson))
-         Order By: ((document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson) AND (document |-<> '{ "d" : { "$numberInt" : "1" } }'::bson))
+         Order By: ((document |<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "b" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "d" : { "$numberInt" : "1" } }'::bson))
 (11 rows)
 
 -- cannot push non equality in the non-sorted prefix
@@ -2067,8 +2068,8 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
                                                                                                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                                                                                                      
 ---------------------------------------------------------------------
  Incremental Sort (actual rows=0 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "d" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Presorted Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)), (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index(document, '{ "d" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Presorted Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)), (bson_orderby_index(document, '{ "b" : { "$numberInt" : "1" } }'::bson))
    Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
          indexName: idx1
@@ -2078,9 +2079,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
          innerScanLoops: 2 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0)]
-         ->  Index Scan using idx1 on documents_68010_680020 collection (actual rows=0 loops=1)
+         ->  Index Scan using idx1 on documents_69210_6920020 collection (actual rows=0 loops=1)
                Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson) AND (document @*= '{ "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson) AND (document @*= '{ "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ] }'::bson))
-               Order By: ((document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson))
+               Order By: ((document |<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "b" : { "$numberInt" : "1" } }'::bson))
 (15 rows)
 
 -- once it's multi-key this isn't allowed.
@@ -2094,7 +2095,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
                                                                                                                                      QUERY PLAN                                                                                                                                      
 ---------------------------------------------------------------------
  Sort (actual rows=1 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "d" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index(document, '{ "d" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: 25kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          indexName: idx1
@@ -2104,7 +2105,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
          innerScanLoops: 2 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0)]
-         ->  Index Scan using idx1 on documents_68010_680020 collection (actual rows=1 loops=1)
+         ->  Index Scan using idx1 on documents_69210_6920020 collection (actual rows=1 loops=1)
                Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson) AND (document @*= '{ "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson) AND (document @= '{ "c" : { "$numberInt" : "2" } }'::bson))
 (13 rows)
 
@@ -2143,9 +2144,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
    innerScanLoops: 15 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0)]
-   ->  Index Scan using a_b_c_d_1 on documents_68011_680022 collection (actual rows=0 loops=1)
+   ->  Index Scan using a_b_c_d_1 on documents_69211_6920022 collection (actual rows=0 loops=1)
          Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson) AND (document @*= '{ "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson) AND (document @= '{ "d" : { "$numberInt" : "10" } }'::bson))
-         Order By: ((document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson) AND (document |-<> '{ "c" : { "$numberInt" : "1" } }'::bson))
+         Order By: ((document |<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "b" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "c" : { "$numberInt" : "1" } }'::bson))
 (11 rows)
 
 -- if we're querying just filters, use a_b_d since it's better
@@ -2160,7 +2161,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
    innerScanLoops: 4 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0)]
-   ->  Index Scan using a_b_d_1 on documents_68011_680022 collection (actual rows=0 loops=1)
+   ->  Index Scan using a_b_d_1 on documents_69211_6920022 collection (actual rows=0 loops=1)
          Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson) AND (document @*= '{ "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson) AND (document @= '{ "d" : { "$numberInt" : "10" } }'::bson))
 (10 rows)
 
@@ -2175,9 +2176,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
    innerScanLoops: 15 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0)]
-   ->  Index Scan using a_b_c_d_1 on documents_68011_680022 collection (actual rows=0 loops=1)
+   ->  Index Scan using a_b_c_d_1 on documents_69211_6920022 collection (actual rows=0 loops=1)
          Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson) AND (document @*= '{ "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson) AND (document @= '{ "d" : { "$numberInt" : "10" } }'::bson))
-         Order By: ((document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson) AND (document |-<> '{ "c" : { "$numberInt" : "1" } }'::bson))
+         Order By: ((document |<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "b" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "c" : { "$numberInt" : "1" } }'::bson))
 (11 rows)
 
 -- the same should work if the indexes were created in the reverse order
@@ -2217,9 +2218,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
    innerScanLoops: 15 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0)]
-   ->  Index Scan using a_b_c_d_1 on documents_68011_680022 collection (actual rows=0 loops=1)
+   ->  Index Scan using a_b_c_d_1 on documents_69211_6920022 collection (actual rows=0 loops=1)
          Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson) AND (document @*= '{ "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson) AND (document @= '{ "d" : { "$numberInt" : "10" } }'::bson))
-         Order By: ((document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson) AND (document |-<> '{ "c" : { "$numberInt" : "1" } }'::bson))
+         Order By: ((document |<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "b" : { "$numberInt" : "1" } }'::bson) AND (document |<> '{ "c" : { "$numberInt" : "1" } }'::bson))
 (11 rows)
 
 -- if we're querying just filters, use a_b_d since it's better
@@ -2234,7 +2235,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT * FROM bson_aggr
    innerScanLoops: 4 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0)]
-   ->  Index Scan using a_b_d_1 on documents_68011_680022 collection (actual rows=0 loops=1)
+   ->  Index Scan using a_b_d_1 on documents_69211_6920022 collection (actual rows=0 loops=1)
          Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::bson) AND (document @*= '{ "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson) AND (document @= '{ "d" : { "$numberInt" : "10" } }'::bson))
 (10 rows)
 
@@ -2264,9 +2265,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
    innerScanLoops: 100 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
-   ->  Index Scan using a_b_1 on documents_68012_680024 collection (actual rows=100 loops=1)
+   ->  Index Scan using a_b_1 on documents_69212_6920024 collection (actual rows=100 loops=1)
          Index Cond: ((document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson) AND (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson))
-         Order By: ((document <>-| '{ "a" : { "$numberInt" : "-1" } }'::bson) AND (document <>-| '{ "b" : { "$numberInt" : "-1" } }'::bson))
+         Order By: ((document |<> '{ "a" : { "$numberInt" : "-1" } }'::bson) AND (document |<> '{ "b" : { "$numberInt" : "-1" } }'::bson))
 (12 rows)
 
 -- test index selectivity for orderby vs filters.
@@ -2321,9 +2322,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
          innerScanLoops: 2 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
-         ->  Index Scan using "filterSortIndex_1" on documents_68011_680022 collection (actual rows=1 loops=1)
+         ->  Index Scan using "filterSortIndex_1" on documents_69211_6920022 collection (actual rows=1 loops=1)
                Index Cond: ((document @= '{ "filter1" : "filter1-5" }'::bson) AND (document @= '{ "filter2" : "filter2-55" }'::bson) AND (document @> '{ "filter3" : { "$numberInt" : "50" } }'::bson))
-               Order By: (document |-<> '{ "orderKey" : { "$numberInt" : "1" } }'::bson)
+               Order By: (document |<> '{ "orderKey" : { "$numberInt" : "1" } }'::bson)
 (12 rows)
 
 -- this one can't push the order by but should prefer the filter.
@@ -2333,7 +2334,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
 ---------------------------------------------------------------------
  Limit (actual rows=10 loops=1)
    ->  Sort (actual rows=10 loops=1)
-         Sort Key: (bson_orderby(document, '{ "orderKey" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+         Sort Key: (bson_orderby_index(document, '{ "orderKey" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          Sort Method: top-N heapsort  Memory: 28kB
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=255 loops=1)
                indexName: filterSortIndex_1
@@ -2343,7 +2344,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
                innerScanLoops: 501 loops
                scanType: ordered
                scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 51)]
-               ->  Index Scan using "filterSortIndex_1" on documents_68011_680022 collection (actual rows=255 loops=1)
+               ->  Index Scan using "filterSortIndex_1" on documents_69211_6920022 collection (actual rows=255 loops=1)
                      Index Cond: ((document @= '{ "filter1" : "filter1-5" }'::bson) AND (document @>= '{ "filter2" : "filter2-55" }'::bson) AND (document @> '{ "filter3" : { "$numberInt" : "50" } }'::bson))
 (14 rows)
 
@@ -2367,9 +2368,9 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
          innerScanLoops: 595 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 595)]
-         ->  Index Scan using "sortIndex_1" on documents_68011_680022 collection (actual rows=10 loops=1)
+         ->  Index Scan using "sortIndex_1" on documents_69211_6920022 collection (actual rows=10 loops=1)
                Index Cond: (document @<> '{ "orderKey" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-               Order By: (document |-<> '{ "orderKey" : { "$numberInt" : "1" } }'::bson)
+               Order By: (document |<> '{ "orderKey" : { "$numberInt" : "1" } }'::bson)
                Filter: ((document @= '{ "filter1" : "filter1-5" }'::bson) AND (document @>= '{ "filter2" : "filter2-55" }'::bson) AND (document @> '{ "filter3" : { "$numberInt" : "50" } }'::bson))
                Rows Removed by Filter: 585
 (14 rows)
@@ -2396,16 +2397,16 @@ SELECT documentdb_distributed_test_helpers.drop_primary_key('comp_ordind_db', 't
 
 SELECT collection_id AS collection_id_7 FROM documentdb_api_catalog.collections WHERE collection_name = 'testbitmaponorder' AND database_name = 'comp_ordind_db' \gset
 \d documentdb_data.documents_:collection_id_7
-          Table "documentdb_data.documents_68013"
+          Table "documentdb_data.documents_69213"
      Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
  shard_key_value | bigint |           | not null | 
  object_id       | bson   |           | not null | 
  document        | bson   |           | not null | 
 Indexes:
-    "documents_rum_index_68035" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "b", "c", "a" ]', tl='2691'))
+    "documents_rum_index_69235" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "b", "c", "a" ]', tl='2691'))
 Check constraints:
-    "shard_key_value_check" CHECK (shard_key_value = '68013'::bigint)
+    "shard_key_value_check" CHECK (shard_key_value = '69213'::bigint)
 
 ANALYZE documentdb_data.documents_:collection_id_7;
 set documentdb.forceDisableSeqScan to off;
@@ -2417,10 +2418,10 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('comp
                                                                               QUERY PLAN                                                                              
 ---------------------------------------------------------------------
  Sort
-   Output: document, (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson))
-   Sort Key: (bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   ->  Bitmap Heap Scan on documentdb_data.documents_68013_680026 collection
-         Output: document, bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)
+   Output: document, (bson_orderby_index(document, '{ "b" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby_index(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Bitmap Heap Scan on documentdb_data.documents_69213_6920026 collection
+         Output: document, bson_orderby_index(document, '{ "b" : { "$numberInt" : "1" } }'::bson)
          Recheck Cond: ((collection.document @> '{ "a" : "" }'::bson) AND (collection.document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
          ->  Bitmap Index Scan on b_c_a_1
                Index Cond: ((collection.document @> '{ "a" : "" }'::bson) AND (collection.document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
@@ -2609,9 +2610,9 @@ SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_s
                                                                       document                                                                      
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "0" }, "data" : [ { "value" : { "$minKey" : 1 } }, { "value" : { "$maxKey" : 1 } } ] }
+ { "_id" : { "$numberInt" : "6" }, "data" : [  ] }
  { "_id" : { "$numberInt" : "8" }, "data" : { "value" : null } }
  { "_id" : { "$numberInt" : "7" }, "data" : [ { "value" : null } ] }
- { "_id" : { "$numberInt" : "6" }, "data" : [  ] }
  { "_id" : { "$numberInt" : "4" }, "data" : { "value" : [  ] } }
  { "_id" : { "$numberInt" : "3" }, "data" : [ { "value" : { "$numberDouble" : "-Infinity" } }, { "value" : { "$numberDouble" : "Infinity" } } ] }
  { "_id" : { "$numberInt" : "1" }, "data" : [ { "value" : { "$numberInt" : "3" } }, { "value" : { "$numberDouble" : "4.0999999999999996447" } } ] }
@@ -2649,9 +2650,9 @@ SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_s
  { "_id" : { "$numberInt" : "2" }, "data" : [ { "value" : { "$numberInt" : "4" } }, { "value" : { "$numberInt" : "5" } } ] }
  { "_id" : { "$numberInt" : "1" }, "data" : [ { "value" : { "$numberInt" : "3" } }, { "value" : { "$numberDouble" : "4.0999999999999996447" } } ] }
  { "_id" : { "$numberInt" : "4" }, "data" : { "value" : [  ] } }
- { "_id" : { "$numberInt" : "6" }, "data" : [  ] }
  { "_id" : { "$numberInt" : "7" }, "data" : [ { "value" : null } ] }
  { "_id" : { "$numberInt" : "8" }, "data" : { "value" : null } }
+ { "_id" : { "$numberInt" : "6" }, "data" : [  ] }
 (19 rows)
 
 -- test _id sorting
@@ -2813,30 +2814,116 @@ SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_s
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "data.value": 1 } }');
                                              QUERY PLAN                                             
 ---------------------------------------------------------------------
- Index Scan using data_value_1 on documents_68015_680030 collection
+ Index Scan using data_value_1 on documents_69215_6920030 collection
    Index Cond: (document @<> '{ "data.value" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-   Order By: (document |-<> '{ "data.value" : { "$numberInt" : "1" } }'::bson)
+   Order By: (document |<> '{ "data.value" : { "$numberInt" : "1" } }'::bson)
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "data.value": -1 } }');
                                              QUERY PLAN                                              
 ---------------------------------------------------------------------
- Index Scan using data_value_1 on documents_68015_680030 collection
+ Index Scan using data_value_1 on documents_69215_6920030 collection
    Index Cond: (document @<> '{ "data.value" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson)
-   Order By: (document <>-| '{ "data.value" : { "$numberInt" : "-1" } }'::bson)
+   Order By: (document |<> '{ "data.value" : { "$numberInt" : "-1" } }'::bson)
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "_id": 1 } }');
-                         QUERY PLAN                         
+                         QUERY PLAN                          
 ---------------------------------------------------------------------
- Index Scan using _id_ on documents_68015_680030 collection
-   Index Cond: (shard_key_value = '68015'::bigint)
+ Index Scan using _id_ on documents_69215_6920030 collection
+   Index Cond: (shard_key_value = '69215'::bigint)
 (2 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "basic_sort_order", "filter": {}, "sort": { "_id": -1 } }');
-                             QUERY PLAN                              
+                              QUERY PLAN                              
 ---------------------------------------------------------------------
- Index Scan Backward using _id_ on documents_68015_680030 collection
-   Index Cond: (shard_key_value = '68015'::bigint)
+ Index Scan Backward using _id_ on documents_69215_6920030 collection
+   Index Cond: (shard_key_value = '69215'::bigint)
 (2 rows)
+
+-- test the appearance of order pushdown
+SELECT COUNT(documentdb_api.insert_one('comp_ordind_db', 'test_order_pushdown_explain', '{ "_id": 1, "a": 1, "b": 2 }')) FROM generate_series(1, 1000);
+NOTICE:  creating collection
+ count 
+---------------------------------------------------------------------
+  1000
+(1 row)
+
+-- test asc/desc combos for each runtime type pair (with hruntime, the function always gets asc sort spec but with forward or reverse) since we have DESC/ASC in the sort itself.
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "test_order_pushdown_explain", "sort": { "a": 1 } }');
+                                            QUERY PLAN                                            
+---------------------------------------------------------------------
+ Sort
+   Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Index Scan using _id_ on documents_69216_6920032 collection
+         Index Cond: (shard_key_value = '69216'::bigint)
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "test_order_pushdown_explain", "sort": { "a": -1 } }');
+                                                  QUERY PLAN                                                  
+---------------------------------------------------------------------
+ Sort
+   Sort Key: (bson_orderby_index_reverse(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) DESC NULLS LAST
+   ->  Index Scan using _id_ on documents_69216_6920032 collection
+         Index Cond: (shard_key_value = '69216'::bigint)
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "test_order_pushdown_explain", "sort": { "a": 1, "b": -1 } }');
+                                                                                             QUERY PLAN                                                                                             
+---------------------------------------------------------------------
+ Sort
+   Sort Key: (bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby_index_reverse(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) DESC NULLS LAST
+   ->  Index Scan using _id_ on documents_69216_6920032 collection
+         Index Cond: (shard_key_value = '69216'::bigint)
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "test_order_pushdown_explain", "sort": { "a": -1, "b": 1 } }');
+                                                                                             QUERY PLAN                                                                                             
+---------------------------------------------------------------------
+ Sort
+   Sort Key: (bson_orderby_index_reverse(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) DESC NULLS LAST, (bson_orderby_index(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Index Scan using _id_ on documents_69216_6920032 collection
+         Index Cond: (shard_key_value = '69216'::bigint)
+(4 rows)
+
+-- when pushing to the index, we want to make sure the index term reflects the sort order of the query
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_ordind_db', '{ "createIndexes": "test_order_pushdown_explain", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "storageEngine": { "enableCompositeTerm": true } }, { "key": { "b": -1 }, "name": "b_-1", "storageEngine": { "enableCompositeTerm": true } } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT collection_id FROM documentdb_api_catalog.collections WHERE collection_name = 'test_order_pushdown_explain' AND database_name = 'comp_ordind_db' \gset
+ANALYZE documentdb_data.documents_:collection_id;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "test_order_pushdown_explain", "sort": { "a": 1 } }');
+                                        QUERY PLAN                                         
+---------------------------------------------------------------------
+ Index Scan using a_1 on documents_69216_6920032 collection
+   Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+   Order By: (document |<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "test_order_pushdown_explain", "sort": { "a": -1 } }');
+                                         QUERY PLAN                                         
+---------------------------------------------------------------------
+ Index Scan using a_1 on documents_69216_6920032 collection
+   Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson)
+   Order By: (document |<> '{ "a" : { "$numberInt" : "-1" } }'::bson)
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "test_order_pushdown_explain", "sort": { "b": 1 } }');
+                                        QUERY PLAN                                         
+---------------------------------------------------------------------
+ Index Scan using "b_-1" on documents_69216_6920032 collection
+   Index Cond: (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+   Order By: (document |<> '{ "b" : { "$numberInt" : "1" } }'::bson)
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_ordind_db', '{ "find": "test_order_pushdown_explain", "sort": { "b": -1 } }');
+                                         QUERY PLAN                                         
+---------------------------------------------------------------------
+ Index Scan using "b_-1" on documents_69216_6920032 collection
+   Index Cond: (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson)
+   Order By: (document |<> '{ "b" : { "$numberInt" : "-1" } }'::bson)
+(3 rows)
 

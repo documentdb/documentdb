@@ -199,6 +199,10 @@ bool EnableExtendedIndexes = DEFAULT_ENABLE_EXTENDED_INDEXES;
 #define DEFAULT_ENABLE_COMPARABLE_TERMS false
 bool EnableComparableTerms = DEFAULT_ENABLE_COMPARABLE_TERMS;
 
+/* Added in v111, Pending stabilization */
+#define DEFAULT_ENABLE_ORDER_BY_INDEX_TERM false
+bool EnableOrderByIndexTerm = DEFAULT_ENABLE_ORDER_BY_INDEX_TERM;
+
 /*
  * SECTION: Planner feature flags
  */
@@ -895,6 +899,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable comparable terms feature."),
 		NULL, &EnableComparableTerms,
 		DEFAULT_ENABLE_COMPARABLE_TERMS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableOrderByIndexTerm", newGucPrefix),
+		gettext_noop(
+			"Whether to enable order by index term feature."),
+		NULL, &EnableOrderByIndexTerm,
+		DEFAULT_ENABLE_ORDER_BY_INDEX_TERM,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
