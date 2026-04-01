@@ -1171,6 +1171,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY:
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE:
+		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_INDEXTERM:
 		{
 			/* It's a full scan */
 			break;
@@ -1331,6 +1332,7 @@ IsValidRecheckForIndexValue(const BsonIndexTerm *compareTerm,
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_LTE:
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY:
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE:
+		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_INDEXTERM:
 		{
 			/* No recheck */
 			ereport(ERROR, (errmsg(

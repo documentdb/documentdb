@@ -85,6 +85,7 @@ extern bool FailOnGroupIdDuplicate;
 extern bool EnableUseLookupNewProjectInlineMethod;
 extern bool InlineChangeStreamMatchStage;
 extern bool RemoveMatchNamespaceFilters;
+extern bool EnableOrderByIndexTerm;
 
 /* GUC to config tdigest compression */
 extern int TdigestCompressionAccuracy;
@@ -4966,44 +4967,68 @@ HandleSort(const bson_value_t *existingValue, Query *query,
 				ReportFeatureUsage(FEATURE_STAGE_SORT_BY_ID);
 			}
 
+			bool isOrderByIndexTerm = EnableOrderByIndexTerm && !isSortByMeta &&
+									  IsClusterVersionAtleast(DocDB_V0, 111, 0);
 			SortBy *sortBy = makeNode(SortBy);
-			SortByNulls sortByNulls = SORTBY_NULLS_DEFAULT;
+			SortByNulls sortByNulls = isAscending ? SORTBY_NULLS_FIRST :
+									  SORTBY_NULLS_LAST;
 			SortByDir sortByDirection = isAscending ? SORTBY_ASC : SORTBY_DESC;
 			sortBy->location = -1;
 
 			Oid funcOid = BsonOrderByFunctionOid();
+			Oid funcOidWithCollation = IsCollationApplicable(context->collationString) ?
+									   BsonOrderByWithCollationFunctionOid() : InvalidOid;
+			Oid funcReturnType = BsonTypeId();
+			Const *sortOrderConst = sortBson;
+			if (isOrderByIndexTerm)
+			{
+				funcOid = isAscending ? BsonOrderByIndexFunctionOid() :
+						  BsonOrderByIndexReverseFunctionOid();
+				funcReturnType = BsonIndexTermTypeId();
+				funcOidWithCollation = isAscending ?
+									   BsonOrderByIndexWithCollationFunctionOid() :
+									   BsonOrderByIndexWithCollationReverseFunctionOid();
+
+				pgbsonelement updatedSortElement = element;
+				updatedSortElement.bsonValue.value_type = BSON_TYPE_INT32;
+				updatedSortElement.bsonValue.value.v_int32 = 1;
+				pgbson *updatedSortDoc = PgbsonElementToPgbson(&updatedSortElement);
+				sortOrderConst = MakeBsonConst(updatedSortDoc);
+			}
+
 			List *args = NIL;
 
 			/* apply collation to the sort comparison */
 			if (IsCollationApplicable(context->collationString))
 			{
-				funcOid = BsonOrderByWithCollationFunctionOid();
+				funcOid = funcOidWithCollation;
 				Const *collationConst = MakeTextConst(context->collationString,
 													  strlen(
 														  context->collationString));
 
-				args = list_make3(sortInput, sortBson, collationConst);
+				args = list_make3(sortInput, sortOrderConst, collationConst);
 
 				/*
 				 * For ascending order: ORDER BY <value> USING ApiInternalSchemaNameV2.<<<
 				 * For descending order: ORDER BY <value> USING ApiInternalSchemaNameV2.>>>
 				 */
-				sortByDirection = SORTBY_USING;
-				sortBy->useOp = isAscending ?
-								list_make2(makeString(ApiInternalSchemaNameV2),
-										   makeString("<<<")) :
-								list_make2(makeString(ApiInternalSchemaNameV2),
-										   makeString(">>>"));
+				if (!isOrderByIndexTerm)
+				{
+					sortByDirection = SORTBY_USING;
+					sortBy->useOp = isAscending ?
+									list_make2(makeString(ApiInternalSchemaNameV2),
+											   makeString("<<<")) :
+									list_make2(makeString(ApiInternalSchemaNameV2),
+											   makeString(">>>"));
+				}
 			}
 			else
 			{
-				args = list_make2(sortInput, sortBson);
+				args = list_make2(sortInput, sortOrderConst);
 			}
 
-			sortByNulls = isAscending ? SORTBY_NULLS_FIRST : SORTBY_NULLS_LAST;
-
 			expr = (Expr *) makeFuncExpr(funcOid,
-										 BsonTypeId(),
+										 funcReturnType,
 										 args,
 										 InvalidOid, InvalidOid,
 										 COERCE_EXPLICIT_CALL);
@@ -5030,7 +5055,7 @@ HandleSort(const bson_value_t *existingValue, Query *query,
 				/* If sort by is descending use the new operators: this allows for
 				 * customization of reverse scan.
 				 */
-				if (!isAscending)
+				if (!isAscending && !isOrderByIndexTerm)
 				{
 					sortByDirection = SORTBY_USING;
 					sortBy->useOp = list_make2(makeString(ApiInternalSchemaNameV2),

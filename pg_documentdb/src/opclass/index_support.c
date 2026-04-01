@@ -202,6 +202,7 @@ typedef struct IndexElemmatchState
 
 extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
+extern bool EnableOrderByIndexTerm;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -2176,6 +2177,18 @@ GetSortDetails(PlannerInfo *root, Index rti,
 
 			*hasOrderBy = true;
 		}
+		else if (EnableOrderByIndexTerm &&
+				 (func->funcid == BsonOrderByIndexFunctionOid() ||
+				  func->funcid == BsonOrderByIndexReverseFunctionOid()))
+		{
+			/* TODO: Collation index pushdown support. */
+			if (*hasGroupby)
+			{
+				return NIL;
+			}
+
+			*hasOrderBy = true;
+		}
 		else if (func->funcid == BsonExpressionGetFunctionOid() ||
 				 func->funcid == BsonExpressionGetWithLetFunctionOid())
 		{
@@ -2294,6 +2307,7 @@ GetSortDetails(PlannerInfo *root, Index rti,
 		sortDetailsInput->sortPathKey = pathkey;
 		sortDetailsInput->sortVar = (Expr *) firstVar;
 		sortDetailsInput->sortDatum = (Expr *) secondConst;
+		sortDetailsInput->funcOid = func->funcid;
 		sortDetails = lappend(sortDetails, sortDetailsInput);
 
 		*isOrderById = *isOrderById ||
@@ -2543,13 +2557,6 @@ ProcessOrderByStatements(PlannerInfo *root,
 				break;
 			}
 
-			if (determinedSortOrder < 0 &&
-				!(IsClusterVersionAtleast(DocDB_V0, 107, 0) ||
-				  IsClusterVersionAtLeastPatch(DocDB_V0, 106, 1)))
-			{
-				break;
-			}
-
 			SortIndexInputDetails *sortDetailsInput =
 				(SortIndexInputDetails *) list_nth(sortDetails, sortDetailsIndex);
 
@@ -2563,14 +2570,46 @@ ProcessOrderByStatements(PlannerInfo *root,
 
 			/* Path sort order matches the currently determined index sort order */
 			/* Now we've reached the first orderby */
-			Oid indexOperator = pathSortOrders[i] < 0 ?
-								BsonOrderByReverseIndexOperatorId() :
-								BsonOrderByIndexOperatorId();
-			Expr *orderElement = make_opclause(
-				indexOperator, BsonTypeId(), false,
-				(Expr *) sortDetailsInput->sortVar,
-				(Expr *) sortDetailsInput->sortDatum,
-				InvalidOid, InvalidOid);
+			OpExpr *orderElement;
+			if (sortDetailsInput->funcOid == BsonOrderByIndexFunctionOid() ||
+				sortDetailsInput->funcOid == BsonOrderByIndexReverseFunctionOid())
+			{
+				Oid indexOperator = BsonOrderByBsonIndexTypeOperatorId();
+
+				/* sortDatum in the index order case we push is the index sort datum */
+				pgbsonelement sortElement;
+				sortElement.path = sortDetailsInput->sortPath;
+				sortElement.pathLength = strlen(sortDetailsInput->sortPath);
+				sortElement.bsonValue.value_type = BSON_TYPE_INT32;
+				sortElement.bsonValue.value.v_int32 =
+					SortPathKeyStrategy(sortDetailsInput->sortPathKey) ==
+					BTGreaterStrategyNumber ?
+					-1 : 1;
+				pgbson *sortDatum = PgbsonElementToPgbson(&sortElement);
+				Const *sortConst = makeConst(BsonTypeId(), -1, InvalidOid, -1,
+											 PointerGetDatum(sortDatum),
+											 false, false);
+
+				orderElement = (OpExpr *) make_opclause(
+					indexOperator, BsonIndexTermTypeId(), false,
+					(Expr *) sortDetailsInput->sortVar,
+					(Expr *) sortConst,
+					InvalidOid, InvalidOid);
+				orderElement->opfuncid = get_opcode(indexOperator);
+			}
+			else
+			{
+				Oid indexOperator = pathSortOrders[i] < 0 ?
+									BsonOrderByReverseIndexOperatorId() :
+									BsonOrderByIndexOperatorId();
+				orderElement = (OpExpr *) make_opclause(
+					indexOperator, BsonTypeId(), false,
+					(Expr *) sortDetailsInput->sortVar,
+					(Expr *) sortDetailsInput->sortDatum,
+					InvalidOid, InvalidOid);
+				orderElement->opfuncid = get_opcode(indexOperator);
+			}
+
 			indexOrderBys = lappend(indexOrderBys, orderElement);
 			indexPathKeys = lappend(indexPathKeys, sortDetailsInput->sortPathKey);
 			indexOrderbyCols = lappend_int(indexOrderbyCols, 0);
