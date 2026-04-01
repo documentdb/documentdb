@@ -271,3 +271,68 @@ All components will be validated by unit tests, and functional tests. The major 
 
 Custom roles will be added in the future, the existing roles and privilege extraction logic should support them, the main work will be adding customer commands for managing them, and adding validation.
 
+# DocumentDb → Postgres Role Mapping
+
+Postgres and DocumentDB both support role based authentication at a high level, but there are structural differences between the two that make it impossible to create a 1:1 mapping.
+
+A simple example of this is for the DocumentDb write privilege. A DocumentDB user can have the write privilege on any collection called items “items” anywhere in the database through a custom role:
+
+```
+// Create the custom role with write privileges on catalog.items
+db.createRole({
+  role: "itemsWriter",
+  privileges: [
+    {
+      resource: { db: "", collection: "items" },
+      actions: ["insert", "update", "remove", "find"]
+    }
+  ],
+  roles: []
+})
+
+// Grant the role to user1
+db.grantRolesToUser("user1", ["itemsWriter"])
+```
+
+At this point the no databases or collections need to exist, but the user is able to gain these privileges on any table that exists in the future. By the way the “insert” operation works in DocumentDb the user also has privileges to create a collection names “items” in any database. These actions cannot be modeled by Postgres roles.
+
+There are also operational and diagnostic actions where Postgres does not provide the granularity needed to match the requirements for DocumentDb.
+
+## Proposed System
+
+The proposed system is to have a two stage authorization model, where the top level DocumentDB API operations validate the full required privileges and also maintain Postgres roles and authorization for the critical privileges (insert, update, delete).
+
+DocumentDb will manage the Postgres privileges for it’s users, and map Postgres roles to ensure that the user always have the critical permissions, but will also allow the user to act beyond their Postgres privilege levels for actions that cannot be appropriately modeled.
+
+For the above example, if “user1” tries to do an insert into an “items” collection that does not exist, the DocumentDB API insert UDF would recognize that by the DocumentDB auth rules this is a valid operation, and assume higher level privileges to create the “items” collection for the user, and assign the user the correct Postgres privileges for the newly created collection. Any subsequent inserts to that collection would be authorized by Postgres based on it’s auth rules.
+
+
+## DocumentDB Roles
+
+DocumentDB has 3 types of roles:
+
+
+* Static Built-in roles, these are standard built in roles, like “dbAdmin” with are associated with the “admin” database, there is only one version of each of these roles
+* Dynamic Built-in roles, these are built in roles that are associated with a database, e.g. `{“db”:“test”, “role”: “write”}`. These provide built in privileges based on the named database where they are assigned. For each of these role definitions there is theoretically one per database the customer creates.
+* Custom Role, these are roles the customer creates, that are associated with the database the customer creates them in (but can have privileges outside that database), these can also inherit from other roles.
+
+## 1:1 Role Mapping
+
+Implementing a 1:1 roles mapping would have each role in the roles table table above be linked to an associated Postgres role, with dynamic built-in roles being created and deleted on demand, these roles would be given the critical privileges for every existing table that matches their privileges. When we assign a role to a user in DocumentDB the associated role will be granted to their Postgres user.
+
+A mechanism (trigger?) would be used to react to table changes to update the Postgres privileges on:
+
+* Table creation
+* Table deletion
+* Table rename
+
+### Potential Issues
+
+A split auth model can always have potential issues with the data being out of sync, or hard to understand as it’s in more than one place. Potential issues that can arise here:
+
+* Through the DocumentDB APIs a user can take more actions than what is visible reviewing their Postgres privileges
+* What doers a Postgres Admin modifying the privileges within a role mean
+* What does a Postgres Admin deleting a built-in role mean
+
+
+
