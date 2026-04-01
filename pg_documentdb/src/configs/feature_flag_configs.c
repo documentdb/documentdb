@@ -168,6 +168,11 @@ bool EnableCompositeReducedCorrelatedTerms = DEFAULT_ENABLE_REDUCED_CORRELATED_T
 bool EnableUniqueCompositeReducedCorrelatedTerms =
 	DEFAULT_ENABLE_UNIQUE_REDUCED_CORRELATED_TERMS;
 
+/* Added in v111, enabled in v111, remove after v115 */
+#define DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS_ON_COMMON_SUBPATH true
+bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath =
+	DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS_ON_COMMON_SUBPATH;
+
 /* Longer term feature flag to track older cluster data: Move to testing_configs when convenient */
 /* Added in v109, enabled in v109, remove after v999 */
 #define DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS true
@@ -849,6 +854,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable reduced term generation for correlated composite paths for unique indexes."),
 		NULL, &EnableUniqueCompositeReducedCorrelatedTerms,
 		DEFAULT_ENABLE_UNIQUE_REDUCED_CORRELATED_TERMS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCompositeReducedCorrelatedTermsOnCommonSubPath", newGucPrefix),
+		gettext_noop(
+			"Whether to enable reduced term generation for correlated composite paths on common sub-paths."),
+		NULL, &EnableCompositeReducedCorrelatedTermsOnCommonSubPath,
+		DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS_ON_COMMON_SUBPATH,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

@@ -60,6 +60,7 @@
 #include "utils/documentdb_errors.h"
 #include "utils/query_utils.h"
 #include "utils/feature_counter.h"
+#include "utils/hashset_utils.h"
 #include "utils/index_utils.h"
 #include "utils/version_utils.h"
 #include "vector/vector_common.h"
@@ -169,6 +170,7 @@ extern bool EnableCompositeReducedCorrelatedTerms;
 extern bool EnableUniqueCompositeReducedCorrelatedTerms;
 extern bool EnableCompositeShardDocumentTerms;
 extern bool EnablePerCollectionPlannerStatistics;
+extern bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath;
 
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool SkipFailOnCollation;
@@ -5952,7 +5954,18 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		pgbson_array_writer arrayWriter;
 		PgbsonWriterStartArray(&elementListWriter, "", 0, &arrayWriter);
 
+		bool useReducedCorrelatedTerms = false;
+
+		bool isUniqueStyleIndex = unique || buildAsUnique;
+		if (list_length(indexDefKey->keyPathList) > 1 &&
+			((EnableCompositeReducedCorrelatedTerms && !isUniqueStyleIndex) ||
+			 (EnableUniqueCompositeReducedCorrelatedTerms && isUniqueStyleIndex)))
+		{
+			useReducedCorrelatedTerms = true;
+		}
+
 		int32_t wildcardTermIndex = -1;
+		int32_t numPathsWithCommonPrefix = 0;
 		if (list_length(indexDefKey->keyPathList) == 0)
 		{
 			/* root wildcard index */
@@ -5974,6 +5987,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		{
 			ListCell *keyPathCell = NULL;
 			int numPaths = 0;
+			HTAB *pathHash = CreateStringViewHashSet();
 			foreach(keyPathCell, indexDefKey->keyPathList)
 			{
 				IndexDefKeyPath *indexKeyPath = (IndexDefKeyPath *) lfirst(keyPathCell);
@@ -5989,6 +6003,22 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 					}
 
 					wildcardTermIndex = foreach_current_index(keyPathCell);
+				}
+
+				/* Track number of index paths with dots*/
+				StringView keyPathView = CreateStringViewFromString(keyPath);
+				StringView dottedPrefix = StringViewFindPrefix(&keyPathView, '.');
+				if (dottedPrefix.length > 0 && !StringViewEqualsCString(&dottedPrefix,
+																		"_id"))
+				{
+					bool found = false;
+					hash_search(pathHash, &dottedPrefix, HASH_ENTER, &found);
+
+					if (found)
+					{
+						/* We have 2 index paths for a common prefix, track this */
+						numPathsWithCommonPrefix++;
+					}
 				}
 
 				numPaths++;
@@ -6035,6 +6065,8 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 								errmsg("Index exceeds maximum supported keys of %d",
 									   INDEX_MAX_KEYS)));
 			}
+
+			hash_destroy(pathHash);
 		}
 
 		PgbsonWriterEndArray(&elementListWriter, &arrayWriter);
@@ -6042,16 +6074,19 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		pg_sprintf(indexTermSizeLimitArg, ",tl=%u", ComputeIndexTermLimit(
 					   COMPOUND_INDEX_TERM_SIZE_LIMIT));
 
+		if (numPathsWithCommonPrefix > 0 &&
+			EnableCompositeReducedCorrelatedTermsOnCommonSubPath)
+		{
+			useReducedCorrelatedTerms = true;
+		}
+
 		char wildcardIndexPath[22] = { 0 };
 		char wildcardIndexTruncatedPathLimit[22] = { 0 };
 		char *wildCardIndexPathLimit = "";
 		char *wildcardIndexString = "";
 		char *reducedCorrelatedTermString = "";
 
-		bool isUniqueStyleIndex = unique || buildAsUnique;
-		if (list_length(indexDefKey->keyPathList) > 1 &&
-			((EnableCompositeReducedCorrelatedTerms && !isUniqueStyleIndex) ||
-			 (EnableUniqueCompositeReducedCorrelatedTerms && isUniqueStyleIndex)))
+		if (useReducedCorrelatedTerms)
 		{
 			reducedCorrelatedTermString = ",rct=true";
 		}
