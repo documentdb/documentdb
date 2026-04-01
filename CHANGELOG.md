@@ -17,6 +17,7 @@
 * Improved performance for `$sum` and `$avg` accumulators in `$group` and `$setWindowFields` pipeline stages under flag `enableNewWithExprAccumulators`, with moving window support via inverse transition. (#457)
 * Fix segfault due to use after free in bson_dollar_project_find *[Bugfix]*
 * Remove unnecessary explicit frees of items allocated on tuple-context *[Perf]*
+* Add support for ordering by index term order (matching the ordering spec more closely) for both index and runtime. This also makes index and runtime orders match *[Bugfix]*
 
 ### documentdb v0.110-0 (Unreleased) ###
 * Add support for keyword `description` in `$jsonSchema` *[Feature]*

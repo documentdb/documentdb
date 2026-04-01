@@ -65,6 +65,11 @@ static Oid GetInternalBinaryOperatorId(Oid *operatorId, Oid leftTypeOid,
 									   Oid rightTypeOid);
 static Oid GetCoreBinaryOperatorId(Oid *operatorId, Oid leftTypeOid, char *operatorName,
 								   Oid rightTypeOid);
+static Oid GetBinaryOperatorFunctionIdWithSchemaMaybeMissing(Oid *operatorFuncId,
+															 char *operatorName,
+															 Oid leftTypeOid, Oid
+															 rightTypeOid,
+															 char *schemaName);
 static Oid GetBinaryOperatorFunctionIdWithSchema(Oid *operatorFuncId, char *operatorName,
 												 Oid leftTypeOid, Oid rightTypeOid,
 												 char *schemaName);
@@ -269,6 +274,21 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the bson_orderby with collation function */
 	Oid BsonOrderByWithCollationFunctionId;
 
+	/* OID of the bson_orderby_index function */
+	Oid BsonOrderByIndexFunctionId;
+
+	/* OID of the bson_orderby_index_reverse function */
+	Oid BsonOrderByIndexReverseFunctionId;
+
+	/* OID of the bson_orderby_index with collation function */
+	Oid BsonOrderByIndexWithCollationFunctionId;
+
+	/* OID of the bson_orderby_index_reverse with collation function */
+	Oid BsonOrderByIndexWithCollationReverseFunctionId;
+
+	/* OID of the bson index term type */
+	Oid BsonIndexTermTypeId;
+
 	/* OID of the bson_orderby_compare function */
 	Oid BsonOrderByCompareFunctionOId;
 
@@ -295,6 +315,9 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OID of the reverse sort order by index operator */
 	Oid BsonOrderByReverseIndexOperatorId;
+
+	/* Oid of the bson order by index on hte bsonindextype operator */
+	Oid BsonOrderByBsonIndexTypeOperatorId;
 
 	/* OID of the bson_orderby_partition function */
 	Oid BsonOrderByPartitionFunctionOid;
@@ -5107,6 +5130,64 @@ BsonOrderByFunctionOid(void)
 
 
 Oid
+BsonOrderByIndexFunctionOid(void)
+{
+	return GetBinaryOperatorFunctionIdWithSchemaMaybeMissing(
+		&Cache.BsonOrderByIndexFunctionId,
+		"bson_orderby_index", BsonTypeId(), BsonTypeId(),
+		DocumentDBApiInternalSchemaName);
+}
+
+
+Oid
+BsonOrderByIndexReverseFunctionOid(void)
+{
+	return GetBinaryOperatorFunctionIdWithSchemaMaybeMissing(
+		&Cache.BsonOrderByIndexReverseFunctionId,
+		"bson_orderby_index_reverse", BsonTypeId(), BsonTypeId(),
+		DocumentDBApiInternalSchemaName);
+}
+
+
+Oid
+BsonOrderByIndexWithCollationFunctionOid(void)
+{
+	return GetOperatorFunctionIdThreeArgs(&Cache.BsonOrderByIndexWithCollationFunctionId,
+										  DocumentDBApiInternalSchemaName,
+										  "bson_orderby_index", BsonTypeId(),
+										  BsonTypeId(), TEXTOID);
+}
+
+
+Oid
+BsonOrderByIndexWithCollationReverseFunctionOid(void)
+{
+	return GetOperatorFunctionIdThreeArgs(
+		&Cache.BsonOrderByIndexWithCollationReverseFunctionId,
+		DocumentDBApiInternalSchemaName,
+		"bson_orderby_index_reverse", BsonTypeId(),
+		BsonTypeId(), TEXTOID);
+}
+
+
+Oid
+BsonIndexTermTypeId(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (Cache.BsonIndexTermTypeId == InvalidOid)
+	{
+		List *bsonTypeNameList = list_make2(makeString(ApiInternalSchemaNameV2),
+											makeString("bsonindexterm"));
+		TypeName *bsonTypeName = makeTypeNameFromNameList(bsonTypeNameList);
+		Cache.BsonIndexTermTypeId = typenameTypeId(NULL, bsonTypeName);
+	}
+
+	return Cache.BsonIndexTermTypeId;
+}
+
+
+Oid
 BsonOrderByIndexOperatorId(void)
 {
 	return GetBinaryOperatorId(&Cache.BsonOrderByIndexOperatorId,
@@ -5119,6 +5200,14 @@ BsonOrderByReverseIndexOperatorId(void)
 {
 	return GetInternalBinaryOperatorId(&Cache.BsonOrderByReverseIndexOperatorId,
 									   BsonTypeId(), "<>-|", BsonTypeId());
+}
+
+
+Oid
+BsonOrderByBsonIndexTypeOperatorId(void)
+{
+	return GetInternalBinaryOperatorId(&Cache.BsonOrderByBsonIndexTypeOperatorId,
+									   BsonTypeId(), "|<>", BsonTypeId());
 }
 
 
@@ -6907,6 +6996,28 @@ GetBinaryOperatorFunctionIdWithSchema(Oid *operatorFuncId, char *operatorName,
 											makeString(operatorName));
 		Oid paramOids[2] = { leftTypeOid, rightTypeOid };
 		bool missingOK = false;
+
+		*operatorFuncId =
+			LookupFuncName(functionNameList, 2, paramOids, missingOK);
+	}
+
+	return *operatorFuncId;
+}
+
+
+static Oid
+GetBinaryOperatorFunctionIdWithSchemaMaybeMissing(Oid *operatorFuncId, char *operatorName,
+												  Oid leftTypeOid, Oid rightTypeOid,
+												  char *schemaName)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (*operatorFuncId == InvalidOid)
+	{
+		List *functionNameList = list_make2(makeString(schemaName),
+											makeString(operatorName));
+		Oid paramOids[2] = { leftTypeOid, rightTypeOid };
+		bool missingOK = true;
 
 		*operatorFuncId =
 			LookupFuncName(functionNameList, 2, paramOids, missingOK);

@@ -109,8 +109,8 @@ test: schema_validation_insert schema_validation bson_aggregation_stage_lookup_i
 test: bson_aggregation_pipeline_operator_locf commands_insert setwindowfields_and_group_compliance bson_composite_pfe_order_by_index_tests
 
 test: bson_index_rum_index_scan_to_bitmap_heap_scan commands_update_bulk bson_aggregation_stage_lookup_tests!PG17_OR_HIGHER!_composite
-test: bson_index_truncation_code_tests bson_index_truncation_symbol_tests bson_index_truncation_index_tests
-test: geospatial_extract_2d_geometries bson_query_operator_geospatial_tests_runtime commands_create_index_geospatial
+test: bson_index_truncation_code_tests bson_index_truncation_symbol_tests bson_index_truncation_index_tests bson_composite_order_by_index_tests
+test: geospatial_extract_2d_geometries bson_query_operator_geospatial_tests_runtime commands_create_index_geospatial bson_composite_order_by_index_tests_indexterm
 test: commands_create_ttl_indexes bson_query_operator_range bson_index_truncation_nested_objects_tests bson_index_truncation_binary_tests
 test: users_libpq_permissioning
 test: bson_aggregation_stage_merge_tests commands_create_indexes_text bson_aggregation_pipeline_tests_coll_agnostic commands_coll_mod
@@ -155,9 +155,7 @@ test: collection_management
 # we cannot set this GUC inside one. This is why the test is not being run concurrently.
 test: three_column_data_table
 
-# This needs to be by itself since it updates the documentdb schema to add order by functions
-# Once this is added to the central schema, it can be run concurrently
-test: bson_composite_order_by_index_tests
+# Needs to be by itself for testing global state and creating functions.
 test: bson_distributed_mem_vtable_palloc_test
 
 test: command_bulk_write
