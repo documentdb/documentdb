@@ -50,6 +50,7 @@ extern bool DisableExtendedRumExplainPlans;
 extern bool EnableOrderedCostEstimator;
 extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
+extern bool EnableOrderByIndexTerm;
 
 extern const RumIndexArrayStateFuncs RoaringStateFuncs;
 
@@ -963,7 +964,16 @@ ValidateMatchForOrderbyQuals(IndexPath *path)
 
 		/* Validate that it's a supported operator */
 		OpExpr *opQual = (OpExpr *) orderQual;
-		if (opQual->opfuncid != BsonOrderByFunctionOid())
+		if (EnableOrderByIndexTerm &&
+			opQual->opfuncid != BsonOrderByFunctionOid() &&
+			opQual->opfuncid != BsonOrderByIndexFunctionOid() &&
+			opQual->opfuncid != BsonOrderByIndexWithCollationFunctionOid() &&
+			opQual->opfuncid != BsonOrderByIndexWithCollationReverseFunctionOid() &&
+			opQual->opfuncid != BsonOrderByIndexReverseFunctionOid())
+		{
+			return false;
+		}
+		else if (opQual->opfuncid != BsonOrderByFunctionOid())
 		{
 			return false;
 		}

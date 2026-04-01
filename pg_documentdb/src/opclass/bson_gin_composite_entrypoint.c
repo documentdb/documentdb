@@ -957,6 +957,7 @@ gin_bson_composite_path_compare_partial(PG_FUNCTION_ARGS)
 
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY:
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE:
+		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_INDEXTERM:
 		case BSON_INDEX_STRATEGY_INVALID:
 		{
 			/* use order by key to signal truncation status of ordering */
@@ -2378,6 +2379,43 @@ gin_bson_composite_rum_config(PG_FUNCTION_ARGS)
 }
 
 
+inline static int
+GetOrderByIndexPath(pgbson *queryValue, const char **indexPaths,
+					uint32_t *indexPathLengths,
+					int numPaths, pgbsonelement *querySortElement)
+{
+	pgbsonelement sortElement;
+	if (!TryGetSinglePgbsonElementFromPgbson(queryValue, &sortElement))
+	{
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg(
+							"Invalid query value for ordering transform - only 1 path is supported")));
+	}
+
+	/* Match the order by column to the index path */
+	int orderbyIndexPath = -1;
+	for (int i = 0; i < numPaths; i++)
+	{
+		if (sortElement.pathLength == indexPathLengths[i] &&
+			strcmp(sortElement.path, indexPaths[i]) == 0)
+		{
+			orderbyIndexPath = i;
+			break;
+		}
+	}
+
+	if (orderbyIndexPath < 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("Order by path '%s' does not match any index path",
+							   sortElement.path)));
+	}
+
+	*querySortElement = sortElement;
+	return orderbyIndexPath;
+}
+
+
 Datum
 gin_bson_composite_ordering_transform(PG_FUNCTION_ARGS)
 {
@@ -2401,8 +2439,9 @@ gin_bson_composite_ordering_transform(PG_FUNCTION_ARGS)
 		indexPathLengths,
 		sortOrders);
 
-	BsonIndexTerm compareTerm[INDEX_MAX_KEYS] = { 0 };
-	int32_t numPathsInIndex = InitializeCompositeIndexTerm(compareValue, compareTerm);
+	SerializedCompositeTermPair compareTerms[INDEX_MAX_KEYS] = { 0 };
+	int32_t numPathsInIndex = LazyInitializeSerializedCompositeIndexTerm(compareValue,
+																		 compareTerms);
 	if (numPathsInIndex != numPaths)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
@@ -2411,119 +2450,158 @@ gin_bson_composite_ordering_transform(PG_FUNCTION_ARGS)
 							   numPathsInIndex, numPaths)));
 	}
 
-	pgbson *result = NULL;
+	Datum result = (Datum) 0;
 
-	/* Index only scan, we need to reconstruct and project the document back. */
-	if (strategy == UINT16_MAX)
+	switch (strategy)
 	{
-		pgbson_heap_writer *writer;
-
-		/* Start over if the priorKey is not provided (handles the rescan scenario)
-		 * Note that we don't check or free the writer since the MemoryContext
-		 * is reset in between rescan scenarios.
-		 */
-		if (fcinfo->flinfo->fn_extra == NULL || currentKey == (Datum) 0)
+		/* Index only scan, we need to reconstruct and project the document back. */
+		case UINT16_MAX:
 		{
-			writer = PgbsonHeapWriterInit();
-			fcinfo->flinfo->fn_extra = (void *) writer;
-		}
-		else
-		{
-			writer = (pgbson_heap_writer *) fcinfo->flinfo->fn_extra;
-			PgbsonHeapWriterReset(writer);
-		}
+			pgbson_heap_writer *writer;
 
-		for (int i = 0; i < numPaths; i++)
-		{
-			BsonIndexTerm *term = &compareTerm[i];
-			PgbsonHeapWriterAppendValue(writer, indexPaths[i], indexPathLengths[i],
-										&term->element.bsonValue);
-		}
-
-		bson_value_t value = PgbsonHeapWriterGetValue(writer);
-
-		if (currentKey == (Datum) 0)
-		{
-			result = PgbsonInitFromDocumentBsonValue(&value);
-		}
-		else
-		{
-			pgbson *existing = DatumGetPgBson(currentKey);
-			Size currentSize = VARSIZE(existing);
-
-			Size requiredSize = value.value.v_doc.data_len + VARHDRSZ;
-			if (currentSize < requiredSize)
+			/* Start over if the priorKey is not provided (handles the rescan scenario)
+			 * Note that we don't check or free the writer since the MemoryContext
+			 * is reset in between rescan scenarios.
+			 */
+			if (fcinfo->flinfo->fn_extra == NULL || currentKey == (Datum) 0)
 			{
-				existing = repalloc(existing, requiredSize);
+				writer = PgbsonHeapWriterInit();
+				fcinfo->flinfo->fn_extra = (void *) writer;
+			}
+			else
+			{
+				writer = (pgbson_heap_writer *) fcinfo->flinfo->fn_extra;
+				PgbsonHeapWriterReset(writer);
 			}
 
-			uint8_t *dataValues = (uint8_t *) VARDATA(existing);
-			memcpy(dataValues, value.value.v_doc.data, value.value.v_doc.data_len);
-			SET_VARSIZE(existing, requiredSize);
-			result = existing;
-		}
-	}
-	else
-	{
-		if (currentKey != (Datum) 0)
-		{
-			pgbson *currentOrdering = DatumGetPgBsonPacked(currentKey);
-			pfree(currentOrdering);
+			for (int i = 0; i < numPaths; i++)
+			{
+				InitializeBsonIndexTermIfNeeded(&compareTerms[i]);
+				BsonIndexTerm *term = &compareTerms[i].term;
+				PgbsonHeapWriterAppendValue(writer, indexPaths[i], indexPathLengths[i],
+											&term->element.bsonValue);
+			}
+
+			bson_value_t value = PgbsonHeapWriterGetValue(writer);
+
+			if (currentKey == (Datum) 0)
+			{
+				result = PointerGetDatum(PgbsonInitFromDocumentBsonValue(&value));
+			}
+			else
+			{
+				pgbson *existing = DatumGetPgBson(currentKey);
+				Size currentSize = VARSIZE(existing);
+
+				Size requiredSize = value.value.v_doc.data_len + VARHDRSZ;
+				if (currentSize < requiredSize)
+				{
+					existing = repalloc(existing, requiredSize);
+				}
+
+				uint8_t *dataValues = (uint8_t *) VARDATA(existing);
+				memcpy(dataValues, value.value.v_doc.data, value.value.v_doc.data_len);
+				SET_VARSIZE(existing, requiredSize);
+				result = PointerGetDatum(existing);
+			}
+
+			break;
 		}
 
-		pgbson *queryValue = PG_GETARG_PGBSON_PACKED(1);
-		pgbsonelement sortElement;
-		if (!TryGetSinglePgbsonElementFromPgbson(queryValue, &sortElement))
+		/* Order by on BSON */
+		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY:
+		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE:
 		{
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+			if (currentKey != (Datum) 0)
+			{
+				pgbson *currentOrdering = DatumGetPgBsonPacked(currentKey);
+				pfree(currentOrdering);
+			}
+
+			pgbsonelement sortElement;
+			int orderbyIndexPath = GetOrderByIndexPath(PG_GETARG_PGBSON_PACKED(1),
+													   indexPaths,
+													   indexPathLengths, numPaths,
+													   &sortElement);
+
+			/* Match the runtime format of order by */
+			InitializeBsonIndexTermIfNeeded(&compareTerms[orderbyIndexPath]);
+			pgbson_writer writer;
+			PgbsonWriterInit(&writer);
+			PgbsonWriterAppendValue(&writer, sortElement.path, sortElement.pathLength,
+									&compareTerms[orderbyIndexPath].term.element.bsonValue);
+
+			/* Check if it's a reverse scan */
+			if (strategy == BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE)
+			{
+				/* Reverse sort add truncation status */
+				if (IsIndexTermTruncated(&compareTerms[orderbyIndexPath].term))
+				{
+					PgbsonWriterAppendBool(&writer, "t", 1,
+										   IsIndexTermTruncated(
+											   &compareTerms[orderbyIndexPath].term));
+				}
+
+				PgbsonWriterAppendBool(&writer, "r", 1, true);
+			}
+
+			result = PointerGetDatum(PgbsonWriterGetPgbson(&writer));
+			break;
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_INDEXTERM:
+		{
+			if (currentKey != (Datum) 0)
+			{
+				bytea *currentOrdering = DatumGetByteaPP(currentKey);
+				pfree(currentOrdering);
+			}
+
+			pgbsonelement sortElement;
+			int orderbyIndexPath = GetOrderByIndexPath(PG_GETARG_PGBSON_PACKED(1),
+													   indexPaths,
+													   indexPathLengths, numPaths,
+													   &sortElement);
+
+			bytea *indexTerm = compareTerms[orderbyIndexPath].serializedTerm;
+			bool requiresReversing = false;
+
+			int querySort = BsonValueAsInt32(&sortElement.bsonValue);
+			if (IsSerializedIndexTermTruncated(indexTerm))
+			{
+				/* Truncated terms always show up in ascending order */
+				requiresReversing = IsSerializedTermValueDescending(indexTerm);
+			}
+			else if (sortOrders[orderbyIndexPath] != querySort)
+			{
+				/* If the sort order matches, we can just return the index term as is */
+				requiresReversing = true;
+			}
+
+			/* For index term ordering, we just return the index term for the order by path */
+			if (requiresReversing)
+			{
+				result = PointerGetDatum(FormReversedIndexTerm(indexTerm));
+			}
+			else
+			{
+				result = PointerGetDatum(DatumGetByteaPCopy(PointerGetDatum(indexTerm)));
+			}
+
+			break;
+		}
+
+		default:
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							errmsg(
-								"Invalid query value for ordering transform - only 1 path is supported")));
+								"Unsupported strategy for composite index ordering transform: %d",
+								strategy)));
 		}
-
-		/* Match the order by column to the index path */
-		int orderbyIndexPath = -1;
-		for (int i = 0; i < numPaths; i++)
-		{
-			if (sortElement.pathLength == indexPathLengths[i] &&
-				strcmp(sortElement.path, indexPaths[i]) == 0)
-			{
-				orderbyIndexPath = i;
-				break;
-			}
-		}
-
-		if (orderbyIndexPath < 0)
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-							errmsg("Order by path '%s' does not match any index path",
-								   sortElement.path)));
-		}
-
-		/* Match the runtime format of order by */
-		pgbson_writer writer;
-		PgbsonWriterInit(&writer);
-		PgbsonWriterAppendValue(&writer, sortElement.path, sortElement.pathLength,
-								&compareTerm[orderbyIndexPath].element.bsonValue);
-
-		/* Check if it's a reverse scan */
-		if (strategy == BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE)
-		{
-			/* Reverse sort add truncation status */
-			if (IsIndexTermTruncated(&compareTerm[orderbyIndexPath]))
-			{
-				PgbsonWriterAppendBool(&writer, "t", 1,
-									   IsIndexTermTruncated(
-										   &compareTerm[orderbyIndexPath]));
-			}
-
-			PgbsonWriterAppendBool(&writer, "r", 1, true);
-		}
-
-		result = PgbsonWriterGetPgbson(&writer);
 	}
 
 	PG_FREE_IF_COPY(compareValue, 0);
-	PG_RETURN_POINTER(result);
+	PG_RETURN_DATUM(result);
 }
 
 
@@ -2839,7 +2917,8 @@ GetCompositeTraverseOptionWildCard(BsonGinCompositePathOptions *options, BsonInd
 	}
 
 	if (strategy == BSON_INDEX_STRATEGY_DOLLAR_ORDERBY ||
-		strategy == BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE)
+		strategy == BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE ||
+		strategy == BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_INDEXTERM)
 	{
 		/* For now we don't push down orderby. This can be relaxed
 		 * later if we're matching on a single filter path range
@@ -3314,18 +3393,28 @@ DetermineCompositeScanDirection(bytea *compositeScanOptions,
 		indexPaths, sortOrders);
 
 	/* For the first key, match it to the appropriate path*/
-	pgbson *sortSpec = DatumGetPgBson(orderbys[0].sk_argument);
-	pgbsonelement sortElement;
-	PgbsonToSinglePgbsonElement(sortSpec, &sortElement);
-
-	int sortAsc = BsonValueAsInt32(&sortElement.bsonValue);
-	for (int i = 0; i < numPaths; i++)
+	switch (orderbys[0].sk_strategy)
 	{
-		if (strcmp(sortElement.path, indexPaths[i]) == 0)
+		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY:
+		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE:
+		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_INDEXTERM:
 		{
-			/* Found a path match - return scanDirection based on direction */
-			return sortAsc == sortOrders[i] ? ForwardScanDirection :
-				   BackwardScanDirection;
+			pgbson *sortSpec = DatumGetPgBson(orderbys[0].sk_argument);
+			pgbsonelement sortElement;
+			PgbsonToSinglePgbsonElement(sortSpec, &sortElement);
+
+			int sortAsc = BsonValueAsInt32(&sortElement.bsonValue);
+			for (int i = 0; i < numPaths; i++)
+			{
+				if (strcmp(sortElement.path, indexPaths[i]) == 0)
+				{
+					/* Found a path match - return scanDirection based on direction */
+					return sortAsc == sortOrders[i] ? ForwardScanDirection :
+						   BackwardScanDirection;
+				}
+			}
+
+			break;
 		}
 	}
 

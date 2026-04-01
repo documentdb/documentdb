@@ -72,7 +72,8 @@ static int32_t CompareCompositeIndexTerms(const uint8_t *leftBuffer,
 										  const uint8_t *rightBuffer,
 										  uint32_t rightIndexTermSize,
 										  const char *collation,
-										  bool *isComparisonValid);
+										  bool *isComparisonValid,
+										  bool isBtreeCompareFunction);
 static void InitializeBsonIndexTermFromBuffer(const uint8_t *buffer,
 											  uint32_t indexTermSize,
 											  BsonIndexTerm *indexTerm);
@@ -81,11 +82,12 @@ static int32_t InitializeCompositeIndexTermBuffer(const uint8_t *buffer, uint32_
 												  BsonIndexTerm indexTerm[INDEX_MAX_KEYS]);
 static int32_t CompareBsonGinIndexTerms(const uint8_t *leftBuffer, uint32_t leftSize,
 										const uint8_t *rightBuffer, uint32_t rightSize,
-										const char *collation, bool *isComparisonValid);
+										const char *collation, bool *isComparisonValid,
+										bool isBtreeCompareFunction);
 static int32_t CompareBsonIndexTermCore(const BsonIndexTerm *leftTerm, const
 										BsonIndexTerm *rightTerm,
 										bool *isComparisonValid, const char *collation,
-										bool isMetadataSame);
+										bool isMetadataSame, bool isBtreeCompareFunction);
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -138,7 +140,7 @@ inline static int32_t
 CompareBsonGinRegularTerms(const uint8_t *leftBuffer, uint32_t leftSize,
 						   const uint8_t *rightBuffer, uint32_t rightSize,
 						   const char *collation, bool isMetadataSame,
-						   bool *isComparisonValid)
+						   bool *isComparisonValid, bool isBtreeCompareFunction)
 {
 	BsonIndexTerm leftTerm;
 	BsonIndexTerm rightTerm;
@@ -146,14 +148,15 @@ CompareBsonGinRegularTerms(const uint8_t *leftBuffer, uint32_t leftSize,
 	InitializeBsonIndexTermFromBuffer(rightBuffer, rightSize, &rightTerm);
 	return CompareBsonIndexTermCore(&leftTerm, &rightTerm,
 									isComparisonValid, collation,
-									isMetadataSame);
+									isMetadataSame, isBtreeCompareFunction);
 }
 
 
 inline static int32_t
 CompareBsonGinIndexTermsSameMetadata(const uint8_t *leftBuffer, uint32_t leftSize,
 									 const uint8_t *rightBuffer, uint32_t rightSize,
-									 const char *collation, bool *isComparisonValid)
+									 const char *collation, bool *isComparisonValid,
+									 bool isBtreeCompareFunction)
 {
 	Assert(leftBuffer[0] == rightBuffer[0]);
 	switch (leftBuffer[0])
@@ -188,7 +191,8 @@ CompareBsonGinIndexTermsSameMetadata(const uint8_t *leftBuffer, uint32_t leftSiz
 		{
 			*isComparisonValid = true;
 			return CompareCompositeIndexTerms(leftBuffer, leftSize, rightBuffer,
-											  rightSize, collation, isComparisonValid);
+											  rightSize, collation, isComparisonValid,
+											  isBtreeCompareFunction);
 		}
 
 		default:
@@ -196,7 +200,7 @@ CompareBsonGinIndexTermsSameMetadata(const uint8_t *leftBuffer, uint32_t leftSiz
 			const bool isMetadataSame = true;
 			return CompareBsonGinRegularTerms(leftBuffer, leftSize, rightBuffer,
 											  rightSize, collation, isMetadataSame,
-											  isComparisonValid);
+											  isComparisonValid, isBtreeCompareFunction);
 		}
 	}
 }
@@ -205,7 +209,8 @@ CompareBsonGinIndexTermsSameMetadata(const uint8_t *leftBuffer, uint32_t leftSiz
 inline static int32_t
 CompareBsonGinIndexTerms(const uint8_t *leftBuffer, uint32_t leftSize,
 						 const uint8_t *rightBuffer, uint32_t rightSize,
-						 const char *collation, bool *isComparisonValid)
+						 const char *collation, bool *isComparisonValid, bool
+						 isBtreeCompareFunction)
 {
 	bool isMetadataSame = leftBuffer[0] == rightBuffer[0];
 
@@ -213,7 +218,8 @@ CompareBsonGinIndexTerms(const uint8_t *leftBuffer, uint32_t leftSize,
 	{
 		return CompareBsonGinIndexTermsSameMetadata(leftBuffer, leftSize, rightBuffer,
 													rightSize, collation,
-													isComparisonValid);
+													isComparisonValid,
+													isBtreeCompareFunction);
 	}
 
 	int32_t compareTerm;
@@ -228,7 +234,8 @@ CompareBsonGinIndexTerms(const uint8_t *leftBuffer, uint32_t leftSize,
 	{
 		compareTerm = CompareBsonGinRegularTerms(leftBuffer, leftSize, rightBuffer,
 												 rightSize, collation, isMetadataSame,
-												 isComparisonValid);
+												 isComparisonValid,
+												 isBtreeCompareFunction);
 	}
 
 	return compareTerm;
@@ -251,7 +258,7 @@ ExtractCollationAndUpdateBuffer(const uint8_t **buffer, uint32_t *size)
 
 
 inline static int32_t
-CompareBsonIndexTerms(bytea *left, bytea *right)
+CompareBsonIndexTerms(bytea *left, bytea *right, bool isBtreeCompareFunction)
 {
 	const uint8_t *leftBuffer = (const uint8_t *) VARDATA_ANY(left);
 	uint32_t leftSize = VARSIZE_ANY_EXHDR(left);
@@ -283,7 +290,8 @@ CompareBsonIndexTerms(bytea *left, bytea *right)
 
 	bool isComparisonValidIgnore = false;
 	return CompareBsonGinIndexTerms(leftBuffer, leftSize, rightBuffer, rightSize,
-									leftCollation, &isComparisonValidIgnore);
+									leftCollation, &isComparisonValidIgnore,
+									isBtreeCompareFunction);
 }
 
 
@@ -296,8 +304,10 @@ CompareSerializedBsonIndexTerms(bytea *left, bytea *right, const char *collation
 
 	const uint8_t *rightBuffer = (const uint8_t *) VARDATA_ANY(right);
 	uint32_t rightSize = VARSIZE_ANY_EXHDR(right);
+	bool isBtreeCompareFunction = false;
 	return CompareBsonGinIndexTerms(leftBuffer, leftSize, rightBuffer,
-									rightSize, collation, isComparisonValid);
+									rightSize, collation, isComparisonValid,
+									isBtreeCompareFunction);
 }
 
 
@@ -341,9 +351,11 @@ gin_bson_compare(PG_FUNCTION_ARGS)
 	const uint8_t *rightBuffer = (const uint8_t *) VARDATA_ANY(right);
 	uint32_t rightSize = VARSIZE_ANY_EXHDR(right);
 	bool isComparisonValidIgnore = false;
+	bool isBtreeCompareFunction = false;
 	int32_t compareTerm =
 		CompareBsonGinIndexTerms(leftBuffer, leftSize, rightBuffer,
-								 rightSize, collationString, &isComparisonValidIgnore);
+								 rightSize, collationString, &isComparisonValidIgnore,
+								 isBtreeCompareFunction);
 	PG_FREE_IF_COPY(left, 0);
 	PG_FREE_IF_COPY(right, 1);
 	PG_RETURN_INT32(compareTerm);
@@ -356,7 +368,8 @@ bsonindexterm_compare_btree(PG_FUNCTION_ARGS)
 	bytea *left = PG_GETARG_BYTEA_PP(0);
 	bytea *right = PG_GETARG_BYTEA_PP(1);
 
-	int32_t compareTerm = CompareBsonIndexTerms(left, right);
+	bool isBtreeCompareFunction = true;
+	int32_t compareTerm = CompareBsonIndexTerms(left, right, isBtreeCompareFunction);
 	PG_FREE_IF_COPY(left, 0);
 	PG_FREE_IF_COPY(right, 1);
 	PG_RETURN_INT32(compareTerm);
@@ -468,7 +481,9 @@ bsonindexterm_eq(PG_FUNCTION_ARGS)
 	bytea *leftTerm = PG_GETARG_BYTEA_PP(0);
 	bytea *rightTerm = PG_GETARG_BYTEA_PP(1);
 
-	int32_t compareTerm = CompareBsonIndexTerms(leftTerm, rightTerm);
+	bool isBtreeCompareFunction = true;
+	int32_t compareTerm = CompareBsonIndexTerms(leftTerm, rightTerm,
+												isBtreeCompareFunction);
 
 	PG_FREE_IF_COPY(leftTerm, 0);
 	PG_FREE_IF_COPY(rightTerm, 1);
@@ -482,7 +497,9 @@ bsonindexterm_lt(PG_FUNCTION_ARGS)
 	bytea *leftTerm = PG_GETARG_BYTEA_PP(0);
 	bytea *rightTerm = PG_GETARG_BYTEA_PP(1);
 
-	int32_t compareTerm = CompareBsonIndexTerms(leftTerm, rightTerm);
+	bool isBtreeCompareFunction = true;
+	int32_t compareTerm = CompareBsonIndexTerms(leftTerm, rightTerm,
+												isBtreeCompareFunction);
 
 	PG_FREE_IF_COPY(leftTerm, 0);
 	PG_FREE_IF_COPY(rightTerm, 1);
@@ -496,7 +513,9 @@ bsonindexterm_gt(PG_FUNCTION_ARGS)
 	bytea *leftTerm = PG_GETARG_BYTEA_PP(0);
 	bytea *rightTerm = PG_GETARG_BYTEA_PP(1);
 
-	int32_t compareTerm = CompareBsonIndexTerms(leftTerm, rightTerm);
+	bool isBtreeCompareFunction = true;
+	int32_t compareTerm = CompareBsonIndexTerms(leftTerm, rightTerm,
+												isBtreeCompareFunction);
 
 	PG_FREE_IF_COPY(leftTerm, 0);
 	PG_FREE_IF_COPY(rightTerm, 1);
@@ -510,7 +529,9 @@ bsonindexterm_gte(PG_FUNCTION_ARGS)
 	bytea *leftTerm = PG_GETARG_BYTEA_PP(0);
 	bytea *rightTerm = PG_GETARG_BYTEA_PP(1);
 
-	int32_t compareTerm = CompareBsonIndexTerms(leftTerm, rightTerm);
+	bool isBtreeCompareFunction = true;
+	int32_t compareTerm = CompareBsonIndexTerms(leftTerm, rightTerm,
+												isBtreeCompareFunction);
 
 	PG_FREE_IF_COPY(leftTerm, 0);
 	PG_FREE_IF_COPY(rightTerm, 1);
@@ -524,7 +545,9 @@ bsonindexterm_lte(PG_FUNCTION_ARGS)
 	bytea *leftTerm = PG_GETARG_BYTEA_PP(0);
 	bytea *rightTerm = PG_GETARG_BYTEA_PP(1);
 
-	int32_t compareTerm = CompareBsonIndexTerms(leftTerm, rightTerm);
+	bool isBtreeCompareFunction = true;
+	int32_t compareTerm = CompareBsonIndexTerms(leftTerm, rightTerm,
+												isBtreeCompareFunction);
 
 	PG_FREE_IF_COPY(leftTerm, 0);
 	PG_FREE_IF_COPY(rightTerm, 1);
@@ -694,6 +717,25 @@ FormCollatedIndexTerm(bytea *sourceTerm, const char *collation, uint32_t collati
 }
 
 
+bytea *
+FormReversedIndexTerm(bytea *sourceTerm)
+{
+	bytea *copiedTerm = DatumGetByteaPCopy(PointerGetDatum(sourceTerm));
+	uint8_t *termBuffer = (uint8_t *) VARDATA_ANY(copiedTerm);
+
+	if (termBuffer[0] >= IndexTermDescending)
+	{
+		termBuffer[0] -= IndexTermDescending;
+	}
+	else
+	{
+		termBuffer[0] += IndexTermDescending;
+	}
+
+	return copiedTerm;
+}
+
+
 Datum
 gin_bson_to_bsonindexterm(PG_FUNCTION_ARGS)
 {
@@ -786,7 +828,8 @@ gin_bson_to_bsonindexterm(PG_FUNCTION_ARGS)
 static int32_t
 CompareCompositeIndexTerms(const uint8_t *leftBuffer, uint32_t leftIndexTermSize,
 						   const uint8_t *rightBuffer, uint32_t rightIndexTermSize,
-						   const char *collation, bool *isComparisonValid)
+						   const char *collation, bool *isComparisonValid, bool
+						   isBtreeCompareFunction)
 {
 	Assert(leftIndexTermSize > (sizeof(uint8_t) + 2));
 	Assert(rightIndexTermSize > (sizeof(uint8_t) + 2));
@@ -817,7 +860,8 @@ CompareCompositeIndexTerms(const uint8_t *leftBuffer, uint32_t leftIndexTermSize
 															   rightTermBuffer,
 															   rightTermSize,
 															   collation,
-															   isComparisonValid);
+															   isComparisonValid,
+															   isBtreeCompareFunction);
 		}
 		else
 		{
@@ -830,7 +874,8 @@ CompareCompositeIndexTerms(const uint8_t *leftBuffer, uint32_t leftIndexTermSize
 			compareTerm = CompareBsonIndexTermCore(&leftTerm, &rightTerm,
 												   isComparisonValid,
 												   collation,
-												   isMetadataSameInner);
+												   isMetadataSameInner,
+												   isBtreeCompareFunction);
 		}
 
 		if (compareTerm != 0)
@@ -911,7 +956,7 @@ CompareIndexTermPathAndValue(const BsonIndexTerm *leftTerm, const
 static int32_t
 CompareBsonIndexTermCore(const BsonIndexTerm *leftTerm, const BsonIndexTerm *rightTerm,
 						 bool *isComparisonValid, const char *collation, bool
-						 isMetadataSame)
+						 isMetadataSame, bool isBtreeCompareFunction)
 {
 	bool isLeftDescending = IsIndexTermValueDescending(leftTerm);
 	if (!isMetadataSame)
@@ -935,6 +980,21 @@ CompareBsonIndexTermCore(const BsonIndexTerm *leftTerm, const BsonIndexTerm *rig
 				/* Treat similar to metadata terms */
 				return (int32_t) IsRootTruncationTerm(rightTerm) -
 					   (int32_t) IsRootTruncationTerm(leftTerm);
+			}
+
+			/* Second special case, if one is truncated and other is not, compare based on value
+			 * On truncation, order by is comparing a runtime term with an index term.
+			 * In this path, if one term is truncated and the other isn't, ensure that we're
+			 * only tracking the order as "ascending". If both are truncated, or not we apply
+			 * the order as requested. This is to match the behavior in IndexOrderWithRecheck
+			 * in nodeIndexScan.c
+			 */
+			if (isBtreeCompareFunction && (IsIndexTermTruncated(leftTerm) ^
+										   IsIndexTermTruncated(rightTerm)))
+			{
+				return CompareIndexTermPathAndValue(leftTerm, rightTerm,
+													isComparisonValid, collation,
+													isMetadataSame);
 			}
 
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
@@ -964,8 +1024,9 @@ CompareBsonIndexTerm(const BsonIndexTerm *leftTerm, const BsonIndexTerm *rightTe
 {
 	/* First compare metadata - metadata terms are less than all terms */
 	bool isMetadataSame = leftTerm->termMetadata == rightTerm->termMetadata;
+	bool isBtreeCompareFunction = false;
 	return CompareBsonIndexTermCore(leftTerm, rightTerm, isComparisonValid, collation,
-									isMetadataSame);
+									isMetadataSame, isBtreeCompareFunction);
 }
 
 
