@@ -103,9 +103,11 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkey_db', '{ "createIndexes": "mkey_coll_unique", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "a_b_c_1", "enableOrderedIndex": 1, "unique": true } ] }');
 
 set documentdb.enableUniqueCompositeReducedCorrelatedTerms to off;
+set documentdb.enableCompositeReducedCorrelatedTermsOnCommonSubPath to off;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkey_db', '{ "createIndexes": "mkey_coll_unique_base", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "a_b_c_1", "enableOrderedIndex": 1, "unique": true } ] }');
 
 set documentdb.enableUniqueCompositeReducedCorrelatedTerms to on;
+set documentdb.enableCompositeReducedCorrelatedTermsOnCommonSubPath to on;
 \d documentdb_data.documents_502
 \d documentdb_data.documents_503
 

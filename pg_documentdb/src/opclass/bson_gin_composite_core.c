@@ -677,7 +677,8 @@ TrimSecondaryVariableBounds(VariableIndexBounds *variableBounds,
 		if (set->indexAttribute > 0)
 		{
 			runData->metaInfo->requiresRuntimeRecheck = true;
-			foreach_delete_current(variableBounds->variableBoundsList, cell);
+			variableBounds->variableBoundsList = foreach_delete_current(
+				variableBounds->variableBoundsList, cell);
 			continue;
 		}
 	}
@@ -723,7 +724,7 @@ PickVariableBoundsForOrderedScan(VariableIndexBounds *variableBounds,
 		}
 
 		/* Remove current index */
-		foreach_delete_current(
+		variableBounds->variableBoundsList = foreach_delete_current(
 			variableBounds->variableBoundsList, cell);
 	}
 }
