@@ -393,9 +393,10 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb',
    indexName: idx_tenant_userId_assigneeStatus_assigneeActive_updatedAt
    indexKey: {"tenantId": 1,"steps.assignees.userId": 1,"steps.assignees.status": 1,"steps.assignees.active": 1,"steps.assignees.updatedAt": -1}
    isMultiKey: true
-   indexBounds: ["tenantId": ["tenant-abc-001", "tenant-abc-001"], "steps.assignees.userId": ["user-xyz-001", "user-xyz-001"], "steps.assignees.status": [4, 4], "steps.assignees.active": [1, 1], "steps.assignees.updatedAt": DESC(MinKey, MaxKey)], ["tenantId": ["tenant-abc-002", "tenant-abc-002"], "steps.assignees.userId": ["user-xyz-001", "user-xyz-001"], "steps.assignees.status": [4, 4], "steps.assignees.active": [1, 1], "steps.assignees.updatedAt": DESC(MinKey, MaxKey)]
+   hasCorrelatedTerms: true
+   indexBounds: ["tenantId": ["tenant-abc-001", "tenant-abc-001"], "steps.assignees.userId": (MinKey, MaxKey), "steps.assignees.status": (MinKey, MaxKey), "steps.assignees.active": (MinKey, MaxKey), "steps.assignees.updatedAt": DESC(MinKey, MaxKey)], ["tenantId": ["tenant-abc-002", "tenant-abc-002"], "steps.assignees.userId": (MinKey, MaxKey), "steps.assignees.status": (MinKey, MaxKey), "steps.assignees.active": (MinKey, MaxKey), "steps.assignees.updatedAt": DESC(MinKey, MaxKey)]
    ->  Index Scan using "idx_tenant_userId_assigneeStatus_assigneeActive_updatedAt" on documents_202 collection
          Index Cond: ((document @*= '{ "tenantId" : [ "tenant-abc-001", "tenant-abc-002" ] }'::bson) AND (document @<> '{ "steps.assignees.userId" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "user-xyz-001", "isTopLevel" : false } ] } }'::bson) AND (document @<> '{ "steps.assignees.status" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "4" }, "isTopLevel" : false } ] } }'::bson) AND (document @<> '{ "steps.assignees.active" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" }, "isTopLevel" : false } ] } }'::bson))
          Filter: ((document @= '{ "active" : { "$numberInt" : "1" } }'::bson) AND (document @*= '{ "status" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson) AND (document @#? '{ "steps.assignees" : { "userId" : "user-xyz-001", "status" : { "$numberInt" : "4" }, "active" : { "$numberInt" : "1" } } }'::bson))
-(9 rows)
+(10 rows)
 
