@@ -10,12 +10,14 @@ mod connection;
 mod cursor;
 mod request;
 mod service;
+mod session;
 mod transaction;
 
-pub use cursor::{Cursor, CursorStore, CursorStoreEntry};
-
-pub use transaction::{GatewayTransaction, RequestTransactionInfo, TransactionStore};
-
 pub use connection::ConnectionContext;
+pub use cursor::{Cursor, CursorId, CursorKey, CursorStore, CursorStoreEntry};
 pub use request::RequestContext;
 pub use service::ServiceContext;
+pub use session::SessionId;
+pub use transaction::{
+    GatewayTransaction, RequestTransactionInfo, TransactionNumber, TransactionStore,
+};

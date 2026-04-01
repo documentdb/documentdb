@@ -9,24 +9,26 @@
 use bson::RawArray;
 
 use crate::{
-    context::{ConnectionContext, RequestContext},
+    context::{ConnectionContext, RequestContext, SessionId},
     error::{DocumentDBError, Result},
     postgres::PgDataClient,
     requests::RequestType,
     responses::Response,
 };
 
-fn parse_session_ids(sessions_field: &RawArray) -> Result<Vec<&[u8]>> {
+fn parse_session_ids(sessions_field: &RawArray) -> Result<Vec<SessionId>> {
     let mut session_ids = Vec::new();
     for session in sessions_field {
         let session_doc = session?
             .as_document()
             .ok_or_else(|| DocumentDBError::bad_value("Session should be a document".to_owned()))?;
 
-        let session_id = session_doc
-            .get_binary("id")
-            .map_err(DocumentDBError::parse_failure())?
-            .bytes;
+        let session_id = SessionId::from(
+            session_doc
+                .get_binary("id")
+                .map_err(DocumentDBError::parse_failure())?
+                .bytes,
+        );
 
         session_ids.push(session_id);
     }
@@ -43,7 +45,7 @@ async fn terminate_sessions(
 
     let transaction_store = connection_context.service_context.transaction_store();
 
-    for session_id in session_ids {
+    for session_id in &session_ids {
         // Remove all cursors for the session
         let cursor_ids = connection_context
             .service_context

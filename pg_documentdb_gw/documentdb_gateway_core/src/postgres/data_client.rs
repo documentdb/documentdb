@@ -508,7 +508,7 @@ pub trait PgDataClient: Send + Sync {
                 request_info.db()?,
                 request_info.collection()?,
                 cursor_timeout,
-                request_info.session_id.map(<[u8]>::to_vec),
+                request_info.session_id.clone(),
             );
         }
 
