@@ -63,6 +63,9 @@ To run the prebuild image with the DocumentDB Gateway, use the following command
 ```bash
 docker run -dt -p 10260:10260 -e USERNAME=<username> -e PASSWORD=<password> ghcr.io/microsoft/documentdb/documentdb-local:latest
 
+# Add demo data only when you want the built-in sample dataset
+docker run -dt -p 10260:10260 -e USERNAME=<username> -e PASSWORD=<password> -e INIT_DATA=true ghcr.io/microsoft/documentdb/documentdb-local:latest
+
 mongosh localhost:10260 -u <username> -p <password> \
         --authenticationMechanism SCRAM-SHA-256 \
         --tls \

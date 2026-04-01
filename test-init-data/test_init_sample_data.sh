@@ -5,7 +5,7 @@ set -e
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 CONTAINER_NAME="documentdb-init-data-test"
 IMAGE_NAME="documentdb-init-data-test"
@@ -228,6 +228,30 @@ verify_sample_data() {
     export SEATTLE_USERS ELECTRONICS_PRODUCTS DELIVERED_ORDERS PREMIUM_USERS
 }
 
+# Function to verify sample data is not loaded by default
+verify_sample_data_disabled_by_default() {
+    echo "=== Verifying Built-in Sample Data Is Disabled By Default ==="
+
+    DB_LIST=$(mongosh localhost:$DOCUMENTDB_PORT -u default_user -p $PASSWORD --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --eval "db.adminCommand('listDatabases')" --quiet 2>/dev/null)
+
+    if [[ "$DB_LIST" == *"sampledb"* ]]; then
+        echo "❌ sampledb database found unexpectedly"
+        echo "Available databases:"
+        echo "$DB_LIST"
+        return 1
+    fi
+
+    echo "✅ sampledb database not found"
+
+    if docker logs $CONTAINER_NAME 2>&1 | grep -q "Initializing database with built-in sample data"; then
+        echo "❌ Built-in sample data initialization ran unexpectedly"
+        return 1
+    fi
+
+    echo "✅ Built-in sample data initialization did not run"
+    return 0
+}
+
 # Function to test environment variable usage
 test_environment_variable() {
     echo
@@ -319,8 +343,37 @@ main() {
     # Build the Docker image
     build_image
     
-    # Test 1: Command line flag --init-data=true
-    echo "=== Test 1: Command Line Flag (--init-data true) ==="
+    # Test 1: Default startup should not load sample data
+    echo "=== Test 1: Default Startup (no sample data) ==="
+    echo "Starting DocumentDB container without built-in sample data..."
+    docker run -d \
+        --name $CONTAINER_NAME \
+        -p $DOCUMENTDB_PORT:10260 \
+        -e PASSWORD=$PASSWORD \
+        $IMAGE_NAME \
+        --password $PASSWORD
+
+    echo "Container started with ID: $(docker ps -q -f name=$CONTAINER_NAME)"
+    echo
+
+    if wait_for_documentdb; then
+        if verify_sample_data_disabled_by_default; then
+            echo "✅ Default startup verification completed"
+            DEFAULT_OFF_RESULT=0
+        else
+            echo "❌ Default startup verification failed"
+            return 1
+        fi
+    else
+        echo "❌ Default startup failed"
+        docker logs $CONTAINER_NAME
+        return 1
+    fi
+
+    cleanup
+
+    # Test 2: Command line flag --init-data true
+    echo "=== Test 2: Command Line Flag (--init-data true) ==="
     echo "Starting DocumentDB container with --init-data true..."
     docker run -d \
         --name $CONTAINER_NAME \
@@ -351,7 +404,7 @@ main() {
             return 1
         fi
         
-        # Test 2: Environment variable
+        # Test 3: Environment variable
         test_environment_variable
         ENV_TEST_RESULT=$?
         
@@ -359,6 +412,7 @@ main() {
         echo "=== Test Results Summary ==="
         
         # Expected values based on our sample data
+        EXPECTED_DEFAULT_OFF="PASS"
         EXPECTED_USERS=5
         EXPECTED_PRODUCTS=5
         EXPECTED_ORDERS=4
@@ -375,6 +429,7 @@ main() {
         MIN_ANALYTICS_INDEXES=4  # _id + period + type + date
         
         # Test results
+        DEFAULT_OFF_PASS=$([[ "$DEFAULT_OFF_RESULT" == "0" ]] && echo "✅" || echo "❌")
         USERS_PASS=$([[ "$USER_COUNT" == "$EXPECTED_USERS" ]] && echo "✅" || echo "❌")
         PRODUCTS_PASS=$([[ "$PRODUCT_COUNT" == "$EXPECTED_PRODUCTS" ]] && echo "✅" || echo "❌")
         ORDERS_PASS=$([[ "$ORDER_COUNT" == "$EXPECTED_ORDERS" ]] && echo "✅" || echo "❌")
@@ -392,6 +447,7 @@ main() {
         echo "┌─────────────────────────────────┬──────────┬──────────┬────────┐"
         echo "│ Test Case                       │ Expected │ Actual   │ Result │"
         echo "├─────────────────────────────────┼──────────┼──────────┼────────┤"
+        echo "│ Default Startup                 │ $EXPECTED_DEFAULT_OFF     │ $([ "$DEFAULT_OFF_RESULT" = "0" ] && echo "PASS" || echo "FAIL")     │ $DEFAULT_OFF_PASS     │"
         echo "│ Users Collection                │ $EXPECTED_USERS        │ $USER_COUNT        │ $USERS_PASS     │"
         echo "│ Products Collection             │ $EXPECTED_PRODUCTS        │ $PRODUCT_COUNT        │ $PRODUCTS_PASS     │"
         echo "│ Orders Collection               │ $EXPECTED_ORDERS        │ $ORDER_COUNT        │ $ORDERS_PASS     │"
@@ -412,6 +468,7 @@ main() {
         ALL_TESTS_PASSED=true
         
         # Check all conditions
+        [ "$DEFAULT_OFF_RESULT" != "0" ] && ALL_TESTS_PASSED=false
         [ "$USER_COUNT" != "$EXPECTED_USERS" ] && ALL_TESTS_PASSED=false
         [ "$PRODUCT_COUNT" != "$EXPECTED_PRODUCTS" ] && ALL_TESTS_PASSED=false
         [ "$ORDER_COUNT" != "$EXPECTED_ORDERS" ] && ALL_TESTS_PASSED=false
@@ -430,6 +487,7 @@ main() {
             echo "🎉 OVERALL RESULT: SUCCESS! All tests passed."
             echo "✅ Docker build completed successfully"
             echo "✅ Container started and initialized properly"
+            echo "✅ Default startup does not load built-in sample data"
             echo "✅ All sample collections created with expected data"
             echo "✅ All indexes created successfully"
             echo "✅ All queries work as expected"
