@@ -21,7 +21,7 @@ use tokio_postgres::IsolationLevel;
 
 use crate::{
     bson::convert_to_f64,
-    context::RequestTransactionInfo,
+    context::{RequestTransactionInfo, SessionId, TransactionNumber},
     error::{DocumentDBError, ErrorCode, Result},
     protocol::opcode::OpCode,
 };
@@ -52,7 +52,7 @@ pub struct RequestInfo<'a> {
     pub transaction_info: Option<RequestTransactionInfo>,
     db: Option<&'a str>,
     collection: Option<&'a str>,
-    pub session_id: Option<&'a [u8]>,
+    pub session_id: Option<SessionId>,
     read_concern: ReadConcern,
 }
 
@@ -206,8 +206,8 @@ impl<'a> Request<'a> {
     {
         let mut max_time_ms = None;
         let mut db = None;
-        let mut session_id: Option<&[u8]> = None;
-        let mut transaction_number: Option<i64> = None;
+        let mut session_id: Option<SessionId> = None;
+        let mut transaction_number: Option<TransactionNumber> = None;
         let mut auto_commit = true;
         let mut start_transaction = false;
         let mut isolation_level = None;
@@ -234,15 +234,17 @@ impl<'a> Request<'a> {
                             )))?
                             .get_binary("id")
                             .map_err(DocumentDBError::parse_failure())?
-                            .bytes,
+                            .bytes
+                            .into(),
                     );
                 }
                 "txnNumber" => {
-                    transaction_number =
-                        Some(v.as_i64().ok_or(DocumentDBError::bad_value(format!(
+                    transaction_number = Some(TransactionNumber::new(v.as_i64().ok_or(
+                        DocumentDBError::bad_value(format!(
                             "Expected txnNumber to be an i64 but got {:?}",
                             v.element_type()
-                        )))?);
+                        )),
+                    )?));
                 }
                 "autocommit" => {
                     auto_commit = v.as_bool().ok_or(DocumentDBError::bad_value(format!(

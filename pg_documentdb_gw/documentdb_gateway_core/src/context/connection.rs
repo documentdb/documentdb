@@ -19,7 +19,7 @@ use uuid::{Builder, Uuid};
 use crate::{
     auth::AuthState,
     configuration::DynamicConfiguration,
-    context::{Cursor, CursorStoreEntry, ServiceContext},
+    context::{Cursor, CursorKey, CursorStoreEntry, ServiceContext, SessionId, TransactionNumber},
     error::Result,
     postgres::conn_mgmt::Connection,
     telemetry::TelemetryProvider,
@@ -33,7 +33,7 @@ pub struct ConnectionContext {
     pub auth_state: AuthState,
     pub requires_response: bool,
     pub client_information: Option<RawDocumentBuf>,
-    pub transaction: Option<(Vec<u8>, i64)>,
+    pub transaction: Option<(SessionId, TransactionNumber)>,
     pub telemetry_provider: Option<Box<dyn TelemetryProvider>>,
     pub ip_address: String,
     pub cipher_type: i32,
@@ -83,18 +83,20 @@ impl ConnectionContext {
 
     #[must_use]
     pub fn get_cursor(&self, id: i64, username: &str) -> Option<CursorStoreEntry> {
+        let key = CursorKey {
+            cursor_id: id.into(),
+            username: username.to_owned(),
+        };
         // If there is a transaction, get the cursor to its store
         if let Some((session_id, _)) = self.transaction.as_ref() {
             let transaction_store = self.service_context.transaction_store();
             if let Some(entry) = transaction_store.transactions.get(session_id) {
                 let (_, transaction) = entry.value();
-                return transaction.cursors.get_cursor(&(id, username.to_owned()));
+                return transaction.cursors.get_cursor(&key);
             }
         }
 
-        self.service_context
-            .cursor_store()
-            .get_cursor(&(id, username.to_owned()))
+        self.service_context.cursor_store().get_cursor(&key)
     }
 
     #[expect(
@@ -109,9 +111,12 @@ impl ConnectionContext {
         db: &str,
         collection: &str,
         cursor_timeout: Duration,
-        session_id: Option<Vec<u8>>,
+        session_id: Option<SessionId>,
     ) {
-        let key = (cursor.cursor_id, username.to_owned());
+        let key = CursorKey {
+            cursor_id: cursor.cursor_id,
+            username: username.to_owned(),
+        };
         let value = CursorStoreEntry {
             conn,
             cursor,

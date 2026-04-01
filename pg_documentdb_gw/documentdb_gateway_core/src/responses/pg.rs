@@ -12,7 +12,7 @@ use documentdb_macros::documentdb_int_error_mapping;
 use tokio_postgres::{error::SqlState, Row};
 
 use crate::{
-    context::{ConnectionContext, Cursor},
+    context::{ConnectionContext, Cursor, CursorId},
     error::{DocumentDBError, ErrorCode, Result},
     postgres::{document::ColumnByteLen, PgDocument},
     responses::{
@@ -621,7 +621,7 @@ impl PgResponse {
                                 persist,
                                 Cursor {
                                     continuation: continuation.0.to_raw_document_buf(),
-                                    cursor_id,
+                                    cursor_id: CursorId::from(cursor_id),
                                 },
                             )))
                         }
