@@ -43,4 +43,5 @@ s/ bson_hashed_aggregates_tests//
 s/cursors_basic_support //
 s/ commands_update_txn_proc//
 /^test: command_compact$/d
-/^test: bson_composite_order_by_index_tests$/d
+s/bson_composite_order_by_index_tests_indexterm//
+s/bson_composite_order_by_index_tests//
