@@ -17,10 +17,10 @@ It adds BSON datatype support and a MongoDB wire protocol gateway to PostgreSQL.
 
 | Component | Language | Description |
 |-----------|----------|-------------|
-| `pg_documentdb_core/` | C | Core extension: BSON datatypes, I/O, query planner integration. No dependencies. |
-| `pg_documentdb/` | C | Main extension: CRUD API, aggregation pipeline, indexing, auth, geospatial, vector search. Depends on `documentdb_core`, `pg_cron`, `tsm_system_rows`, `vector`, `postgis`. |
-| `pg_documentdb_extended_rum/` | C | RUM index support for document search. |
-| `pg_documentdb_gw/` | Rust | Gateway workspace: `documentdb_gateway_core` (shared library for protocol translation, auth, connection handling) + `documentdb_gateway` (standalone binary). Translates MongoDB wire protocol to PostgreSQL queries. |
+| `pg_documentdb_core/` | C | Core extension: BSON datatypes, I/O, query planner integration. No dependencies. Tests: `pg_documentdb_core/src/test/regress/` |
+| `pg_documentdb/` | C | Main extension: CRUD API, aggregation pipeline, indexing, auth, geospatial, vector search. Depends on `documentdb_core`, `pg_cron`, `tsm_system_rows`, `vector`, `postgis`. Tests: `pg_documentdb/src/test/regress/` |
+| `pg_documentdb_extended_rum/` | C | RUM index support for document search. Tests: `pg_documentdb/src/test/extended_rum_tests/` |
+| `pg_documentdb_gw/` | Rust | Gateway workspace: `documentdb_gateway_core` (shared library for protocol translation, auth, connection handling) + `documentdb_gateway` (standalone binary). Translates MongoDB wire protocol to PostgreSQL queries. Tests: `pg_documentdb_gw/documentdb_tests/` (integration) + inline unit tests |
 | `pg_documentdb_gw_host/` | Rust | Pgrx extension that runs `documentdb_gateway_core` as a PostgreSQL background worker (alternative to the standalone binary). |
 | `internal/pg_documentdb_distributed/` | C | Internal only. Multi-node support via Citus. Not shipped in OSS packages or documentdb-local. Do not reference in user-facing work. |
 
@@ -89,15 +89,29 @@ Unit and integration tests for the MongoDB wire protocol gateway.
 cd pg_documentdb_gw
 cargo make test                         # All Rust tests (runs single-threaded)
 cargo test --test command_tests         # Run a specific test file
-cargo test -p documentdb_gateway_core   # Unit tests only
+cargo test -p documentdb_gateway_core --lib  # Unit tests only (excludes doc tests)
+cargo test -p documentdb_gateway_core   # Unit + doc tests
 ```
 
-### Functional / Integration Tests
+### Gateway Integration Tests
+
+The gateway has its own integration tests in `pg_documentdb_gw/documentdb_tests/` that
+validate the gateway operates correctly — protocol handling, authentication, connection
+management, command routing, and response formatting. These run against a live PostgreSQL
+instance and do not require an external MongoDB client.
+
+```bash
+cd pg_documentdb_gw
+cargo make test                         # Runs all gateway integration tests
+```
+
+### Functional / End-to-End Tests
 
 For **new features**, add functional tests to the separate
 [documentdb/functional-tests](https://github.com/documentdb/functional-tests) repository.
-These tests validate end-to-end behavior against a running DocumentDB instance and are
-the right place for higher-level feature validation that goes beyond SQL regression tests.
+These tests validate end-to-end behavior against a running DocumentDB instance using
+a MongoDB client and are the right place for higher-level feature validation that goes
+beyond SQL regression tests and gateway integration tests.
 
 ### Which tests to write
 
@@ -106,7 +120,7 @@ the right place for higher-level feature validation that goes beyond SQL regress
 | New SQL feature / operator / command | SQL regression test in `pg_documentdb/src/test/regress/sql/` |
 | Core BSON type change | SQL regression test in `pg_documentdb_core/src/test/regress/sql/` |
 | RUM index change | Extended RUM test in `pg_documentdb/src/test/extended_rum_tests/sql/` |
-| Gateway protocol / connection change | Rust integration test in `pg_documentdb_gw/documentdb_tests/tests/` |
+| Gateway protocol / auth / connection change | Gateway integration test in `pg_documentdb_gw/documentdb_tests/tests/` |
 | New user-facing feature | Functional test in [documentdb/functional-tests](https://github.com/documentdb/functional-tests) |
 
 ## Code Style
@@ -120,7 +134,9 @@ C code (extensions):
 - File headers: copyright block + brief description
 
 Rust code (gateway):
-- Standard Rust conventions, formatted on save via rust-analyzer
+- Follow the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/naming.html#naming) for naming conventions
+- Follow the [Rust API Guidelines Checklist](https://rust-lang.github.io/api-guidelines/checklist.html) and [Microsoft Rust Guidelines Checklist](https://microsoft.github.io/rust-guidelines/guidelines/checklist/index.html) for public APIs
+- Formatted on save via rust-analyzer
 - Imports use `crate::` prefix
 
 ## Contributing

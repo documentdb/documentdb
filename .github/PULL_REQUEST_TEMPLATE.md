@@ -8,6 +8,7 @@
 - [ ] New feature
 - [ ] Documentation update
 - [ ] Refactoring / code cleanup
+- [ ] DevOps / tooling
 - [ ] Test improvement
 - [ ] Other: ___________
 
