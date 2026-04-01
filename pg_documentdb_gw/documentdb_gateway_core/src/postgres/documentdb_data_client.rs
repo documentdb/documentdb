@@ -222,19 +222,15 @@ impl PgDataClient for DocumentDBDataClient {
         let db = request_info.db()?;
         let coll = request_info.collection()?;
 
-        let run_coll_stats = |conn: Arc<Connection>| {
-            let db_str = db.to_owned();
-            let coll_str = coll.to_owned();
-            async move {
-                let rows = conn
-                    .query(
-                        self.service_context.query_catalog().coll_stats(),
-                        &[Type::TEXT, Type::TEXT, Type::FLOAT8],
-                        &[&db_str, &coll_str, &scale],
-                    )
-                    .await?;
-                Ok(Response::Pg(PgResponse::new(rows)))
-            }
+        let run_coll_stats = |conn: Arc<Connection>| async move {
+            let rows = conn
+                .query(
+                    self.service_context.query_catalog().coll_stats(),
+                    &[Type::TEXT, Type::TEXT, Type::FLOAT8],
+                    &[&db, &coll, &scale],
+                )
+                .await?;
+            Ok(Response::Pg(PgResponse::new(rows)))
         };
 
         self.run_query(
@@ -344,16 +340,13 @@ impl PgDataClient for DocumentDBDataClient {
         let doc = request.document();
         let extra = request.extra();
 
-        let run_delete = |conn: Arc<Connection>| {
-            let db_str = db.to_owned();
-            async move {
-                conn.query(
-                    self.service_context.query_catalog().delete(),
-                    &[Type::TEXT, Type::BYTEA, Type::BYTEA],
-                    &[&db_str, &PgDocument(doc), &extra],
-                )
-                .await
-            }
+        let run_delete = |conn: Arc<Connection>| async move {
+            conn.query(
+                self.service_context.query_catalog().delete(),
+                &[Type::TEXT, Type::BYTEA, Type::BYTEA],
+                &[&db, &PgDocument(doc), &extra],
+            )
+            .await
         };
 
         self.run_query(
@@ -379,24 +372,21 @@ impl PgDataClient for DocumentDBDataClient {
         let doc = request.document();
         let extra = request.extra();
 
-        let run_delete_readonly = |conn: Arc<Connection>| {
-            let db_str = db.to_owned();
-            async move {
-                let mut txn = ScopedTransaction::start_if_necessary(&conn).await?;
-                conn.batch_execute(self.service_context.query_catalog().set_allow_write())
-                    .await?;
-                let rows = conn
-                    .query(
-                        self.service_context.query_catalog().delete(),
-                        &[Type::TEXT, Type::BYTEA, Type::BYTEA],
-                        &[&db_str, &PgDocument(doc), &extra],
-                    )
-                    .await;
-                if rows.is_ok() {
-                    txn.commit().await?;
-                }
-                rows
+        let run_delete_readonly = |conn: Arc<Connection>| async move {
+            let mut txn = ScopedTransaction::start_if_necessary(&conn).await?;
+            conn.batch_execute(self.service_context.query_catalog().set_allow_write())
+                .await?;
+            let rows = conn
+                .query(
+                    self.service_context.query_catalog().delete(),
+                    &[Type::TEXT, Type::BYTEA, Type::BYTEA],
+                    &[&db, &PgDocument(doc), &extra],
+                )
+                .await;
+            if rows.is_ok() {
+                txn.commit().await?;
             }
+            rows
         };
 
         self.run_query(
@@ -738,16 +728,13 @@ impl PgDataClient for DocumentDBDataClient {
             query_options_builder = query_options_builder.retry_request(false);
         }
 
-        let run_insert = |conn: Arc<Connection>| {
-            let db_str = db.to_owned();
-            async move {
-                conn.query(
-                    query,
-                    &[Type::TEXT, Type::BYTEA, Type::BYTEA],
-                    &[&db_str, &PgDocument(doc), &extra],
-                )
-                .await
-            }
+        let run_insert = |conn: Arc<Connection>| async move {
+            conn.query(
+                query,
+                &[Type::TEXT, Type::BYTEA, Type::BYTEA],
+                &[&db, &PgDocument(doc), &extra],
+            )
+            .await
         };
 
         self.run_query(
@@ -869,16 +856,13 @@ impl PgDataClient for DocumentDBDataClient {
         let doc = request.document();
         let extra = request.extra();
 
-        let run_update = |conn: Arc<Connection>| {
-            let db_str = db.to_owned();
-            async move {
-                conn.query(
-                    query_str,
-                    &[Type::TEXT, Type::BYTEA, Type::BYTEA],
-                    &[&db_str, &PgDocument(doc), &extra],
-                )
-                .await
-            }
+        let run_update = |conn: Arc<Connection>| async move {
+            conn.query(
+                query_str,
+                &[Type::TEXT, Type::BYTEA, Type::BYTEA],
+                &[&db, &PgDocument(doc), &extra],
+            )
+            .await
         };
 
         self.run_query(
@@ -934,17 +918,13 @@ impl PgDataClient for DocumentDBDataClient {
         reshard: bool,
         connection_context: &ConnectionContext,
     ) -> Result<()> {
-        let run_shard = |conn: Arc<Connection>| {
-            let db_str = db.to_owned();
-            let coll_str = collection.to_owned();
-            async move {
-                conn.query(
-                    self.service_context.query_catalog().shard_collection(),
-                    &[Type::TEXT, Type::TEXT, Type::BYTEA, Type::BOOL],
-                    &[&db_str, &coll_str, &PgDocument(key), &reshard],
-                )
-                .await
-            }
+        let run_shard = |conn: Arc<Connection>| async move {
+            conn.query(
+                self.service_context.query_catalog().shard_collection(),
+                &[Type::TEXT, Type::TEXT, Type::BYTEA, Type::BOOL],
+                &[&db, &collection, &PgDocument(key), &reshard],
+            )
+            .await
         };
 
         self.run_query(
@@ -971,20 +951,16 @@ impl PgDataClient for DocumentDBDataClient {
         let db = request_info.db()?;
         let coll = request_info.collection()?;
 
-        let run_reindex = |conn: Arc<Connection>| {
-            let db_str = db.to_owned();
-            let coll_str = coll.to_owned();
-            async move {
-                let rows = conn
-                    .query(
-                        self.service_context.query_catalog().re_index(),
-                        &[Type::TEXT, Type::TEXT],
-                        &[&db_str, &coll_str],
-                    )
-                    .await?;
+        let run_reindex = |conn: Arc<Connection>| async move {
+            let rows = conn
+                .query(
+                    self.service_context.query_catalog().re_index(),
+                    &[Type::TEXT, Type::TEXT],
+                    &[&db, &coll],
+                )
+                .await?;
 
-                Ok(Response::Pg(PgResponse::new(rows)))
-            }
+            Ok(Response::Pg(PgResponse::new(rows)))
         };
 
         self.run_query(
@@ -1044,20 +1020,16 @@ impl PgDataClient for DocumentDBDataClient {
         let coll = request_info.collection()?;
         let doc = request.document();
 
-        let run_coll_mod = |conn: Arc<Connection>| {
-            let db_str = db.to_owned();
-            let coll_str = coll.to_owned();
-            async move {
-                let rows = conn
-                    .query(
-                        self.service_context.query_catalog().coll_mod(),
-                        &[Type::TEXT, Type::TEXT, Type::BYTEA],
-                        &[&db_str, &coll_str, &PgDocument(doc)],
-                    )
-                    .await?;
+        let run_coll_mod = |conn: Arc<Connection>| async move {
+            let rows = conn
+                .query(
+                    self.service_context.query_catalog().coll_mod(),
+                    &[Type::TEXT, Type::TEXT, Type::BYTEA],
+                    &[&db, &coll, &PgDocument(doc)],
+                )
+                .await?;
 
-                Ok(Response::Pg(PgResponse::new(rows)))
-            }
+            Ok(Response::Pg(PgResponse::new(rows)))
         };
 
         self.run_query(
@@ -1115,19 +1087,16 @@ impl PgDataClient for DocumentDBDataClient {
     ) -> Result<Response> {
         let db = request_context.info().db()?;
 
-        let run_db_stats = |conn: Arc<Connection>| {
-            let db_str = db.to_owned();
-            async move {
-                let rows = conn
-                    .query(
-                        self.service_context.query_catalog().db_stats(),
-                        &[Type::TEXT, Type::FLOAT8, Type::BOOL],
-                        &[&db_str, &scale, &false],
-                    )
-                    .await?;
+        let run_db_stats = |conn: Arc<Connection>| async move {
+            let rows = conn
+                .query(
+                    self.service_context.query_catalog().db_stats(),
+                    &[Type::TEXT, Type::FLOAT8, Type::BOOL],
+                    &[&db, &scale, &false],
+                )
+                .await?;
 
-                Ok(Response::Pg(PgResponse::new(rows)))
-            }
+            Ok(Response::Pg(PgResponse::new(rows)))
         };
 
         self.run_query(
