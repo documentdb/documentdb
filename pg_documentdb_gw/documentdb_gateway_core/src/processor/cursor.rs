@@ -11,7 +11,7 @@ use std::{sync::Arc, time::Duration};
 use bson::{rawdoc, RawArrayBuf};
 
 use crate::{
-    context::{ConnectionContext, Cursor, CursorStoreEntry, RequestContext},
+    context::{ConnectionContext, Cursor, CursorId, CursorStoreEntry, RequestContext},
     error::{DocumentDBError, ErrorCode, Result},
     postgres::{conn_mgmt::PullConnection, PgDataClient, PgDocument},
     protocol::OK_SUCCEEDED,
@@ -144,7 +144,7 @@ pub async fn process_get_more(
             connection_context.add_cursor(
                 cursor_connection,
                 Cursor {
-                    cursor_id: id,
+                    cursor_id: CursorId::from(id),
                     continuation: continuation.0.to_raw_document_buf(),
                 },
                 connection_context.auth_state.username()?,
