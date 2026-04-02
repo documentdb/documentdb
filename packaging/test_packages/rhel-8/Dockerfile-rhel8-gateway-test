@@ -1,0 +1,20 @@
+ARG BASE_IMAGE=rockylinux:8
+FROM ${BASE_IMAGE}
+
+ARG GATEWAY_PACKAGE_PATH
+
+RUN echo "Testing gateway RPM install on RHEL 8"
+
+RUN [ -n "${GATEWAY_PACKAGE_PATH}" ] || \
+    (echo "ERROR: GATEWAY_PACKAGE_PATH build-arg is required" >&2 && exit 1)
+
+COPY ${GATEWAY_PACKAGE_PATH} /tmp/documentdb_gateway.rpm
+
+RUN rpm -i /tmp/documentdb_gateway.rpm
+
+CMD echo "Verifying gateway RPM installation..." && \
+    test -f /usr/bin/documentdb_gateway && echo "OK: /usr/bin/documentdb_gateway exists" && \
+    test -f /etc/documentdb/SetupConfiguration.json && echo "OK: /etc/documentdb/SetupConfiguration.json exists" && \
+    test -f /usr/lib/systemd/system/documentdb-gateway.service && echo "OK: /usr/lib/systemd/system/documentdb-gateway.service exists" && \
+    test -x /usr/bin/documentdb_gateway && echo "OK: /usr/bin/documentdb_gateway is executable" && \
+    echo "All gateway RPM verification checks passed!"

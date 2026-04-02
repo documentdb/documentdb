@@ -1,0 +1,64 @@
+ARG BASE_IMAGE=rockylinux:9
+FROM ${BASE_IMAGE}
+
+ARG DOCUMENTDB_VERSION
+
+ENV DOCUMENTDB_VERSION=${DOCUMENTDB_VERSION}
+
+RUN test -n "$DOCUMENTDB_VERSION" || (echo "DOCUMENTDB_VERSION not set" && false)
+
+RUN printf "[main]\nskip_if_unavailable=True\n" > /etc/dnf/dnf.conf
+RUN dnf --setopt=skip_if_unavailable=True install -y dnf-plugins-core && \
+    dnf --setopt=skip_if_unavailable=True config-manager --set-enabled crb
+
+# Install base build tools and dependencies
+RUN dnf -y swap curl-minimal curl && \
+    dnf -y install \
+        rpm-build \
+        rpmdevtools \
+        gcc \
+        gcc-c++ \
+        make \
+        curl \
+        git \
+        openssl-devel \
+        tar && \
+    dnf update -y --refresh && \
+    dnf clean all
+
+# Create documentdb user
+RUN useradd -ms /bin/bash documentdb
+
+COPY . /home/documentdb/code
+RUN chown -R documentdb:documentdb /home/documentdb/code
+
+# Install Rust toolchain
+USER documentdb
+ENV RUSTUP_HOME=/home/documentdb/.rustup
+ENV CARGO_HOME=/home/documentdb/.cargo
+RUN mkdir -p $RUSTUP_HOME && mkdir -p $CARGO_HOME
+ENV PATH=${CARGO_HOME}/bin:${PATH}
+
+RUN /home/documentdb/code/scripts/install_rustup.sh --install-toolchain
+
+# Build the gateway binary
+WORKDIR /home/documentdb/code/pg_documentdb_gw
+RUN CARGO_MANIFEST_DIR=/home/documentdb/code/pg_documentdb_gw cargo build --profile=release-with-symbols
+
+# Setup RPM build as root
+USER root
+RUN rpmdev-setuptree
+
+COPY packaging/rpm/spec/documentdb_gateway.spec /root/rpmbuild/SPECS/documentdb_gateway.spec
+RUN sed -i "s|DOCUMENTDB_VERSION|${DOCUMENTDB_VERSION}|g" /root/rpmbuild/SPECS/documentdb_gateway.spec
+
+RUN mkdir -p /output
+
+CMD rpmbuild -bb ~/rpmbuild/SPECS/documentdb_gateway.spec && \
+    UNAME_ARCH=$(uname -m) && \
+    for rpm_file in ~/rpmbuild/RPMS/${UNAME_ARCH}/*.rpm; do \
+        [ -e "$rpm_file" ] || continue; \
+        base_rpm=$(basename "$rpm_file"); \
+        cp "$rpm_file" "/output/${OS}-${base_rpm}"; \
+    done && \
+    chown -R $(stat -c "%u:%g" /output) /output

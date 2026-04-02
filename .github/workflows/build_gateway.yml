@@ -36,7 +36,7 @@ env:
 
 jobs:
   build-and-push:
-    name: Build and Push Images
+    name: Build and Push Gateway Images (${{ matrix.arch }}, PG${{ matrix.pg_version }})
     strategy:
       matrix:
         arch: [amd64, arm64]
@@ -48,9 +48,9 @@ jobs:
             base_arch: ARM64
             runner: ubuntu-22.04-arm
         pg_version:
-          - 15
           - 16
           - 17
+          - 18
     runs-on: ${{ matrix.runner }}
     outputs:
       documentdb_version: ${{ steps.extract_version.outputs.documentdb_version }}
@@ -64,10 +64,14 @@ jobs:
         DOCUMENTDB_VERSION=$(echo $DOCUMENTDB_VERSION | sed "s/-/./g")
         echo "Extracted Version: $DOCUMENTDB_VERSION"
         echo "documentdb_version=$DOCUMENTDB_VERSION" >> $GITHUB_OUTPUT
-    - name: Build Debian Package
+    - name: Build Extension DEB Package
       run: |
         ./packaging/build_packages.sh --os deb13 --pg ${{ matrix.pg_version }} --output-dir downloaded-artifacts
         ls -R downloaded-artifacts
+    - name: Build Gateway DEB Package
+      run: |
+        ./packaging/build_gateway_packages.sh --os deb13 --pg ${{ matrix.pg_version }} --output-dir downloaded-artifacts
+        ls downloaded-artifacts/*gateway*.deb || (echo "ERROR: Gateway package build failed - no .deb found" && exit 1)
     - name: Login to GHCR
       run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
     - name: Build ${{ matrix.arch }} Image
@@ -77,11 +81,12 @@ jobs:
           --platform linux/${{ matrix.arch }} \
           --build-arg BASE_IMAGE=debian:trixie-slim \
           --build-arg POSTGRES_VERSION=${{ matrix.pg_version }} \
-          --build-arg DEB_PACKAGE_REL_PATH=downloaded-artifacts/$(ls downloaded-artifacts | grep -v 'dbgsym')  \
+          --build-arg DEB_PACKAGE_REL_PATH=downloaded-artifacts/$(ls downloaded-artifacts | grep -E 'postgresql.*documentdb' | grep -v 'dbgsym' | head -1) \
+          --build-arg GATEWAY_DEB_PACKAGE_REL_PATH=downloaded-artifacts/$(ls downloaded-artifacts | grep -E 'gateway.*\.deb' | grep -v 'dbgsym' | head -1) \
           -t ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:$TAG \
           -f .github/containers/Build-Ubuntu/Dockerfile_gateway .
     - name: Push ${{ matrix.arch }} Image
-      if: github.event.inputs.push_images == 'true' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+      if: inputs.push_images || startsWith(github.ref, 'refs/tags/')
       run: |
         TAG=${{ env.IMAGE_TAG }}-pg${{ matrix.pg_version }}-${{ matrix.arch }}
         echo "Pushing image ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:$TAG"
@@ -89,20 +94,20 @@ jobs:
     
   create-manifest:
     name: Create, Push, Sign & Verify Manifest
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    if: inputs.push_images || startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
         pg_version:
-          - 15
           - 16
           - 17
+          - 18
     runs-on: ubuntu-22.04
     needs: build-and-push
     steps:
     - name: Login to GHCR
       run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
     - name: Show version
-      run: echo "Using DOCUMENTDB_VERSION=${{ needs.prepare.outputs.documentdb_version }}"
+      run: echo "Using DOCUMENTDB_VERSION=${{ needs.build-and-push.outputs.documentdb_version }}"
     - name: Set Default Values
       run: |
         echo "MANIFEST_TAG=pg${{ matrix.pg_version }}-${{ needs.build-and-push.outputs.documentdb_version }}" >> $GITHUB_ENV
@@ -130,35 +135,49 @@ jobs:
           ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}@${DIGEST}
 
   create-manifest-latest:  
-    name: Create & push 'latest' manifest
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    name: Create & push 'latest' and version-only manifests
+    if: inputs.push_images || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-22.04
     needs: build-and-push
     steps:
     - name: Login to GHCR
       run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-    - name: Set Default Values
+    - name: Set version
       run: |
-        echo "MANIFEST_TAG=latest" >> $GITHUB_ENV
-    - name: Create and Push Manifest
+        echo "DOCUMENTDB_VERSION=${{ needs.build-and-push.outputs.documentdb_version }}" >> $GITHUB_ENV
+    - name: Create and push 'latest' manifest
       run: |
-        docker manifest create ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }} \
-          --amend ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-pg17-amd64 \
-          --amend ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-pg17-arm64
-        docker manifest push ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }}
+        docker manifest create ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:latest \
+          --amend ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-pg18-amd64 \
+          --amend ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-pg18-arm64
+        docker manifest push ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:latest
+    - name: Create and push version-only manifest
+      run: |
+        docker manifest create ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.DOCUMENTDB_VERSION }} \
+          --amend ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-pg18-amd64 \
+          --amend ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-pg18-arm64
+        docker manifest push ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.DOCUMENTDB_VERSION }}
     - name: Install cosign
       uses: sigstore/cosign-installer@main
-    - name: Sign manifest (keyless)
+    - name: Sign 'latest' manifest (keyless)
       run: |
-        DIGEST=$(docker buildx imagetools inspect ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }} \
+        DIGEST=$(docker buildx imagetools inspect ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:latest \
           | awk '/^Digest:/ { print $2 }')
-        echo "Signing manifest-list@${DIGEST}"
+        echo "Signing latest@${DIGEST}"
         cosign sign ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}@${DIGEST} -y
-    - name: Verify manifest signature (keyless)
+    - name: Sign version-only manifest (keyless)
       run: |
-        DIGEST=$(docker buildx imagetools inspect ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }} \
+        DIGEST=$(docker buildx imagetools inspect ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.DOCUMENTDB_VERSION }} \
           | awk '/^Digest:/ { print $2 }')
-        cosign verify \
-          --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/build_gateway.yml@${{ github.ref }}" \
-          --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-          ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}@${DIGEST}
+        echo "Signing ${{ env.DOCUMENTDB_VERSION }}@${DIGEST}"
+        cosign sign ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}@${DIGEST} -y
+    - name: Verify manifest signatures (keyless)
+      run: |
+        for TAG in latest ${{ env.DOCUMENTDB_VERSION }}; do
+          DIGEST=$(docker buildx imagetools inspect ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${TAG} \
+            | awk '/^Digest:/ { print $2 }')
+          cosign verify \
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/build_gateway.yml@${{ github.ref }}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}@${DIGEST}
+        done

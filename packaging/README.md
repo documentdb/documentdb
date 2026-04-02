@@ -16,7 +16,7 @@ Supported DEB/Ubuntu distributions:
 - ubuntu22.04 — Ubuntu 22.04 (jammy)
 - ubuntu24.04 — Ubuntu 24.04 (noble)
 
-Supported PG versions: 15, 16, 17
+Supported PG versions: 16, 17, 18
 
 ## Building RPM Packages
 
@@ -30,7 +30,7 @@ Supported RPM distributions:
 - rhel8 (Red Hat Enterprise Linux 8 compatible)
 - rhel9 (Red Hat Enterprise Linux 9 compatible)
 
-Supported PG versions: 15, 16, 17
+Supported PG versions: 16, 17, 18
 
 ### RPM Build Prerequisites
 
@@ -64,9 +64,11 @@ Packages can be found at the `packages` directory by default, but it can be conf
 
 ## Building Gateway Packages
 
-To build gateway packages, use the `build_gateway_packages.sh` script. This script supports the same OS and PostgreSQL version options as the main package builder.
+Gateway packages are **PG-version-independent** — a single gateway package per OS/architecture works with any supported PostgreSQL version. The `--pg` flag selects the PostgreSQL version used in the build and test environment, but the resulting package has no PG-specific dependency.
 
-For example, to build a gateway package for Debian 12 and PostgreSQL 16, run:
+To build gateway packages, use the `build_gateway_packages.sh` script.
+
+### Gateway DEB Packages
 
 ```sh
 ./packaging/build_gateway_packages.sh --os deb12 --pg 16
@@ -79,6 +81,51 @@ Supported DEB/Ubuntu distributions:
 - ubuntu22.04 — Ubuntu 22.04 (jammy)
 - ubuntu24.04 — Ubuntu 24.04 (noble)
 
-Supported PG versions: 15, 16, 17, 18
+Supported architectures: amd64, arm64
+
+This produces 5 OS x 2 arch = **10 DEB packages**.
+
+### Gateway RPM Packages
+
+```sh
+./packaging/build_gateway_packages.sh --os rhel8 --pg 17
+./packaging/build_gateway_packages.sh --os rhel9 --pg 17 --test-clean-install
+```
+
+Supported RPM distributions:
+- rhel8 (Red Hat Enterprise Linux 8 compatible)
+- rhel9 (Red Hat Enterprise Linux 9 compatible)
+
+Supported architectures: x86_64, aarch64
+
+This produces 2 OS x 2 arch = **4 RPM packages**.
+
+### Gateway Package Contents
+
+Gateway packages install the following files:
+
+- `/usr/bin/documentdb_gateway` — the gateway binary
+- `/etc/documentdb/SetupConfiguration.json` — default configuration
+- Systemd service unit:
+  - DEB: `/lib/systemd/system/documentdb-gateway.service`
+  - RPM: `/usr/lib/systemd/system/documentdb-gateway.service`
+
+### Gateway Output
 
 The resulting gateway packages will be placed in the output directory (default: `packaging`). You can change the output location with the `--output-dir` option.
+
+## Docker Images
+
+Docker images (`documentdb-local`) install prebuilt extension and gateway `.deb` packages instead of compiling from source. Images are based on Debian 13 (trixie) and are built for each supported PG version and architecture.
+
+## Complete Artifact Matrix
+
+| Family | OS | PG | Arch | Count |
+|--------|----|----|------|-------|
+| Extension DEB | deb11, deb12, deb13, ubuntu22.04, ubuntu24.04 | 16, 17, 18 | amd64, arm64 | 28* |
+| Extension RPM | rhel8, rhel9 | 16, 17, 18 | x86_64, aarch64 | 12 |
+| Gateway DEB | deb11, deb12, deb13, ubuntu22.04, ubuntu24.04 | N/A | amd64, arm64 | 10 |
+| Gateway RPM | rhel8, rhel9 | N/A | x86_64, aarch64 | 4 |
+| Docker images | deb13 | 16, 17, 18 | amd64, arm64 | 6 |
+
+*deb11 + PG18 is excluded because `postgresql-18-postgis-3` is not available in the PGDG repo for Debian Bullseye (EOL Aug 2024). deb11 extension packages are built for PG16 and PG17 only.

@@ -36,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       # Use reduced matrix for PRs, full matrix for pushes/releases
-      matrix: ${{ fromJson((github.event_name == 'pull_request' && !inputs.use_full_matrix) && '{"include":[{"os":"rhel9","arch":"amd64","runner":"ubuntu-24.04","pg_version":"17"},{"os":"rhel9","arch":"arm64","runner":"ubuntu-24.04-arm","pg_version":"18"}]}' || '{"os":["rhel8","rhel9"],"arch":["amd64","arm64"],"include":[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}],"pg_version":["16","17","18"]}') }}
+      matrix: ${{ fromJson((github.event_name == 'pull_request' && !inputs.use_full_matrix) && '{"include":[{"os":"rhel9","arch":"amd64","runner":"ubuntu-24.04","pg_version":"18"},{"os":"rhel9","arch":"arm64","runner":"ubuntu-24.04-arm","pg_version":"18"}]}' || '{"os":["rhel8","rhel9"],"arch":["amd64","arm64"],"include":[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}],"pg_version":["16","17","18"]}') }}
 
     steps:
       - name: Checkout repository
@@ -55,16 +55,33 @@ jobs:
           fi
           echo "DOCUMENTDB_VERSION=$DOCUMENTDB_VERSION" >> $GITHUB_ENV
 
-      - name: Build RPM Package
+      - name: Build Extension RPM Package
         run: |
           ./packaging/build_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }} --test-clean-install
 
-      - name: Upload RPM Package as Artifact
+      - name: Upload Extension RPM Package as Artifact
         uses: actions/upload-artifact@v4
         with:
           name: rpm-${{ matrix.os }}-${{ matrix.arch }}-pg${{ matrix.pg_version }}-${{ env.DOCUMENTDB_VERSION }}
           path: |
             packaging/*.rpm
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Build Gateway RPM Package
+        # Build gateway once per OS/arch - PG version doesn't affect gateway build
+        if: matrix.pg_version == '18'
+        run: |
+          ./packaging/build_gateway_packages.sh --os ${{ matrix.os }} --pg 18 --version ${{ env.DOCUMENTDB_VERSION }} --test-clean-install
+
+      - name: Upload Gateway RPM Package as Artifact
+        if: matrix.pg_version == '18'
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.os }}-${{ matrix.arch }}-documentdb-gateway-${{ env.DOCUMENTDB_VERSION }}
+          path: |
+            packaging/*gateway*.rpm
           retention-days: 7
           if-no-files-found: error
           compression-level: 0

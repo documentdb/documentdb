@@ -40,4 +40,4 @@ USER root
 RUN mkdir -p /output && chown documentdb:documentdb /output
 USER documentdb
 
-CMD ["cargo", "deb", "--no-build", "--profile=release-with-symbols", "--output", "/output/"]
+CMD cargo deb --no-build --profile=release-with-symbols --deb-version=${DOCUMENTDB_VERSION} --output /output/

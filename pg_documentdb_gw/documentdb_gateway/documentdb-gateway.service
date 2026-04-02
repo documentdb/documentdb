@@ -1,0 +1,17 @@
+[Unit]
+Description=DocumentDB Gateway - MongoDB wire protocol proxy
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=documentdb
+Group=documentdb
+ExecStart=/usr/bin/documentdb_gateway /etc/documentdb/SetupConfiguration.json
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

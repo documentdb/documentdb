@@ -47,7 +47,7 @@ jobs:
           # VERSION is in format X.Y-Z (e.g., 0.109-0)
           # Convert to dots format for package building: X.Y.Z (e.g., 0.109.0)
           VERSION_DOTS=$(echo $VERSION | sed "s/-/./g")
-          
+
           echo "Extracted Version (dash format): $VERSION"
           echo "Converted to dots format: $VERSION_DOTS"
           echo "version=$VERSION_DOTS" >> $GITHUB_OUTPUT
@@ -108,6 +108,18 @@ jobs:
           ls -lh ./packages/
           echo "Total packages: $(ls -1 ./packages/ | wc -l)"
 
+      - name: Validate gateway packages present
+        run: |
+          echo "=== Gateway packages ==="
+          GATEWAY_DEBS=$(find ./packages -name "*gateway*.deb" ! -name "*dbgsym*" | wc -l)
+          GATEWAY_RPMS=$(find ./packages -name "*gateway*.rpm" | wc -l)
+          echo "Gateway DEBs found: $GATEWAY_DEBS"
+          echo "Gateway RPMs found: $GATEWAY_RPMS"
+          ls -lh ./packages/*gateway* 2>/dev/null || echo "WARNING: No gateway packages found!"
+          if [ "$GATEWAY_DEBS" -eq 0 ] && [ "$GATEWAY_RPMS" -eq 0 ]; then
+            echo "::warning::No gateway packages found in release artifacts"
+          fi
+
       - name: Extract Changelog for Version
         id: changelog
         run: |
@@ -131,7 +143,7 @@ jobs:
               echo "Release ${VERSION_DASH}" >> changelog_excerpt.md
             fi
           fi
-          
+
           echo "=== Changelog excerpt ==="
           cat changelog_excerpt.md
           echo "========================"

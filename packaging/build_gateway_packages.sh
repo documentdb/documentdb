@@ -7,16 +7,16 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Function to display help message
 function show_help {
-    echo "Usage: $0 --os <OS> --pg <PG_VERSION> [--test-clean-install] [--output-dir <DIR>] [-h|--help]"
+    echo "Usage: $0 --os <OS> [--pg <PG_VERSION>] [--test-clean-install] [--output-dir <DIR>] [-h|--help]"
     echo ""
     echo "Description:"
-    echo "  This script builds extension packages (DEB/RPM) using Docker."
+    echo "  This script builds gateway packages (DEB/RPM) using Docker."
     echo ""
     echo "Mandatory Arguments:"
     echo "  --os                 OS to build packages for. Possible values: [deb11, deb12, deb13, ubuntu22.04, ubuntu24.04, rhel8, rhel9]"
-    echo "  --pg                 PG version to build packages for. Possible values: [15, 16, 17]"
     echo ""
     echo "Optional Arguments:"
+    echo "  --pg                 PG version for the test environment (required with --test-clean-install). Possible values: [15, 16, 17, 18]"
     echo "  --version            The version of documentdb to build. Examples: [0.100.0, 0.101.0]"
     echo "  --test-clean-install Test installing the packages in a clean Docker container."
     echo "  --output-dir         Relative path from the repo root of the directory where to drop the packages. The directory will be created if it doesn't exist. Default: packaging"
@@ -94,6 +94,24 @@ if [[ -z "$OS" ]]; then
     exit 1
 fi
 
+if [[ $TEST_CLEAN_INSTALL == true && -z "$PG" ]]; then
+    echo "Error: --pg is required when --test-clean-install is used."
+    show_help
+    exit 1
+fi
+
+# Extract version from control file if not provided via --version
+if [[ -z "$DOCUMENTDB_VERSION" ]]; then
+    DOCUMENTDB_VERSION=$(grep -E "^default_version" "${script_dir}/pg_documentdb_core/documentdb_core.control" | sed -E "s/.*'([0-9]+\.[0-9]+-[0-9]+)'.*/\1/")
+    DOCUMENTDB_VERSION=$(echo "$DOCUMENTDB_VERSION" | sed "s/-/./g")
+    echo "DOCUMENTDB_VERSION extracted from control file: $DOCUMENTDB_VERSION"
+    if [[ -z "$DOCUMENTDB_VERSION" ]]; then
+        echo "Error: --version is required and could not be found in the control file."
+        show_help
+        exit 1
+    fi
+fi
+
 # Set the appropriate Docker image and configuration based on the OS
 DOCKERFILE=""
 OS_VERSION_NUMBER=""
@@ -128,11 +146,21 @@ if [[ "$PACKAGE_TYPE" == "deb" ]]; then
             ;;
     esac
 elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
-    # TODO: Implement RPM package building
-    echo "Building RPM packages is not yet implemented."
+    case $OS in
+        rhel8)
+            DOCKERFILE="${script_dir}/packaging/rpm/rhel-8/Dockerfile-gateway-rhel8"
+            DOCKER_IMAGE="rockylinux:8"
+            TEST_DOCKER_IMAGE="rockylinux:8"
+            ;;
+        rhel9)
+            DOCKERFILE="${script_dir}/packaging/rpm/rhel-9/Dockerfile-gateway-rhel9"
+            DOCKER_IMAGE="rockylinux:9"
+            TEST_DOCKER_IMAGE="rockylinux:9"
+            ;;
+    esac
 fi
 
-TAG=documentdb-build-packages-$OS-pg$PG:latest
+TAG=documentdb-build-gateway-packages-$OS:latest
 
 abs_output_dir="$script_dir/$OUTPUT_DIR"
 
@@ -150,9 +178,19 @@ if [[ "$PACKAGE_TYPE" == "deb" ]]; then
         --build-arg DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" "$script_dir"
     # Run the Docker container to build the packages
     docker run --rm --env OS="$OS" --env DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" -v "$abs_output_dir:/output" "$TAG"
+
+    # Rename gateway debs to include OS prefix (match extension package convention)
+    for f in "$abs_output_dir"/documentdb_gateway_*.deb; do
+        [ -e "$f" ] || continue
+        base=$(basename "$f")
+        mv "$f" "$abs_output_dir/${OS}-${base}"
+    done
 elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
-    echo "Building RPM packages is not yet implemented."
-    # TODO: Implement RPM package building
+    docker build -t "$TAG" -f "$DOCKERFILE" \
+        --build-arg BASE_IMAGE="$DOCKER_IMAGE" \
+        --build-arg DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" "$script_dir"
+    # Run the Docker container to build the packages
+    docker run --rm --env OS="$OS" -v "$abs_output_dir:/output" "$TAG"
 fi
 
 echo "Packages built successfully!!"
@@ -164,7 +202,7 @@ if [[ $TEST_CLEAN_INSTALL == true ]]; then
         ls "$abs_output_dir"
         deb_package_name=$(ls "$abs_output_dir" | grep -E "${OS}-postgresql-$PG-documentdb_${DOCUMENTDB_VERSION}.*\.deb" | grep -v "dbg" | head -n 1)
         deb_package_rel_path="$OUTPUT_DIR/$deb_package_name"
-        gateway_package_name=$(ls "$abs_output_dir" | grep -E "^documentdb_gateway_.*\.deb" | grep -v "dbg" | head -n 1)
+        gateway_package_name=$(ls "$abs_output_dir" | grep -E "^${OS}-documentdb_gateway_.*\.deb" | grep -v "dbg" | head -n 1)
         gateway_package_rel_path="$OUTPUT_DIR/$gateway_package_name"
 
         echo "Debian package path passed into Docker build: $deb_package_rel_path"
@@ -172,13 +210,35 @@ if [[ $TEST_CLEAN_INSTALL == true ]]; then
         # Build the Docker image while showing the output to the console
         docker build -t documentdb-test-gateway-packages:latest -f "${script_dir}/packaging/test_packages/deb/Dockerfile_deb_gateway_test" \
             --build-arg BASE_IMAGE="$TEST_DOCKER_IMAGE" \
+            --build-arg POSTGRES_VERSION="$PG" \
             --build-arg DEB_PACKAGE_REL_PATH="$deb_package_rel_path" \
             --build-arg GATEWAY_PACKAGE_PATH="$gateway_package_rel_path" "$script_dir"
         # Run the Docker container to test the packages
         docker run --rm documentdb-test-gateway-packages:latest
 
     elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
-        echo "RPM package installation test is not yet implemented."
+        gateway_rpm_name=$(ls "$abs_output_dir" | grep -E "${OS}-documentdb-gateway-.*\.(x86_64|aarch64)\.rpm" | head -n 1)
+        if [[ -z "$gateway_rpm_name" ]]; then
+            echo "Error: Could not find the built gateway RPM package in $abs_output_dir for testing."
+            exit 1
+        fi
+        gateway_package_rel_path="$OUTPUT_DIR/$gateway_rpm_name"
+
+        echo "Gateway RPM package path passed into Docker build: $gateway_package_rel_path"
+
+        if [[ "$OS" == "rhel8" ]]; then
+            TEST_DOCKERFILE="${script_dir}/packaging/test_packages/rhel-8/Dockerfile-rhel8-gateway-test"
+        elif [[ "$OS" == "rhel9" ]]; then
+            TEST_DOCKERFILE="${script_dir}/packaging/test_packages/rhel-9/Dockerfile-rhel9-gateway-test"
+        else
+            echo "Error: Unknown RPM OS for test Dockerfile: $OS"
+            exit 1
+        fi
+
+        docker build -t documentdb-test-gateway-rpm-packages:latest -f "$TEST_DOCKERFILE" \
+            --build-arg BASE_IMAGE="$TEST_DOCKER_IMAGE" \
+            --build-arg GATEWAY_PACKAGE_PATH="$gateway_package_rel_path" "$script_dir"
+        docker run --rm documentdb-test-gateway-rpm-packages:latest
     fi
 
     echo "Clean installation test successful!!"
