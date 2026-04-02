@@ -114,10 +114,10 @@ static Query * BuildBucketAutoQuery(Query *query,
 static void BuildBucketAutoGroupSpec(const bson_value_t *output, bson_value_t *groupSpec);
 
 static void SetLowerBound(const pgbson *currentValue, const BucketAutoArguments *args,
-						  BucketAutoState *state);
+						  BucketAutoState *state, const char *indexCollation);
 
 static void SetUpperBound(WindowObject winobj, const BucketAutoArguments *args,
-						  BucketAutoState *state);
+						  BucketAutoState *state, const char *indexCollation);
 
 static void InitializeBucketAutoArguments(BucketAutoArguments *args, const pgbson *spec);
 
@@ -236,8 +236,9 @@ bson_dollar_bucket_auto(PG_FUNCTION_ARGS)
 		}
 
 		/* set lower and upper bound, lower bound setting should go first */
-		SetLowerBound(currentValue, args, state);
-		SetUpperBound(winobj, args, state);
+		const char *collation = NULL;
+		SetLowerBound(currentValue, args, state, collation);
+		SetUpperBound(winobj, args, state, collation);
 	}
 
 	if (state->rowIndex == state->actualRowsLimit)
@@ -582,7 +583,7 @@ BuildBucketAutoGroupSpec(const bson_value_t *output, bson_value_t *groupSpec)
  */
 static void
 SetLowerBound(const pgbson *currentValue, const BucketAutoArguments *args,
-			  BucketAutoState *state)
+			  BucketAutoState *state, const char *indexCollation)
 {
 	if (state->lower_bound != NULL)
 	{
@@ -642,7 +643,7 @@ SetLowerBound(const pgbson *currentValue, const BucketAutoArguments *args,
  */
 static void
 SetUpperBound(WindowObject winobj, const BucketAutoArguments *args,
-			  BucketAutoState *state)
+			  BucketAutoState *state, const char *indexCollation)
 {
 	if (state->upper_bound != NULL)
 	{
@@ -724,9 +725,12 @@ SetUpperBound(WindowObject winobj, const BucketAutoArguments *args,
 		{
 			pgbsonelement upperBoundElement;
 			PgbsonToSinglePgbsonElement(upperBound, &upperBoundElement);
-			int compareWithBound = CompareBsonValueAndType(&upperBoundElement.bsonValue,
-														   &nextElement.bsonValue,
-														   &isComparionValid);
+			int compareWithBound = CompareBsonValueAndTypeWithCollation(
+				&upperBoundElement.bsonValue,
+				&nextElement.
+				bsonValue,
+				&isComparionValid,
+				indexCollation);
 			if (compareWithBound > 0)
 			{
 				/* expand bucket, when next element value is less than the upper bound set with granularity */

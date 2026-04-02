@@ -364,7 +364,14 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	CompositeQueryRunData *runData = CreateCompositeQueryRunData(numPaths);
 	runData->metaInfo = metaInfo;
 	metaInfo->numIndexPaths = numPaths;
-	metaInfo->collation = NULL;
+
+	/* Populate collation from index options */
+	const char *indexCollation = NULL;
+	int indexCollationLength = 0;
+	Get_Index_Collation_Option((&options->base), collation,
+							   indexCollation, indexCollationLength);
+	metaInfo->collation = indexCollation;
+
 	metaInfo->wildcardPathIndex = EnableCompositeWildcardIndex ?
 								  options->wildcardPathIndex : -1;
 
@@ -863,7 +870,8 @@ OptimizeVariableBoundsForQuery(CompositeQueryRunData *runData,
 			variableBounds->variableBoundsList =
 				MergeSingleVariableBounds(variableBounds->variableBoundsList,
 										  &runData->wildcardPath,
-										  runData->indexBounds);
+										  runData->indexBounds,
+										  runData->metaInfo->collation);
 		}
 	}
 
@@ -3540,11 +3548,19 @@ ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetSca
 		BsonIndexStrategy strategy = scankey[i].sk_strategy;
 		pgbson *secondBson = DatumGetPgBson(scanKeyArg);
 
+		/* Extract the query element, stripping the collation field if present.
+		 * The collation is carried in the BSON as a second field but should not
+		 * be included in the composite query spec — it's handled at index
+		 * selection time. */
+		pgbsonelement queryElement;
+		PgbsonToSinglePgbsonElementWithCollation(secondBson, &queryElement);
+
 		pgbson_writer clauseWriter;
 		PgbsonArrayWriterStartDocument(&queryWriter, &clauseWriter);
 		PgbsonWriterAppendInt32(&clauseWriter, "op", 2,
 								strategy);
-		PgbsonWriterConcat(&clauseWriter, secondBson);
+		PgbsonWriterAppendValue(&clauseWriter, queryElement.path,
+								queryElement.pathLength, &queryElement.bsonValue);
 		PgbsonArrayWriterEndDocument(&queryWriter, &clauseWriter);
 	}
 
