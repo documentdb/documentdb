@@ -226,7 +226,9 @@ PushBinaryExpressionQuals(bson_iter_t *outerIter, List *inputQuals,
 		return inputQuals;
 	}
 
-	if (!ValidateIndexForQualifierElement(indexOptions, &queryElement,
+	/* TODO (COLLATION): elemMatch */
+	const char *queryCollation = NULL;
+	if (!ValidateIndexForQualifierElement(indexOptions, &queryElement, queryCollation,
 										  operator->indexStrategy))
 	{
 		return inputQuals;

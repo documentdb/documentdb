@@ -64,10 +64,14 @@ static Size FillWildcardProjectPathSpec(const char *prefix, void *buffer);
 static bool QueryPathHasDigits(const char *path, uint32_t pathLength);
 static void FailIfQueryPathHasDigitsForWildcard(Datum query, bytea *options);
 
+static bool IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
+											const char *queryCollation, BsonIndexStrategy
+											strategy);
 
 extern Datum gin_bson_exclusion_pre_consistent(PG_FUNCTION_ARGS);
 extern uint32_t MaxWildcardIndexKeySize;
 extern bool EnableCollation;
+extern bool EnableCollationWithNonUniqueOrderedIndexes;
 
 /*
  * gin_bson_single_path_extract_value is run on the insert/update path and collects the terms
@@ -894,22 +898,17 @@ ValidateIndexForQualifierValue(bytea *indexOptions, Datum queryValue, BsonIndexS
 
 	queryBson = DatumGetPgBson(queryValue);
 
-	const char *collationString = PgbsonToSinglePgbsonElementWithCollation(queryBson,
-																		   &filterElement);
+	const char *queryCollation = PgbsonToSinglePgbsonElementWithCollation(queryBson,
+																		  &filterElement);
 
-	if (IsCollationValid(collationString))
-	{
-		/* We don't yet support collated index, until then we can't use index */
-		return false;
-	}
-
-	return ValidateIndexForQualifierElement(indexOptions, &filterElement, strategy);
+	return ValidateIndexForQualifierElement(indexOptions, &filterElement, queryCollation,
+											strategy);
 }
 
 
 bool
 ValidateIndexForQualifierElement(bytea *indexOptions, pgbsonelement *filterElement,
-								 BsonIndexStrategy strategy)
+								 const char *queryCollation, BsonIndexStrategy strategy)
 {
 	BsonGinIndexOptionsBase *options = (BsonGinIndexOptionsBase *) indexOptions;
 
@@ -945,6 +944,12 @@ ValidateIndexForQualifierElement(bytea *indexOptions, pgbsonelement *filterEleme
 
 		case IndexOptionsType_SinglePath:
 		{
+			if (IsCollationValid(queryCollation))
+			{
+				traverse = IndexTraverse_Invalid;
+				break;
+			}
+
 			BsonGinSinglePathOptions *singlePathOptions =
 				(BsonGinSinglePathOptions *) indexOptions;
 
@@ -986,6 +991,12 @@ ValidateIndexForQualifierElement(bytea *indexOptions, pgbsonelement *filterEleme
 
 		case IndexOptionsType_Composite:
 		{
+			if (!IsCollationApplicableToStrategy(options, queryCollation, strategy))
+			{
+				traverse = IndexTraverse_Invalid;
+				break;
+			}
+
 			int32_t compositeColumnIgnore;
 			traverse = GetCompositePathIndexTraverseOption(
 				strategy, options,
@@ -998,6 +1009,12 @@ ValidateIndexForQualifierElement(bytea *indexOptions, pgbsonelement *filterEleme
 
 		case IndexOptionsType_Hashed:
 		{
+			if (IsCollationValid(queryCollation))
+			{
+				traverse = IndexTraverse_Invalid;
+				break;
+			}
+
 			/* Hash index only supports $eq today */
 			if (strategy != BSON_INDEX_STRATEGY_DOLLAR_EQUAL &&
 				strategy != BSON_INDEX_STRATEGY_DOLLAR_IN)
@@ -1013,6 +1030,12 @@ ValidateIndexForQualifierElement(bytea *indexOptions, pgbsonelement *filterEleme
 
 		case IndexOptionsType_Wildcard:
 		{
+			if (IsCollationValid(queryCollation))
+			{
+				traverse = IndexTraverse_Invalid;
+				break;
+			}
+
 			int32_t pathIndexInnerIgnore = 0;
 			traverse = GetWildcardProjectionPathIndexTraverseOption(options,
 																	filterElement->path,
@@ -1596,4 +1619,65 @@ FillWildcardProjectPathSpec(const char *prefix, void *buffer)
 	}
 
 	return totalSize;
+}
+
+
+/*
+ * Checks whether the query collation matches the index collation.
+ * Returns true when both are absent or when the ICU locale strings
+ * are identical. Returns false on any mismatch.
+ */
+static bool
+IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
+								const char *queryCollation, BsonIndexStrategy strategy)
+{
+	uint32_t indexCollationLength = 0;
+	const char *indexCollation = NULL;
+	Get_Index_Collation_Option(indexOptions, collation, indexCollation,
+							   indexCollationLength);
+
+	bool indexHasCollation = IsCollationValid(indexCollation);
+	bool queryHasCollation = IsCollationValid(queryCollation);
+
+	if (!EnableCollationWithNonUniqueOrderedIndexes)
+	{
+		/* Reject if either query or index has collation  */
+		return !queryHasCollation && !indexHasCollation;
+	}
+
+	/* If neither has collation, all strategies are applicable */
+	if (!indexHasCollation && !queryHasCollation)
+	{
+		return true;
+	}
+
+	/* If one has collation and the other doesn't, they don't match */
+	if (indexHasCollation != queryHasCollation)
+	{
+		return false;
+	}
+
+	/* Both have collation - check they match */
+	if (strcmp(indexCollation, queryCollation) != 0)
+	{
+		return false;
+	}
+
+	/* Collations match - only support eq, gt, gte strategies for now */
+	switch (strategy)
+	{
+		/* Equality strategies - check collation equality */
+		case BSON_INDEX_STRATEGY_DOLLAR_EQUAL:
+		case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
+		case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
+		{
+			return true;
+		}
+
+		default:
+		{
+			/* TODO (COLLATION): compare query and index collations */
+			return false;
+		}
+	}
 }
