@@ -1567,15 +1567,9 @@ CheckOpArgIsValidForIndexOnlyScan(Const *arg, bytea *indexOptions, BsonIndexStra
 
 	Datum queryValue = arg->constvalue;
 	pgbsonelement queryElement;
-	const char *collation = PgbsonToSinglePgbsonElementWithCollation(DatumGetPgBson(
-																		 queryValue),
-																	 &queryElement);
-
-	if (IsCollationValid(collation))
-	{
-		/* index with collation is not yet supported. */
-		return false;
-	}
+	const char *queryCollation = PgbsonToSinglePgbsonElementWithCollation(DatumGetPgBson(
+																			  queryValue),
+																		  &queryElement);
 
 	if (indexStrategy == BSON_INDEX_STRATEGY_DOLLAR_IN)
 	{
@@ -1595,7 +1589,7 @@ CheckOpArgIsValidForIndexOnlyScan(Const *arg, bytea *indexOptions, BsonIndexStra
 		return false;
 	}
 
-	return ValidateIndexForQualifierElement(indexOptions, &queryElement,
+	return ValidateIndexForQualifierElement(indexOptions, &queryElement, queryCollation,
 											indexStrategy);
 }
 
