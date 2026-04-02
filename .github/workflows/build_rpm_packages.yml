@@ -21,7 +21,6 @@ on:
       - 'main'
       - 'release/**'
     paths-ignore:
-      - 'docs/**'
       - '.devcontainer/**'
       - '*.md'
   pull_request:
@@ -40,7 +39,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Extract and Format Default Version
         id: extract_version

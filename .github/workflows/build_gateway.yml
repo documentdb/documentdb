@@ -21,7 +21,6 @@ on:
       - 'main'
       - 'release/**'
     paths-ignore:
-      - 'docs/**'
       - '.devcontainer/**'
       - '*.md'
 
@@ -56,7 +55,7 @@ jobs:
       documentdb_version: ${{ steps.extract_version.outputs.documentdb_version }}
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
     - name: Extract and Format Default Version
       id: extract_version
       run: |

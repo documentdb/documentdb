@@ -129,6 +129,6 @@ ENV PATH=$PATH:/usr/lib/postgresql/$PG_VERSION/bin
 USER documentdb
 WORKDIR /home/documentdb
 
-LABEL org.opencontainers.image.source=https://github.com/microsoft/documentdb
+LABEL org.opencontainers.image.source=https://github.com/documentdb/documentdb
 LABEL org.opencontainers.image.description="DocumentDB ubuntu build image"
 LABEL org.opencontainers.image.licenses=MIT

@@ -713,7 +713,7 @@ jobs:
   functional-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - name: Read test configuration
         run: |
           TEST_VERSION=$(cat test-config/test-version.txt)

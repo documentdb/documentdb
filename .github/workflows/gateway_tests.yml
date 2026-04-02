@@ -14,7 +14,6 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
     paths-ignore:
-      - "docs/**"
       - ".devcontainer/**"
       - "*.md"
 
@@ -40,7 +39,7 @@ jobs:
             runner: ubuntu-22.04-arm
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Build and Install DocumentDB
         run: |
