@@ -66,6 +66,10 @@ bool EnableBackgroundWorker = DEFAULT_ENABLE_BG_WORKER;
 #define DEFAULT_ENABLE_BG_WORKER_JOBS true
 bool EnableBackgroundWorkerJobs = DEFAULT_ENABLE_BG_WORKER_JOBS;
 
+/* Added in v111, pending stabilization */
+#define DEFAULT_ENABLE_BG_WORKER_INIT_JOBS false
+bool EnableBackgroundWorkerInitJobs = DEFAULT_ENABLE_BG_WORKER_INIT_JOBS;
+
 #define DEFAULT_BG_WORKER_JOB_TIMEOUT_THRESHOLD_SEC 300
 int BackgroundWorkerJobTimeoutThresholdSec = DEFAULT_BG_WORKER_JOB_TIMEOUT_THRESHOLD_SEC;
 
@@ -279,6 +283,12 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		gettext_noop("Enable the execution of the pre-defined background worker jobs."),
 		NULL, &EnableBackgroundWorkerJobs, DEFAULT_ENABLE_BG_WORKER_JOBS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableBackgroundWorkerInitJobs", newGucPrefix),
+		gettext_noop("Enable the execution of init background jobs."),
+		NULL, &EnableBackgroundWorkerInitJobs, DEFAULT_ENABLE_BG_WORKER_INIT_JOBS,
+		PGC_POSTMASTER, 0, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(
 		psprintf("%s.backgroundWorkerJobTimeoutThresholdSec", newGucPrefix),
