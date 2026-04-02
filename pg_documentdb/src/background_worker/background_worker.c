@@ -132,6 +132,17 @@ extern void RegisterBackgroundWorkerJobAllowedCommand(BackgroundWorkerJobCommand
 static BackgroundWorkerBoolOption IsCoordinator =
 	BackgroundWorkerBoolOption_Undefined;
 
+/* Process local state for a registered init job. */
+typedef struct InitJobState
+{
+	BackgroundWorkerInitJob job;
+	bool done;
+} InitJobState;
+
+static bool TryExecuteInitJob(InitJobState *state);
+static void RunInitJobs(void);
+static bool AreAllInitJobsDone(void);
+
 /* Background worker job functions*/
 static void ValidateJob(BackgroundWorkerJob job);
 static void ManageJobsLifeCycle(List *jobExecutions, char *userName, char *databaseName);
@@ -149,6 +160,7 @@ static char * GenerateCommandQuery(BackgroundWorkerJob job, MemoryContext stable
 static void CancelJobIfTimeIsUp(BackgroundWorkerJobExecution *jobExec, TimestampTz
 								currentTime);
 static void WaitForBackgroundWorkerDependencies(void);
+static void WaitForInitJobsCompletion(void);
 
 /*
  * The allowed commands registry should not be exposed outside this c file to avoid unpredictable behavior.
@@ -165,6 +177,10 @@ static int AllowedCommandEntries = 0;
 #define MAX_BACKGROUND_WORKER_JOBS 5
 static BackgroundWorkerJob JobRegistry[MAX_BACKGROUND_WORKER_JOBS];
 static int JobEntries = 0;
+
+#define MAX_INIT_JOBS 5
+static InitJobState InitJobs[MAX_INIT_JOBS];
+static int NumInitJobs = 0;
 
 
 /* Default implementation of the hook. Presently just returns a const.
@@ -222,6 +238,12 @@ DocumentDBBackgroundWorkerMain(Datum main_arg)
 
 	/* Set on-detach hook so that our PID will be cleared on exit. */
 	on_shmem_exit(BackgroundWorkerKill, 0);
+
+	/*
+	 * Run registered init jobs before waiting for background worker dependencies.
+	 * Guarded by the enableBackgroundWorkerInitJobs feature flag.
+	 */
+	WaitForInitJobsCompletion();
 
 	/*
 	 * Wait until BackgroundWorkerRole prerequisites are met.
@@ -531,6 +553,60 @@ WaitForBackgroundWorkerDependencies(void)
 				ereport(WARNING, errmsg("BackgroundWorkerRole %s does not exist.",
 										roleName));
 			}
+		}
+	}
+}
+
+
+/*
+ * Wait for all registered init jobs to complete before proceeding.
+ * Init jobs are one time initialization tasks (e.g. extension creation)
+ * that use C callbacks rather than SQL UDFs.
+ */
+static void
+WaitForInitJobsCompletion(void)
+{
+	if (!EnableBackgroundWorkerInitJobs)
+	{
+		return;
+	}
+
+	if (NumInitJobs == 0)
+	{
+		ereport(LOG, (errmsg("Init jobs enabled but none registered, skipping")));
+		return;
+	}
+
+	ereport(LOG, (errmsg("Starting %d registered init job(s)", NumInitJobs)));
+
+	int waitResult;
+
+	/* Fixed retry interval for init jobs */
+	int waitTimeoutInSec = 10;
+
+	/* Run initialization jobs and loop with sleep until all complete */
+	RunInitJobs();
+
+	/* Loop until all init jobs are done */
+	while (!AreAllInitJobsDone() && !got_sigterm)
+	{
+		waitResult = WaitLatch(&BackgroundWorkerShmem->latch,
+							   WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
+							   waitTimeoutInSec * ONE_SEC_IN_MS,
+							   WAIT_EVENT_PG_SLEEP);
+		ResetLatch(&BackgroundWorkerShmem->latch);
+
+		CHECK_FOR_INTERRUPTS();
+
+#if PG_VERSION_NUM >= 180000
+		ProcessMainLoopInterrupts();
+#else
+		HandleMainLoopInterrupts();
+#endif
+
+		if (waitResult & WL_TIMEOUT)
+		{
+			RunInitJobs();
 		}
 	}
 }
@@ -1066,4 +1142,140 @@ background_worker_sighup(SIGNAL_ARGS)
 	{
 		SetLatch(&BackgroundWorkerShmem->latch);
 	}
+}
+
+
+/*
+ * One-time initialization jobs that run via C function pointer callbacks
+ * before the periodic UDF-based job loop. Registered during
+ * shared_preload_libraries and executed early in the background worker
+ * lifecycle.
+ */
+void
+RegisterBackgroundWorkerInitJob(BackgroundWorkerInitJob job)
+{
+	if (!process_shared_preload_libraries_in_progress)
+	{
+		ereport(ERROR, (errmsg(
+							"Init background jobs must be registered during shared_preload_libraries")));
+	}
+
+	if (NumInitJobs >= MAX_INIT_JOBS)
+	{
+		ereport(ERROR,
+				(errmsg("Only %d init background jobs are permitted",
+						MAX_INIT_JOBS)));
+	}
+
+	if (job.jobName == NULL || job.jobName[0] == '\0')
+	{
+		ereport(ERROR, (errmsg("Init background job name cannot be NULL or empty")));
+	}
+
+	if (job.callback == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Init background job '%s' must have a non-NULL callback",
+							job.jobName)));
+	}
+
+	InitJobState *state = &InitJobs[NumInitJobs++];
+	state->job = job;
+	state->done = false;
+}
+
+
+/*
+ * Attempt to execute a single init job.
+ * Returns true if the job completed successfully.
+ */
+static bool
+TryExecuteInitJob(InitJobState *state)
+{
+	bool success = false;
+
+	ereport(LOG, (errmsg("Init job '%s': starting attempt",
+						 state->job.jobName)));
+
+	PG_TRY();
+	{
+		success = state->job.callback();
+	}
+	PG_CATCH();
+	{
+		FlushErrorState();
+
+		/*
+		 * Clean up any transaction state the callback left behind.
+		 * If the callback threw mid-transaction, we must pop its
+		 * snapshots and abort to leave the connection usable for retry.
+		 */
+		PopAllActiveSnapshots();
+		AbortCurrentTransaction();
+
+		ereport(ERROR, (errmsg(
+							"Init job '%s': callback threw an error",
+							state->job.jobName)));
+	}
+	PG_END_TRY();
+
+	if (success)
+	{
+		state->done = true;
+		ereport(LOG, (errmsg("Init job '%s': completed successfully",
+							 state->job.jobName)));
+	}
+	else
+	{
+		ereport(WARNING, (errmsg(
+							  "Init job '%s': failed",
+							  state->job.jobName)));
+	}
+
+	return success;
+}
+
+
+/*
+ * Run all registered init jobs. Completed jobs are skipped;
+ * failed jobs are retried on each call.
+ */
+static void
+RunInitJobs(void)
+{
+	if (NumInitJobs == 0)
+	{
+		return;
+	}
+
+	/* Jobs are executed serially in registration order */
+	for (int i = 0; i < NumInitJobs; i++)
+	{
+		InitJobState *state = &InitJobs[i];
+
+		if (state->done)
+		{
+			continue;
+		}
+
+		TryExecuteInitJob(state);
+	}
+}
+
+
+/*
+ * Returns true if all registered init jobs have completed successfully.
+ */
+static bool
+AreAllInitJobsDone(void)
+{
+	for (int i = 0; i < NumInitJobs; i++)
+	{
+		if (!InitJobs[i].done)
+		{
+			return false;
+		}
+	}
+
+	return true;
 }
