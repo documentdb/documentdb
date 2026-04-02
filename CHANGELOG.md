@@ -1,3 +1,5 @@
+### documentdb v0.112-0 (Unreleased) ###
+
 ### documentdb v0.111-0 (Unreleased) ###
 * Add feature flag `enableCollationWithIndexes` to `enableCollationWithNonUniqueOrderedIndexes` to gate collation support specifically for non-unique ordered/composite indexes. Collation is rejected for other index types/options *[Feature]*
 * Fix `$count:{}` accumulator in `$group` to reject invalid arguments. Guarded by `failOnNonEmptyGroupCountArg` feature flag *[Bugfix]*
