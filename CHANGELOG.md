@@ -1,6 +1,7 @@
 ### documentdb v0.112-0 (Unreleased) ###
 
 ### documentdb v0.111-0 (Unreleased) ###
+* Add init background job infrastructure for running one time C callback initialization tasks before the periodic job loop. Guarded by `enableBackgroundWorkerInitJobs` feature flag *[Feature]*
 * Add feature flag `enableCollationWithIndexes` to `enableCollationWithNonUniqueOrderedIndexes` to gate collation support specifically for non-unique ordered/composite indexes. Collation is rejected for other index types/options *[Feature]*
 * Fix `$count:{}` accumulator in `$group` to reject invalid arguments. Guarded by `failOnNonEmptyGroupCountArg` feature flag *[Bugfix]*
 * Reject duplicate `_id` in `$group` stage. Guarded by `failOnGroupIdDuplicate` feature flag *[Bugfix]*

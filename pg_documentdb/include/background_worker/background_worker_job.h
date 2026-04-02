@@ -96,4 +96,36 @@ typedef struct
  */
 void RegisterBackgroundWorkerJob(BackgroundWorkerJob job);
 
+
+/*
+ * Callback for background worker init jobs. Native C functions that run
+ * one time initialization before the periodic job loop, and before
+ * extensions/roles exist.
+ * Returns true if completed (will not be retried), false to retry.
+ */
+typedef bool (*BackgroundWorkerInitJobCallback)(void);
+
+
+/*
+ * Definition of a background worker init job.
+ */
+typedef struct BackgroundWorkerInitJob
+{
+	/* Job name, this will be used in log emission. */
+	const char *jobName;
+
+	/* C function pointer to execute. */
+	BackgroundWorkerInitJobCallback callback;
+} BackgroundWorkerInitJob;
+
+
+/*
+ * Register a background worker init job to be executed during background
+ * worker initialization.
+ *
+ * Must be called during shared_preload_libraries and is executed in
+ * registration order.
+ */
+void RegisterBackgroundWorkerInitJob(BackgroundWorkerInitJob job);
+
 #endif /* DOCUMENTS_BACKGROUND_WORKER_JOB_H */
