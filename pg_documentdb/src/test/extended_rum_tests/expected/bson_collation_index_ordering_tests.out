@@ -1305,15 +1305,14 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 (1 row)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_numord_true", "filter": { "item": { "$eq": "item1" } }, "collation": { "locale": "en", "numericOrdering": true } }');
-                                               QUERY PLAN                                                
----------------------------------------------------------------------------------------------------------
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on documentdb_data.documents_8101 collection
    Output: document
-   Recheck Cond: (collection.shard_key_value = '8101'::bigint)
-   Filter: (collection.document @= '{ "item" : "item1", "collation" : "en-u-ks-level3-kn-true" }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (collection.shard_key_value = '8101'::bigint)
-(6 rows)
+   Recheck Cond: (collection.document @= '{ "item" : "item1", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+   ->  Bitmap Index Scan on item_numord_true_idx
+         Index Cond: (collection.document @= '{ "item" : "item1", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+(5 rows)
 
 ROLLBACK;
 BEGIN;
@@ -1325,15 +1324,14 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 (1 row)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_compound_numord_true", "filter": { "item": { "$eq": "item1" } }, "collation": { "locale": "en", "numericOrdering": true } }');
-                                               QUERY PLAN                                                
----------------------------------------------------------------------------------------------------------
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on documentdb_data.documents_8103 collection
    Output: document
-   Recheck Cond: (collection.shard_key_value = '8103'::bigint)
-   Filter: (collection.document @= '{ "item" : "item1", "collation" : "en-u-ks-level3-kn-true" }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (collection.shard_key_value = '8103'::bigint)
-(6 rows)
+   Recheck Cond: (collection.document @= '{ "item" : "item1", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+   ->  Bitmap Index Scan on item_qty_numord_true_idx
+         Index Cond: (collection.document @= '{ "item" : "item1", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+(5 rows)
 
 ROLLBACK;
 DROP SCHEMA collation_ordered_test_schema CASCADE;

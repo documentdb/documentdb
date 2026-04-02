@@ -201,6 +201,7 @@ typedef struct
 
 bool ValidateIndexForQualifierElement(bytea *indexOptions,
 									  pgbsonelement *queryelement,
+									  const char *queryCollation,
 									  BsonIndexStrategy strategy);
 bool ValidateIndexForQualifierValue(bytea *indexOptions, Datum queryValue,
 									BsonIndexStrategy
