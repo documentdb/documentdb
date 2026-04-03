@@ -286,17 +286,35 @@ FROM documentdb_api_catalog.collection_indexes WHERE (index_spec).index_expire_a
 
 -- 10.b. Call ttl task procedure with a batch size of 0 --
 BEGIN;
-Set citus.log_remote_commands to on; -- Will print Citus rewrites of the queries
-Set citus.log_local_commands to on; -- Will print the local queries 
-set local documentdb.SingleTTLTaskTimeBudget to 1;
+Set local citus.log_remote_commands to on; -- Will print Citus rewrites of the queries
+Set local citus.log_local_commands to on; -- Will print the local queries 
 SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(0); -- To test the sql query, it won't delete any data
 NOTICE:  executing the command locally: SELECT index_id, collection_id, (index_spec).index_key AS index_key, (index_spec).index_pfe AS index_pfe, (index_spec).index_expire_after_seconds AS index_expire_after_seconds, (index_spec).index_is_sparse AS index_is_sparse, COALESCE((documentdb_core.bson_get_value_text((index_spec).index_options, 'enableCompositeTerm'::text))::boolean, (documentdb_core.bson_get_value_text((index_spec).index_options, 'enableOrderedIndex'::text))::boolean, false) AS index_is_ordered, (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_is_valid AND ((index_spec).index_expire_after_seconds OPERATOR(pg_catalog.>=) 0)) ORDER BY collection_id, index_id
 NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
 NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
 NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
-Set citus.log_remote_commands to off;
-Set citus.log_local_commands to off;
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM documentdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
 END;
 -- 10.a.
 BEGIN;
