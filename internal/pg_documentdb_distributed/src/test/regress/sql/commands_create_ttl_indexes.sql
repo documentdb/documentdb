@@ -134,13 +134,10 @@ FROM documentdb_api_catalog.collection_indexes WHERE (index_spec).index_expire_a
 
 -- 10.b. Call ttl task procedure with a batch size of 0 --
 BEGIN;
-Set citus.log_remote_commands to on; -- Will print Citus rewrites of the queries
-Set citus.log_local_commands to on; -- Will print the local queries 
-set local documentdb.SingleTTLTaskTimeBudget to 1;
+Set local citus.log_remote_commands to on; -- Will print Citus rewrites of the queries
+Set local citus.log_local_commands to on; -- Will print the local queries 
 SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(0); -- To test the sql query, it won't delete any data
-Set citus.log_remote_commands to off;
-Set citus.log_local_commands to off;
 END;
 
 -- 10.a.
