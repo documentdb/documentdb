@@ -1683,7 +1683,8 @@ IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 		case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
 		case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
 		{
-			if (queryValueType == BSON_TYPE_MINKEY)
+			if (queryValueType == BSON_TYPE_MINKEY ||
+				!IsBsonTypeCollationAware(queryValueType))
 			{
 				return true;
 			}
@@ -1691,16 +1692,16 @@ IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 			return collationsMatch;
 		}
 
-		/* TODO (COLLATION): $lt/$lte */
 		case BSON_INDEX_STRATEGY_DOLLAR_LESS:
 		case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
 		{
-			if (queryValueType == BSON_TYPE_MAXKEY)
+			if (queryValueType == BSON_TYPE_MAXKEY ||
+				!IsBsonTypeCollationAware(queryValueType))
 			{
 				return true;
 			}
 
-			return false;
+			return collationsMatch;
 		}
 
 		/*
@@ -1721,7 +1722,7 @@ IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 			return false;
 		}
 
-		/* Skip index pushdown */
+		/* TODO (COLLATION): To be supported */
 		case BSON_INDEX_STRATEGY_DOLLAR_IN:
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_EQUAL:
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_IN:
@@ -1730,13 +1731,17 @@ IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_LT:
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_LTE:
 		case BSON_INDEX_STRATEGY_DOLLAR_ELEMMATCH:
-		case BSON_INDEX_STRATEGY_DOLLAR_ALL:
 		case BSON_INDEX_STRATEGY_DOLLAR_RANGE:
-		case BSON_INDEX_STRATEGY_UNIQUE_EQUAL:
-		case BSON_INDEX_STRATEGY_DOLLAR_TEXT:
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY:
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE:
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_INDEXTERM:
+
+		/* TODO (COLLATION): Pending unique index support */
+		case BSON_INDEX_STRATEGY_UNIQUE_EQUAL:
+
+		/* Not applicable */
+		case BSON_INDEX_STRATEGY_DOLLAR_ALL:
+		case BSON_INDEX_STRATEGY_DOLLAR_TEXT:
 		case BSON_INDEX_STRATEGY_COMPOSITE_QUERY:
 		case BSON_INDEX_STRATEGY_IS_MULTIKEY:
 		case BSON_INDEX_STRATEGY_HAS_TRUNCATED_TERMS:
