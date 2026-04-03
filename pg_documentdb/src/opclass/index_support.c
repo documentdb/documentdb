@@ -279,8 +279,6 @@ static bool MatchIndexPathForIndexHint(IndexPath *path, void *matchContext);
 static bool TryUseAlternateIndexForIndexHint(PlannerInfo *root, RelOptInfo *rel,
 											 ReplaceExtensionFunctionContext *context,
 											 MatchIndexPath matchIndexPath);
-static bool EnableIndexHintForceIndexPushdown(PlannerInfo *root,
-											  ReplaceExtensionFunctionContext *context);
 static void ThrowIndexHintUnableToFindIndex(void);
 
 static List * UpdateIndexListForPrimaryKeyLookup(List *existingIndex,
@@ -333,7 +331,7 @@ static const ForceIndexSupportFuncs ForceIndexOperatorSupport[] =
 		.matchIndexPath = &MatchIndexPathForIndexHint,
 		.alternatePath = &TryUseAlternateIndexForIndexHint,
 		.noIndexHandler = &ThrowIndexHintUnableToFindIndex,
-		.enableForceIndexPushdown = &EnableIndexHintForceIndexPushdown
+		.enableForceIndexPushdown = &DefaultTrueForceIndexPushdown
 	},
 	[ForceIndexOpType_PrimaryKeyLookup] = {
 		.operator = ForceIndexOpType_PrimaryKeyLookup,
@@ -780,8 +778,7 @@ CheckRestrictionPathNodeForIndexOperation(Expr *currentExpr,
 	if (IsA(currentExpr, FuncExpr))
 	{
 		FuncExpr *funcExpr = (FuncExpr *) currentExpr;
-		if (IsClusterVersionAtleast(DocDB_V0, 106, 0) &&
-			funcExpr->funcid == BsonIndexHintFunctionOid())
+		if (funcExpr->funcid == BsonIndexHintFunctionOid())
 		{
 			Node *secondNode = lsecond(funcExpr->args);
 			if (!IsA(secondNode, Const))
@@ -4893,14 +4890,6 @@ ThrowIndexHintUnableToFindIndex(void)
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_UNABLETOFINDINDEX),
 					errmsg(
 						"index specified by index hint is not found or invalid for the filters")));
-}
-
-
-static bool
-EnableIndexHintForceIndexPushdown(PlannerInfo *root,
-								  ReplaceExtensionFunctionContext *context)
-{
-	return IsClusterVersionAtleast(DocDB_V0, 106, 0);
 }
 
 

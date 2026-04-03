@@ -674,16 +674,13 @@ CollStatsWorker(void *fcinfoPointer)
 	 * the coordinator in a multi-node setup to be on the latest version.
 	 */
 	CollStatsAggMode mode = CollStatsAggMode_CountAndStorage;
-	if (IsClusterVersionAtleast(DocDB_V0, 108, 0) ||
-		DefaultInlineWriteOperations)
+
+	/* Ensure proper conversion to enum */
+	int argAsInt = (int) floor(modeArgument);
+	if (argAsInt > CollStatsAggMode_None &&
+		argAsInt <= CollStatsAggMode_Max)
 	{
-		/* Ensure proper conversion to enum */
-		int argAsInt = (int) floor(modeArgument);
-		if (argAsInt > CollStatsAggMode_None &&
-			argAsInt <= CollStatsAggMode_Max)
-		{
-			mode = argAsInt;
-		}
+		mode = argAsInt;
 	}
 
 	MongoCollection *collection =
