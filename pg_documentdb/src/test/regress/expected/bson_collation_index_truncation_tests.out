@@ -692,6 +692,252 @@ $cmd$);
 (13 rows)
 
 -- ======================================================================
+-- SECTION 6b: $lt, $lte on truncated strings
+-- ======================================================================
+-- 6b.1: $lt on short string — index SHOULD be used
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$lt": "short_string" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                                                            document                                                                            
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "another_short" }
+ { "_id" : { "$numberInt" : "10" }, "a" : "medium_prefix_string_alpha_end" }
+ { "_id" : { "$numberInt" : "11" }, "a" : "medium_prefix_string_beta_end" }
+ { "_id" : { "$numberInt" : "12" }, "a" : "Medium_Prefix_String_Alpha_End" }
+ { "_id" : { "$numberInt" : "30" }, "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut" }
+ { "_id" : { "$numberInt" : "31" }, "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_beta_suffix_after_cut" }
+ { "_id" : { "$numberInt" : "40" }, "a" : "prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end" }
+ { "_id" : { "$numberInt" : "41" }, "a" : "prefix_match_BBBB_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end" }
+(8 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$lt": "short_string" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=8 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=8 loops=1)
+         namespaceName: trunc_db.trunc_coll
+         indexName: idx_a_en_s1_trunc
+         indexKey: {"a": 1}
+         isMultiKey: false
+         hasTruncation: true
+         indexBounds: ["a": ["", "short_string")]
+         ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=8 loops=1)
+               Index Cond: (document @< '{ "a" : "short_string", "collation" : "en-u-ks-level1" }'::bson)
+(12 rows)
+
+-- 6b.2: $lte on short string — index SHOULD be used
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$lte": "short_string" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                                                            document                                                                            
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "short_string" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Short_String" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "another_short" }
+ { "_id" : { "$numberInt" : "10" }, "a" : "medium_prefix_string_alpha_end" }
+ { "_id" : { "$numberInt" : "11" }, "a" : "medium_prefix_string_beta_end" }
+ { "_id" : { "$numberInt" : "12" }, "a" : "Medium_Prefix_String_Alpha_End" }
+ { "_id" : { "$numberInt" : "30" }, "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut" }
+ { "_id" : { "$numberInt" : "31" }, "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_beta_suffix_after_cut" }
+ { "_id" : { "$numberInt" : "40" }, "a" : "prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end" }
+ { "_id" : { "$numberInt" : "41" }, "a" : "prefix_match_BBBB_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end" }
+(10 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$lte": "short_string" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=10 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
+         namespaceName: trunc_db.trunc_coll
+         indexName: idx_a_en_s1_trunc
+         indexKey: {"a": 1}
+         isMultiKey: false
+         hasTruncation: true
+         indexBounds: ["a": ["", "short_string"]]
+         ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=10 loops=1)
+               Index Cond: (document @<= '{ "a" : "short_string", "collation" : "en-u-ks-level1" }'::bson)
+(12 rows)
+
+-- 6b.3: $lt on long truncated string — should work correctly despite truncation
+SELECT document FROM bson_aggregation_find('trunc_db',
+  '{ "find": "trunc_coll", "filter": { "a": { "$lt": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_BBBB" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                                                                 document                                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "short_string" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Short_String" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "another_short" }
+ { "_id" : { "$numberInt" : "10" }, "a" : "medium_prefix_string_alpha_end" }
+ { "_id" : { "$numberInt" : "11" }, "a" : "medium_prefix_string_beta_end" }
+ { "_id" : { "$numberInt" : "12" }, "a" : "Medium_Prefix_String_Alpha_End" }
+ { "_id" : { "$numberInt" : "20" }, "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA" }
+ { "_id" : { "$numberInt" : "22" }, "a" : "This_Is_A_Long_String_That_Will_Definitely_Exceed_The_Index_Term_Truncation_Limit_And_The_Difference_Is_At_The_Very_End_AAAA" }
+ { "_id" : { "$numberInt" : "30" }, "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut" }
+ { "_id" : { "$numberInt" : "31" }, "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_beta_suffix_after_cut" }
+ { "_id" : { "$numberInt" : "40" }, "a" : "prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end" }
+ { "_id" : { "$numberInt" : "41" }, "a" : "prefix_match_BBBB_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end" }
+(12 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db',
+  '{ "find": "trunc_coll", "filter": { "a": { "$lt": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_BBBB" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                                   run_explain_and_trim                                                                                                   
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=12 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=12 loops=1)
+         namespaceName: trunc_db.trunc_coll
+         indexName: idx_a_en_s1_trunc
+         indexKey: {"a": 1}
+         isMultiKey: false
+         hasTruncation: true
+         indexBounds: ["a": ["", "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_BBBB")]
+         ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=12 loops=1)
+               Index Cond: (document @< '{ "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_BBBB", "collation" : "en-u-ks-level1" }'::bson)
+               Rows Removed by Index Recheck: 1
+(13 rows)
+
+-- 6b.4: $lte on long truncated string
+SELECT document FROM bson_aggregation_find('trunc_db',
+  '{ "find": "trunc_coll", "filter": { "a": { "$lte": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                                                                 document                                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "short_string" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Short_String" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "another_short" }
+ { "_id" : { "$numberInt" : "10" }, "a" : "medium_prefix_string_alpha_end" }
+ { "_id" : { "$numberInt" : "11" }, "a" : "medium_prefix_string_beta_end" }
+ { "_id" : { "$numberInt" : "12" }, "a" : "Medium_Prefix_String_Alpha_End" }
+ { "_id" : { "$numberInt" : "20" }, "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA" }
+ { "_id" : { "$numberInt" : "22" }, "a" : "This_Is_A_Long_String_That_Will_Definitely_Exceed_The_Index_Term_Truncation_Limit_And_The_Difference_Is_At_The_Very_End_AAAA" }
+ { "_id" : { "$numberInt" : "30" }, "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut" }
+ { "_id" : { "$numberInt" : "31" }, "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_beta_suffix_after_cut" }
+ { "_id" : { "$numberInt" : "40" }, "a" : "prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end" }
+ { "_id" : { "$numberInt" : "41" }, "a" : "prefix_match_BBBB_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end" }
+(12 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db',
+  '{ "find": "trunc_coll", "filter": { "a": { "$lte": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                                   run_explain_and_trim                                                                                                    
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=12 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=12 loops=1)
+         namespaceName: trunc_db.trunc_coll
+         indexName: idx_a_en_s1_trunc
+         indexKey: {"a": 1}
+         isMultiKey: false
+         hasTruncation: true
+         indexBounds: ["a": ["", "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA"]]
+         ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=12 loops=1)
+               Index Cond: (document @<= '{ "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", "collation" : "en-u-ks-level1" }'::bson)
+               Rows Removed by Index Recheck: 1
+(13 rows)
+
+-- 6b.5: $lt on boundary string — correctness with truncation at boundary
+SELECT document FROM bson_aggregation_find('trunc_db',
+  '{ "find": "trunc_coll", "filter": { "a": { "$lt": "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_beta_suffix_after_cut" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                                                    document                                                                     
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "another_short" }
+ { "_id" : { "$numberInt" : "30" }, "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut" }
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db',
+  '{ "find": "trunc_coll", "filter": { "a": { "$lt": "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_beta_suffix_after_cut" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                     run_explain_and_trim                                                                                      
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: trunc_db.trunc_coll
+         indexName: idx_a_en_s1_trunc
+         indexKey: {"a": 1}
+         isMultiKey: false
+         hasTruncation: true
+         indexBounds: ["a": ["", "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_beta_suffix_after_cut")]
+         ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=2 loops=1)
+               Index Cond: (document @< '{ "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_beta_suffix_after_cut", "collation" : "en-u-ks-level1" }'::bson)
+               Rows Removed by Index Recheck: 1
+(13 rows)
+
+-- 6b.6: $lte on boundary string
+SELECT document FROM bson_aggregation_find('trunc_db',
+  '{ "find": "trunc_coll", "filter": { "a": { "$lte": "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                                                    document                                                                     
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "another_short" }
+ { "_id" : { "$numberInt" : "30" }, "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut" }
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db',
+  '{ "find": "trunc_coll", "filter": { "a": { "$lte": "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                      run_explain_and_trim                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: trunc_db.trunc_coll
+         indexName: idx_a_en_s1_trunc
+         indexKey: {"a": 1}
+         isMultiKey: false
+         hasTruncation: true
+         indexBounds: ["a": ["", "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut"]]
+         ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=2 loops=1)
+               Index Cond: (document @<= '{ "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut", "collation" : "en-u-ks-level1" }'::bson)
+               Rows Removed by Index Recheck: 1
+(13 rows)
+
+-- 6b.7: $lt on prefix_match string — differs before truncation point
+SELECT document FROM bson_aggregation_find('trunc_db',
+  '{ "find": "trunc_coll", "filter": { "a": { "$lt": "prefix_match_BBBB_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                                                            document                                                                            
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "another_short" }
+ { "_id" : { "$numberInt" : "10" }, "a" : "medium_prefix_string_alpha_end" }
+ { "_id" : { "$numberInt" : "11" }, "a" : "medium_prefix_string_beta_end" }
+ { "_id" : { "$numberInt" : "12" }, "a" : "Medium_Prefix_String_Alpha_End" }
+ { "_id" : { "$numberInt" : "30" }, "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut" }
+ { "_id" : { "$numberInt" : "31" }, "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_beta_suffix_after_cut" }
+ { "_id" : { "$numberInt" : "40" }, "a" : "prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end" }
+(7 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db',
+  '{ "find": "trunc_coll", "filter": { "a": { "$lt": "prefix_match_BBBB_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                             run_explain_and_trim                                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=7 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
+         namespaceName: trunc_db.trunc_coll
+         indexName: idx_a_en_s1_trunc
+         indexKey: {"a": 1}
+         isMultiKey: false
+         hasTruncation: true
+         indexBounds: ["a": ["", "prefix_match_BBBB_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end")]
+         ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=7 loops=1)
+               Index Cond: (document @< '{ "a" : "prefix_match_BBBB_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end", "collation" : "en-u-ks-level1" }'::bson)
+               Rows Removed by Index Recheck: 1
+(13 rows)
+
+-- ======================================================================
 -- SECTION 7: $and combinations with truncated strings
 -- ======================================================================
 -- 7.1: $and $eq + $gt — both truncated strings
@@ -737,8 +983,8 @@ SELECT document FROM bson_aggregation_find('trunc_db',
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db',   '{ "find": "trunc_coll", "filter": { "a": { "$gte": "prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end", "$lte": "prefix_match_BBBB_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                              run_explain_and_trim                                                                                              
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                            
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
@@ -748,12 +994,10 @@ $cmd$);
          indexKey: {"a": 1}
          isMultiKey: false
          hasTruncation: true
-         indexBounds: ["a": ["prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end", { })]
+         indexBounds: ["a": ["prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end", "prefix_match_BBBB_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=2 loops=1)
-               Index Cond: (document @>= '{ "a" : "prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end", "collation" : "en-u-ks-level1" }'::bson)
-               Filter: (document @<= '{ "a" : "prefix_match_BBBB_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end", "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Filter: 5
-(14 rows)
+               Index Cond: ((document @>= '{ "a" : "prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end", "collation" : "en-u-ks-level1" }'::bson) AND (document @<= '{ "a" : "prefix_match_BBBB_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end", "collation" : "en-u-ks-level1" }'::bson))
+(12 rows)
 
 -- 7.3: $and $eq + $gte — short + truncated mix
 SELECT document FROM bson_aggregation_find('trunc_db',
