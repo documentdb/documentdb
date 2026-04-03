@@ -1931,7 +1931,7 @@ BsonRangeMatchFunctionId(void)
 {
 	int nargs = 2;
 	Oid argTypes[2] = { BsonTypeId(), BsonTypeId() };
-	bool missingOk = false;
+	bool missingOk = true;
 	return GetSchemaFunctionIdWithNargs(&Cache.BsonRangeMatchFunctionId,
 										ApiCatalogToApiInternalSchemaName,
 										"bson_dollar_range", nargs, argTypes,

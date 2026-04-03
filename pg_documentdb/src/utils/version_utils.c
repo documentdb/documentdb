@@ -104,6 +104,7 @@ bool
 IsClusterVersionAtleast(MajorVersion majorVersion, int minor, int patch)
 {
 	Assert(majorVersion <= MaxVersionAllowed);
+	Assert(majorVersion > DocDB_V0 || (majorVersion == DocDB_V0 && minor > 108));
 	ExtensionVersion version = RefreshCurrentVersion();
 
 	int major = majorVersion + FirstMajorVersionOffset;
