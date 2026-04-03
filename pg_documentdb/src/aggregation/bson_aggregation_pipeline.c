@@ -2031,16 +2031,6 @@ BuildAggregationCursorGetMoreQuery(text *database, pgbson *getMoreSpec,
 }
 
 
-inline static bool
-CanUseNewCountAggregates()
-{
-	return EnableNewCountAggregates &&
-		   (IsClusterVersionAtLeastPatch(DocDB_V0, 106, 2) ||
-			IsClusterVersionAtLeastPatch(DocDB_V0, 107, 1) ||
-			IsClusterVersionAtleast(DocDB_V0, 108, 0));
-}
-
-
 /*
  * Generates a query that is akin to $count command protocol.
  */
@@ -2245,7 +2235,7 @@ GenerateCountQuery(text *databaseDatum, pgbson *countSpec, bool setStatementTime
 		query = HandleCountCore(&countValue, query, &context, isCountCommand);
 	}
 
-	if (appendOkResult || !CanUseNewCountAggregates())
+	if (appendOkResult || !EnableNewCountAggregates)
 	{
 		/* Now add the "ok": 1 as an add fields stage. */
 		pgbson_writer addFieldsWriter;
@@ -4724,10 +4714,8 @@ HandleCountCore(const bson_value_t *existingValue, Query *query,
 							"The count field is not allowed to contain '.'.")));
 	}
 
-	bool useNewCountAggregates = CanUseNewCountAggregates();
-
 	/* if it is command count query we can just use BSONCOMMANDCOUNT and avoid the bson repath and build. */
-	bool useCommandCount = useNewCountAggregates && isCountCommand;
+	bool useCommandCount = EnableNewCountAggregates && isCountCommand;
 
 	/* Count requires the existing query to move to subquery */
 	query = MigrateQueryToSubQuery(query, context);
@@ -4741,7 +4729,7 @@ HandleCountCore(const bson_value_t *existingValue, Query *query,
 	parseState->p_next_resno = firstEntry->resno + 1;
 
 	Aggref *aggref = NULL;
-	if (useNewCountAggregates)
+	if (EnableNewCountAggregates)
 	{
 		Oid aggFuncId = useCommandCount ? BsonCommandCountAggregateFunctionOid()
 						: BsonCountAggregateFunctionOid();
@@ -5371,7 +5359,7 @@ AddSumGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 					   Expr *documentExpr, Expr *variableSpec, const
 					   char *collationString, Expr *groupIdExpr)
 {
-	bool canUseBsonCountAggregate = CanUseNewCountAggregates() &&
+	bool canUseBsonCountAggregate = EnableNewCountAggregates &&
 									IsA(groupIdExpr, Const);
 
 	bool useNewCountAggregate = false;
@@ -6214,7 +6202,7 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 				}
 			}
 
-			if (CanUseNewCountAggregates())
+			if (EnableNewCountAggregates)
 			{
 				/* Use the new BSONCOUNT aggregate. */
 				Expr *constValue = (Expr *) makeConst(INT4OID, -1, InvalidOid, 4,
@@ -7297,8 +7285,7 @@ GenerateBaseTableQuery(text *databaseDatum, const StringView *collectionNameView
 
 	/* Before applying the view stages, apply the hint on the base table */
 	if (collection != NULL && indexHint != NULL &&
-		indexHint->value_type != BSON_TYPE_EOD &&
-		IsClusterVersionAtleast(DocDB_V0, 106, 0))
+		indexHint->value_type != BSON_TYPE_EOD)
 	{
 		const char *indexName = NULL;
 		bool isSparse = false;
