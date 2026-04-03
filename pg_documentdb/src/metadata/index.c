@@ -2198,6 +2198,13 @@ RegisterIndexBuildBackgroundWorkerJobs(void)
 }
 
 
+char *
+GetIndexQueueTableName(void)
+{
+	return psprintf("%s_index_queue", ExtensionObjectPrefixV2);
+}
+
+
 /*
  * Returns the index queue name based on the cluster version.
  * The return value includes the schema name and the queue name.
@@ -2205,7 +2212,7 @@ RegisterIndexBuildBackgroundWorkerJobs(void)
 char *
 GetIndexQueueName(void)
 {
-	return psprintf("%s.%s_index_queue", ApiCatalogSchemaNameV2, ExtensionObjectPrefixV2);
+	return psprintf("%s.%s", ApiCatalogSchemaNameV2, GetIndexQueueTableName());
 }
 
 

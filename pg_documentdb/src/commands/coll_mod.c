@@ -698,13 +698,6 @@ ModifyIndexSpecsInCollection(const MongoCollection *collection,
 
 	if ((*specFlags & HAS_INDEX_OPTION_HIDDEN) == HAS_INDEX_OPTION_HIDDEN)
 	{
-		if (!ForceUpdateIndexInline && !IsClusterVersionAtleast(DocDB_V0, 108, 0) &&
-			!IsClusterVersionAtLeastPatch(DocDB_V0, 107, 2))
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
-							errmsg("hidden index option is not supported yet")));
-		}
-
 		if (!isIndexValid)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
