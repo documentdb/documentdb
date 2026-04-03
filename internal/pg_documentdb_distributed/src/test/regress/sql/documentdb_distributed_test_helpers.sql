@@ -262,6 +262,10 @@ BEGIN
           -- Background index builds can take longer on slower CI runners.
           -- Allow up to 60 seconds before treating the build as hung.
           IF attempt_count >= max_attempts THEN
+            SELECT string_agg(index_cmd || index_cmd_status || comment || attempt || update_time, ',') into index_cmd_stored FROM documentdb_api_catalog.documentdb_index_queue;
+            RAISE INFO 'Index Queue Commands: %', index_cmd_stored;
+            SELECT string_agg(index_id || ':' || collection_id || ':' || index_is_valid, ',') into index_cmd_stored FROM documentdb_api_catalog.collection_indexes;
+            RAISE INFO 'Collection Indexes: %', index_cmd_stored;
             RAISE EXCEPTION 'Waited too long for index build to complete. Last response from check_build_index_status: %', check_build_index_status;
           END IF;
           PERFORM pg_sleep_for('100 ms');
