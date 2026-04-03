@@ -1,4 +1,5 @@
 ### documentdb v0.112-0 (Unreleased) ###
+* Support collation with non-unique ordered indexes with $lt, $lte. Requires `EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
 
 ### documentdb v0.111-0 (Unreleased) ###
 * Add init background job infrastructure for running one time C callback initialization tasks before the periodic job loop. Guarded by `enableBackgroundWorkerInitJobs` feature flag *[Feature]*
