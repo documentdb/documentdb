@@ -66,7 +66,7 @@ static void FailIfQueryPathHasDigitsForWildcard(Datum query, bytea *options);
 
 static bool IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 											const char *queryCollation, BsonIndexStrategy
-											strategy);
+											strategy, bson_type_t queryValueType);
 
 extern Datum gin_bson_exclusion_pre_consistent(PG_FUNCTION_ARGS);
 extern uint32_t MaxWildcardIndexKeySize;
@@ -991,7 +991,8 @@ ValidateIndexForQualifierElement(bytea *indexOptions, pgbsonelement *filterEleme
 
 		case IndexOptionsType_Composite:
 		{
-			if (!IsCollationApplicableToStrategy(options, queryCollation, strategy))
+			if (!IsCollationApplicableToStrategy(options, queryCollation, strategy,
+												 filterElement->bsonValue.value_type))
 			{
 				traverse = IndexTraverse_Invalid;
 				break;
@@ -1629,7 +1630,8 @@ FillWildcardProjectPathSpec(const char *prefix, void *buffer)
  */
 static bool
 IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
-								const char *queryCollation, BsonIndexStrategy strategy)
+								const char *queryCollation, BsonIndexStrategy strategy,
+								bson_type_t queryValueType)
 {
 	uint32_t indexCollationLength = 0;
 	const char *indexCollation = NULL;
@@ -1641,7 +1643,7 @@ IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 
 	if (!EnableCollationWithNonUniqueOrderedIndexes)
 	{
-		/* Reject if either query or index has collation  */
+		/* Reject if either query or index has collation */
 		return !queryHasCollation && !indexHasCollation;
 	}
 
@@ -1651,32 +1653,97 @@ IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 		return true;
 	}
 
-	/* If one has collation and the other doesn't, they don't match */
-	if (indexHasCollation != queryHasCollation)
-	{
-		return false;
-	}
+	/*
+	 * Check whether the strategy can use this collated index.
+	 */
+	bool collationsMatch = (indexHasCollation == queryHasCollation) &&
+						   (!indexHasCollation ||
+							strcmp(indexCollation, queryCollation) == 0);
 
-	/* Both have collation - check they match */
-	if (strcmp(indexCollation, queryCollation) != 0)
-	{
-		return false;
-	}
-
-	/* Collations match - only support eq, gt, gte strategies for now */
 	switch (strategy)
 	{
-		/* Equality strategies - check collation equality */
-		case BSON_INDEX_STRATEGY_DOLLAR_EQUAL:
-		case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
-		case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
+		/*
+		 * Collation-insensitive operators — safe to push down regardless
+		 * of whether collations match.
+		 */
+		case BSON_INDEX_STRATEGY_DOLLAR_EXISTS:
+		case BSON_INDEX_STRATEGY_DOLLAR_SIZE:
+		case BSON_INDEX_STRATEGY_DOLLAR_TYPE:
+		case BSON_INDEX_STRATEGY_DOLLAR_BITS_ALL_CLEAR:
+		case BSON_INDEX_STRATEGY_DOLLAR_BITS_ANY_CLEAR:
+		case BSON_INDEX_STRATEGY_DOLLAR_BITS_ALL_SET:
+		case BSON_INDEX_STRATEGY_DOLLAR_BITS_ANY_SET:
+		case BSON_INDEX_STRATEGY_DOLLAR_MOD:
 		{
 			return true;
 		}
 
+		/* Collation-sensitive comparison operators */
+		case BSON_INDEX_STRATEGY_DOLLAR_EQUAL:
+		case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
+		case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
+		{
+			if (queryValueType == BSON_TYPE_MINKEY)
+			{
+				return true;
+			}
+
+			return collationsMatch;
+		}
+
+		/* TODO (COLLATION): $lt/$lte */
+		case BSON_INDEX_STRATEGY_DOLLAR_LESS:
+		case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
+		{
+			if (queryValueType == BSON_TYPE_MAXKEY)
+			{
+				return true;
+			}
+
+			return false;
+		}
+
+		/*
+		 * $regex is not collation-aware.
+		 * TODO (COLLATION): Consider creating bounds (eg: [>= "", < MaxString]).
+		 */
+		case BSON_INDEX_STRATEGY_DOLLAR_REGEX:
+		{
+			return false;
+		}
+
+		/* Geo operators — not supported */
+		case BSON_INDEX_STRATEGY_DOLLAR_GEOWITHIN:
+		case BSON_INDEX_STRATEGY_DOLLAR_GEOINTERSECTS:
+		case BSON_INDEX_STRATEGY_GEONEAR:
+		case BSON_INDEX_STRATEGY_GEONEAR_RANGE:
+		{
+			return false;
+		}
+
+		/* Skip index pushdown */
+		case BSON_INDEX_STRATEGY_DOLLAR_IN:
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_EQUAL:
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_IN:
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_GT:
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_GTE:
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_LT:
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_LTE:
+		case BSON_INDEX_STRATEGY_DOLLAR_ELEMMATCH:
+		case BSON_INDEX_STRATEGY_DOLLAR_ALL:
+		case BSON_INDEX_STRATEGY_DOLLAR_RANGE:
+		case BSON_INDEX_STRATEGY_UNIQUE_EQUAL:
+		case BSON_INDEX_STRATEGY_DOLLAR_TEXT:
+		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY:
+		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE:
+		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_INDEXTERM:
+		case BSON_INDEX_STRATEGY_COMPOSITE_QUERY:
+		case BSON_INDEX_STRATEGY_IS_MULTIKEY:
+		case BSON_INDEX_STRATEGY_HAS_TRUNCATED_TERMS:
+		case BSON_INDEX_STRATEGY_HAS_CORRELATED_REDUCED_TERMS:
+		case BSON_INDEX_STRATEGY_INVALID:
 		default:
 		{
-			/* TODO (COLLATION): compare query and index collations */
 			return false;
 		}
 	}
