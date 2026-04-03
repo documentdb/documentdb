@@ -4,11 +4,13 @@ RETURNS void
 AS $$
 DECLARE
     job_id integer;
+    index_row_stored text;
 BEGIN
     FOR job_id IN (SELECT jobid FROM cron.job WHERE jobname LIKE 'documentdb_index_%' order by jobid)
     LOOP
         UPDATE cron.job SET active = active_status WHERE jobid = job_id;
-        RAISE NOTICE 'Processing job_id: %', job_id;
+        SELECT row_to_json(ROW(jobid,schedule,command,active,jobname))::text into index_row_stored FROM cron.job WHERE jobid = job_id;
+        RAISE INFO 'Processing job_id: % state: %', job_id, index_row_stored;
     END LOOP;
 END;
 $$
