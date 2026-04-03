@@ -291,6 +291,31 @@ $cmd$);
                Index Cond: (document @= '{ "a" : { "$numberInt" : "42" }, "collation" : "en-u-ks-level1" }'::bson)
 (11 rows)
 
+-- 2.6b: $eq with numeric value and mismatched collation — index SHOULD be used (non-string type)
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$eq": 42 } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
+                             document                              
+-------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "9" }, "a" : { "$numberInt" : "42" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$eq": 42 } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=1 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [42, 42]]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=1 loops=1)
+               Index Cond: (document @= '{ "a" : { "$numberInt" : "42" }, "collation" : "de-u-ks-level1" }'::bson)
+(11 rows)
+
 -- 2.7: $eq with null value and matching collation — index SHOULD be used
 SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$eq": null } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                     document                     
@@ -367,7 +392,7 @@ $cmd$);
 (11 rows)
 
 -- ======================================================================
--- SECTION 3: $gt, $gte — range operators (enabled for collation)
+-- SECTION 3: $gt, $gte — range operators
 -- ======================================================================
 -- 3.1: $gt with matching collation — index SHOULD be used
 SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$gt": "banana" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -497,8 +522,356 @@ $cmd$);
                Index Cond: (document @> '{ "a" : { "$numberInt" : "10" }, "collation" : "en-u-ks-level1" }'::bson)
 (11 rows)
 
+-- 3.5b: $gt with numeric value and mismatched collation — index SHOULD be used (non-string type)
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$gt": 10 } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
+                             document                              
+-------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "9" }, "a" : { "$numberInt" : "42" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$gt": 10 } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=1 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (10, Infinity]]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=1 loops=1)
+               Index Cond: (document @> '{ "a" : { "$numberInt" : "10" }, "collation" : "de-u-ks-level1" }'::bson)
+(11 rows)
+
+-- 3.6: $gt "BANANA" case-insensitive at strength=1
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$gt": "BANANA" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "cherry" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "Cherry" }
+ { "_id" : { "$numberInt" : "7" }, "a" : "date" }
+ { "_id" : { "$numberInt" : "8" }, "a" : "Date" }
+(4 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$gt": "BANANA" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=4 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ("BANANA", { })]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=4 loops=1)
+               Index Cond: (document @> '{ "a" : "BANANA", "collation" : "en-u-ks-level1" }'::bson)
+(11 rows)
+
+-- 3.7: $gte "CHERRY" case-insensitive at strength=1
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$gte": "CHERRY" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "cherry" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "Cherry" }
+ { "_id" : { "$numberInt" : "7" }, "a" : "date" }
+ { "_id" : { "$numberInt" : "8" }, "a" : "Date" }
+(4 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$gte": "CHERRY" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=4 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["CHERRY", { })]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=4 loops=1)
+               Index Cond: (document @>= '{ "a" : "CHERRY", "collation" : "en-u-ks-level1" }'::bson)
+(11 rows)
+
 -- ======================================================================
--- SECTION 4: Combinations of $eq, $gt, $gte — $and and compound index
+-- SECTION 3b: $lt, $lte — range operators
+-- ======================================================================
+-- 3b.1: $lt with matching collation — index SHOULD be used
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lt": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "BANANA" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "banana" }
+(4 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lt": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=4 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["", "cherry")]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=4 loops=1)
+               Index Cond: (document @< '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
+(11 rows)
+
+-- 3b.2: $lte with matching collation — index SHOULD be used
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lte": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "BANANA" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "banana" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "cherry" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "Cherry" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lte": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=6 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["", "cherry"]]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=6 loops=1)
+               Index Cond: (document @<= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
+(11 rows)
+
+-- 3b.3: $lt with no collation — index should NOT be used
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lt": "cherry" } }, "sort": { "_id": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "BANANA" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "banana" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "Cherry" }
+ { "_id" : { "$numberInt" : "8" }, "a" : "Date" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lt": "cherry" } }, "sort": { "_id": 1 } }')
+$cmd$);
+                            run_explain_and_trim                            
+----------------------------------------------------------------------------
+ Index Scan using _id_ on documents_2301 collection (actual rows=6 loops=1)
+   Index Cond: (shard_key_value = '2301'::bigint)
+   Filter: (document @< '{ "a" : "cherry" }'::bson)
+   Rows Removed by Filter: 4
+(4 rows)
+
+-- 3b.4: $lte with different locale — index should NOT be used
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lte": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "BANANA" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "banana" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "cherry" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "Cherry" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lte": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=6 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Index Scan using _id_ on documents_2301 collection (actual rows=6 loops=1)
+         Index Cond: (shard_key_value = '2301'::bigint)
+         Filter: (document @<= '{ "a" : "cherry", "collation" : "de-u-ks-level1" }'::bson)
+         Rows Removed by Filter: 4
+(7 rows)
+
+-- 3b.5: $lt with numeric value and matching collation — index SHOULD be used
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lt": 100 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                             document                              
+-------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "9" }, "a" : { "$numberInt" : "42" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lt": 100 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=1 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [-Infinity, 100)]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=1 loops=1)
+               Index Cond: (document @< '{ "a" : { "$numberInt" : "100" }, "collation" : "en-u-ks-level1" }'::bson)
+(11 rows)
+
+-- 3b.5b: $lt with numeric value and mismatched collation — index SHOULD be used (non-string type)
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lt": 100 } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
+                             document                              
+-------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "9" }, "a" : { "$numberInt" : "42" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lt": 100 } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=1 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [-Infinity, 100)]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=1 loops=1)
+               Index Cond: (document @< '{ "a" : { "$numberInt" : "100" }, "collation" : "de-u-ks-level1" }'::bson)
+(11 rows)
+
+-- 3b.5c: $lte with numeric value and mismatched collation — index SHOULD be used (non-string type)
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lte": 42 } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
+                             document                              
+-------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "9" }, "a" : { "$numberInt" : "42" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lte": 42 } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=1 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [-Infinity, 42]]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=1 loops=1)
+               Index Cond: (document @<= '{ "a" : { "$numberInt" : "42" }, "collation" : "de-u-ks-level1" }'::bson)
+(11 rows)
+
+-- 3b.6: $lte case-insensitive at strength=1 — "banana" matches "banana" and "BANANA"
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lte": "banana" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "BANANA" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "banana" }
+(4 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lte": "banana" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=4 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["", "banana"]]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=4 loops=1)
+               Index Cond: (document @<= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
+(11 rows)
+
+-- 3b.6b: $lte "Cherry" case-insensitive at strength=1
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lte": "Cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "BANANA" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "banana" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "cherry" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "Cherry" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lte": "Cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=6 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["", "Cherry"]]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=6 loops=1)
+               Index Cond: (document @<= '{ "a" : "Cherry", "collation" : "en-u-ks-level1" }'::bson)
+(11 rows)
+
+-- 3b.7: $lt with null value and matching collation — index SHOULD be used
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lt": null } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+ document 
+----------
+(0 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lt": null } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=0 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [null, null)]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=0 loops=1)
+               Index Cond: (document @< '{ "a" : null, "collation" : "en-u-ks-level1" }'::bson)
+(11 rows)
+
+-- ======================================================================
+-- SECTION 4: Combinations — $and and compound index
 -- ======================================================================
 -- 4.1: $and with two $eq conditions — both should push down
 SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$eq": "apple" } }, { "a": { "$eq": "Apple" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -578,7 +951,7 @@ $cmd$);
                Index Cond: ((document @= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document @>= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson))
 (11 rows)
 
--- 4.4: $and with $gt + $lt range — $gt pushes down; $lt becomes filter
+-- 4.4: $and with $gt + $lt range — both push down with matching collation
 SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$gt": "apple" } }, { "a": { "$lt": "date" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                       document                      
 ----------------------------------------------------
@@ -591,8 +964,8 @@ SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_fie
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$gt": "apple" } }, { "a": { "$lt": "date" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                              run_explain_and_trim                                                                              
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
@@ -601,14 +974,12 @@ $cmd$);
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
          isMultiKey: false
-         indexBounds: ["a": ("apple", { })]
+         indexBounds: ["a": ("apple", "date")]
          ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=4 loops=1)
-               Index Cond: (document @> '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson)
-               Filter: (document @< '{ "a" : "date", "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Filter: 2
-(13 rows)
+               Index Cond: ((document @> '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson) AND (document @< '{ "a" : "date", "collation" : "en-u-ks-level1" }'::bson))
+(11 rows)
 
--- 4.5: $and with $gte + $lte range — $gte pushes down; $lte becomes filter
+-- 4.5: $and with $gte + $lte range — both push down with matching collation
 SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$gte": "banana" } }, { "a": { "$lte": "cherry" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                       document                      
 ----------------------------------------------------
@@ -621,8 +992,8 @@ SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_fie
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$gte": "banana" } }, { "a": { "$lte": "cherry" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                run_explain_and_trim                                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
@@ -631,14 +1002,12 @@ $cmd$);
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
          isMultiKey: false
-         indexBounds: ["a": ["banana", { })]
+         indexBounds: ["a": ["banana", "cherry"]]
          ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=4 loops=1)
-               Index Cond: (document @>= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
-               Filter: (document @<= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Filter: 2
-(13 rows)
+               Index Cond: ((document @>= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson) AND (document @<= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson))
+(11 rows)
 
--- 4.6: Implicit $and — $gt pushes down; $lt becomes filter
+-- 4.6: Implicit $and — $gt + $lt both push down
 SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$gt": "apple", "$lt": "date" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                       document                      
 ----------------------------------------------------
@@ -651,8 +1020,8 @@ SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_fie
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$gt": "apple", "$lt": "date" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                              run_explain_and_trim                                                                              
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
@@ -661,14 +1030,12 @@ $cmd$);
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
          isMultiKey: false
-         indexBounds: ["a": ("apple", { })]
+         indexBounds: ["a": ("apple", "date")]
          ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=4 loops=1)
-               Index Cond: (document @> '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson)
-               Filter: (document @< '{ "a" : "date", "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Filter: 2
-(13 rows)
+               Index Cond: ((document @> '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson) AND (document @< '{ "a" : "date", "collation" : "en-u-ks-level1" }'::bson))
+(11 rows)
 
--- 4.7: Implicit $and with $gte + $lte — $gte pushes down; $lte becomes filter
+-- 4.7: Implicit $and with $gte + $lte — both push down
 SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$gte": "banana", "$lte": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                       document                      
 ----------------------------------------------------
@@ -681,8 +1048,8 @@ SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_fie
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$gte": "banana", "$lte": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                run_explain_and_trim                                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
@@ -691,12 +1058,10 @@ $cmd$);
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
          isMultiKey: false
-         indexBounds: ["a": ["banana", { })]
+         indexBounds: ["a": ["banana", "cherry"]]
          ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=4 loops=1)
-               Index Cond: (document @>= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
-               Filter: (document @<= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Filter: 2
-(13 rows)
+               Index Cond: ((document @>= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson) AND (document @<= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson))
+(11 rows)
 
 -- 4.8: $and with $eq + $gt — no collation — index should NOT be used
 SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$eq": "banana" } }, { "a": { "$gt": "apple" } } ] }, "sort": { "_id": 1 } }');
@@ -911,6 +1276,295 @@ $cmd$);
          indexBounds: ["a": ["DOG", "DOG"], "b": (10, Infinity]]
          ->  Index Scan using idx_ab_en_s1 on documents_2302 collection (actual rows=1 loops=1)
                Index Cond: ((document @= '{ "a" : "DOG", "collation" : "en-u-ks-level1" }'::bson) AND (document @> '{ "b" : { "$numberInt" : "10" }, "collation" : "en-u-ks-level1" }'::bson))
+(11 rows)
+
+-- 4.17: $and with $eq + $lt — both can push down with matching collation
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$eq": "banana" } }, { "a": { "$lt": "cherry" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "BANANA" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "banana" }
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$eq": "banana" } }, { "a": { "$lt": "cherry" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                               run_explain_and_trim                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["banana", "banana"]]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=2 loops=1)
+               Index Cond: ((document @= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson) AND (document @< '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson))
+(11 rows)
+
+-- 4.18: $and with $eq + $lte — both can push down
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$eq": "apple" } }, { "a": { "$lte": "banana" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                     document                      
+---------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$eq": "apple" } }, { "a": { "$lte": "banana" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                               run_explain_and_trim                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["apple", "apple"]]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=2 loops=1)
+               Index Cond: ((document @= '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson) AND (document @<= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson))
+(11 rows)
+
+-- 4.19: Compound: $lt on first key — matching collation — index SHOULD be used
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "compound_field", "filter": { "a": { "$lt": "dog" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                    document                                     
+---------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "Cat", "b" : { "$numberInt" : "30" } }
+ { "_id" : { "$numberInt" : "4" }, "a" : "cat", "b" : { "$numberInt" : "40" } }
+ { "_id" : { "$numberInt" : "5" }, "a" : "Bird", "b" : { "$numberInt" : "50" } }
+ { "_id" : { "$numberInt" : "6" }, "a" : "bird", "b" : { "$numberInt" : "60" } }
+(4 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "compound_field", "filter": { "a": { "$lt": "dog" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=4 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+         namespaceName: coll_idx_db.compound_field
+         indexName: idx_ab_en_s1
+         indexKey: {"a": 1,"b": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["", "dog"), "b": (MinKey, MaxKey)]
+         ->  Index Scan using idx_ab_en_s1 on documents_2302 collection (actual rows=4 loops=1)
+               Index Cond: (document @< '{ "a" : "dog", "collation" : "en-u-ks-level1" }'::bson)
+(11 rows)
+
+-- 4.20: Compound: $lte on first key — matching collation — index SHOULD be used
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "compound_field", "filter": { "a": { "$lte": "cat" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                    document                                     
+---------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "Cat", "b" : { "$numberInt" : "30" } }
+ { "_id" : { "$numberInt" : "4" }, "a" : "cat", "b" : { "$numberInt" : "40" } }
+ { "_id" : { "$numberInt" : "5" }, "a" : "Bird", "b" : { "$numberInt" : "50" } }
+ { "_id" : { "$numberInt" : "6" }, "a" : "bird", "b" : { "$numberInt" : "60" } }
+(4 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "compound_field", "filter": { "a": { "$lte": "cat" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=4 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+         namespaceName: coll_idx_db.compound_field
+         indexName: idx_ab_en_s1
+         indexKey: {"a": 1,"b": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["", "cat"], "b": (MinKey, MaxKey)]
+         ->  Index Scan using idx_ab_en_s1 on documents_2302 collection (actual rows=4 loops=1)
+               Index Cond: (document @<= '{ "a" : "cat", "collation" : "en-u-ks-level1" }'::bson)
+(11 rows)
+
+-- 4.21: Compound: $eq on "a" + $lt on "b" — matching collation — both push down
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "compound_field", "filter": { "a": { "$eq": "dog" }, "b": { "$lt": 20 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                    document                                    
+--------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "DOG", "b" : { "$numberInt" : "10" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "compound_field", "filter": { "a": { "$eq": "dog" }, "b": { "$lt": 20 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                     run_explain_and_trim                                                                                      
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=1 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+         namespaceName: coll_idx_db.compound_field
+         indexName: idx_ab_en_s1
+         indexKey: {"a": 1,"b": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["dog", "dog"], "b": [-Infinity, 20)]
+         ->  Index Scan using idx_ab_en_s1 on documents_2302 collection (actual rows=1 loops=1)
+               Index Cond: ((document @= '{ "a" : "dog", "collation" : "en-u-ks-level1" }'::bson) AND (document @< '{ "b" : { "$numberInt" : "20" }, "collation" : "en-u-ks-level1" }'::bson))
+(11 rows)
+
+-- 4.22: Compound: $eq on "a" + $lte on "b" — matching collation — both push down
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "compound_field", "filter": { "a": { "$eq": "cat" }, "b": { "$lte": 40 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                    document                                    
+--------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "Cat", "b" : { "$numberInt" : "30" } }
+ { "_id" : { "$numberInt" : "4" }, "a" : "cat", "b" : { "$numberInt" : "40" } }
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "compound_field", "filter": { "a": { "$eq": "cat" }, "b": { "$lte": 40 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                      run_explain_and_trim                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: coll_idx_db.compound_field
+         indexName: idx_ab_en_s1
+         indexKey: {"a": 1,"b": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["cat", "cat"], "b": [-Infinity, 40]]
+         ->  Index Scan using idx_ab_en_s1 on documents_2302 collection (actual rows=2 loops=1)
+               Index Cond: ((document @= '{ "a" : "cat", "collation" : "en-u-ks-level1" }'::bson) AND (document @<= '{ "b" : { "$numberInt" : "40" }, "collation" : "en-u-ks-level1" }'::bson))
+(11 rows)
+
+-- 4.23: $lte "banana" AND $gt "CHERRY" — case-insensitive at strength=1
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$lte": "banana" } }, { "a": { "$gt": "CHERRY" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+ document 
+----------
+(0 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$lte": "banana" } }, { "a": { "$gt": "CHERRY" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                run_explain_and_trim                                                                                
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=0 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ("CHERRY", "banana"]]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=0 loops=1)
+               Index Cond: ((document @<= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson) AND (document @> '{ "a" : "CHERRY", "collation" : "en-u-ks-level1" }'::bson))
+(11 rows)
+
+-- 4.24: $eq "banana" AND $gt "CHERRY" — case-insensitive at strength=1
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$eq": "banana" } }, { "a": { "$gt": "CHERRY" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+ document 
+----------
+(0 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$eq": "banana" } }, { "a": { "$gt": "CHERRY" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                               run_explain_and_trim                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=0 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ("CHERRY", "banana"]]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=0 loops=1)
+               Index Cond: ((document @= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson) AND (document @> '{ "a" : "CHERRY", "collation" : "en-u-ks-level1" }'::bson))
+(11 rows)
+
+-- 4.25: Compound: $lte on "a" + $lt on "b" — range on both keys
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "compound_field", "filter": { "a": { "$lte": "cat" }, "b": { "$lt": 50 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                    document                                    
+--------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "Cat", "b" : { "$numberInt" : "30" } }
+ { "_id" : { "$numberInt" : "4" }, "a" : "cat", "b" : { "$numberInt" : "40" } }
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "compound_field", "filter": { "a": { "$lte": "cat" }, "b": { "$lt": 50 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                      run_explain_and_trim                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: coll_idx_db.compound_field
+         indexName: idx_ab_en_s1
+         indexKey: {"a": 1,"b": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["", "cat"], "b": [-Infinity, 50)]
+         ->  Index Scan using idx_ab_en_s1 on documents_2302 collection (actual rows=2 loops=1)
+               Index Cond: ((document @<= '{ "a" : "cat", "collation" : "en-u-ks-level1" }'::bson) AND (document @< '{ "b" : { "$numberInt" : "50" }, "collation" : "en-u-ks-level1" }'::bson))
+(11 rows)
+
+-- 4.26: $lt on "a" AND $lte on "a" — both string ranges at strength=1
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$lt": "date" } }, { "a": { "$lte": "CHERRY" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "BANANA" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "banana" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "cherry" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "Cherry" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$lt": "date" } }, { "a": { "$lte": "CHERRY" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                               run_explain_and_trim                                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=6 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["", "CHERRY"]]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=6 loops=1)
+               Index Cond: ((document @< '{ "a" : "date", "collation" : "en-u-ks-level1" }'::bson) AND (document @<= '{ "a" : "CHERRY", "collation" : "en-u-ks-level1" }'::bson))
+(11 rows)
+
+-- 4.27: $gt "bAnAnA" AND $lte "chErRy" — mixed-case range at strength=1
+SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$gt": "bAnAnA" } }, { "a": { "$lte": "chErRy" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "cherry" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "Cherry" }
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$gt": "bAnAnA" } }, { "a": { "$lte": "chErRy" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                run_explain_and_trim                                                                                
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ("bAnAnA", "chErRy"]]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=2 loops=1)
+               Index Cond: ((document @> '{ "a" : "bAnAnA", "collation" : "en-u-ks-level1" }'::bson) AND (document @<= '{ "a" : "chErRy", "collation" : "en-u-ks-level1" }'::bson))
 (11 rows)
 
 -- ======================================================================
@@ -1222,6 +1876,62 @@ $cmd$);
          indexBounds: ["a": ["cherry", "cherry"]]
          ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=2 loops=1)
                Index Cond: (document @= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
+(11 rows)
+
+-- 6.5: $match with $lt — matching collation — index SHOULD be used
+SELECT document FROM bson_aggregation_pipeline('coll_idx_db', '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$lt": "cherry" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "BANANA" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "banana" }
+(4 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('coll_idx_db', '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$lt": "cherry" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=4 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["", "cherry")]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=4 loops=1)
+               Index Cond: (document @< '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
+(11 rows)
+
+-- 6.6: $match with $lte — matching collation — index SHOULD be used
+SELECT document FROM bson_aggregation_pipeline('coll_idx_db', '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$lte": "banana" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "BANANA" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "banana" }
+(4 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('coll_idx_db', '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$lte": "banana" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=4 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+         namespaceName: coll_idx_db.single_field
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["", "banana"]]
+         ->  Index Scan using idx_a_en_s1 on documents_2301 collection (actual rows=4 loops=1)
+               Index Cond: (document @<= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
 (11 rows)
 
 -- ======================================================================
@@ -2099,57 +2809,7 @@ $cmd$);
 -- ======================================================================
 -- SECTION 10: Unsupported operators — single test each to confirm NOT used
 -- ======================================================================
--- 10.1: $lt with matching collation — index should NOT be used
-SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lt": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
-                      document                      
-----------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
- { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
- { "_id" : { "$numberInt" : "3" }, "a" : "BANANA" }
- { "_id" : { "$numberInt" : "4" }, "a" : "banana" }
-(4 rows)
-
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lt": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
-$cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=4 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Index Scan using _id_ on documents_2301 collection (actual rows=4 loops=1)
-         Index Cond: (shard_key_value = '2301'::bigint)
-         Filter: (document @< '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-         Rows Removed by Filter: 6
-(7 rows)
-
--- 10.2: $lte with matching collation — index should NOT be used
-SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lte": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
-                      document                      
-----------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
- { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
- { "_id" : { "$numberInt" : "3" }, "a" : "BANANA" }
- { "_id" : { "$numberInt" : "4" }, "a" : "banana" }
- { "_id" : { "$numberInt" : "5" }, "a" : "cherry" }
- { "_id" : { "$numberInt" : "6" }, "a" : "Cherry" }
-(6 rows)
-
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$lte": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
-$cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=6 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Index Scan using _id_ on documents_2301 collection (actual rows=6 loops=1)
-         Index Cond: (shard_key_value = '2301'::bigint)
-         Filter: (document @<= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-         Rows Removed by Filter: 4
-(7 rows)
-
--- 10.3: $ne with matching collation — index should NOT be used
+-- 10.1: $ne with matching collation — index should NOT be used
 SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$ne": "apple" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                              document                              
 -------------------------------------------------------------------
@@ -2177,7 +2837,7 @@ $cmd$);
          Rows Removed by Filter: 2
 (7 rows)
 
--- 10.4: $in with matching collation — index should NOT be used
+-- 10.2: $in with matching collation — index should NOT be used
 SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$in": ["apple", "BANANA"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                       document                      
 ----------------------------------------------------
@@ -2201,7 +2861,7 @@ $cmd$);
          Rows Removed by Filter: 6
 (7 rows)
 
--- 10.5: $nin with matching collation — index should NOT be used
+-- 10.3: $nin with matching collation — index should NOT be used
 SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$nin": ["apple", "banana"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                              document                              
 -------------------------------------------------------------------
@@ -2227,7 +2887,7 @@ $cmd$);
          Rows Removed by Filter: 4
 (7 rows)
 
--- 10.6: $regex — collation is ignored for regex operations
+-- 10.4: $regex — collation is ignored for regex operations
 SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$regex": "^app" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                      document                      
 ---------------------------------------------------
@@ -2248,7 +2908,7 @@ $cmd$);
          Rows Removed by Filter: 9
 (7 rows)
 
--- 10.7: $all with matching collation — $all decomposes to $eq which IS pushed down
+-- 10.5: $all with matching collation — $all decomposes to $eq which IS pushed down
 SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$all": ["apple", "APPLE"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                      document                      
 ---------------------------------------------------
@@ -2274,7 +2934,7 @@ $cmd$);
                Index Cond: ((document @= '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson) AND (document @= '{ "a" : "APPLE", "collation" : "en-u-ks-level1" }'::bson))
 (11 rows)
 
--- 10.8: $exists with matching collation
+-- 10.6: $exists with matching collation
 SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$exists": true } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                              document                              
 -------------------------------------------------------------------
@@ -2308,7 +2968,7 @@ $cmd$);
                Index Cond: (document @>= '{ "a" : { "$minKey" : 1 }, "collation" : "en-u-ks-level1" }'::bson)
 (11 rows)
 
--- 10.9: $type with matching collation
+-- 10.7: $type with matching collation
 SELECT document FROM bson_aggregation_find('coll_idx_db', '{ "find": "single_field", "filter": { "a": { "$type": "string" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                       document                      
 ----------------------------------------------------
@@ -2340,7 +3000,7 @@ $cmd$);
                Index Cond: (document @# '{ "a" : "string", "collation" : "en-u-ks-level1" }'::bson)
 (11 rows)
 
--- 10.10: $or with matching collation — index should NOT be used
+-- 10.8: $or with matching collation — index should NOT be used
 SELECT document FROM bson_aggregation_pipeline('coll_idx_db', '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "$or": [ { "a": { "$eq": "apple" } }, { "a": { "$eq": "banana" } } ] } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
                       document                      
 ----------------------------------------------------
