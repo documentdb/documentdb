@@ -16,6 +16,7 @@
 #include "lib/stringinfo.h"
 #include "access/xact.h"
 #include "utils/syscache.h"
+#include "utils/lsyscache.h"
 #include "nodes/makefuncs.h"
 #include "catalog/namespace.h"
 
@@ -170,9 +171,17 @@ command_drop_collection(PG_FUNCTION_ARGS)
 	DeleteAllCollectionIndexRecords(collection->collectionId);
 
 	bool tableExists = false;
-	if (IsClusterVersionAtleast(DocDB_V0, 12, 0))
+	const char *tableName = GetIndexQueueTableName();
+
+	bool missingOk = true;
+	Oid namespaceOid = get_namespace_oid(ApiCatalogSchemaNameV2, missingOk);
+	if (namespaceOid != InvalidOid)
 	{
-		tableExists = true;
+		Oid tableOid = get_relname_relid(tableName, namespaceOid);
+		if (tableOid != InvalidOid)
+		{
+			tableExists = true;
+		}
 	}
 
 	if (tableExists)
