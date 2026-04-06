@@ -33,6 +33,16 @@ mkdir -p /var/lib/documentdb
 chown documentdb:documentdb /var/lib/documentdb
 exit 0
 
+%post
+if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+systemctl daemon-reload
+fi
+
+%postun
+if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+systemctl daemon-reload
+fi
+
 %files
 %defattr(-,root,root,-)
 /usr/bin/documentdb_gateway
