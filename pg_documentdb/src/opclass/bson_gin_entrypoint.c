@@ -1680,23 +1680,13 @@ IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 
 		/* Collation-sensitive comparison operators */
 		case BSON_INDEX_STRATEGY_DOLLAR_EQUAL:
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_EQUAL:
 		case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
 		case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
-		{
-			if (queryValueType == BSON_TYPE_MINKEY ||
-				!IsBsonTypeCollationAware(queryValueType))
-			{
-				return true;
-			}
-
-			return collationsMatch;
-		}
-
 		case BSON_INDEX_STRATEGY_DOLLAR_LESS:
 		case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
 		{
-			if (queryValueType == BSON_TYPE_MAXKEY ||
-				!IsBsonTypeCollationAware(queryValueType))
+			if (!IsBsonTypeCollationAware(queryValueType))
 			{
 				return true;
 			}
@@ -1724,7 +1714,6 @@ IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 
 		/* TODO (COLLATION): To be supported */
 		case BSON_INDEX_STRATEGY_DOLLAR_IN:
-		case BSON_INDEX_STRATEGY_DOLLAR_NOT_EQUAL:
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_IN:
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_GT:
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_GTE:

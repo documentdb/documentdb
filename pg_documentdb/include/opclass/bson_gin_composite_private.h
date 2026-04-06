@@ -179,7 +179,8 @@ CreateCompositeIndexBoundsSet(int32_t numTerms, int32_t indexAttribute,
 
 
 bool IsValidRecheckForIndexValue(const BsonIndexTerm *compareTerm,
-								 IndexRecheckArgs *recheckArgs);
+								 IndexRecheckArgs *recheckArgs,
+								 const char *indexCollation);
 
 bytea * BuildLowerBoundTermFromIndexBounds(CompositeQueryRunData *runData,
 										   IndexTermCreateMetadata *metadata,
