@@ -39,21 +39,21 @@ async fn test_currentop_captures_mongodb_operations() -> Result<(), Error> {
 
 #[tokio::test]
 async fn test_currentop_aggregation_basic() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_aggregation_basic(&client).await
 }
 
 #[tokio::test]
 async fn test_currentop_aggregation_pipeline_composition() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_aggregation_pipeline_composition(&client).await
 }
 
 #[tokio::test]
 async fn test_currentop_aggregation_requires_first_stage() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_aggregation_requires_first_stage(&client).await
 }
@@ -67,105 +67,105 @@ async fn test_currentop_aggregation_non_admin_db_error() -> Result<(), Error> {
 
 #[tokio::test]
 async fn test_currentop_aggregation_nested_pipeline_errors() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_aggregation_nested_pipeline_errors(&client).await
 }
 
 #[tokio::test]
 async fn test_currentop_aggregation_option_validation() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_aggregation_option_validation(&client).await
 }
 
 #[tokio::test]
 async fn test_currentop_command_filter() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_command_filter(&client).await
 }
 
 #[tokio::test]
 async fn test_currentop_opmetadata_fields() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_opmetadata_fields(&client).await
 }
 
 #[tokio::test]
 async fn test_currentop_aggregation_transaction_error() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_aggregation_transaction_error(&client).await
 }
 
 #[tokio::test]
 async fn test_currentop_lsid_binary_uuid() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_lsid_binary_uuid(&client).await
 }
 
 #[tokio::test]
 async fn test_currentop_own_ops_filtering() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_own_ops_filtering(&client).await
 }
 
 #[tokio::test]
 async fn test_currentop_allusers_aggregation() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_allusers_aggregation(&client).await
 }
 
 #[tokio::test]
 async fn test_currentop_cursor_field() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_cursor_field(&client).await
 }
 
 #[tokio::test]
 async fn test_currentop_transaction_fields() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_transaction_fields(&client).await
 }
 
 #[tokio::test]
 async fn test_currentop_no_transaction_outside_txn() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_no_transaction_outside_txn(&client).await
 }
 
 #[tokio::test]
 async fn test_currentop_cursor_originating_command() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_cursor_originating_command(&client).await
 }
 
 #[tokio::test]
 async fn test_currentop_no_originating_command_without_cursor() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_no_originating_command_without_cursor(&client).await
 }
 
 #[tokio::test]
 async fn test_currentop_lsid_value_matches_session() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_lsid_value_matches_session(&client).await
 }
 
 #[tokio::test]
 async fn test_currentop_effectiveusers_value() -> Result<(), Error> {
-    let client = initialize::initialize().await;
+    let client = initialize::initialize().await?;
 
     current_op::validate_currentop_effectiveusers_value(&client).await
 }

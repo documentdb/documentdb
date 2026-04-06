@@ -377,10 +377,6 @@ command_drop_indexes_concurrently(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errmsg("Argument value must not be NULL")));
 	}
 	pgbson *spec = PG_GETARG_PGBSON(1);
-<<<<<<< Updated upstream
-=======
-	/* Register operation metadata for currentOp */
-	documentDbPreCommand(spec);
 	/* Register operation metadata for currentOp */
 	documentDbPreCommand(spec);
 

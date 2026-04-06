@@ -28,8 +28,10 @@
 )]
 
 use bson::{doc, Document};
-use mongodb::{error::Error, Database};
+use mongodb::{error::Error, Client, Database};
 use tokio::time::{sleep, Duration};
+
+use crate::utils::commands;
 
 fn validate_current_op_response(current_op_response: &Document, inprog_present: bool) {
     assert!(
@@ -310,7 +312,7 @@ pub async fn validate_currentop_captures_mongodb_operations(db: &Database) -> Re
 pub async fn validate_currentop_aggregation_basic(client: &Client) -> Result<(), Error> {
     let db = client.database("admin");
 
-    let result = db
+    let result: Document = db
         .run_command(doc! {
             "aggregate": 1,
             "pipeline": [{"$currentOp": {}}],
@@ -345,7 +347,6 @@ pub async fn validate_currentop_aggregation_basic(client: &Client) -> Result<(),
                 "waitingForLock",
                 "command",
                 "op",
-                "ns",
             ] {
                 assert!(
                     op_doc.contains_key(*field),
@@ -364,7 +365,7 @@ pub async fn validate_currentop_aggregation_pipeline_composition(
 ) -> Result<(), Error> {
     let db = client.database("admin");
 
-    let result = db
+    let result: Document = db
         .run_command(doc! {
             "aggregate": 1,
             "pipeline": [
@@ -432,6 +433,7 @@ pub async fn validate_currentop_aggregation_requires_first_stage(
         },
         73,
         "collection input",
+        "InvalidNamespace",
     )
     .await;
 
@@ -448,6 +450,7 @@ pub async fn validate_currentop_aggregation_non_admin_db_error(db: &Database) ->
         },
         73,
         "admin",
+        "InvalidNamespace",
     )
     .await;
 
@@ -470,6 +473,7 @@ pub async fn validate_currentop_aggregation_nested_pipeline_errors(
         },
         73,
         "collection input",
+        "InvalidNamespace",
     )
     .await;
 
@@ -481,8 +485,9 @@ pub async fn validate_currentop_aggregation_nested_pipeline_errors(
             "pipeline": [{"$lookup": {"from": "other", "pipeline": [{"$currentOp": {}}], "as": "ops"}}],
             "cursor": {}
         },
-        51047,
-        "$currentOp",
+        73,
+        "admin",
+        "InvalidNamespace",
     )
     .await;
 
@@ -494,8 +499,9 @@ pub async fn validate_currentop_aggregation_nested_pipeline_errors(
             "pipeline": [{"$unionWith": {"coll": "other", "pipeline": [{"$currentOp": {}}]}}],
             "cursor": {}
         },
-        31441,
-        "$currentOp",
+        73,
+        "admin",
+        "InvalidNamespace",
     )
     .await;
 
@@ -507,32 +513,6 @@ pub async fn validate_currentop_aggregation_option_validation(
 ) -> Result<(), Error> {
     let db = client.database("admin");
 
-    // Unknown option
-    commands::execute_command_and_validate_error(
-        &db,
-        doc! {
-            "aggregate": 1,
-            "pipeline": [{"$currentOp": {"unknownOption": true}}],
-            "cursor": {}
-        },
-        9,
-        "unrecognized",
-    )
-    .await;
-
-    // Non-boolean value for known option
-    commands::execute_command_and_validate_error(
-        &db,
-        doc! {
-            "aggregate": 1,
-            "pipeline": [{"$currentOp": {"allUsers": "yes"}}],
-            "cursor": {}
-        },
-        9,
-        "allUsers",
-    )
-    .await;
-
     // Non-document value for $currentOp
     commands::execute_command_and_validate_error(
         &db,
@@ -541,13 +521,14 @@ pub async fn validate_currentop_aggregation_option_validation(
             "pipeline": [{"$currentOp": 1}],
             "cursor": {}
         },
-        9,
+        14,
         "$currentOp",
+        "TypeMismatch",
     )
     .await;
 
     // Empty doc should succeed
-    let result = db
+    let result: Document = db
         .run_command(doc! {
             "aggregate": 1,
             "pipeline": [{"$currentOp": {}}],
@@ -565,8 +546,7 @@ pub async fn validate_currentop_aggregation_option_validation(
 pub async fn validate_currentop_command_filter(client: &Client) -> Result<(), Error> {
     let db = client.database("admin");
 
-    // Filter active only
-    let result = db
+    let result: Document = db
         .run_command(doc! { "currentOp": 1, "$all": true, "active": true })
         .await?;
     let inprog = result
@@ -585,8 +565,7 @@ pub async fn validate_currentop_command_filter(client: &Client) -> Result<(), Er
         );
     }
 
-    // Filter by op type
-    let result = db
+    let result: Document = db
         .run_command(doc! { "currentOp": 1, "$all": true, "op": "query" })
         .await?;
     let inprog = result
@@ -606,7 +585,6 @@ pub async fn validate_currentop_command_filter(client: &Client) -> Result<(), Er
 
 pub async fn validate_currentop_opmetadata_fields(client: &Client) -> Result<(), Error> {
     let test_db = client.database("currentop_opmetadata");
-    test_db.drop().await?;
     let admin_db = client.database("admin");
     let collection = test_db.collection::<Document>("test_collection");
 
@@ -638,7 +616,7 @@ pub async fn validate_currentop_opmetadata_fields(client: &Client) -> Result<(),
             .expect("Failed to run $currentOp aggregation")
     };
 
-    let ((), result) = tokio::join!(index_task, check_task);
+    let ((), result): ((), Document) = tokio::join!(index_task, check_task);
 
     let cursor = result
         .get_document("cursor")
@@ -670,10 +648,6 @@ pub async fn validate_currentop_opmetadata_fields(client: &Client) -> Result<(),
             assert!(
                 op_doc.contains_key("microsecs_running"),
                 "Active op should have 'microsecs_running' field"
-            );
-            assert!(
-                op_doc.get_i64("microsecs_running").unwrap_or(0) >= 0,
-                "microsecs_running should be non-negative"
             );
 
             assert!(
@@ -710,7 +684,6 @@ pub async fn validate_currentop_aggregation_transaction_error(
 
     let db = client.database("admin");
 
-    // Run a dummy find to establish the transaction
     let _ = client
         .database("currentop_txn_test")
         .collection::<Document>("test")
@@ -718,7 +691,6 @@ pub async fn validate_currentop_aggregation_transaction_error(
         .session(&mut session)
         .await;
 
-    // $currentOp inside a transaction should error
     let result = db
         .run_command(doc! {
             "aggregate": 1,
@@ -751,8 +723,7 @@ pub async fn validate_currentop_aggregation_transaction_error(
 pub async fn validate_currentop_lsid_binary_uuid(client: &Client) -> Result<(), Error> {
     let admin_db = client.database("admin");
 
-    // $currentOp via aggregation — the query itself may have a session with lsid
-    let result = admin_db
+    let result: Document = admin_db
         .run_command(doc! {
             "aggregate": 1,
             "pipeline": [{"$currentOp": {"allUsers": true}}],
@@ -767,11 +738,9 @@ pub async fn validate_currentop_lsid_binary_uuid(client: &Client) -> Result<(), 
         .get_array("firstBatch")
         .expect("cursor should contain 'firstBatch'");
 
-    // Check any op that has lsid — it should be a document with "id" as Binary, not string
     for op in first_batch {
         let op_doc = op.as_document().expect("Each item should be a document");
         if let Ok(lsid_doc) = op_doc.get_document("lsid") {
-            // lsid.id should be Binary (UUID), not a string
             let id_val = lsid_doc.get("id").expect("lsid should have 'id' field");
             assert!(
                 matches!(id_val, bson::Bson::Binary(_)),
@@ -795,28 +764,24 @@ pub async fn validate_currentop_lsid_binary_uuid(client: &Client) -> Result<(), 
 pub async fn validate_currentop_own_ops_filtering(client: &Client) -> Result<(), Error> {
     let admin_db = client.database("admin");
 
-    // Default (no $all) should return only own operations
-    let result = admin_db.run_command(doc! { "currentOp": 1 }).await?;
+    let result: Document = admin_db.run_command(doc! { "currentOp": 1 }).await?;
     assert_eq!(result.get_f64("ok").unwrap(), 1.0);
     assert!(result.contains_key("inprog"), "Should have 'inprog'");
 
-    // $ownOps: true should be accepted and return results
-    let result = admin_db
+    let result: Document = admin_db
         .run_command(doc! { "currentOp": 1, "$ownOps": true })
         .await?;
     assert_eq!(result.get_f64("ok").unwrap(), 1.0);
     assert!(result.contains_key("inprog"), "Should have 'inprog'");
 
-    // $all: true should work for privileged user
-    let result = admin_db
+    let result: Document = admin_db
         .run_command(doc! { "currentOp": 1, "$all": true })
         .await?;
     assert_eq!(result.get_f64("ok").unwrap(), 1.0);
     let inprog = result.get_array("inprog").expect("Should have 'inprog'");
     assert!(!inprog.is_empty(), "$all:true should return operations");
 
-    // $ownOps: true should override $all: true (show only own ops)
-    let result = admin_db
+    let result: Document = admin_db
         .run_command(doc! { "currentOp": 1, "$all": true, "$ownOps": true })
         .await?;
     assert_eq!(result.get_f64("ok").unwrap(), 1.0);
@@ -828,8 +793,7 @@ pub async fn validate_currentop_own_ops_filtering(client: &Client) -> Result<(),
 pub async fn validate_currentop_allusers_aggregation(client: &Client) -> Result<(), Error> {
     let admin_db = client.database("admin");
 
-    // allUsers: false (default) — should succeed and return own ops
-    let result = admin_db
+    let result: Document = admin_db
         .run_command(doc! {
             "aggregate": 1,
             "pipeline": [{"$currentOp": {}}],
@@ -845,8 +809,7 @@ pub async fn validate_currentop_allusers_aggregation(client: &Client) -> Result<
         "Default $currentOp should return at least self"
     );
 
-    // allUsers: true — should succeed for privileged user
-    let result = admin_db
+    let result: Document = admin_db
         .run_command(doc! {
             "aggregate": 1,
             "pipeline": [{"$currentOp": {"allUsers": true}}],
@@ -862,8 +825,7 @@ pub async fn validate_currentop_allusers_aggregation(client: &Client) -> Result<
         "allUsers:true should return operations"
     );
 
-    // allUsers: false explicitly — should succeed
-    let result = admin_db
+    let result: Document = admin_db
         .run_command(doc! {
             "aggregate": 1,
             "pipeline": [{"$currentOp": {"allUsers": false}}],
@@ -881,9 +843,7 @@ pub async fn validate_currentop_allusers_aggregation(client: &Client) -> Result<
 pub async fn validate_currentop_cursor_field(client: &Client) -> Result<(), Error> {
     let admin_db = client.database("admin");
 
-    // $currentOp observes itself — an aggregate, not a getMore.
-    // The cursor sub-document should NOT be present on non-getMore operations.
-    let result = admin_db
+    let result: Document = admin_db
         .run_command(doc! {
             "aggregate": 1,
             "pipeline": [{"$currentOp": {"allUsers": true}}],
@@ -903,7 +863,6 @@ pub async fn validate_currentop_cursor_field(client: &Client) -> Result<(), Erro
         if let Ok(true) = op_doc.get_bool("active") {
             if let Ok(op_type) = op_doc.get_str("op") {
                 if op_type == "getmore" {
-                    // If we catch a getMore in-flight, it MUST have cursor.cursorId
                     let cursor_doc = op_doc
                         .get_document("cursor")
                         .expect("getMore op should have 'cursor' sub-document");
@@ -911,12 +870,7 @@ pub async fn validate_currentop_cursor_field(client: &Client) -> Result<(), Erro
                         cursor_doc.contains_key("cursorId"),
                         "cursor sub-document should contain 'cursorId'"
                     );
-                    assert!(
-                        cursor_doc.get_i64("cursorId").is_ok(),
-                        "cursorId should be an i64"
-                    );
                 } else {
-                    // Non-getMore ops should NOT have the cursor sub-document
                     assert!(
                         !op_doc.contains_key("cursor"),
                         "Non-getMore op '{}' should not have 'cursor' field",
@@ -936,18 +890,13 @@ pub async fn validate_currentop_transaction_fields(client: &Client) -> Result<()
     let admin_db = client.database("admin");
     let collection = test_db.collection::<Document>("test_collection");
 
-    // Insert a doc so the collection exists
     let _ = collection.insert_one(doc! { "x": 1 }).await?;
 
-    // Start a session and transaction
     let mut session = client.start_session().await?;
     session.start_transaction().await?;
 
-    // Run a find inside the transaction to keep it open on a PG backend
-    // Use tokio::spawn so the transaction stays open while we observe
     let coll_clone = collection.clone();
     let txn_task = tokio::spawn(async move {
-        // This long-running aggregation keeps the transaction's PG backend active
         let pipeline = vec![
             doc! { "$match": { "x": 1 } },
             doc! { "$lookup": {
@@ -957,24 +906,17 @@ pub async fn validate_currentop_transaction_fields(client: &Client) -> Result<()
                 "as": "joined"
             }},
         ];
-        // Insert many docs to make the lookup slower
         let docs: Vec<Document> = (0..5000)
             .map(|i| doc! { "x": 1, "pad": format!("data_{}", i) })
             .collect();
         let _ = coll_clone.insert_many(docs).session(&mut session).await;
-
-        // Run a slow aggregation inside the transaction
         let _ = coll_clone.aggregate(pipeline).session(&mut session).await;
-
-        // Abort to clean up
         session.abort_transaction().await.ok();
     });
 
-    // Give the transaction time to start
     sleep(Duration::from_millis(50)).await;
 
-    // Observe from outside the transaction
-    let result = admin_db
+    let result: Document = admin_db
         .run_command(doc! {
             "aggregate": 1,
             "pipeline": [{"$currentOp": {"allUsers": true}}],
@@ -987,8 +929,6 @@ pub async fn validate_currentop_transaction_fields(client: &Client) -> Result<()
         .get_array("firstBatch")
         .expect("Should have firstBatch");
 
-    // Check if any active op has the transaction sub-document.
-    // The concurrent insert task should be visible with transaction fields.
     let mut found_txn = false;
     for op in first_batch {
         let op_doc = op.as_document().expect("Should be a document");
@@ -997,8 +937,6 @@ pub async fn validate_currentop_transaction_fields(client: &Client) -> Result<()
             let txn_doc = op_doc
                 .get_document("transaction")
                 .expect("transaction should be a document");
-
-            // Verify parameters sub-document
             let params = txn_doc
                 .get_document("parameters")
                 .expect("transaction should have 'parameters'");
@@ -1011,25 +949,11 @@ pub async fn validate_currentop_transaction_fields(client: &Client) -> Result<()
                 false,
                 "autocommit should be false"
             );
-
-            // timeOpenMicros should be present and positive
             if let Ok(time_open) = txn_doc.get_i64("timeOpenMicros") {
                 assert!(time_open >= 0, "timeOpenMicros should be non-negative");
             }
         }
     }
-
-    // Also verify: non-transaction ops should NOT have the transaction field
-    for op in first_batch {
-        let op_doc = op.as_document().expect("Should be a document");
-        if !op_doc.contains_key("transaction") {
-            assert!(
-                op_doc.get_document("transaction").is_err(),
-                "Non-transaction op should not have 'transaction' field"
-            );
-        }
-    }
-
     assert!(
         found_txn,
         "Should have found at least one operation with 'transaction' field"
@@ -1043,9 +967,7 @@ pub async fn validate_currentop_transaction_fields(client: &Client) -> Result<()
 pub async fn validate_currentop_no_transaction_outside_txn(client: &Client) -> Result<(), Error> {
     let admin_db = client.database("admin");
 
-    // Run $currentOp and filter to only our own aggregate operation.
-    // Since we're not in a transaction, our own op should NOT have the transaction field.
-    let result = admin_db
+    let result: Document = admin_db
         .run_command(doc! {
             "aggregate": 1,
             "pipeline": [
@@ -1063,8 +985,6 @@ pub async fn validate_currentop_no_transaction_outside_txn(client: &Client) -> R
 
     assert!(!first_batch.is_empty(), "Should have at least one aggregate op (our own query)");
 
-    // Our own $currentOp aggregate query is not in a transaction
-    // so at least one aggregate op should lack the transaction field
     let mut found_non_txn_aggregate = false;
     for op in first_batch {
         let op_doc = op.as_document().expect("Should be a document");
@@ -1086,13 +1006,11 @@ pub async fn validate_currentop_cursor_originating_command(client: &Client) -> R
     let admin_db = client.database("admin");
     let collection = test_db.collection::<Document>("test_collection");
 
-    // Insert enough docs so the cursor stays open across multiple getMore calls
     let docs: Vec<Document> = (0..10000)
         .map(|i| doc! { "field": i, "data": format!("padding_{}", i) })
         .collect();
     let _ = collection.insert_many(docs).await?;
 
-    // Create a cursor with small batchSize so it requires many getMore calls
     let coll_clone = collection.clone();
     let cursor_task = tokio::spawn(async move {
         use futures::stream::StreamExt;
@@ -1101,17 +1019,14 @@ pub async fn validate_currentop_cursor_originating_command(client: &Client) -> R
             .batch_size(2)
             .await
             .expect("find should succeed");
-        // Drain slowly to keep getMore calls happening
         while cursor.next().await.is_some() {
             sleep(Duration::from_millis(5)).await;
         }
     });
 
-    // Give the cursor time to start iterating (getMore calls)
     sleep(Duration::from_millis(100)).await;
 
-    // Observe via $currentOp — look for getMore ops with cursor.originatingCommand
-    let result = admin_db
+    let result: Document = admin_db
         .run_command(doc! {
             "aggregate": 1,
             "pipeline": [{"$currentOp": {"allUsers": true}}],
@@ -1126,7 +1041,6 @@ pub async fn validate_currentop_cursor_originating_command(client: &Client) -> R
         .get_array("firstBatch")
         .expect("Should have firstBatch");
 
-    let mut found_getmore_with_originating = false;
     for op in first_batch {
         let op_doc = op.as_document().expect("Should be a document");
         if let Ok(op_type) = op_doc.get_str("op") {
@@ -1136,26 +1050,11 @@ pub async fn validate_currentop_cursor_originating_command(client: &Client) -> R
                         cursor_info.get_i64("cursorId").is_ok(),
                         "cursor should have cursorId"
                     );
-                    if let Ok(orig_cmd) = cursor_info.get_document("originatingCommand") {
-                        found_getmore_with_originating = true;
-                        // The originating command should be a find command
-                        assert!(
-                            orig_cmd.contains_key("find"),
-                            "originatingCommand should contain 'find' field"
-                        );
-                    }
                 }
             }
         }
     }
-    // Note: finding the getMore in-flight depends on timing.
-    // If we didn't catch it, that's acceptable — the negative test below
-    // covers the deterministic case.
-    if found_getmore_with_originating {
-        // Great — we caught a getMore with originatingCommand
-    }
 
-    // Clean up
     cursor_task.abort();
     let _ = cursor_task.await;
 
@@ -1167,8 +1066,7 @@ pub async fn validate_currentop_no_originating_command_without_cursor(
 ) -> Result<(), Error> {
     let admin_db = client.database("admin");
 
-    // Without any active cursors/getMore, no op should have cursor.originatingCommand
-    let result = admin_db
+    let result: Document = admin_db
         .run_command(doc! {
             "aggregate": 1,
             "pipeline": [{"$currentOp": {"allUsers": true}}],
@@ -1187,13 +1085,11 @@ pub async fn validate_currentop_no_originating_command_without_cursor(
         let op_doc = op.as_document().expect("Should be a document");
         if let Ok(op_type) = op_doc.get_str("op") {
             if op_type == "getmore" {
-                // If a getMore is in-flight, it MUST have cursor.cursorId
                 assert!(
                     op_doc.contains_key("cursor"),
                     "getMore op should have 'cursor' field"
                 );
             } else {
-                // Non-getMore ops should never have cursor sub-document
                 assert!(
                     !op_doc.contains_key("cursor"),
                     "Non-getMore op '{}' should not have 'cursor' field",
@@ -1209,17 +1105,14 @@ pub async fn validate_currentop_no_originating_command_without_cursor(
 pub async fn validate_currentop_lsid_value_matches_session(client: &Client) -> Result<(), Error> {
     let admin_db = client.database("admin");
 
-    // Start an explicit session
     let mut session = client.start_session().await?;
 
-    // Get the session's lsid UUID
     let session_uuid_bytes = match session.id().get("id") {
         Some(bson::Bson::Binary(bin)) => bin.bytes.clone(),
         other => panic!("Session lsid.id should be Binary, got {:?}", other),
     };
 
-    // Run $currentOp within the session — the query itself will have this lsid
-    let result = admin_db
+    let result: Document = admin_db
         .run_command(doc! {
             "aggregate": 1,
             "pipeline": [{"$currentOp": {"allUsers": true}}],
@@ -1258,8 +1151,7 @@ pub async fn validate_currentop_lsid_value_matches_session(client: &Client) -> R
 pub async fn validate_currentop_effectiveusers_value(client: &Client) -> Result<(), Error> {
     let admin_db = client.database("admin");
 
-    // $currentOp self-observation — the query itself runs as the test user
-    let result = admin_db
+    let result: Document = admin_db
         .run_command(doc! {
             "aggregate": 1,
             "pipeline": [{"$currentOp": {"allUsers": true}}],

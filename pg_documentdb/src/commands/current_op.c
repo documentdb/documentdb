@@ -123,6 +123,18 @@ typedef struct
 
 	/* Index spec for running create Index */
 	IndexSpec *indexSpec;
+
+	/* Application name from pg_stat_activity */
+	const char *appName;
+
+	/* Client address from pg_stat_activity */
+	const char *clientAddr;
+
+	/* User OID for allUsers filtering */
+	Oid userOid;
+
+	/* Transaction start time in Unix epoch microseconds */
+	int64 xactStart;
 } SingleWorkerActivity;
 
 PG_FUNCTION_INFO_V1(command_current_op);

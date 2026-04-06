@@ -27,7 +27,7 @@
 #include <aggregation/bson_aggregation_pipeline.h>
 #include "aggregation/aggregation_commands.h"
 #include "infrastructure/cursor_store.h"
-#include "utils/op_metadata.h"
+#include "commands/commands_common.h"
 
 
 extern bool UseFileBasedPersistedCursors;

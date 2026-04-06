@@ -32,6 +32,7 @@
 #include "background_worker/background_worker_job.h"
 #include "index_am/roaring_bitmap_adapter.h"
 #include "utils/error_utils.h"
+#include "utils/op_metadata.h"
 
 /* --------------------------------------------------------- */
 /* Data Types & Enum values */
@@ -221,6 +222,7 @@ DocumentDBSharedMemoryRequest(void)
 	RequestAddinShmemSpace(SharedFeatureCounterShmemSize());
 	RequestAddinShmemSpace(VersionCacheShmemSize());
 	RequestAddinShmemSpace(FileCursorShmemSize());
+	RequestAddinShmemSpace(SharedOpMetadataShmemSize());
 }
 
 
@@ -231,6 +233,7 @@ DocumentDBSharedMemoryInit(void)
 	SharedFeatureCounterShmemInit();
 	InitializeVersionCache();
 	InitializeFileCursorShmem();
+	SharedOpMetadataShmemInit();
 
 	if (prev_shmem_startup_hook != NULL)
 	{

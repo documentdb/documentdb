@@ -52,9 +52,6 @@ extern OpMetadata *OpMetadataBackendArray;
 /* GUC variable to enable/disable operation metadata collection */
 extern bool EnableOpMetadataCollection;
 
-/* External reference to MyBEEntry for changecount protocol */
-extern PgBackendStatus *MyBEEntry;
-
 /* Function declarations */
 extern Size SharedOpMetadataShmemSize(void);
 extern void SharedOpMetadataShmemInit(void);

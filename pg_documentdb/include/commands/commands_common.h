@@ -152,5 +152,7 @@ ThrowIfServerOrTransactionReadOnly(void)
 					errdetail("the current transaction is read-only")));
 }
 
+/* Pre-command hook for operation metadata collection */
+extern void documentDbPreCommand(pgbson *commandSpec);
 
 #endif
