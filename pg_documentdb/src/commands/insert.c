@@ -1079,6 +1079,11 @@ CommandInsertCore(PG_FUNCTION_ARGS, InsertMode insertMode, MemoryContext allocCo
 
 	bson_iter_t insertCommandIter;
 	PgbsonInitIterator(insertSpec, &insertCommandIter);
+
+	/* Register operation metadata for currentOp — done before MemoryContextSwitchTo
+	 * to ensure any internal allocations use the default memory context. */
+	documentDbPreCommand(insertSpec);
+
 	MemoryContext oldContext = MemoryContextSwitchTo(allocContext);
 
 	/* we first validate insert command BSON and build a specification */

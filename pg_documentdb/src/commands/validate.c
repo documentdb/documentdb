@@ -94,6 +94,8 @@ command_validate(PG_FUNCTION_ARGS)
 	}
 
 	pgbson *validationBsonSpec = PG_GETARG_PGBSON(1);
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(validationBsonSpec);
 	Datum databaseNameDatum = PG_ARGISNULL(0) ? (Datum) 0 : PG_GETARG_DATUM(0);
 
 	bson_iter_t validateIter;

@@ -33,6 +33,16 @@
 #include "utils/guc_utils.h"
 #include "index_am/index_am_utils.h"
 #include "commands/diagnostic_commands.h"
+#include <commands/dbcommands.h>
+#if PG_VERSION_NUM >= 170000
+#include <storage/proc.h>
+#else
+#include <storage/backendid.h>
+#endif
+#include "utils/op_metadata.h"
+#include "index_am/index_am_utils.h"
+#include "storage/procarray.h"
+#include "pgstat.h"
 
 
 /*
@@ -488,7 +498,11 @@ WorkerGetBaseActivities()
 						   " EXTRACT(epoch FROM now() - pa.state_change)::bigint AS state_change_since, "
 						   " pa.groupid AS shard_id, "
 						   " pa.backend_type AS backend_type, "
-						   " pa.leader_pid::bigint AS leaderPid "
+						   " pa.leader_pid::bigint AS leaderPid, "
+  		 					" pa.application_name AS app_name, "
+  		 					" pa.client_addr::text AS client_addr, "
+  		 					" pa.usesysid AS user_oid, "
+  		 					" (EXTRACT(epoch FROM pa.xact_start) * 1000000)::bigint AS xact_start "
 						   " FROM (");
 
 	appendStringInfoString(queryInfo, DistributedOperationsQuery);
@@ -704,6 +718,57 @@ WorkerGetBaseActivities()
 		{
 			activity->leaderPid = DatumGetInt64(resultDatum);
 		}
+		/* app_name (Attr 14) */
+		resultDatum = SPI_getbinval(SPI_tuptable->vals[0],
+									SPI_tuptable->tupdesc, 14,
+									&isNull);
+		if (!isNull)
+		{
+			spiContext = MemoryContextSwitchTo(priorMemoryContext);
+			activity->appName = TextDatumGetCString(resultDatum);
+			MemoryContextSwitchTo(spiContext);
+		}
+		else
+		{
+			activity->appName = "";
+		}
+	
+		/* client_addr (Attr 15) */
+		resultDatum = SPI_getbinval(SPI_tuptable->vals[0],
+									SPI_tuptable->tupdesc, 15,
+									&isNull);
+		if (!isNull)
+		{
+			spiContext = MemoryContextSwitchTo(priorMemoryContext);
+			activity->clientAddr = TextDatumGetCString(resultDatum);
+			MemoryContextSwitchTo(spiContext);
+		}
+		else
+		{
+			activity->clientAddr = "";
+		}
+
+		/* user_oid (Attr 16) */
+		resultDatum = SPI_getbinval(SPI_tuptable->vals[0],
+									SPI_tuptable->tupdesc, 16,
+									&isNull);
+		if (!isNull)
+		{
+			activity->userOid = DatumGetObjectId(resultDatum);
+		}
+		else
+		{
+			activity->userOid = InvalidOid;
+		}
+
+		/* xact_start (Attr 17) */
+		resultDatum = SPI_getbinval(SPI_tuptable->vals[0],
+									SPI_tuptable->tupdesc, 17,
+									&isNull);
+		if (!isNull)
+		{
+			activity->xactStart = DatumGetInt64(resultDatum);
+		}
 
 		spiContext = MemoryContextSwitchTo(priorMemoryContext);
 		workerActivities = lappend(workerActivities, activity);
@@ -714,6 +779,25 @@ WorkerGetBaseActivities()
 	SPI_finish();
 
 	return workerActivities;
+}
+
+
+/*
+ * Returns true if the given BSON key is a metadata field that should be
+ * excluded from the "command" and "originatingCommand" output in currentOp.
+ * These fields are either displayed in their own dedicated fields (lsid,
+ * transaction parameters) or are wire protocol metadata ($db, $clusterTime).
+ */
+static inline bool
+IsCommandMetadataField(const char *key)
+{
+	return strcmp(key, "lsid") == 0 ||
+		   strcmp(key, "$db") == 0 ||
+		   strcmp(key, "$clusterTime") == 0 ||
+		   strcmp(key, "txnNumber") == 0 ||
+		   strcmp(key, "autocommit") == 0 ||
+		   strcmp(key, "startTransaction") == 0 ||
+		   strcmp(key, "readConcern") == 0;
 }
 
 
@@ -760,6 +844,203 @@ WriteOneActivityToDocument(SingleWorkerActivity *workerActivity,
 	/* report the globalPid so that we can track locks back to this process */
 	PgbsonWriterAppendInt64(singleActivityWriter, "op_prefix", 9,
 							workerActivity->globalPid);
+	
+	/* desc - backend description */
+	if (workerActivity->backendType != NULL && strlen(workerActivity->backendType) > 0)
+	{
+		PgbsonWriterAppendUtf8(singleActivityWriter, "desc", 4, workerActivity->backendType);
+	}
+	
+	/* connectionId - postgres PID */
+	PgbsonWriterAppendInt64(singleActivityWriter, "connectionId", 12, workerActivity->statPid);
+	
+	/* appName - application name */
+	if (workerActivity->appName != NULL && strlen(workerActivity->appName) > 0)
+	{
+		PgbsonWriterAppendUtf8(singleActivityWriter, "appName", 7, workerActivity->appName);
+	}
+	
+	/* client - client address */
+	if (workerActivity->clientAddr != NULL && strlen(workerActivity->clientAddr) > 0)
+	{
+		PgbsonWriterAppendUtf8(singleActivityWriter, "client", 6, workerActivity->clientAddr);
+	}
+	
+	/*
+		* Read OpMetadata for this backend from shared memory.
+		* Unlike the previous implementation that only read metadata for MyProcPid,
+		* we now look up ANY backend by iterating the PgBackendStatus array to find
+		* the matching PID, then read its OpMetadata slot using the changecount protocol.
+		*/
+	OpMetadata localOpMetadata;
+	bool hasValidMetadata = false;
+	
+	if (strcmp(workerActivity->state, "active") == 0 &&
+		EnableOpMetadataCollection && OpMetadataBackendArray != NULL)
+	{
+		int targetPid = (int) workerActivity->statPid;
+	
+		/*
+			* Find the backend index for this PID by iterating all backend status entries.
+			* pgstat_get_local_beentry_by_index returns NULL when index is out of range.
+			*/
+		int numBackends = pgstat_fetch_stat_numbackends();
+		for (int i = 1; i <= numBackends; i++)
+		{
+			LocalPgBackendStatus *localBe = pgstat_get_local_beentry_by_index(i);
+			if (localBe == NULL)
+				continue;
+	
+			PgBackendStatus *beStatus = &localBe->backendStatus;
+			if (beStatus->st_procpid != targetPid)
+				continue;
+	
+			/*
+				* Found the matching backend. Derive the shared memory index.
+				* On PG17+ the backendStatus stores proc_number directly;
+				* on older versions we use the 1-based backend_id from LocalPgBackendStatus.
+				*/
+			int backendIndex;
+	#if PG_VERSION_NUM >= 170000
+			backendIndex = localBe->proc_number;
+	#else
+			backendIndex = localBe->backend_id - 1;
+	#endif
+	
+			if (backendIndex < 0 || backendIndex >= MaxBackends)
+				break;
+	
+			/*
+				* Read OpMetadata using the changecount protocol for safe concurrent reads.
+				* The writer sets changecount to ODD during write, EVEN when done.
+				*/
+			volatile PgBackendStatus *beentry = beStatus;
+			int before_changecount, after_changecount;
+			int retry_count = 0;
+			const int MAX_RETRIES = 10;
+	
+			do
+			{
+				before_changecount = beentry->st_changecount;
+				pg_read_barrier();
+				memcpy(&localOpMetadata, &OpMetadataBackendArray[backendIndex],
+						sizeof(OpMetadata));
+				pg_read_barrier();
+				after_changecount = beentry->st_changecount;
+				retry_count++;
+			} while (((before_changecount & 1) ||
+						(before_changecount != after_changecount)) &&
+						(retry_count < MAX_RETRIES));
+	
+			if (retry_count < MAX_RETRIES)
+				hasValidMetadata = true;
+			else
+				ereport(DEBUG1,
+						(errmsg("currentOp: Failed to read OpMetadata for pid %d after %d retries",
+								targetPid, MAX_RETRIES)));
+	
+			/* Also extract effectiveUsers and microsecs_running from backend status */
+			if (hasValidMetadata && localOpMetadata.hasLsid)
+			{
+				pgbson_writer lsidWriter;
+				PgbsonWriterStartDocument(singleActivityWriter, "lsid", 4, &lsidWriter);
+				bson_value_t uuidValue = { 0 };
+				uuidValue.value_type = BSON_TYPE_BINARY;
+				uuidValue.value.v_binary.subtype = BSON_SUBTYPE_UUID;
+				uuidValue.value.v_binary.data = (uint8_t *) localOpMetadata.lsidData;
+				uuidValue.value.v_binary.data_len = LSID_UUID_LENGTH;
+				PgbsonWriterAppendValue(&lsidWriter, "id", 2, &uuidValue);
+				PgbsonWriterEndDocument(singleActivityWriter, &lsidWriter);
+			}
+	
+			/* microsecs_running from backend status timestamp */
+			TimestampTz startTime = beStatus->st_activity_start_timestamp;
+			if (startTime > 0)
+			{
+				TimestampTz currentTime = GetCurrentTimestamp();
+				int64 microsecsRunning = currentTime - startTime;
+				PgbsonWriterAppendInt64(singleActivityWriter, "microsecs_running", 17,
+										microsecsRunning);
+			}
+	
+			/* effectiveUsers from backend status */
+			if (beStatus->st_userid != InvalidOid &&
+				beStatus->st_databaseid != InvalidOid)
+			{
+				const char *username = GetUserNameFromId(beStatus->st_userid, true);
+				const char *dbname = get_database_name(beStatus->st_databaseid);
+	
+				if (username != NULL && dbname != NULL)
+				{
+					pgbson_array_writer effectiveUsersWriter;
+					PgbsonWriterStartArray(singleActivityWriter, "effectiveUsers", 14,
+											&effectiveUsersWriter);
+	
+					pgbson_writer userWriter;
+					PgbsonArrayWriterStartDocument(&effectiveUsersWriter, &userWriter);
+					PgbsonWriterAppendUtf8(&userWriter, "user", 4, username);
+					PgbsonWriterAppendUtf8(&userWriter, "db", 2, dbname);
+					PgbsonArrayWriterEndDocument(&effectiveUsersWriter, &userWriter);
+	
+					PgbsonWriterEndArray(singleActivityWriter, &effectiveUsersWriter);
+				}
+			}
+	
+			break; /* Found our backend, stop iterating */
+		}
+	}
+	
+	/* killPending: always emit for active ops, only when true for idle */
+	if (hasValidMetadata && localOpMetadata.killPending)
+	{
+		PgbsonWriterAppendBool(singleActivityWriter, "killPending", 11, true);
+	}
+	else if (strcmp(workerActivity->state, "active") == 0)
+	{
+		PgbsonWriterAppendBool(singleActivityWriter, "killPending", 11, false);
+	}
+
+	/* transaction sub-document: emitted when operation is inside a multi-document transaction */
+	if (hasValidMetadata && localOpMetadata.hasTxnNumber)
+	{
+		pgbson_writer txnWriter;
+		PgbsonWriterStartDocument(singleActivityWriter, "transaction", 11, &txnWriter);
+
+		pgbson_writer paramsWriter;
+		PgbsonWriterStartDocument(&txnWriter, "parameters", 10, &paramsWriter);
+		PgbsonWriterAppendInt64(&paramsWriter, "txnNumber", 9, localOpMetadata.txnNumber);
+		PgbsonWriterAppendBool(&paramsWriter, "autocommit", 10, localOpMetadata.autocommit);
+
+		if (localOpMetadata.hasReadConcern)
+		{
+			pgbson_writer rcWriter;
+			PgbsonWriterStartDocument(&paramsWriter, "readConcern", 11, &rcWriter);
+			PgbsonWriterAppendUtf8(&rcWriter, "level", 5, localOpMetadata.readConcernLevel);
+			PgbsonWriterEndDocument(&paramsWriter, &rcWriter);
+		}
+		PgbsonWriterEndDocument(&txnWriter, &paramsWriter);
+
+		/* timeOpenMicros from pg_stat_activity.xact_start.
+		 * xactStart is Unix epoch microseconds (from EXTRACT(epoch FROM xact_start) * 1000000).
+		 * GetCurrentTimestamp() returns microseconds since PG epoch (2000-01-01).
+		 * Convert both to the same base before subtracting. */
+		if (workerActivity->xactStart > 0)
+		{
+			/* Convert Unix epoch microseconds to PG TimestampTz (microseconds since 2000-01-01).
+			 * POSTGRES_EPOCH_JDATE and UNIX_EPOCH_JDATE define the offset between epochs.
+			 * The difference is 946684800 seconds (30 years). */
+			int64 unixToPgEpochOffsetMicros = ((int64)(POSTGRES_EPOCH_JDATE - UNIX_EPOCH_JDATE) * SECS_PER_DAY) * 1000000LL;
+			int64 xactStartPgMicros = workerActivity->xactStart - unixToPgEpochOffsetMicros;
+			int64 nowPgMicros = (int64) GetCurrentTimestamp();
+			int64 timeOpenMicros = nowPgMicros - xactStartPgMicros;
+			if (timeOpenMicros > 0)
+			{
+				PgbsonWriterAppendInt64(&txnWriter, "timeOpenMicros", 14, timeOpenMicros);
+			}
+		}
+
+		PgbsonWriterEndDocument(singleActivityWriter, &txnWriter);
+	}
 
 
 	if (workerActivity->backendType != NULL &&
@@ -810,11 +1091,168 @@ WriteOneActivityToDocument(SingleWorkerActivity *workerActivity,
 		pgbson_writer commandDocumentWriter;
 		PgbsonWriterStartDocument(singleActivityWriter, "command", 7,
 								  &commandDocumentWriter);
+		/*
+		* Build the command document and determine query type.
+		* Two possible paths:
+		* 1. Use OpMetadata if available (preferred) - writes actual MongoDB command
+		* 2. Fallback to parsing PostgreSQL query - writes inferred command
+		* Only ONE path will write to commandDocumentWriter (never both).
+		*/
+		const char *queryType = NULL;
+		bool commandWritten = false;
+		int64 cursorId = 0;
+		bool hasCursorId = false;
+	
+		if (hasValidMetadata)
+		{
+			uint32_t commandLength = localOpMetadata.commandLength;
+			const uint8_t *commandData = (const uint8_t *)localOpMetadata.commandData;
+	
+			if (commandLength > 0)
+			{
+				/*
+					* Parse the stored BSON command.
+					* The BSON might be truncated - check the length header.
+					*/
+				bool isTruncated = false;
+				if (commandLength >= 4)
+				{
+					uint32_t bsonOriginalLength;
+					memcpy(&bsonOriginalLength, commandData, 4);
+					isTruncated = (commandLength < bsonOriginalLength);
+				}
+	
+				bson_iter_t iter;
+				if (!isTruncated && bson_iter_init_from_data(&iter, commandData, commandLength))
+				{
+					/* Command name is always the first field in MongoDB BSON */
+					bson_iter_t firstFieldIter;
+					if (bson_iter_init_from_data(&firstFieldIter, commandData, commandLength) &&
+						bson_iter_next(&firstFieldIter))
+					{
+						const char *firstKey = bson_iter_key(&firstFieldIter);
+						if (strcmp(firstKey, "insert") == 0)
+							queryType = "insert";
+						else if (strcmp(firstKey, "find") == 0)
+							queryType = "query";
+						else if (strcmp(firstKey, "update") == 0)
+							queryType = "update";
+						else if (strcmp(firstKey, "delete") == 0)
+							queryType = "remove";
+						else if (strcmp(firstKey, "aggregate") == 0)
+							queryType = "aggregate";
+						else if (strcmp(firstKey, "count") == 0)
+							queryType = "count";
+						else if (strcmp(firstKey, "distinct") == 0)
+							queryType = "distinct";
+						else if (strcmp(firstKey, "findAndModify") == 0)
+							queryType = "findAndModify";
+						else if (strcmp(firstKey, "getMore") == 0)
+						{
+							queryType = "getmore";
+							const bson_value_t *val = bson_iter_value(&firstFieldIter);
+							if (val->value_type == BSON_TYPE_INT64)
+							{
+								cursorId = val->value.v_int64;
+								hasCursorId = true;
+							}
+						}
+					}
 
-		const char *queryType = WriteCommandAndGetQueryType(workerActivity->query,
-															workerActivity,
-															&commandDocumentWriter);
+					/* Complete BSON - parse normally */
+					while (bson_iter_next(&iter))
+					{
+						const bson_value_t *value = bson_iter_value(&iter);
+						const char *key = bson_iter_key(&iter);
+	
+						/* Skip lsid and other metadata fields */
+						if (!IsCommandMetadataField(key))
+						{
+							PgbsonWriterAppendValue(&commandDocumentWriter, key,
+													strlen(key), value);
+						}
+					}
+					commandWritten = true;
+				}
+				else if (isTruncated)
+				{
+					/*
+						* Truncated BSON - mark as truncated only, no fallback.
+						* We show just the truncation marker to avoid mixing BSON metadata
+						* with SQL-parsed command data.
+						*/
+					PgbsonWriterAppendBool(&commandDocumentWriter, "$truncated", 10, true);
+					commandWritten = true;  /* Prevent fallback to SQL parsing */
+				}
+			}
+		}
+	
+		/*
+			* Fallback to parsing PostgreSQL query if no OpMetadata command.
+			* This path is only taken if OpMetadata was unavailable or empty.
+			* WriteCommandAndGetQueryType will write to commandDocumentWriter AND return queryType.
+			*/
+		if (!commandWritten)
+		{
+			queryType = WriteCommandAndGetQueryType(workerActivity->query,
+													workerActivity,
+													&commandDocumentWriter);
+		}
 		PgbsonWriterEndDocument(singleActivityWriter, &commandDocumentWriter);
+
+		/* Emit cursor sub-document for getMore operations */
+		if (hasCursorId)
+		{
+			pgbson_writer cursorWriter;
+			PgbsonWriterStartDocument(singleActivityWriter, "cursor", 6, &cursorWriter);
+			PgbsonWriterAppendInt64(&cursorWriter, "cursorId", 8, cursorId);
+
+			/* Add originatingCommand from OpMetadata if available (persistent cursors) */
+			if (hasValidMetadata && localOpMetadata.hasOriginatingCommand &&
+				localOpMetadata.originatingCommandLength > 0)
+			{
+				uint32_t origLen = localOpMetadata.originatingCommandLength;
+				const uint8_t *origData = (const uint8_t *) localOpMetadata.originatingCommandData;
+
+				/* Check if originating command is truncated */
+				bool origTruncated = false;
+				if (origLen >= 4)
+				{
+					uint32_t origBsonLen;
+					memcpy(&origBsonLen, origData, 4);
+					origTruncated = (origLen < origBsonLen);
+				}
+
+				bson_iter_t origIter;
+				if (!origTruncated && bson_iter_init_from_data(&origIter, origData, origLen))
+				{
+					pgbson_writer origCmdWriter;
+					PgbsonWriterStartDocument(&cursorWriter, "originatingCommand", 18, &origCmdWriter);
+					while (bson_iter_next(&origIter))
+					{
+						const char *key = bson_iter_key(&origIter);
+						if (!IsCommandMetadataField(key))
+						{
+							PgbsonWriterAppendValue(&origCmdWriter, key, strlen(key),
+													bson_iter_value(&origIter));
+						}
+					}
+					PgbsonWriterEndDocument(&cursorWriter, &origCmdWriter);
+				}
+			}
+
+			PgbsonWriterEndDocument(singleActivityWriter, &cursorWriter);
+		}
+
+		/*
+		* Ensure we have a queryType. This handles the edge case where:
+		* - OpMetadata path succeeded (commandWritten=true) but didn't recognize any command
+		* - WriteCommandAndGetQueryType returned NULL (shouldn't happen but defensive)
+		*/
+		if (queryType == NULL)
+		{
+			queryType = "unknown";
+		}
 		PgbsonWriterAppendUtf8(singleActivityWriter, "op", 2, queryType);
 	}
 	else if (workerActivity->state_change_since > 0)

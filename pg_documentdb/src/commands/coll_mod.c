@@ -175,6 +175,9 @@ command_coll_mod(PG_FUNCTION_ARGS)
 
 	ReportFeatureUsage(FEATURE_COMMAND_COLLMOD);
 
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(collModSpec);
+
 	/*
 	 * TODO: Restrict collMod command access based on RBAC when it is available
 	 */

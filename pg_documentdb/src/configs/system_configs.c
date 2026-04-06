@@ -483,4 +483,10 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, &MaxNonOrderedTermScanThreshold,
 		DEFAULT_MAX_NON_ORDERED_TERM_SCAN_THRESHOLD,
 		-1, INT_MAX, PGC_USERSET, 0, NULL, NULL, NULL);
+	DefineCustomBoolVariable(
+		psprintf("%s.enableOpMetadataCollection", newGucPrefix),
+		gettext_noop(
+			"Enable operation metadata collection for currentOp support."),
+		NULL, &EnableOpMetadataCollection, DEFAULT_ENABLE_OP_METADATA_COLLECTION,
+		PGC_SUSET, 0, NULL, NULL, NULL);
 }

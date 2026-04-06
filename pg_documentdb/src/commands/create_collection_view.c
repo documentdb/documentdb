@@ -89,6 +89,8 @@ Datum
 command_create_collection_view(PG_FUNCTION_ARGS)
 {
 	pgbson *createSpec = PG_GETARG_PGBSON(1);
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(createSpec);
 	Datum databaseDatum = PG_ARGISNULL(0) ? (Datum) 0 : PG_GETARG_DATUM(0);
 
 	bool hasSchemaValidationSpec = false;
