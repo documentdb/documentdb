@@ -152,8 +152,20 @@ if [ ! -f "$configFile" ]; then
     exit 1
 fi
 
-# Set CWD for TLS cert generation (gateway writes ./pkey.pem and ./cert.pem to CWD).
-cd "$(dirname "$configFile")"
+# Keep packaged runs aligned with the systemd unit so generated TLS certs land in
+# the writable service working directory instead of /etc/documentdb.
+if [[ "$configFile" == /etc/documentdb/* ]]; then
+    gateway_workdir="/var/lib/documentdb"
+else
+    gateway_workdir="$(dirname "$configFile")"
+fi
+
+if [ ! -d "$gateway_workdir" ]; then
+    echo "Error: Gateway working directory not found at $gateway_workdir"
+    exit 1
+fi
+
+cd "$gateway_workdir"
 
 "$gateway_bin" "$configFile" &
 

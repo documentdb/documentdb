@@ -114,6 +114,56 @@ Gateway packages install the following files:
 
 The resulting gateway packages will be placed in the output directory (default: `packaging`). You can change the output location with the `--output-dir` option.
 
+## Using Existing Packages on a Local Machine
+
+These steps assume you already have the extension and gateway packages for your OS, architecture, and PostgreSQL version, and that you are running from a repo checkout so the helper scripts under `scripts/` are available.
+
+### Install the packages
+
+Debian/Ubuntu:
+
+```sh
+sudo apt-get install -y \
+  ./path/to/deb13-postgresql-18-documentdb_<version>_<arch>.deb \
+  ./path/to/deb13-documentdb_gateway_<version>_<arch>.deb
+```
+
+RHEL:
+
+```sh
+sudo dnf install -y \
+  ./path/to/rhel9-postgresql18-documentdb-<version>.<arch>.rpm \
+  ./path/to/rhel9-documentdb-gateway-<version>.<arch>.rpm
+```
+
+If you are using PG16 or PG17 packages instead, use that version in the next step.
+
+### Initialize PostgreSQL and Launch the Gateway
+
+Run these commands from the repo root after the packages are installed:
+
+```sh
+export PG_VERSION_USED=18
+./scripts/start_oss_server.sh -c -d "$HOME/.documentdb/data" -p 9712
+./scripts/build_and_start_gateway.sh -u docdb_user -p Admin100 -P 9712
+```
+
+Keep `build_and_start_gateway.sh` running and open a second terminal for `mongosh`.
+
+When the gateway package is installed, `build_and_start_gateway.sh` automatically uses:
+
+- `/usr/bin/documentdb_gateway`
+- `/etc/documentdb/SetupConfiguration.json`
+
+### Connect with Mongosh
+
+```sh
+mongosh localhost:10260 -u docdb_user -p Admin100 \
+  --authenticationMechanism SCRAM-SHA-256 \
+  --tls \
+  --tlsAllowInvalidCertificates
+```
+
 ## Docker Images
 
 Docker images (`documentdb-local`) install prebuilt extension and gateway `.deb` packages instead of compiling from source. Images are based on Debian 13 (trixie) and are built for each supported PG version and architecture.
