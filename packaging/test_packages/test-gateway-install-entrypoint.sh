@@ -41,7 +41,7 @@ while ! grep -q "=== DocumentDB is ready ===" "$emulator_log"; do
         cat /var/log/documentdb/gateway.log 2>/dev/null || echo "(no gateway log found)"
         echo ""
         echo "=== Gateway process status ==="
-        ps aux | grep -i documentdb_gateway | grep -v grep || echo "(no gateway process found)"
+        ls -la /proc/*/exe 2>/dev/null | grep documentdb_gateway || echo "(no gateway process found)"
         echo ""
         echo "=== Emulator process status ==="
         if kill -0 "$emulator_pid" 2>/dev/null; then

@@ -55,7 +55,7 @@ while getopts "d:u:p:n:chsP:o:" opt; do
     esac
 done
 
-green=$(tput setaf 2)
+green=$(tput setaf 2 2>/dev/null || true)
 if [ "$help" == "true" ]; then
     echo "${green}sets up and launches the documentdb gateway on the port specified in the config."
     echo "${green}build_and_start_gateway.sh [-u <userName>] [-p <userPassword>] [-d <SetupConfigurationFile>] [-n <hostname>] [-s] [-c] [-P <port>] [-o <owner>]"

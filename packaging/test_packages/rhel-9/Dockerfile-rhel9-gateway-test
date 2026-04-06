@@ -73,7 +73,8 @@ ENV CERT_PATH="" \
     OWNER="documentdb" \
     PG_VERSION_USED="${POSTGRES_VERSION}" \
     ALLOW_EXTERNAL_CONNECTIONS="false" \
-    PATH=/usr/pgsql-${POSTGRES_VERSION}/bin:$PATH
+    PATH=/usr/pgsql-${POSTGRES_VERSION}/bin:$PATH \
+    TERM=xterm-256color
 
 RUN sudo mkdir -p /home/documentdb/gateway/pg_documentdb_gw/target /var/run/postgresql && \
     sudo chown -R documentdb:documentdb /home/documentdb /var/run/postgresql && \
