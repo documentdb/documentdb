@@ -2266,30 +2266,46 @@ GetSortDetails(PlannerInfo *root, Index rti,
 			/* In the case of group by the expression would be { "": expr }
 			 * Here we can push down to the index iff the expression is a path.
 			 */
-			if (sortElement.bsonValue.value_type != BSON_TYPE_UTF8)
+			const char *groupFieldPath = NULL;
+			uint32_t groupFieldPathLen = 0;
+
+			if (sortElement.bsonValue.value_type == BSON_TYPE_UTF8)
+			{
+				if (sortElement.bsonValue.value.v_utf8.len > 1 &&
+					sortElement.bsonValue.value.v_utf8.str[0] == '$' &&
+					sortElement.bsonValue.value.v_utf8.str[1] != '$')
+				{
+					groupFieldPath = sortElement.bsonValue.value.v_utf8.str + 1;
+					groupFieldPathLen = sortElement.bsonValue.value.v_utf8.len - 1;
+				}
+			}
+			else if (sortElement.bsonValue.value_type == BSON_TYPE_DOCUMENT)
+			{
+				pgbsonelement docElement;
+				if (TryGetSingleFieldPathFromBsonValue(&sortElement.bsonValue,
+													   &docElement))
+				{
+					groupFieldPath = docElement.bsonValue.value.v_utf8.str + 1;
+					groupFieldPathLen = docElement.bsonValue.value.v_utf8.len - 1;
+				}
+			}
+
+			if (groupFieldPath == NULL)
 			{
 				return NIL;
 			}
 
-			if (sortElement.bsonValue.value.v_utf8.len > 1 &&
-				sortElement.bsonValue.value.v_utf8.str[0] == '$')
-			{
-				/* This is a valid path: Track the path in the sortElement to decide pushdown */
-				sortElement.path = sortElement.bsonValue.value.v_utf8.str + 1;
-				sortElement.pathLength = sortElement.bsonValue.value.v_utf8.len - 1;
-				sortElement.bsonValue.value_type = BSON_TYPE_INT32;
-				sortElement.bsonValue.value.v_int32 = SortPathKeyStrategy(pathkey) ==
-													  BTGreaterStrategyNumber ? -1 : 1;
-				pgbson *sortSpec = PgbsonElementToPgbson(&sortElement);
+			/* This is a valid path: Track the path in the sortElement to decide pushdown */
+			sortElement.path = groupFieldPath;
+			sortElement.pathLength = groupFieldPathLen;
+			sortElement.bsonValue.value_type = BSON_TYPE_INT32;
+			sortElement.bsonValue.value.v_int32 = SortPathKeyStrategy(pathkey) ==
+												  BTGreaterStrategyNumber ? -1 : 1;
+			pgbson *sortSpec = PgbsonElementToPgbson(&sortElement);
 
-				/* Also rewrite the secondConst so that the Expr on the sort operator is correct */
-				secondConst = makeConst(BsonTypeId(), -1, InvalidOid, -1, PointerGetDatum(
-											sortSpec), false, false);
-			}
-			else
-			{
-				return NIL;
-			}
+			/* Also rewrite the secondConst so that the Expr on the sort operator is correct */
+			secondConst = makeConst(BsonTypeId(), -1, InvalidOid, -1, PointerGetDatum(
+										sortSpec), false, false);
 		}
 
 		SortIndexInputDetails *sortDetailsInput =

@@ -80,3 +80,33 @@ InitializeQueryDollarRange(const bson_value_t *filterValue,
 		rangeParams->isMaxInclusive = true;
 	}
 }
+
+
+/*
+ * Given a BSON_TYPE_DOCUMENT value, checks if it contains exactly one field
+ * whose value is a "$path" expression (not a "$$variable").
+ * On success, populates *element with the single field element.
+ */
+bool
+TryGetSingleFieldPathFromBsonValue(const bson_value_t *value,
+								   pgbsonelement *element)
+{
+	if (value->value_type != BSON_TYPE_DOCUMENT)
+	{
+		return false;
+	}
+
+	bson_iter_t iter;
+	BsonValueInitIterator(value, &iter);
+
+	if (TryGetSinglePgbsonElementFromBsonIterator(&iter, element) &&
+		element->bsonValue.value_type == BSON_TYPE_UTF8 &&
+		element->bsonValue.value.v_utf8.len > 1 &&
+		element->bsonValue.value.v_utf8.str[0] == '$' &&
+		element->bsonValue.value.v_utf8.str[1] != '$')
+	{
+		return true;
+	}
+
+	return false;
+}
