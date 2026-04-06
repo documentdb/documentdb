@@ -36,6 +36,7 @@ static void ParseInputExpressionAndPersistValue(AggregationExpressionData *expre
 												const bson_value_t *expressionValue,
 												ParseAggregationExpressionContext *context);
 
+
 /*
  * Converts a BsonOrderAggState into a serialized form to allow the internal type to be bytea
  * Resulting bytes look like:
@@ -119,20 +120,19 @@ SerializeOrderState(BsonOrderAggState * state)
 	char *bytes = (char *) MemoryContextAlloc(CurrentMemoryContext, requiredByteSize);
 	SET_VARSIZE(bytes, requiredByteSize);
 
-
 	/* Copy into the current value variable */
 	char *byteAllocationPointer = (char *) VARDATA(bytes);
 
 	/* Set the number of Aggregation Values */
-	*((int64 *) (byteAllocationPointer)) = state->numAggValues;
+	memcpy(byteAllocationPointer, &state->numAggValues, sizeof(int64));
 	byteAllocationPointer += sizeof(int64);
 
 	/* Set the number of Current Values */
-	*((int64 *) (byteAllocationPointer)) = state->currentCount;
+	memcpy(byteAllocationPointer, &state->currentCount, sizeof(int64));
 	byteAllocationPointer += sizeof(int64);
 
 	/* Set the number of sortKeys after the numAggValues */
-	*((int *) (byteAllocationPointer)) = state->numSortKeys;
+	memcpy(byteAllocationPointer, &state->numSortKeys, sizeof(int));
 	byteAllocationPointer += sizeof(int);
 
 	/* Write each result */
@@ -209,11 +209,11 @@ DeserializeOrderState(bytea *byteArray,
 	char *bytes = (char *) VARDATA(byteArray);
 
 	/* Extract the number of numAggValues */
-	state->numAggValues = *(int64 *) (bytes);
+	memcpy(&state->numAggValues, bytes, sizeof(int64));
 	bytes += sizeof(int64);
 
-	/* Extract the number of curretn Values */
-	state->currentCount = *(int64 *) (bytes);
+	/* Extract the number of current Values */
+	memcpy(&state->currentCount, bytes, sizeof(int64));
 	bytes += sizeof(int64);
 
 	/* Check to see if we should allocate one extra position for the new data */
@@ -228,7 +228,7 @@ DeserializeOrderState(bytea *byteArray,
 	}
 
 	/* Extract the number of sortKeys from after numAggValues */
-	state->numSortKeys = *(int *) (bytes);
+	memcpy(&state->numSortKeys, bytes, sizeof(int));
 	bytes += sizeof(int);
 
 	/* Extract values from each current result */
@@ -563,7 +563,7 @@ BsonOrderTransition(PG_FUNCTION_ARGS, bool invertSort, bool isSingle, bool
  *      2) The number of documents to be returned or 'N'
  *      3) The input expression to be applied on the results.
  */
-pg_attribute_no_sanitize_alignment() Datum
+Datum
 BsonOrderTransitionOnSorted(PG_FUNCTION_ARGS, bool invertSort, bool isSingle)
 {
 	MemoryContext aggregateContext;
@@ -630,13 +630,15 @@ BsonOrderTransitionOnSorted(PG_FUNCTION_ARGS, bool invertSort, bool isSingle)
 		sourcePtr = (char *) VARDATA(byteArray);
 
 		/* Copy size is total size - VARHDRSZ, the 4 ints we are extracting, and ptr. */
-		copySize = *(int64 *) sourcePtr - sizeof(int64) * 4 - VARHDRSZ;
+		int64 totalSizeValue;
+		memcpy(&totalSizeValue, sourcePtr, sizeof(int64));
+		copySize = totalSizeValue - sizeof(int64) * 4 - VARHDRSZ;
 		sourcePtr += sizeof(int64);
-		returnCount = *(int64 *) sourcePtr;
+		memcpy(&returnCount, sourcePtr, sizeof(int64));
 		sourcePtr += sizeof(int64);
-		currentCount = *(int64 *) sourcePtr;
+		memcpy(&currentCount, sourcePtr, sizeof(int64));
 		sourcePtr += sizeof(int64);
-		inputExpressionSize = *(int64 *) sourcePtr;
+		memcpy(&inputExpressionSize, sourcePtr, sizeof(int64));
 		sourcePtr += sizeof(int64);
 
 		if (inputExpressionSize != 0)
@@ -726,13 +728,14 @@ BsonOrderTransitionOnSorted(PG_FUNCTION_ARGS, bool invertSort, bool isSingle)
 	}
 
 	char *returnDataPtr = (char *) VARDATA(returnData);
-	*((int64 *) (returnDataPtr)) = totalSize;
+	int64 totalSizeAsInt64 = (int64) totalSize;
+	memcpy(returnDataPtr, &totalSizeAsInt64, sizeof(int64));
 	returnDataPtr += sizeof(int64);
-	*((int64 *) (returnDataPtr)) = returnCount;
+	memcpy(returnDataPtr, &returnCount, sizeof(int64));
 	returnDataPtr += sizeof(int64);
-	*((int64 *) (returnDataPtr)) = currentCount;
+	memcpy(returnDataPtr, &currentCount, sizeof(int64));
 	returnDataPtr += sizeof(int64);
-	*((int64 *) (returnDataPtr)) = inputExpressionSize;
+	memcpy(returnDataPtr, &inputExpressionSize, sizeof(int64));
 	returnDataPtr += sizeof(int64);
 
 	/* Copy input expression to returnDataPtr */
@@ -758,13 +761,15 @@ BsonOrderTransitionOnSorted(PG_FUNCTION_ARGS, bool invertSort, bool isSingle)
 	{
 		memcpy(returnDataPtr, newValue, VARSIZE(newValue));
 		returnDataPtr += VARSIZE(newValue);
-		*((uint32 *) (returnDataPtr)) = VARSIZE(newValue);
+		uint32 newValueSize = VARSIZE(newValue);
+		memcpy(returnDataPtr, &newValueSize, sizeof(uint32));
 	}
 	else
 	{
 		*returnDataPtr = 0;
 		returnDataPtr += 1;
-		*((uint32 *) (returnDataPtr)) = (uint32) 1;
+		uint32 nullMarkerSize = (uint32) 1;
+		memcpy(returnDataPtr, &nullMarkerSize, sizeof(uint32));
 	}
 
 	PG_RETURN_POINTER(returnData);
@@ -1155,7 +1160,7 @@ BsonOrderFinal(PG_FUNCTION_ARGS, bool isSingle, bool invert)
  * if IsSingle is true a single value will be returned
  * otherwise an array of values will be returned.
  */
-pg_attribute_no_sanitize_alignment() Datum
+Datum
 BsonOrderFinalOnSorted(PG_FUNCTION_ARGS, bool isSingle)
 {
 	MemoryContext aggregateContext;
@@ -1185,9 +1190,9 @@ BsonOrderFinalOnSorted(PG_FUNCTION_ARGS, bool isSingle)
 		/* Skip over bytes and returnCount */
 		sourcePtr += sizeof(int64);
 		sourcePtr += sizeof(int64);
-		currentCount = *(int64 *) sourcePtr;
+		memcpy(&currentCount, sourcePtr, sizeof(int64));
 		sourcePtr += sizeof(int64);
-		inputExpressionSize = *(int64 *) sourcePtr;
+		memcpy(&inputExpressionSize, sourcePtr, sizeof(int64));
 		sourcePtr += sizeof(int64);
 
 		/* Extract inputExpression from sourcePtr */
