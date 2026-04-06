@@ -1068,7 +1068,8 @@ RunCompareOnPathIndex(CompositeQueryRunData *runData,
 		{
 			IndexRecheckArgs *recheckStrategy = lfirst(recheckFuncs);
 			if (!IsValidRecheckForIndexValue(&serializedTerms[compareIndex].term,
-											 recheckStrategy))
+											 recheckStrategy,
+											 runData->metaInfo->collation))
 			{
 				return -1;
 			}

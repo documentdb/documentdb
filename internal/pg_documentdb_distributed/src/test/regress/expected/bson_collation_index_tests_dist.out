@@ -5,7 +5,7 @@ SET documentdb.next_collection_index_id TO 89000;
 SET documentdb_api.forceUseIndexIfAvailable to on;
 SET documentdb.defaultUseCompositeOpClass TO on;
 -- ======================================================================
--- SECTION 1: Setup — sharded single-field and compound collections
+-- SECTION 1: Setup — sharded single-field collection
 -- ======================================================================
 SELECT documentdb_api.insert_one('coll_idx_d_db','single_field_d', '{"_id": 1, "a": "apple"}', NULL);
 NOTICE:  creating collection
@@ -298,6 +298,50 @@ SELECT document FROM bson_aggregation_find('coll_idx_d_db', '{ "find": "single_f
  { "_id" : { "$numberInt" : "7" }, "a" : { "$numberInt" : "42" } }
  { "_id" : { "$numberInt" : "8" }, "a" : null }
 (6 rows)
+
+END;
+-- ======================================================================
+-- SECTION 6: $ne on sharded collection with collation
+-- ======================================================================
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_find('coll_idx_d_db', '{ "find": "single_field_d", "filter": { "a": { "$ne": "apple" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                             document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "BANANA" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "banana" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "cherry" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "Cherry" }
+ { "_id" : { "$numberInt" : "7" }, "a" : { "$numberInt" : "42" } }
+ { "_id" : { "$numberInt" : "8" }, "a" : null }
+(6 rows)
+
+END;
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_idx_d_db', '{ "find": "single_field_d", "filter": { "a": { "$ne": "apple" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                                                           QUERY PLAN                                                                            
+---------------------------------------------------------------------
+ Sort
+   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   ->  Custom Scan (Citus Adaptive)
+         Task Count: 8
+         Tasks Shown: One of 8
+         ->  Task
+               Node: host=localhost port=58070 dbname=regression
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     indexName: idx_a_en_s1
+                     indexKey: {"a": 1}
+                     isMultiKey: false
+                     indexBounds: ["a": [MinKey, MaxKey]]
+                     ->  Index Scan using idx_a_en_s1 on documents_89001_89000004 collection
+                           Index Cond: (document OPERATOR(documentdb_api_catalog.@!=) '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(14 rows)
 
 END;
 -- ======================================================================

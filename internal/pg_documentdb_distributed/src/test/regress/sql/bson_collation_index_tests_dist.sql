@@ -8,7 +8,7 @@ SET documentdb.defaultUseCompositeOpClass TO on;
 
 
 -- ======================================================================
--- SECTION 1: Setup — sharded single-field and compound collections
+-- SECTION 1: Setup — sharded single-field collection
 -- ======================================================================
 
 SELECT documentdb_api.insert_one('coll_idx_d_db','single_field_d', '{"_id": 1, "a": "apple"}', NULL);
@@ -141,6 +141,26 @@ SELECT document FROM bson_aggregation_find('coll_idx_d_db', '{ "find": "single_f
 
 SELECT documentdb_api.delete('coll_idx_d_db', '{ "delete": "single_field_d", "deletes": [{ "q": { "a": { "$gt": "cherry" } }, "limit": 0, "collation": { "locale": "en", "strength": 1 } }] }');
 SELECT document FROM bson_aggregation_find('coll_idx_d_db', '{ "find": "single_field_d", "filter": {}, "sort": { "_id": 1 } }');
+END;
+
+
+-- ======================================================================
+-- SECTION 6: $ne on sharded collection with collation
+-- ======================================================================
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_find('coll_idx_d_db', '{ "find": "single_field_d", "filter": { "a": { "$ne": "apple" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+END;
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_idx_d_db', '{ "find": "single_field_d", "filter": { "a": { "$ne": "apple" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 END;
 
 
