@@ -45,4 +45,7 @@ void ElemMatchIndexOpStrategyClassify(DollarRangeParams *params,
 									  bool *equalityPrefixes,
 									  bool *nonEqualityPrefixes);
 
+bool TryGetSingleFieldPathFromBsonValue(const bson_value_t *value,
+										pgbsonelement *element);
+
 #endif
