@@ -115,9 +115,10 @@ jobs:
           GATEWAY_RPMS=$(find ./packages -name "*gateway*.rpm" | wc -l)
           echo "Gateway DEBs found: $GATEWAY_DEBS"
           echo "Gateway RPMs found: $GATEWAY_RPMS"
-          ls -lh ./packages/*gateway* 2>/dev/null || echo "WARNING: No gateway packages found!"
+          ls -lh ./packages/*gateway* 2>/dev/null || true
           if [ "$GATEWAY_DEBS" -eq 0 ] && [ "$GATEWAY_RPMS" -eq 0 ]; then
-            echo "::warning::No gateway packages found in release artifacts"
+            echo "::error::No gateway packages found in release artifacts"
+            exit 1
           fi
 
       - name: Extract Changelog for Version

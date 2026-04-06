@@ -132,11 +132,16 @@ else
     echo "Skipping user creation."
 fi
 
-# Use package-installed gateway binary, or source-tree build if -c was used.
+# Resolve gateway binary: freshly-built source > installed package > existing source build.
 if [ "$clean" = "true" ] && [ -x "$scriptDir/../pg_documentdb_gw/target/release-with-symbols/documentdb_gateway" ]; then
     gateway_bin="$scriptDir/../pg_documentdb_gw/target/release-with-symbols/documentdb_gateway"
-else
+elif [ -x "/usr/bin/documentdb_gateway" ]; then
     gateway_bin="/usr/bin/documentdb_gateway"
+elif [ -x "$scriptDir/../pg_documentdb_gw/target/release-with-symbols/documentdb_gateway" ]; then
+    gateway_bin="$scriptDir/../pg_documentdb_gw/target/release-with-symbols/documentdb_gateway"
+else
+    echo "Error: documentdb_gateway not found. Install the gateway package or build from source with -c."
+    exit 1
 fi
 
 if [ -z "$configFile" ]; then

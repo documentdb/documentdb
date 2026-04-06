@@ -69,6 +69,9 @@ jobs:
         ./packaging/build_packages.sh --os deb13 --pg ${{ matrix.pg_version }} --output-dir downloaded-artifacts
         ls -R downloaded-artifacts
     - name: Build Gateway DEB Package
+      # Gateway binary is PG-independent but architecture-specific. Ideally built
+      # once per arch, but the matrix is (arch x pg_version) so it rebuilds per PG
+      # version. Acceptable trade-off to keep the workflow simple.
       run: |
         ./packaging/build_gateway_packages.sh --os deb13 --pg 18 --output-dir downloaded-artifacts
         ls downloaded-artifacts/*gateway*.deb || (echo "ERROR: Gateway package build failed - no .deb found" && exit 1)
