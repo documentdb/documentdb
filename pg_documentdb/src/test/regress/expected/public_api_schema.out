@@ -787,7 +787,7 @@ primary key, btree, for table "documentdb_api_catalog.roles"
 (0 rows)
 
 -- show roles and privileges for v2 schema, below tests intentionally obfuscate role privileges by replacing superuser role names with 'root' to make it easier to test and assert roles for different environments where superuser role names may vary.
-SELECT n.nspname as schema, proname, regexp_replace(proacl::text, pg_get_userbyid(p.proowner), 'root', 'g') AS proacl FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'documentdb_api_v2' ORDER BY n.nspname, proname;
+SELECT n.nspname as schema, proname, regexp_replace(proacl::text, '(?<=[{,/])' || pg_get_userbyid(p.proowner) || '(?=[=},])', 'root', 'g') AS proacl FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'documentdb_api_v2' ORDER BY n.nspname, proname;
       schema       |              proname               |                                          proacl                                          
 -------------------+------------------------------------+------------------------------------------------------------------------------------------
  documentdb_api_v2 | aggregate_cursor_first_page        | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_find_role=X/root}
@@ -821,7 +821,7 @@ SELECT n.nspname as schema, proname, regexp_replace(proacl::text, pg_get_userbyi
  documentdb_api_v2 | validate                           | {root=X/root}
 (29 rows)
 
-SELECT n.nspname as schema, proname, regexp_replace(proacl::text, pg_get_userbyid(p.proowner), 'root', 'g') AS proacl FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'documentdb_api_internal_readonly' ORDER BY n.nspname, proname;
+SELECT n.nspname as schema, proname, regexp_replace(proacl::text, '(?<=[{,/])' || pg_get_userbyid(p.proowner) || '(?=[=},])', 'root', 'g') AS proacl FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'documentdb_api_internal_readonly' ORDER BY n.nspname, proname;
               schema              |         proname          | proacl 
 ----------------------------------+--------------------------+--------
  documentdb_api_internal_readonly | check_build_index_status | 
@@ -834,7 +834,7 @@ SELECT n.nspname as schema, proname, regexp_replace(proacl::text, pg_get_userbyi
  documentdb_api_internal_readonly | db_stats_worker          | 
 (8 rows)
 
-SELECT n.nspname as schema, proname, regexp_replace(proacl::text, pg_get_userbyid(p.proowner), 'root', 'g') AS proacl FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'documentdb_api_internal_readwrite' ORDER BY n.nspname, proname;
+SELECT n.nspname as schema, proname, regexp_replace(proacl::text, '(?<=[{,/])' || pg_get_userbyid(p.proowner) || '(?=[=},])', 'root', 'g') AS proacl FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'documentdb_api_internal_readwrite' ORDER BY n.nspname, proname;
               schema               |              proname               | proacl 
 -----------------------------------+------------------------------------+--------
  documentdb_api_internal_readwrite | build_index_concurrently           | 
@@ -851,14 +851,14 @@ SELECT n.nspname as schema, proname, regexp_replace(proacl::text, pg_get_userbyi
  documentdb_api_internal_readwrite | update_worker                      | 
 (12 rows)
 
-SELECT n.nspname as schema, proname, regexp_replace(proacl::text, pg_get_userbyid(p.proowner), 'root', 'g') AS proacl FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'documentdb_api_internal_admin' ORDER BY n.nspname, proname;
+SELECT n.nspname as schema, proname, regexp_replace(proacl::text, '(?<=[{,/])' || pg_get_userbyid(p.proowner) || '(?=[=},])', 'root', 'g') AS proacl FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'documentdb_api_internal_admin' ORDER BY n.nspname, proname;
             schema             |               proname               | proacl 
 -------------------------------+-------------------------------------+--------
  documentdb_api_internal_admin | reindex_index_background            | 
  documentdb_api_internal_admin | reindex_indexes_background_internal | 
 (2 rows)
 
-SELECT n.nspname as schema, proname, regexp_replace(proacl::text, pg_get_userbyid(p.proowner), 'root', 'g') AS proacl FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'documentdb_api_internal_bgworker' ORDER BY n.nspname, proname;
+SELECT n.nspname as schema, proname, regexp_replace(proacl::text, '(?<=[{,/])' || pg_get_userbyid(p.proowner) || '(?=[=},])', 'root', 'g') AS proacl FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'documentdb_api_internal_bgworker' ORDER BY n.nspname, proname;
  schema | proname | proacl 
 --------+---------+--------
 (0 rows)
