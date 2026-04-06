@@ -200,7 +200,16 @@ if [[ $TEST_CLEAN_INSTALL == true ]]; then
 
     if [[ "$PACKAGE_TYPE" == "deb" ]]; then
         ls "$abs_output_dir"
-        deb_package_name=$(ls "$abs_output_dir" | grep -E "${OS}-postgresql-$PG-documentdb_${DOCUMENTDB_VERSION}.*\.deb" | grep -v "dbg" | head -n 1)
+        deb_package_name=$(ls "$abs_output_dir" | grep -E "${OS}-postgresql-$PG-documentdb_${DOCUMENTDB_VERSION}.*\.deb" | grep -v "dbg" | head -n 1 || true)
+        if [[ -z "$deb_package_name" ]]; then
+            echo "Extension DEB package not found in $abs_output_dir, building it for clean-install test..."
+            "${script_dir}/packaging/build_packages.sh" --os "$OS" --pg "$PG" --version "$DOCUMENTDB_VERSION" --output-dir "$OUTPUT_DIR"
+            deb_package_name=$(ls "$abs_output_dir" | grep -E "${OS}-postgresql-$PG-documentdb_${DOCUMENTDB_VERSION}.*\.deb" | grep -v "dbg" | head -n 1 || true)
+        fi
+        if [[ -z "$deb_package_name" ]]; then
+            echo "Error: Could not find the built extension DEB package in $abs_output_dir for testing."
+            exit 1
+        fi
         deb_package_rel_path="$OUTPUT_DIR/$deb_package_name"
         gateway_package_name=$(ls "$abs_output_dir" | grep -E "^${OS}-documentdb_gateway_.*\.deb" | grep -v "dbg" | head -n 1)
         gateway_package_rel_path="$OUTPUT_DIR/$gateway_package_name"
@@ -217,6 +226,17 @@ if [[ $TEST_CLEAN_INSTALL == true ]]; then
         docker run --rm documentdb-test-gateway-packages:latest
 
     elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
+        rpm_package_name=$(ls "$abs_output_dir" | grep -E "${OS}-postgresql${PG}-documentdb-${DOCUMENTDB_VERSION}.*\.(x86_64|aarch64)\.rpm" | head -n 1 || true)
+        if [[ -z "$rpm_package_name" ]]; then
+            echo "Extension RPM package not found in $abs_output_dir, building it for clean-install test..."
+            "${script_dir}/packaging/build_packages.sh" --os "$OS" --pg "$PG" --version "$DOCUMENTDB_VERSION" --output-dir "$OUTPUT_DIR"
+            rpm_package_name=$(ls "$abs_output_dir" | grep -E "${OS}-postgresql${PG}-documentdb-${DOCUMENTDB_VERSION}.*\.(x86_64|aarch64)\.rpm" | head -n 1 || true)
+        fi
+        if [[ -z "$rpm_package_name" ]]; then
+            echo "Error: Could not find the built extension RPM package in $abs_output_dir for testing."
+            exit 1
+        fi
+        rpm_package_rel_path="$OUTPUT_DIR/$rpm_package_name"
         gateway_rpm_name=$(ls "$abs_output_dir" | grep -E "${OS}-documentdb-gateway-.*\.(x86_64|aarch64)\.rpm" | head -n 1)
         if [[ -z "$gateway_rpm_name" ]]; then
             echo "Error: Could not find the built gateway RPM package in $abs_output_dir for testing."
@@ -237,6 +257,8 @@ if [[ $TEST_CLEAN_INSTALL == true ]]; then
 
         docker build -t documentdb-test-gateway-rpm-packages:latest -f "$TEST_DOCKERFILE" \
             --build-arg BASE_IMAGE="$TEST_DOCKER_IMAGE" \
+            --build-arg POSTGRES_VERSION="$PG" \
+            --build-arg RPM_PACKAGE_REL_PATH="$rpm_package_rel_path" \
             --build-arg GATEWAY_PACKAGE_PATH="$gateway_package_rel_path" "$script_dir"
         docker run --rm documentdb-test-gateway-rpm-packages:latest
     fi

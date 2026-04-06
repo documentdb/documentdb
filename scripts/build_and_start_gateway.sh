@@ -69,6 +69,7 @@ if [ "$help" == "true" ]; then
     echo "${green}       are no longer required."
     echo "${green}[-o] - optional argument. specifies the owner for the database operations. Default is postgres."
     echo "${green}if SetupConfigurationFile not specified, /etc/documentdb/SetupConfiguration.json is used"
+    echo "${green}when installed from packages, otherwise pg_documentdb_gw/SetupConfiguration.json"
     echo "${green}and the default port is 10260"
     exit 1
 fi
@@ -138,16 +139,23 @@ else
     gateway_bin="/usr/bin/documentdb_gateway"
 fi
 
-# Set CWD for TLS cert generation (gateway writes ./pkey.pem and ./cert.pem to CWD).
-if [ -n "$configFile" ]; then
-    cd "$(dirname "$configFile")"
+if [ -z "$configFile" ]; then
+    if [ -f "/etc/documentdb/SetupConfiguration.json" ]; then
+        configFile="/etc/documentdb/SetupConfiguration.json"
+    else
+        configFile="$scriptDir/../pg_documentdb_gw/SetupConfiguration.json"
+    fi
 fi
 
-if [ -z "$configFile" ]; then
-    "$gateway_bin"
-else
-    "$gateway_bin" "$configFile"
-fi &
+if [ ! -f "$configFile" ]; then
+    echo "Error: SetupConfiguration file not found at $configFile"
+    exit 1
+fi
+
+# Set CWD for TLS cert generation (gateway writes ./pkey.pem and ./cert.pem to CWD).
+cd "$(dirname "$configFile")"
+
+"$gateway_bin" "$configFile" &
 
 gateway_pid=$!
 

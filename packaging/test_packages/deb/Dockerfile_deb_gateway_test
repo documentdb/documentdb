@@ -95,15 +95,13 @@ ENV CERT_PATH="" \
     PATH=/usr/lib/postgresql/${POSTGRES_VERSION}/bin:$PATH
 
 RUN sudo mkdir /home/documentdb/gateway
-RUN sudo mkdir -p /home/documentdb/gateway/pg_documentdb_gw/target/release-with-symbols
-RUN  ln -s /usr/bin/documentdb_gateway /home/documentdb/gateway/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway  
+RUN sudo mkdir -p /home/documentdb/gateway/pg_documentdb_gw/target
 
 # Create /var/run/postgresql directory with proper permissions
 RUN sudo mkdir -p /var/run/postgresql && \
     sudo chown -R documentdb:documentdb /var/run/postgresql && \
     sudo chmod 755 /var/run/postgresql
 
-COPY pg_documentdb_gw/SetupConfiguration.json /home/documentdb/gateway/pg_documentdb_gw/SetupConfiguration.json
 COPY scripts/start_oss_server.sh /home/documentdb/gateway/scripts/start_oss_server.sh
 COPY scripts/build_and_start_gateway.sh /home/documentdb/gateway/scripts/build_and_start_gateway.sh
 COPY scripts/emulator_entrypoint.sh /home/documentdb/gateway/scripts/emulator_entrypoint.sh

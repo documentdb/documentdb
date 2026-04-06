@@ -1,24 +1,92 @@
 ARG BASE_IMAGE=rockylinux:8
 FROM ${BASE_IMAGE}
 
+ARG POSTGRES_VERSION=18
+ARG RPM_PACKAGE_REL_PATH
 ARG GATEWAY_PACKAGE_PATH
 
-RUN echo "Testing gateway RPM install on RHEL 8"
+RUN [ -n "${RPM_PACKAGE_REL_PATH}" ] || (echo "ERROR: RPM_PACKAGE_REL_PATH build-arg is required" >&2 && exit 1)
+RUN [ -n "${GATEWAY_PACKAGE_PATH}" ] || (echo "ERROR: GATEWAY_PACKAGE_PATH build-arg is required" >&2 && exit 1)
 
-RUN [ -n "${GATEWAY_PACKAGE_PATH}" ] || \
-    (echo "ERROR: GATEWAY_PACKAGE_PATH build-arg is required" >&2 && exit 1)
+ENV POSTGRES_VERSION=${POSTGRES_VERSION}
 
+RUN dnf install -y dnf-plugins-core && \
+    dnf install -y epel-release && \
+    dnf config-manager --set-enabled powertools && \
+    dnf clean all
+
+RUN dnf -y install glibc-langpack-en glibc-common && \
+    localedef -i en_US -f UTF-8 en_US.UTF-8 || true
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+RUN ARCH=$(uname -m) && \
+    dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-${ARCH}/pgdg-redhat-repo-latest.noarch.rpm && \
+    dnf -qy module disable postgresql && \
+    dnf -y swap curl-minimal curl && \
+    dnf -y install \
+        ca-certificates \
+        sudo \
+        jq \
+        openssl \
+        lsof \
+        nmap-ncat \
+        python3 \
+        python3-pip \
+        postgresql${POSTGRES_VERSION} \
+        postgresql${POSTGRES_VERSION}-server \
+        postgresql${POSTGRES_VERSION}-contrib \
+        pgvector_${POSTGRES_VERSION} \
+        pg_cron_${POSTGRES_VERSION} \
+        postgis36_${POSTGRES_VERSION} \
+        $(if [ "${POSTGRES_VERSION}" -lt 18 ]; then echo "rum_${POSTGRES_VERSION}"; else echo ""; fi) && \
+    dnf clean all
+
+COPY ${RPM_PACKAGE_REL_PATH} /tmp/documentdb.rpm
 COPY ${GATEWAY_PACKAGE_PATH} /tmp/documentdb_gateway.rpm
+RUN dnf install -y /tmp/documentdb.rpm /tmp/documentdb_gateway.rpm
 
-RUN rpm -i /tmp/documentdb_gateway.rpm
+RUN id documentdb && \
+    test -d /var/lib/documentdb && \
+    test "$(stat -c '%U:%G' /var/lib/documentdb)" = "documentdb:documentdb" && \
+    grep -q "WorkingDirectory=/var/lib/documentdb" /usr/lib/systemd/system/documentdb-gateway.service && \
+    echo "OK: RPM pre/post install state verified"
 
-CMD echo "Verifying gateway RPM installation..." && \
-    test -f /usr/bin/documentdb_gateway && echo "OK: /usr/bin/documentdb_gateway exists" && \
-    test -f /etc/documentdb/SetupConfiguration.json && echo "OK: /etc/documentdb/SetupConfiguration.json exists" && \
-    test -f /usr/lib/systemd/system/documentdb-gateway.service && echo "OK: /usr/lib/systemd/system/documentdb-gateway.service exists" && \
-    test -x /usr/bin/documentdb_gateway && echo "OK: /usr/bin/documentdb_gateway is executable" && \
-    id documentdb && echo "OK: documentdb user exists" && \
-    test -d /var/lib/documentdb && echo "OK: /var/lib/documentdb exists" && \
-    test "$(stat -c '%U:%G' /var/lib/documentdb)" = "documentdb:documentdb" && echo "OK: /var/lib/documentdb owned by documentdb" && \
-    grep -q "WorkingDirectory=/var/lib/documentdb" /usr/lib/systemd/system/documentdb-gateway.service && echo "OK: WorkingDirectory set" && \
-    echo "All gateway RPM verification checks passed!"
+RUN if id documentdb >/dev/null 2>&1; then \
+        usermod -m -d /home/documentdb -s /bin/bash documentdb && \
+        usermod -aG wheel documentdb; \
+    else \
+        useradd -ms /bin/bash documentdb -G wheel; \
+    fi
+RUN echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" >> /etc/sudoers.d/no-pass-ask
+
+ENV CERT_PATH="" \
+    KEY_FILE="" \
+    DATA_PATH="/data" \
+    DOCUMENTDB_PORT="10260" \
+    ENABLE_TELEMETRY="false" \
+    LOG_LEVEL="info" \
+    USERNAME="default_user" \
+    CREATE_USER="true" \
+    START_POSTGRESQL="true" \
+    POSTGRESQL_PORT="9712" \
+    OWNER="documentdb" \
+    PG_VERSION_USED="${POSTGRES_VERSION}" \
+    ALLOW_EXTERNAL_CONNECTIONS="false" \
+    PATH=/usr/pgsql-${POSTGRES_VERSION}/bin:$PATH
+
+RUN sudo mkdir -p /home/documentdb/gateway/pg_documentdb_gw/target /var/run/postgresql && \
+    sudo chown -R documentdb:documentdb /home/documentdb /var/run/postgresql && \
+    sudo chmod 755 /var/run/postgresql
+
+COPY scripts/start_oss_server.sh /home/documentdb/gateway/scripts/start_oss_server.sh
+COPY scripts/build_and_start_gateway.sh /home/documentdb/gateway/scripts/build_and_start_gateway.sh
+COPY scripts/emulator_entrypoint.sh /home/documentdb/gateway/scripts/emulator_entrypoint.sh
+COPY scripts/utils.sh /home/documentdb/gateway/scripts/utils.sh
+COPY scripts/setup_psqlrc.sh /home/documentdb/gateway/scripts/setup_psqlrc.sh
+COPY packaging/test_packages/test_gateway.py /home/documentdb/gateway/scripts/test_gateway.py
+COPY packaging/test_packages/test-gateway-install-entrypoint.sh /home/documentdb/gateway/scripts/test-gateway-install-entrypoint.sh
+
+USER documentdb
+WORKDIR /home/documentdb/gateway/scripts
+ENTRYPOINT ["/bin/bash", "-c", "/home/documentdb/gateway/scripts/test-gateway-install-entrypoint.sh"]
