@@ -57,6 +57,7 @@
 #include "utils/feature_counter.h"
 #include "utils/version_utils.h"
 #include "aggregation/bson_query.h"
+#include "aggregation/bson_query_common.h"
 #include "metadata/index.h"
 
 #include "aggregation/bson_aggregation_pipeline_private.h"
@@ -5977,17 +5978,41 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 						errmsg("_id is missing from group specification")));
 	}
 
-	/* Group by is valid for pushdown iff it's a string expression of a path that's not a variable */
-	bool isGroupByValidForIndexPushdown =
-		idValue.value_type == BSON_TYPE_UTF8 &&
-		idValue.value.v_utf8.len > 1 &&
-		idValue.value.v_utf8.str[0] == '$' &&
-		idValue.value.v_utf8.str[1] != '$' &&
-		CanPushSortFilterToIndex(query, context);
+	/* Group by is valid for pushdown iff it's a string expression of a path that's not a variable
+	 * or a document with one field.
+	 */
+	bool isGroupByValidForIndexPushdown = false;
+	const char *groupByFieldPath = NULL;
+	uint32_t groupByFieldPathLen = 0;
+	if (CanPushSortFilterToIndex(query, context))
+	{
+		if (idValue.value_type == BSON_TYPE_UTF8 &&
+			idValue.value.v_utf8.len > 1 &&
+			idValue.value.v_utf8.str[0] == '$' &&
+			idValue.value.v_utf8.str[1] != '$')
+		{
+			groupByFieldPath = idValue.value.v_utf8.str + 1;
+			groupByFieldPathLen = idValue.value.v_utf8.len - 1;
+			isGroupByValidForIndexPushdown = true;
+		}
+		else if (idValue.value_type == BSON_TYPE_DOCUMENT)
+		{
+			/*
+			 * For now, we only support the simple case where the document has one field and that field is a path expression that's not a variable.
+			 * If there are multiple fields or if the single field is not a path expression or is a variable,
+			 * then we don't consider it valid for index pushdown.
+			 */
+			pgbsonelement docElement;
+			if (TryGetSingleFieldPathFromBsonValue(&idValue, &docElement))
+			{
+				groupByFieldPath = docElement.bsonValue.value.v_utf8.str + 1;
+				groupByFieldPathLen = docElement.bsonValue.value.v_utf8.len - 1;
+				isGroupByValidForIndexPushdown = true;
+			}
+		}
+	}
 
 	pgbson *groupValue = BsonValueToDocumentPgbson(&idValue);
-
-
 	ParseState *parseState = make_parsestate(NULL);
 	parseState->p_next_resno = 1;
 	parseState->p_expr_kind = EXPR_KIND_GROUP_BY;
@@ -6654,8 +6679,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 	if (isGroupByValidForIndexPushdown)
 	{
 		pgbsonelement sortElement = { 0 };
-		sortElement.path = idValue.value.v_utf8.str + 1;
-		sortElement.pathLength = idValue.value.v_utf8.len - 1;
+		sortElement.path = groupByFieldPath;
+		sortElement.pathLength = groupByFieldPathLen;
 		sortElement.bsonValue.value_type = BSON_TYPE_INT32;
 		sortElement.bsonValue.value.v_int32 = 1;
 		pgbson *sortSpec = PgbsonElementToPgbson(&sortElement);

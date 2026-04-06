@@ -87,27 +87,30 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
 (6 rows)
 
 ---------------------------------------------------------------------
--- these scenarios don't work (even though they should).
+-- single-field document _id pushdown
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "a": "$a" }, "count": { "$sum": 1 } } } ] }');
                                                                                 QUERY PLAN                                                                                 
 ---------------------------------------------------------------------
  Subquery Scan on agg_stage_0
-   ->  HashAggregate
+   ->  GroupAggregate
          Group Key: bson_expression_get(collection.document, '{ "" : { "a" : "$a" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Index Scan using _id_ on documents_8601_860002 collection
-               Index Cond: (shard_key_value = '8601'::bigint)
-(5 rows)
+         ->  Index Scan using a_1 on documents_8601_860002 collection
+               Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+               Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(6 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b" }, "count": { "$sum": 1 } } } ] }');
                                                                                 QUERY PLAN                                                                                 
 ---------------------------------------------------------------------
  Subquery Scan on agg_stage_0
-   ->  HashAggregate
+   ->  GroupAggregate
          Group Key: bson_expression_get(collection.document, '{ "" : { "b" : "$b" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Index Scan using _id_ on documents_8601_860002 collection
-               Index Cond: (shard_key_value = '8601'::bigint)
-(5 rows)
+         ->  Index Scan using b_c_1 on documents_8601_860002 collection
+               Index Cond: (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+               Order By: (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson)
+(6 rows)
 
+-- multi-field document _id: these scenarios don't work yet (even though they should).
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "count": { "$sum": 1 } } } ] }');
                                                                                       QUERY PLAN                                                                                       
 ---------------------------------------------------------------------
