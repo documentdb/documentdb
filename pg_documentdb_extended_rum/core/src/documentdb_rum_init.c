@@ -24,6 +24,8 @@ void _PG_init(void);
 
 extern PGDLLEXPORT bool documentdb_rum_get_multi_key_status(Relation indexRelation);
 extern PGDLLEXPORT void documentdb_rum_update_multi_key_status(Relation indexRelation);
+extern PGDLLEXPORT void DocumentDBRumInitCore(const char *rumGucPrefix, const
+											  char *documentDBRumGucPrefix);
 
 extern PGDLLIMPORT void InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 													   char *documentDBRumGucPrefix);
@@ -67,16 +69,24 @@ _PG_init(void)
 							"variable in postgresql.conf. ")));
 	}
 
+	/* Do not add any initialization logic here. Do it in DocumentDBRumInitCore */
+	DocumentDBRumInitCore("documentdb_rum", "documentdb_rum");
+	MarkGUCPrefixReserved("documentdb_rum");
+}
+
+
+PGDLLEXPORT void
+DocumentDBRumInitCore(const char *rumGucPrefix,
+					  const char *documentDBRumGucPrefix)
+{
 	InitializeRumVacuumState();
 
 	/* Define custom GUC variables. (if any) */
 	if (DocumentDBRumLoadCommonGUCs)
 	{
 		DocumentDBRumLoadCommonGUCs = false;
-		InitializeCommonDocumentDBGUCs("documentdb_rum", "documentdb_rum");
+		InitializeCommonDocumentDBGUCs(rumGucPrefix, documentDBRumGucPrefix);
 	}
-
-	MarkGUCPrefixReserved("documentdb_rum");
 }
 
 
