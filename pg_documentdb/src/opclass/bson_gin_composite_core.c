@@ -1207,7 +1207,8 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 
 bool
 IsValidRecheckForIndexValue(const BsonIndexTerm *compareTerm,
-							IndexRecheckArgs *recheckArgs)
+							IndexRecheckArgs *recheckArgs,
+							const char *indexCollation)
 {
 	switch (recheckArgs->queryStrategy)
 	{
@@ -1269,7 +1270,8 @@ IsValidRecheckForIndexValue(const BsonIndexTerm *compareTerm,
 				return !IsIndexTermMaybeUndefined(compareTerm);
 			}
 
-			return !BsonValueEquals(&compareTerm->element.bsonValue, notEqualQuery);
+			return !BsonValueEqualsWithCollation(&compareTerm->element.bsonValue,
+												 notEqualQuery, indexCollation);
 		}
 
 		case BSON_INDEX_STRATEGY_DOLLAR_BITS_ALL_CLEAR:
