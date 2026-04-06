@@ -70,7 +70,7 @@ jobs:
         ls -R downloaded-artifacts
     - name: Build Gateway DEB Package
       run: |
-        ./packaging/build_gateway_packages.sh --os deb13 --pg ${{ matrix.pg_version }} --output-dir downloaded-artifacts
+        ./packaging/build_gateway_packages.sh --os deb13 --pg 18 --output-dir downloaded-artifacts
         ls downloaded-artifacts/*gateway*.deb || (echo "ERROR: Gateway package build failed - no .deb found" && exit 1)
     - name: Login to GHCR
       run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin

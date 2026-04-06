@@ -64,14 +64,14 @@ Packages can be found at the `packages` directory by default, but it can be conf
 
 ## Building Gateway Packages
 
-Gateway packages are **PG-version-independent** — a single gateway package per OS/architecture works with any supported PostgreSQL version. The `--pg` flag selects the PostgreSQL version used in the build and test environment, but the resulting package has no PG-specific dependency.
+Gateway packages are **PG-version-independent** — a single gateway package per OS/architecture works with any supported PostgreSQL version. The `--pg` flag selects the PostgreSQL version used in the build and test environment, but the resulting package has no PG-specific dependency. CI and release workflows build/test gateway packages on the latest supported PG version (currently 18), while `documentdb-local` images remain available for older PG versions for compatibility.
 
 To build gateway packages, use the `build_gateway_packages.sh` script.
 
 ### Gateway DEB Packages
 
 ```sh
-./packaging/build_gateway_packages.sh --os deb12 --pg 16
+./packaging/build_gateway_packages.sh --os deb12 --pg 18
 ```
 
 Supported DEB/Ubuntu distributions:
@@ -88,8 +88,8 @@ This produces 5 OS x 2 arch = **10 DEB packages**.
 ### Gateway RPM Packages
 
 ```sh
-./packaging/build_gateway_packages.sh --os rhel8 --pg 17
-./packaging/build_gateway_packages.sh --os rhel9 --pg 17 --test-clean-install
+./packaging/build_gateway_packages.sh --os rhel8 --pg 18
+./packaging/build_gateway_packages.sh --os rhel9 --pg 18 --test-clean-install
 ```
 
 Supported RPM distributions:
