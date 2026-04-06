@@ -36,6 +36,7 @@
 #include "utils/feature_counter.h"
 #include "utils/version_utils.h"
 #include "utils/query_utils.h"
+#include "utils/op_metadata.h"
 #include "api_hooks.h"
 
 
@@ -180,6 +181,9 @@ command_delete(PG_FUNCTION_ARGS)
 	}
 
 	ReportFeatureUsage(FEATURE_COMMAND_DELETE);
+
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(deleteSpec);
 
 	/* fetch TupleDesc for return value, not interested in resultTypeId */
 	Oid *resultTypeId = NULL;
