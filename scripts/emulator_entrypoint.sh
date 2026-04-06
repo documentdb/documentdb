@@ -392,7 +392,14 @@ fi
 # Setting up the configuration file
 mkdir -p /home/documentdb/gateway/pg_documentdb_gw/target
 configFile="/home/documentdb/gateway/pg_documentdb_gw/target/SetupConfiguration_temp.json"
-cp /home/documentdb/gateway/pg_documentdb_gw/SetupConfiguration.json $configFile
+
+# Prefer package-installed config, fall back to legacy Docker layout
+if [ -f /etc/documentdb/SetupConfiguration.json ]; then
+    configSource="/etc/documentdb/SetupConfiguration.json"
+else
+    configSource="/home/documentdb/gateway/pg_documentdb_gw/SetupConfiguration.json"
+fi
+cp "$configSource" $configFile
 sudo chmod 755 $configFile
 
 if [ -n "${DOCUMENTDB_PORT:-}" ]; then

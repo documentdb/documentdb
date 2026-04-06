@@ -51,7 +51,19 @@ RUN dpkg -i /tmp/install_setup/$(basename "$DEB_PACKAGE_REL_PATH")
 COPY ${GATEWAY_PACKAGE_PATH} /tmp/install_setup/
 RUN dpkg -i /tmp/install_setup/$(basename "$GATEWAY_PACKAGE_PATH")
 
-RUN useradd -ms /bin/bash documentdb -G sudo
+# Verify DEB preinst side effects: user/group and working directory
+RUN id documentdb && \
+    test -d /var/lib/documentdb && \
+    test "$(stat -c '%U:%G' /var/lib/documentdb)" = "documentdb:documentdb" && \
+    grep -q "WorkingDirectory=/var/lib/documentdb" /lib/systemd/system/documentdb-gateway.service && \
+    echo "OK: preinst and systemd unit verified"
+
+RUN if id documentdb >/dev/null 2>&1; then \
+        usermod -m -d /home/documentdb -s /bin/bash documentdb && \
+        usermod -aG sudo documentdb; \
+    else \
+        useradd -ms /bin/bash documentdb -G sudo; \
+    fi
 RUN echo "%sudo ALL=(ALL:ALL) NOPASSWD: ALL" >> /etc/sudoers.d/no-pass-ask
 
 # ----------- Final Gateway Image -----------

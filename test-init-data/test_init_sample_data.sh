@@ -9,7 +9,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 CONTAINER_NAME="documentdb-init-data-test"
 IMAGE_NAME="documentdb-init-data-test"
-DOCKERFILE_PATH="$PROJECT_ROOT/.github/containers/Build-Ubuntu/Dockerfile_gateway"
+DOCKERFILE_PATH="$PROJECT_ROOT/.github/containers/Build-Ubuntu/Dockerfile_documentdb_local"
 DOCUMENTDB_PORT="10261"  # Use different port to avoid conflicts
 PASSWORD="TestPassword123"
 

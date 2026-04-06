@@ -76,7 +76,7 @@ To get started with the DocumentDB Gateway, follow these steps:
 1. **Build the Gateway**: Build the DocumentDB Gateway using the provided Dockerfile.
 
     ```bash
-    docker build . -f .github/containers/Build-Ubuntu/Dockerfile_gateway -t <image-tag>
+    docker build . -f .github/containers/Build-Ubuntu/Dockerfile_documentdb_local -t <image-tag>
     ```
 
 2. **Run the Gateway**: Run the DocumentDB Gateway in a Docker container.

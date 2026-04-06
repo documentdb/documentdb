@@ -13,6 +13,7 @@ categories.workspace = true
 name = "documentdb_gateway"
 maintainer = "documentdb-packaging-maintainers@microsoft.com"
 depends = []
+maintainer-scripts = "maintainer-scripts/"
 assets = [
  ["target/release-with-symbols/documentdb_gateway", "usr/bin/", "755"],
  ["../SetupConfiguration.json", "etc/documentdb/", "644"],

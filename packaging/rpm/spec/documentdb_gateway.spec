@@ -29,6 +29,8 @@ cp /home/documentdb/code/pg_documentdb_gw/documentdb_gateway/documentdb-gateway.
 %pre
 getent group documentdb >/dev/null || groupadd -r documentdb
 getent passwd documentdb >/dev/null || useradd -r -g documentdb -d /var/lib/documentdb -s /sbin/nologin -c "DocumentDB Gateway" documentdb
+mkdir -p /var/lib/documentdb
+chown documentdb:documentdb /var/lib/documentdb
 exit 0
 
 %files

@@ -84,7 +84,7 @@ jobs:
           --build-arg DEB_PACKAGE_REL_PATH=downloaded-artifacts/$(ls downloaded-artifacts | grep -E 'postgresql.*documentdb' | grep -v 'dbgsym' | head -1) \
           --build-arg GATEWAY_DEB_PACKAGE_REL_PATH=downloaded-artifacts/$(ls downloaded-artifacts | grep -E 'gateway.*\.deb' | grep -v 'dbgsym' | head -1) \
           -t ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:$TAG \
-          -f .github/containers/Build-Ubuntu/Dockerfile_gateway .
+          -f .github/containers/Build-Ubuntu/Dockerfile_documentdb_local .
     - name: Push ${{ matrix.arch }} Image
       if: inputs.push_images || startsWith(github.ref, 'refs/tags/')
       run: |

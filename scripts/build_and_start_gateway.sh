@@ -63,13 +63,13 @@ if [ "$help" == "true" ]; then
     echo "${green}[-p] - required argument. password for the user to be created."
     echo "${green}[-n] - optional argument. hostname for the database connection. Default is localhost."
     echo "${green}[-P] - optional argument. port for the database connection. Default is 9712."
-    echo "${green}[-c] - optional argument. runs cargo clean before building the gateway."
+    echo "${green}[-c] - optional argument. rebuilds the gateway from source before starting (requires source tree)."
     echo "${green}[-d] - optional argument. path to custom SetupConfiguration file"
     echo "${green}[-s] - optional argument. Skips user creation. If provided, -u and -p."
     echo "${green}       are no longer required."
     echo "${green}[-o] - optional argument. specifies the owner for the database operations. Default is postgres."
-    echo "${green}if SetupConfigurationFile not specified assumed to be"
-    echo "${green}pg_documentdb_gw/SetupConfiguration.json and the default port is 10260"
+    echo "${green}if SetupConfigurationFile not specified, /etc/documentdb/SetupConfiguration.json is used"
+    echo "${green}and the default port is 10260"
     exit 1
 fi
 
@@ -105,10 +105,15 @@ echo "PostgreSQL is ready."
 
 if [ "$clean" = "true" ]; then
     echo "Building DocumentDB Gateway after cleaning..."
-    pushd "$scriptDir/../pg_documentdb_gw"
-    cargo clean
-    cargo build --profile=release-with-symbols
-    popd
+    if [ -d "$scriptDir/../pg_documentdb_gw" ]; then
+        pushd "$scriptDir/../pg_documentdb_gw"
+        cargo clean
+        cargo build --profile=release-with-symbols
+        popd
+    else
+        echo "Error: source tree not found. -c requires a source checkout."
+        exit 1
+    fi
 fi
 
 if [ "$createUser" = "true" ]; then
@@ -126,12 +131,22 @@ else
     echo "Skipping user creation."
 fi
 
-cd $scriptDir/../pg_documentdb_gw/
+# Use package-installed gateway binary, or source-tree build if -c was used.
+if [ "$clean" = "true" ] && [ -x "$scriptDir/../pg_documentdb_gw/target/release-with-symbols/documentdb_gateway" ]; then
+    gateway_bin="$scriptDir/../pg_documentdb_gw/target/release-with-symbols/documentdb_gateway"
+else
+    gateway_bin="/usr/bin/documentdb_gateway"
+fi
+
+# Set CWD for TLS cert generation (gateway writes ./pkey.pem and ./cert.pem to CWD).
+if [ -n "$configFile" ]; then
+    cd "$(dirname "$configFile")"
+fi
 
 if [ -z "$configFile" ]; then
-    ./target/release-with-symbols/documentdb_gateway
+    "$gateway_bin"
 else
-    ./target/release-with-symbols/documentdb_gateway "$configFile"
+    "$gateway_bin" "$configFile"
 fi &
 
 gateway_pid=$!

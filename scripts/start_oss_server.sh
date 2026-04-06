@@ -317,7 +317,11 @@ if [ "$allowExternalAccess" == "true" ]; then
 fi
 
 if [ "$gatewayWorker" == "true" ]; then
-  setupConfigurationFile="$scriptDir/../pg_documentdb_gw/SetupConfiguration.json"
+  if [ -f /etc/documentdb/SetupConfiguration.json ]; then
+    setupConfigurationFile="/etc/documentdb/SetupConfiguration.json"
+  else
+    setupConfigurationFile="$scriptDir/../pg_documentdb_gw/SetupConfiguration.json"
+  fi
   AddPostgresConfigToServers "$postgresDirectory" "documentdb_gateway.database = 'postgres'"
   AddPostgresConfigToServers "$postgresDirectory" "documentdb_gateway.setup_configuration_file = '$setupConfigurationFile'"
 fi

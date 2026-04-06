@@ -17,4 +17,8 @@ CMD echo "Verifying gateway RPM installation..." && \
     test -f /etc/documentdb/SetupConfiguration.json && echo "OK: /etc/documentdb/SetupConfiguration.json exists" && \
     test -f /usr/lib/systemd/system/documentdb-gateway.service && echo "OK: /usr/lib/systemd/system/documentdb-gateway.service exists" && \
     test -x /usr/bin/documentdb_gateway && echo "OK: /usr/bin/documentdb_gateway is executable" && \
+    id documentdb && echo "OK: documentdb user exists" && \
+    test -d /var/lib/documentdb && echo "OK: /var/lib/documentdb exists" && \
+    test "$(stat -c '%U:%G' /var/lib/documentdb)" = "documentdb:documentdb" && echo "OK: /var/lib/documentdb owned by documentdb" && \
+    grep -q "WorkingDirectory=/var/lib/documentdb" /usr/lib/systemd/system/documentdb-gateway.service && echo "OK: WorkingDirectory set" && \
     echo "All gateway RPM verification checks passed!"

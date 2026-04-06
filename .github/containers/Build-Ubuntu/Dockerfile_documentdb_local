@@ -60,7 +60,13 @@ RUN dpkg -i /tmp/install_setup/$(basename "$DEB_PACKAGE_REL_PATH")
 COPY ${GATEWAY_DEB_PACKAGE_REL_PATH} /tmp/install_setup/
 RUN dpkg -i /tmp/install_setup/$(basename "$GATEWAY_DEB_PACKAGE_REL_PATH")
 
-RUN useradd -ms /bin/bash documentdb -G sudo
+# Create or adapt documentdb user for interactive Docker use.
+RUN if id documentdb >/dev/null 2>&1; then \
+        usermod -m -d /home/documentdb -s /bin/bash documentdb && \
+        usermod -aG sudo documentdb; \
+    else \
+        useradd -ms /bin/bash documentdb -G sudo; \
+    fi
 RUN echo "%sudo ALL=(ALL:ALL) NOPASSWD: ALL" >> /etc/sudoers.d/no-pass-ask
 
 # ----------- Final Gateway Image -----------
@@ -108,11 +114,9 @@ RUN sudo mkdir -p /var/run/postgresql && \
     sudo chown -R documentdb:documentdb /var/run/postgresql && \
     sudo chmod 755 /var/run/postgresql
 
-# Symlink the gateway binary installed by the .deb to the path scripts expect
-RUN sudo mkdir -p /home/documentdb/gateway/pg_documentdb_gw/target/release-with-symbols && \
-    ln -s /usr/bin/documentdb_gateway /home/documentdb/gateway/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway
+# Create gateway directory structure (target/ is scratch space for temp config)
+RUN sudo mkdir -p /home/documentdb/gateway/pg_documentdb_gw/target
 
-COPY pg_documentdb_gw/SetupConfiguration.json /home/documentdb/gateway/pg_documentdb_gw/SetupConfiguration.json
 COPY scripts/start_oss_server.sh /home/documentdb/gateway/scripts/start_oss_server.sh
 COPY scripts/build_and_start_gateway.sh /home/documentdb/gateway/scripts/build_and_start_gateway.sh
 COPY scripts/emulator_entrypoint.sh /home/documentdb/gateway/scripts/emulator_entrypoint.sh

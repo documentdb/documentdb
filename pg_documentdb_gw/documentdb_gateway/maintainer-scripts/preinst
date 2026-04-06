@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+
+# Create documentdb system user and group (idempotent).
+# Mirrors the RPM %pre scriptlet in packaging/rpm/spec/documentdb_gateway.spec.
+if ! getent group documentdb >/dev/null; then
+    groupadd -r documentdb
+fi
+if ! getent passwd documentdb >/dev/null; then
+    useradd -r -g documentdb -d /var/lib/documentdb -s /usr/sbin/nologin \
+        -c "DocumentDB Gateway" documentdb
+fi
+
+# Ensure the working directory exists for the systemd service
+# (gateway writes auto-generated TLS certs to its CWD).
+mkdir -p /var/lib/documentdb
+chown documentdb:documentdb /var/lib/documentdb
+
+#DEBHELPER#
