@@ -1273,7 +1273,7 @@ extension_amgettuple(IndexScanDesc scan, ScanDirection direction)
 }
 
 
-pg_attribute_no_sanitize_alignment() static bool
+static bool
 GetOneTupleCore(DocumentDBRumIndexState *outerScanState,
 				IndexScanDesc scan, ScanDirection direction,
 				IndexAmRoutine *coreRoutine)
@@ -1281,7 +1281,7 @@ GetOneTupleCore(DocumentDBRumIndexState *outerScanState,
 	bool result = coreRoutine->amgettuple(outerScanState->innerScan, direction);
 	if (result)
 	{
-		scan->xs_heaptid = outerScanState->innerScan->xs_heaptid;
+		ItemPointerCopy(&outerScanState->innerScan->xs_heaptid, &scan->xs_heaptid);
 		scan->xs_recheck = outerScanState->innerScan->xs_recheck;
 		scan->xs_recheckorderby = outerScanState->innerScan->xs_recheckorderby;
 
