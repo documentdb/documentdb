@@ -37,6 +37,12 @@ check-basic: generate_version_schedule
 check-minimal:
 	$(call common_test,--schedule=./minimal_schedule, $(EXTRA_TESTS),documentdb_tests_minimal)
 
+check-isolation:
+	$(call isolation_test,--schedule=./isolation_schedule, $(EXTRA_TESTS),documentdb_isolation_tests)
+
+check-isolation-minimal:
+	$(call isolation_test,--schedule=./isolation_minimal_schedule, $(EXTRA_TESTS),documentdb_isolation_tests_minimal)
+
 check-test-output:
 	./validate_test_output.sh $(pg_major_version) $(MAKEFILE_DIR)
 
@@ -50,4 +56,4 @@ INSTALL_PG_PORT ?= 5432
 installcheck: generate_version_schedule
 	mkdir -p log && { $(top_builddir)/src/test/regress/pg_regress --encoding=UTF8 --port $(INSTALL_PG_PORT) --dlpath=$(BASEPATH) --use-existing --dbname=postgres --schedule=./log/basic_schedule_$(pg_major_version) 2>&1; echo $$? > log/.exitcode; } | tee log/summary.out; test $$(cat log/.exitcode) -eq 0 || (cat regression.diffs && false)
 
-all: check-basic check-test-output
+all: check-basic check-isolation check-test-output
