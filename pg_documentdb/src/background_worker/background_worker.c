@@ -1120,10 +1120,6 @@ static void
 background_worker_sigterm(SIGNAL_ARGS)
 {
 	got_sigterm = true;
-	ereport(LOG,
-			(errmsg("Terminating \"%s\" due to administrator command",
-					ExtensionBackgroundWorkerLeaderName)));
-
 	if (BackgroundWorkerShmem != NULL)
 	{
 		SetLatch(&BackgroundWorkerShmem->latch);
