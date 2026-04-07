@@ -1,0 +1,63 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1-insert s2-count s1-rename-collection s2-count
+create_collection
+-----------------
+t                
+(1 row)
+
+step s1-insert: 
+    SELECT COUNT(documentdb_api.insert_one('ren_db', 'ren1', documentdb_core.bson_build_document('_id', i, 'a', i))) FROM generate_series(1, 100) i;
+
+count
+-----
+  100
+(1 row)
+
+step s2-count: 
+    SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('ren_db',
+        documentdb_core.bson_build_document('aggregate', 'ren1'::text, 'pipeline', ARRAY[documentdb_core.bson_build_document('$count', 'n'::text)]));
+    
+    SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('ren_db',
+        documentdb_core.bson_build_document('aggregate', 'ren2'::text, 'pipeline', ARRAY[documentdb_core.bson_build_document('$count', 'n'::text)]));
+
+document                          
+----------------------------------
+{ "n" : { "$numberInt" : "100" } }
+(1 row)
+
+document                        
+--------------------------------
+{ "n" : { "$numberInt" : "0" } }
+(1 row)
+
+step s1-rename-collection: 
+    SELECT documentdb_api.rename_collection('ren_db', 'ren1', 'ren2');
+
+rename_collection
+-----------------
+                 
+(1 row)
+
+step s2-count: 
+    SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('ren_db',
+        documentdb_core.bson_build_document('aggregate', 'ren1'::text, 'pipeline', ARRAY[documentdb_core.bson_build_document('$count', 'n'::text)]));
+    
+    SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('ren_db',
+        documentdb_core.bson_build_document('aggregate', 'ren2'::text, 'pipeline', ARRAY[documentdb_core.bson_build_document('$count', 'n'::text)]));
+
+document                        
+--------------------------------
+{ "n" : { "$numberInt" : "0" } }
+(1 row)
+
+document                          
+----------------------------------
+{ "n" : { "$numberInt" : "100" } }
+(1 row)
+
+drop_collection
+---------------
+t              
+(1 row)
+
