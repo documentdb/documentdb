@@ -409,6 +409,11 @@ bool EnableCollModUnique = DEFAULT_ENABLE_COLLMOD_UNIQUE;
 #define DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY true
 bool EnableDropInvalidIndexesOnReadOnly = DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY;
 
+/* Added in v112, enabled in v112, remove after v114 */
+#define DEFAULT_ENABLE_ONLY_COLLECTION_CACHE_INVALIDATE_ON_COLLECTION_CHANGES true
+bool EnableOnlyCollectionCacheInvalidateOnCollectionChanges =
+	DEFAULT_ENABLE_ONLY_COLLECTION_CACHE_INVALIDATE_ON_COLLECTION_CHANGES;
+
 /*
  * SECTION: Schedule jobs via background worker.
  */
@@ -1056,5 +1061,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable new WithExpr aggregate optimizations for min, max, sum, avg, first, and last accumulators."),
 		NULL, &EnableNewWithExprAccumulators,
 		DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableOnlyCollectionCacheInvalidateOnCollectionChanges",
+				 newGucPrefix),
+		gettext_noop(
+			"Whether to only invalidate collection cache on collection changes instead of invalidating entire database cache."),
+		NULL, &EnableOnlyCollectionCacheInvalidateOnCollectionChanges,
+		DEFAULT_ENABLE_ONLY_COLLECTION_CACHE_INVALIDATE_ON_COLLECTION_CHANGES,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }

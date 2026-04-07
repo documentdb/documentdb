@@ -106,6 +106,7 @@ extern bool UseLocalExecutionShardQueries;
 extern bool ForceLocalExecutionShardQueries;
 extern bool EnableSchemaValidation;
 extern int MaxSchemaValidatorSize;
+extern bool EnableOnlyCollectionCacheInvalidateOnCollectionChanges;
 
 /* user-defined functions */
 PG_FUNCTION_INFO_V1(command_collection_table);
@@ -1358,7 +1359,15 @@ command_collection_table(PG_FUNCTION_ARGS)
 Datum
 command_invalidate_collection_cache(PG_FUNCTION_ARGS)
 {
-	CacheInvalidateRelcacheAll();
+	if (EnableOnlyCollectionCacheInvalidateOnCollectionChanges)
+	{
+		InvalidateCollectionsCache();
+	}
+	else
+	{
+		CacheInvalidateRelcacheAll();
+	}
+
 	PG_RETURN_VOID();
 }
 
