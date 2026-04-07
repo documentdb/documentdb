@@ -36,7 +36,9 @@ CI against our PRs, please:
 Per the [RFC](docs/rfcs/third-party-testing.md) and inspired by
 [OpenDev Third-Party CI](https://docs.opendev.org/opendev/system-config/latest/third_party.html):
 
-- **Non-gating**: Results are informational PR comments, not required status checks.
+- **Non-gating by default**: Results default to informational (non-gating). Each
+  system declares whether its result is informational or required (blocking merge)
+  at registration time. See the RFC for details on configurable gating.
 - **One comment per push**: Each `synchronize` event produces at most one result.
 - **Public logs**: Include a link to accessible build logs when possible.
 - **Identify yourself**: Comments must include your system name and contact link.
