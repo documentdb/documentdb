@@ -783,34 +783,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
    true
 );
 
--- This Transaction shows buggy output we will remove this GUC soon and will remove this test as well
 BEGIN;
-SET LOCAL documentdb.enableUseLookupNewProjectInlineMethod TO off;
-SELECT document FROM bson_aggregation_pipeline(
-    'db',
-    '{
-      "aggregate": "tenantCollection",
-      "pipeline": [
-        {
-          "$lookup": {
-            "from": "candidateRequest",
-            "localField": "_id",
-            "foreignField": "tenantId",
-            "as": "requests",
-            "pipeline": [
-              { "$match": { "status": { "$ne": "unopened" } } },
-              { "$project": { "status": 1, "candidateId": 1 } }
-            ]
-          }
-        }
-      ]
-    }'
-);
-
-ROLLBACK;
-
-BEGIN;
-SET LOCAL  documentdb.enableUseLookupNewProjectInlineMethod TO on;
 SET LOCAL enable_seqscan TO off;
 SELECT document FROM bson_aggregation_pipeline(
     'db',
