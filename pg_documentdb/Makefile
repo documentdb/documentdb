@@ -80,6 +80,12 @@ check-documentdb-minimal: check-minimal
 check-extended-rum-minimal:
 	$(MAKE) -C src/test/extended_rum_tests check-minimal
 
+check-isolation:
+	$(MAKE) -C src/test/regress check-isolation
+
+check-isolation-minimal:
+	$(MAKE) -C src/test/regress check-isolation-minimal
+
 check-valgrind:
 	mkdir -p $(CURDIR)/src/test/regress/log/
 	echo >$(CURDIR)/src/test/regress/log/pglog.log

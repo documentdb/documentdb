@@ -1,0 +1,2 @@
+test: isolation-setup
+test: isolation-rename-collection

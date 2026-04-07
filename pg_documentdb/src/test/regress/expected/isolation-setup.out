@@ -1,0 +1,17 @@
+Parsed test spec with 1 sessions
+
+starting permutation: s1-begin
+step s1-begin: 
+    -- schema version should match binary version
+    WITH cte AS (SELECT extversion as v FROM pg_extension WHERE extname = 'documentdb') SELECT documentdb_api.binary_version() LIKE REPLACE(v, '-', '.') FROM cte;
+
+?column?
+--------
+t       
+(1 row)
+
+?column?
+--------
+       1
+(1 row)
+

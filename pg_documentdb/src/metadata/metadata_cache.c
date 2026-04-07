@@ -1339,6 +1339,7 @@ InvalidateCollectionsCache()
 	if (Cache.CollectionsTableId != InvalidOid)
 	{
 		InvalidateDocumentDBApiCache((Datum) 0, Cache.CollectionsTableId);
+		CacheInvalidateRelcacheByRelid(Cache.CollectionsTableId);
 	}
 }
 
