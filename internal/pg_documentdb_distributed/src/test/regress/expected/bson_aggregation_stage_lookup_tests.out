@@ -2256,46 +2256,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
--- This Transaction shows buggy output we will remove this GUC soon and will remove this test as well
 BEGIN;
-SET LOCAL documentdb.enableUseLookupNewProjectInlineMethod TO off;
-SELECT document FROM bson_aggregation_pipeline(
-    'db',
-    '{
-      "aggregate": "tenantCollection",
-      "pipeline": [
-        {
-          "$lookup": {
-            "from": "candidateRequest",
-            "localField": "_id",
-            "foreignField": "tenantId",
-            "as": "requests",
-            "pipeline": [
-              { "$match": { "status": { "$ne": "unopened" } } },
-              { "$project": { "status": 1, "candidateId": 1 } }
-            ]
-          }
-        }
-      ]
-    }'
-);
-                                             document                                             
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "name" : "Tenant 1", "archived" : false, "requests" : [  ] }
- { "_id" : { "$numberInt" : "2" }, "name" : "Tenant 2", "archived" : false, "requests" : [  ] }
- { "_id" : { "$numberInt" : "3" }, "name" : "Tenant 3", "archived" : false, "requests" : [  ] }
- { "_id" : { "$numberInt" : "4" }, "name" : "Tenant 4", "archived" : false, "requests" : [  ] }
- { "_id" : { "$numberInt" : "5" }, "name" : "Tenant 5", "archived" : false, "requests" : [  ] }
- { "_id" : { "$numberInt" : "6" }, "name" : "Tenant 6", "archived" : false, "requests" : [  ] }
- { "_id" : { "$numberInt" : "7" }, "name" : "Tenant 7", "archived" : false, "requests" : [  ] }
- { "_id" : { "$numberInt" : "8" }, "name" : "Tenant 8", "archived" : false, "requests" : [  ] }
- { "_id" : { "$numberInt" : "9" }, "name" : "Tenant 9", "archived" : false, "requests" : [  ] }
- { "_id" : { "$numberInt" : "10" }, "name" : "Tenant 10", "archived" : false, "requests" : [  ] }
-(10 rows)
-
-ROLLBACK;
-BEGIN;
-SET LOCAL  documentdb.enableUseLookupNewProjectInlineMethod TO on;
 SET LOCAL enable_seqscan TO off;
 SELECT document FROM bson_aggregation_pipeline(
     'db',
@@ -2384,7 +2345,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline(
 ROLLBACK;
 -- Test nested lookup with multiple levels
 SELECT documentdb_api.insert_one('db','users','{ "_id" : 1, "customerCode": "C100", "name": "Nimisha Doshi" }', NULL);
-psql:sql/bson_aggregation_stage_lookup_tests_core.sql:860: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_core.sql:833: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2397,7 +2358,7 @@ SELECT documentdb_api.insert_one('db','users','{ "_id" : 2, "customerCode": "C10
 (1 row)
 
 SELECT documentdb_api.insert_one('db','orders','{ "_id" : 1,  "orderId": 1, "customerCode": "C100", "productCode": "P200" }', NULL);
-psql:sql/bson_aggregation_stage_lookup_tests_core.sql:863: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_core.sql:836: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2416,7 +2377,7 @@ SELECT documentdb_api.insert_one('db','orders','{ "_id" : 3, "orderId": 3, "cust
 (1 row)
 
 SELECT documentdb_api.insert_one('db','products','{ "_id" : 1, "productCode": "P200", "title": "Laptop", "price": 55000 }', NULL);
-psql:sql/bson_aggregation_stage_lookup_tests_core.sql:867: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_core.sql:840: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3207,7 +3168,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ROLLBACK;
 -- 11 Bug Fix 2 : Should pass foreign fields to lookupinline functions
 SELECT documentdb_api.insert_one('dbAddField','users','{ "_id": 1, "name": "user1", "age": 28 }', NULL);
-psql:sql/bson_aggregation_stage_lookup_tests_core.sql:1277: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_core.sql:1250: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3220,7 +3181,7 @@ SELECT documentdb_api.insert_one('dbAddField','users','{ "_id": 2, "name": "user
 (1 row)
 
 SELECT documentdb_api.insert_one('dbAddField','orders','{ "_id": 101, "userId": 1, "item": "Laptop", "price": 50000 }', NULL);
-psql:sql/bson_aggregation_stage_lookup_tests_core.sql:1280: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_tests_core.sql:1253: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

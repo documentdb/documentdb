@@ -302,10 +302,6 @@ bool EnableIdIndexPushdown = DEFAULT_ENABLE_ID_INDEX_PUSHDOWN;
 bool EnableDollarInToScalarArrayOpExprConversion =
 	DEFAULT_ENABLE_DOLLAR_IN_TO_SCALAR_ARRAY_OP_EXPR_CONVERSION;
 
-/* Added in v109, Enabled in v109, Remove after 111 */
-#define DEFAULT_USE_LOOKUP_NEW_PROJECT_INLINE_METHOD true
-bool EnableUseLookupNewProjectInlineMethod = DEFAULT_USE_LOOKUP_NEW_PROJECT_INLINE_METHOD;
-
 /* Added in v111, enabled in v111, remove after v114 */
 #define DEFAULT_USE_FOREIGN_KEY_LOOKUP_INLINE true
 bool EnableUseForeignKeyLookupInline = DEFAULT_USE_FOREIGN_KEY_LOOKUP_INLINE;
@@ -925,14 +921,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable order by index term feature."),
 		NULL, &EnableOrderByIndexTerm,
 		DEFAULT_ENABLE_ORDER_BY_INDEX_TERM,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableUseLookupNewProjectInlineMethod", newGucPrefix),
-		gettext_noop(
-			"Whether to use new inline method for $project in $lookup."),
-		NULL, &EnableUseLookupNewProjectInlineMethod,
-		DEFAULT_USE_LOOKUP_NEW_PROJECT_INLINE_METHOD,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

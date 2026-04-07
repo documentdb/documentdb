@@ -83,7 +83,6 @@ extern bool EnableFindProjectionAfterOffset;
 extern bool EnableNewCountAggregates;
 extern bool FailOnNonEmptyGroupCountArg;
 extern bool FailOnGroupIdDuplicate;
-extern bool EnableUseLookupNewProjectInlineMethod;
 extern bool InlineChangeStreamMatchStage;
 extern bool RemoveMatchNamespaceFilters;
 extern bool EnableOrderByIndexTerm;
@@ -7857,11 +7856,6 @@ static bool
 CanInlineLookupStageProject(const bson_value_t *stageValue, const
 							StringView *lookupPath, bool hasLet)
 {
-	if (!EnableUseLookupNewProjectInlineMethod)
-	{
-		return CanInlineLookupStageSetAddFields(stageValue, lookupPath, hasLet);
-	}
-
 	if (stageValue->value_type != BSON_TYPE_DOCUMENT)
 	{
 		return false;
