@@ -1107,21 +1107,13 @@ extern RumItem * rumGetBAEntry(BuildAccumulator *accum,
 
 /* GUC parameters */
 extern PGDLLIMPORT int RumFuzzySearchLimit;
-extern PGDLLIMPORT int RumDataPageIntermediateSplitSize;
-extern PGDLLIMPORT bool RumThrowErrorOnInvalidDataPage;
 extern PGDLLIMPORT bool RumDisableFastScan;
-extern PGDLLIMPORT int RumParallelIndexWorkersOverride;
 extern PGDLLIMPORT bool RumEnableParallelIndexBuild;
 extern PGDLLIMPORT bool RumSkipRetryOnDeletePage;
-extern PGDLLIMPORT bool RumForceOrderedIndexScan;
-extern PGDLLIMPORT bool RumPreferOrderedIndexScan;
 extern PGDLLIMPORT bool RumEnableSkipIntermediateEntry;
-extern PGDLLIMPORT bool RumVacuumEntryItems;
-extern PGDLLIMPORT bool RumUseNewItemPtrDecoding;
 extern PGDLLIMPORT bool RumPruneEmptyPages;
 extern PGDLLIMPORT bool RumTrackIncompleteSplit;
 extern PGDLLIMPORT bool RumFixIncompleteSplit;
-extern PGDLLIMPORT bool RumInjectPageSplitIncomplete;
 extern PGDLLIMPORT bool RumEnableNewBulkDelete;
 extern PGDLLIMPORT bool RumNewBulkDeleteInlineDataPages;
 extern PGDLLIMPORT bool RumVacuumSkipPrunePostingTreePages;
@@ -1130,6 +1122,13 @@ extern PGDLLIMPORT bool RumSkipResetOnDeadEntryPage;
 extern PGDLLIMPORT bool RumEnableOrderedOperatorScans;
 extern PGDLLIMPORT int RumDefaultPageFillFactor;
 extern PGDLLIMPORT bool RumEnablePageFillFactor;
+
+/* Gucs used by tests */
+extern PGDLLIMPORT bool RumForceOrderedIndexScan;
+extern PGDLLIMPORT int RumParallelIndexWorkersOverride;
+extern PGDLLIMPORT int RumDataPageIntermediateSplitSize;
+extern PGDLLIMPORT bool RumThrowErrorOnInvalidDataPage;
+extern PGDLLIMPORT bool RumInjectPageSplitIncomplete;
 
 /*
  * Functions for reading ItemPointers with additional information. Used in
@@ -1480,14 +1479,9 @@ rumDataPageLeafRead(Pointer ptr, OffsetNumber attnum, RumItem *item,
 			item->addInfoIsNull = false;
 		}
 	}
-	else if (RumUseNewItemPtrDecoding)
-	{
-		ptr = rumDataPageLeafReadItemPointerNew(ptr, item);
-	}
 	else
 	{
-		ptr = rumDataPageLeafReadItemPointer(ptr, &item->iptr,
-											 &item->addInfoIsNull);
+		ptr = rumDataPageLeafReadItemPointerNew(ptr, item);
 	}
 
 	Assert(item->iptr.ip_posid != InvalidOffsetNumber);

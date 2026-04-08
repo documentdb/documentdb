@@ -180,23 +180,12 @@ rumReadTuple(RumState *rumstate, OffsetNumber attnum,
 		i;
 	RumItemSetMin(&item);
 
-	if (RumUseNewItemPtrDecoding)
+	InitBlockNumberIncr(blockNumberIncr, (&item.iptr));
+	for (i = 0; i < nipd; i++)
 	{
-		InitBlockNumberIncr(blockNumberIncr, (&item.iptr));
-		for (i = 0; i < nipd; i++)
-		{
-			ptr = rumDataPageLeafReadWithBlockNumberIncr(ptr, attnum, &item, copyAddInfo,
-														 rumstate, &blockNumberIncr);
-			items[i] = item;
-		}
-	}
-	else
-	{
-		for (i = 0; i < nipd; i++)
-		{
-			ptr = rumDataPageLeafRead(ptr, attnum, &item, copyAddInfo, rumstate);
-			items[i] = item;
-		}
+		ptr = rumDataPageLeafReadWithBlockNumberIncr(ptr, attnum, &item, copyAddInfo,
+													 rumstate, &blockNumberIncr);
+		items[i] = item;
 	}
 }
 
