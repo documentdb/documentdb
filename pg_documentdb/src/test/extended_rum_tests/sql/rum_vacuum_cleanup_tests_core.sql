@@ -19,7 +19,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
 SELECT index_id AS vacuum_index_id FROM documentdb_api_catalog.collection_indexes WHERE collection_id = :vacuum_col AND index_id != :vacuum_col \gset
 
 -- use the index - 
-set documentdb_rum.vacuum_cleanup_entries to off;
 set documentdb.enableExtendedExplainPlans to on;
 set documentdb.forceDisableSeqScan to on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
@@ -45,7 +44,6 @@ SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ {
 set documentdb.forceDisableSeqScan to on;
 
 -- now set the guc to clean the entries
-set documentdb_rum.vacuum_cleanup_entries to on;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :vacuum_col) \gexec
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
 
@@ -56,7 +54,6 @@ SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ {
 set documentdb.forceDisableSeqScan to on;
 
 -- now set the guc to clean the entries
-set documentdb_rum.vacuum_cleanup_entries to on;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :vacuum_col) \gexec
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
 
@@ -99,7 +96,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, AN
 reset documentdb.forceDisableSeqScan;
 
 -- delete 3000 docs
-set documentdb_rum.vacuum_cleanup_entries to off;
 set documentdb_rum.prune_rum_empty_pages to off;
 SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ { "q": { "_id": { "$exists": true } }, "limit": 0 } ]}');
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :vacuum_col) \gexec
@@ -110,7 +106,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, AN
 reset documentdb.forceDisableSeqScan;
 
 -- call the repair function.
-set documentdb_rum.vacuum_cleanup_entries to on;
 SELECT documentdb_api_internal.rum_prune_empty_entries_on_index(('documentdb_data.documents_rum_index_' || :vacuum_index_id)::regclass);
 
 -- should have fewer entries due to pruning.

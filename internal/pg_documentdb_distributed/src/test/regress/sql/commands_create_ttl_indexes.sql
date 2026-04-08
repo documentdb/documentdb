@@ -339,7 +339,6 @@ END;
 -- 21. TTL index with forced ordered scan via index hints
 
 set documentdb.enableExtendedExplainPlans to on;
-set documentdb_rum.preferOrderedIndexScan to on;
 
 -- if documentdb_extended_rum exists, set alternate index handler
 SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extended_rum', false), extname FROM pg_extension WHERE extname = 'documentdb_extended_rum';
