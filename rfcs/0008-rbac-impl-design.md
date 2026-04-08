@@ -1,15 +1,5 @@
 # DocumentDB RBAC Implementation Overview
 
-## Code Placement
-
-As described in the RFC we are planning on doing the validation in the DocumentDb extension, leaving the Gateway as a pass through. We’ve discussed 3 possible locations where the RBAC code could be implemented and used within the DocumentDB extension. 
-
-* RBAC is implemented into a separate Postgres extension
-* Core logic is extracted into a separate C library
-* All code in the main DocumentDB code base
-
-At present AWS DocumentDb does not plan integrate the new RBAC components implemented for open source into our existing product,  we don’t see a need to extract it into extendable components. We plan to implement the logic in the main DocumentDB code base.
-
 ## On-Disk Storage
 
 ### Users Table
@@ -30,31 +20,30 @@ Sample Entry:
 
 ```
 | **user_name** | **user_data**
-| admin         | {
-                    "roles": [
-                        {"db":"test","role":"write"}, 
-                        {"db":"admin", "role":"readAnyDatabase"}
-                    ],
-                    "comment": "..."
-                  }
+| admin     | {roles: [
+                {"db":"test", "role":"write"}, 
+                {"db": "admin", "role":"readAnyDatabase"}
+               ],
+               comment: "..."}
 ```
 
-The users table references the Postgres role associated with the user, and stores the relevant user data in a bson object. The user_data object will store the roles associated with the user in a list of database/role name pairs (e.g. `roles: [{"db":"test", "role":"write"}, {"db":"admin", "role":"readAnyDatabase"}]`). Additional fields associated with the user can be added in the future, such as custom data, command, authenticationRestrictions (see: https://www.mongodb.com/docs/manual/reference/command/usersInfo/#output)
+The users table references the Postgres role associated with the user, and stores the relevant user data in a bson object. The user_data object will store the roles associated with the user in a list of database/role name pairs (e.g. `roles``:`` ``[{"db":``"test", "role":``"write"``},`` ``{"db":``"admin", "role":``"readAnyDatabase"``}]`). Additional fields associated with the user can be added in the future, such as custom data, command, authenticationRestrictions (see: https://www.mongodb.com/docs/manual/reference/command/usersInfo/#output)
 
 ### Roles Table
 
 ```
 CREATE TABLE IF NOT EXISTS documentdb_api_catalog.roles (
-    role_document documentdb_core.bson NOT NULL
+    pg_role_name TEXT REFERENCES pg_roles(rolname) ON DELETE CASCADE,
+    roles documentdb_core.bson NOT NULL
 );
 
 -- Index for role lookup
 CREATE INDEX IF NOT EXISTS idx_roles
-    ON documentdb_api_catalog.roles(role_document.database, role_document.role); 
+    ON documentdb_api_catalog.roles(roles.database, roles.rolename); 
     
 -- Index for role inheritance lookup
 CREATE INDEX IF NOT EXISTS idx_roles_parents
-    ON documentdb_api_catalog.roless(role_document.roles); 
+    ON documentdb_api_catalog.roles(roles.roles); 
 ```
 
 Roles are stored with a role name, and a database as a primary key. Built in roles have the field “is_builtin”, which we will use to prevent the customer from modifying them. 
@@ -78,32 +67,14 @@ Roles are stored with a role name, and a database as a primary key. Built in rol
     }
   ],
   "roles": []
-}'
-```
-
-Built in roles that are scoped to a database, such as “read”, are stored with an empty string for a database, as well as for the database in the resources for privileges. When loading loading a role with an empty string for the “database” we load the privileges for the role scoped to the database the role was loaded in. 
-
-```
-{
-  "role": "read",
-  "database": "", // indicates the role is scoped to the db is was attached to
-  "is_builtin": true,
-  "description": "Provides read-only access to all collections",
-  "privileges": [
-    {
-      "resource": {"db": "", "collection": ""},
-      "actions": ["find"]
-    }
-  ],
-  "roles": []
 }
 ```
 
-Built in roles are written to the table as part of the install SQL files.
+Built-in roles have their definitions stored in the code, and are only added to the roles table as needed.
 
-## In Memory Structs
+## In Memory Structors
 
-We will create the following constants and in memory structs.
+We will create the following constants and in memory structors.
 
 ### PrivilegeAction Enum
 
@@ -123,14 +94,14 @@ PrivilegeAction privilege_action_from_string(const char *str)
 const char* privilege_action_to_string(PrivilegeAction action)
 ```
 
-### PrivilegeActionSet (Bitmap)
+### Privileges (Bitmap)
 
 Bitmap for storing and comparing privileges on any action
 
 ```
 #define PRIVILEGE_SET_SIZE ((PRIV_MAX + 31) / 32)
 
-typedef struct PrivilegeSet {
+typedef struct Privileges {
     uint32 bits[PRIVILEGE_SET_SIZE];
 } PrivilegeSet;
 ```
@@ -143,8 +114,8 @@ typedef struct PrivilegeSet {
 
 typedef struct Role{
     char database[MAX_DATABASE_NAME_LEN];
-    char role[MAX_ROLE_NAME_LEN];
-} Role;
+    char role[MAX_COLLECTION_NAME_LEN];
+} Resource;
 ```
 
 ### Resource
@@ -159,19 +130,19 @@ typedef struct Resource {
 } Resource;
 ```
 
-### Resource Privilege
+### Resource Privileges
 
 ```
-typedef struct ResourcePrivilege {
+typedef struct ResourcePrivileges {
     Resource resource;
     PrivilegeSet privileges;
 } ResourcePrivilege;
 ```
 
-### Resource Privilege Set
+### Resource Privileges Set
 
 ```
-typedef struct ResourcePrivilegeSet {
+typedef struct ResourcePrivilegesSet {
     ResourcePrivilege **items;
     int count;
     int capacity;
@@ -193,9 +164,9 @@ bool setRolesForUser(const char *username, pgbson *roles_bson);
 
 pgbson* getRolesForUser(const char *username);
 
-ResourcePrivilegeSet* getResourcePrivilegeSetForRoles(pgbson *roles_bson);
+ResourcePrivilegesSet* getResourcePrivilegeSetForRoles(pgbson *roles_bson);
 
-ResourcePrivilegeSet* getResourcePrivilegeSetForUser(const char *username);
+ResourcePrivilegesSet* getResourcePrivilegeSetForUser(const char *username);
 ```
 
 ## Create / Update Customer Facing Commands (Built-in roles only)
@@ -218,7 +189,7 @@ Custom roles support will be added later.
 ## Create a Function for Privilege Extraction For Commands
 
 ```
-ResourcePrivilegeSet* getRequiredResourcePrivilegeSetForCmd(pgbson *bson_spec);
+ResourcePrivilegesSet* getRequiredResourcePrivilegesSetForCmd(pgbson *bson_spec);
 ```
 
 A function to a bson command, and return the ResourcePrivilegeSet required to execute the command. Not all commands can have have their privileges extracted like this, e.g. killOp where a user can kill their own operations, but needs the killAnyOp privilege to kill others, in those cases this function will indicate an error.
@@ -271,11 +242,11 @@ All components will be validated by unit tests, and functional tests. The major 
 
 Custom roles will be added in the future, the existing roles and privilege extraction logic should support them, the main work will be adding customer commands for managing them, and adding validation.
 
-# DocumentDb → Postgres Role Mapping
+# DocumentDb to Postgres Role Mapping
 
-Postgres and DocumentDB both support role based authentication at a high level, but there are structural differences between the two that make it impossible to create a 1:1 mapping.
+Postgres and DocumentDB both support role based authentication at a high level, but there are structural differences between the two that make it impossible to create a 1:1 mapping. 
 
-A simple example of this is for the DocumentDb write privilege. A DocumentDB user can have the write privilege on any collection called items “items” anywhere in the database through a custom role:
+A simple example of this is for the DocumentDb write privilege. A DocumentDB user can have the write privilege on any collection called items “items” anywhere in the database through a custom role: 
 
 ```
 // Create the custom role with write privileges on catalog.items
@@ -294,45 +265,161 @@ db.createRole({
 db.grantRolesToUser("user1", ["itemsWriter"])
 ```
 
-At this point the no databases or collections need to exist, but the user is able to gain these privileges on any table that exists in the future. By the way the “insert” operation works in DocumentDb the user also has privileges to create a collection names “items” in any database. These actions cannot be modeled by Postgres roles.
+At this point the no databases or collections need to exist, but the user is able to gain these privileges on any table that exists in the future. By the way the “insert” operation works in DocumentDb the user also has privileges to create a collection names “items” in any database. These actions cannot be modeled by Postgres roles. 
 
-There are also operational and diagnostic actions where Postgres does not provide the granularity needed to match the requirements for DocumentDb.
+There are also operational and diagnostic actions where Postgres does not provide the granularity needed to match the requirements for DocumentDb. 
 
 ## Proposed System
 
-The proposed system is to have a two stage authorization model, where the top level DocumentDB API operations validate the full required privileges and also maintain Postgres roles and authorization for the critical privileges (insert, update, delete).
+The proposed system is to have a two stage authorization model, where the top level DocumentDB API operations validate the full required privileges and also maintain Postgres roles and authorization for the critical privileges (insert, update, delete). 
 
-DocumentDb will manage the Postgres privileges for it’s users, and map Postgres roles to ensure that the user always have the critical permissions, but will also allow the user to act beyond their Postgres privilege levels for actions that cannot be appropriately modeled.
+DocumentDb will manage the Postgres privileges for it’s users, and map Postgres roles to ensure that the user always have the critical permissions, but will also allow the user to act beyond their Postgres privilege levels for actions that cannot be appropriately modeled. 
 
-For the above example, if “user1” tries to do an insert into an “items” collection that does not exist, the DocumentDB API insert UDF would recognize that by the DocumentDB auth rules this is a valid operation, and assume higher level privileges to create the “items” collection for the user, and assign the user the correct Postgres privileges for the newly created collection. Any subsequent inserts to that collection would be authorized by Postgres based on it’s auth rules.
-
+For the above example, if “user1” tries to do an insert into an “items” collection that does not exist, the DocumentDB API insert UDF would recognize that by the DocumentDB auth rules this is a valid operation, and assume higher level privileges to create the “items” collection for the user, and assign the user the correct Postgres privileges for the newly created collection. Any subsequent inserts to that collection would be authorized by Postgres based on it’s auth rules. 
 
 ## DocumentDB Roles
 
-DocumentDB has 3 types of roles:
-
+DocumentDB has 3 types of roles: 
 
 * Static Built-in roles, these are standard built in roles, like “dbAdmin” with are associated with the “admin” database, there is only one version of each of these roles
-* Dynamic Built-in roles, these are built in roles that are associated with a database, e.g. `{“db”:“test”, “role”: “write”}`. These provide built in privileges based on the named database where they are assigned. For each of these role definitions there is theoretically one per database the customer creates.
-* Custom Role, these are roles the customer creates, that are associated with the database the customer creates them in (but can have privileges outside that database), these can also inherit from other roles.
+* Dynamic Built-in roles, these are built in roles that are associated with a database, e.g. `{“db”:“test”, “role”: “write”}`. These provide built in privileges based on the named database where they are assigned. For each of these role definitions there is theoretically one per database the customer creates. 
+* Custom Role, these are roles the customer creates, that are associated with the database the customer creates them in (but can have privileges outside that database), these can also inherit from other roles. 
 
-## 1:1 Role Mapping
+To support all types of roles, we will only create roles in the DocumentDb roles table as roles are needed, e.g. built-in role used or custom role created. The definitions for built-in roles will live in the code.
 
-Implementing a 1:1 roles mapping would have each role in the roles table table above be linked to an associated Postgres role, with dynamic built-in roles being created and deleted on demand, these roles would be given the critical privileges for every existing table that matches their privileges. When we assign a role to a user in DocumentDB the associated role will be granted to their Postgres user.
+## Mapped Mongo Actions to Postgres Grants
 
-A mechanism (trigger?) would be used to react to table changes to update the Postgres privileges on:
+**Note:** This assumes we has transitioned to each DocumentDb database is corresponds to a Postgres schema.
 
-* Table creation
-* Table deletion
-* Table rename
+The following “critical” MongoDb actions are mapped to Postgres roles, All other privileges will be enforced by the DocumentDb extension.
 
-### Potential Issues
+find → SELECT
+insert → INSERT
+remove → DELETE
+update → UPDATE
 
-A split auth model can always have potential issues with the data being out of sync, or hard to understand as it’s in more than one place. Potential issues that can arise here:
+These actions can be assigned at the database+collection level, the database, the cluster level, and associated with a collection name regardless of database. 
 
-* Through the DocumentDB APIs a user can take more actions than what is visible reviewing their Postgres privileges
-* What doers a Postgres Admin modifying the privileges within a role mean
-* What does a Postgres Admin deleting a built-in role mean
+**Note**: We do not create a combined “write” role to maintain consistency between built-in and custom roles.
 
+### Primitive Roles
 
+The critical privileges will be represented in the database as “primitive roles”, these roles store the final privileges to associate Postgres actions with the underlying tables, we will keep a table mapping the logical primitive role, to it’s Postgres role. Primitive roles will be created on demand as they are needed by built-in or custom roles. When DocumentDb collections or databases are created/deleted/renamed the system will only update the grants on the primitive roles.
+
+```
+CREATE TABLE documentdb_api_catalog.primitive_roles (
+    pg_role_name TEXT REFERENCES pg_roles(rolname) ON DELETE CASCADE,
+    action varchar,
+    database varchar,
+    collection varchar,
+    PRIMARY KEY (pg_role_name),
+    UNIQUE (action, database, collection)
+);
+```
+
+e.g.
+
+|pg_role_name	|action	|database	|collection	|
+|---	|---	|---	|---	|
+|docdb_read_any_database	|find	|NULL	|NULL	|
+|docdb_insert_any_database	|insert	|NULL	|NULL	|
+|docdb_remove_any_database	|remove	|NULL	|NULL	|
+|docdb_read_database_23	|find	|"db23"	|NULL	|
+|docdb_read_database_23_coll_11	|find	|"db23"	|"coll11"	|
+|docdb_read_any_database_coll_11	|find	|NULL	|"coll11"	|
+
+##### Role Creation
+
+When a primitive role is used for the first time:
+
+1. A Postgres roles is created
+2. A entry is made in the primitive_roles table
+3. The collection metadata table is scanned to find every matching database / collection and grants are added to the newly created Postgres role.
+
+**To grant roles**
+
+* Primitive roles with a **database** = NULL and **collection** = NULL represent privileges on every database and collection within DocumentDb, we still want to limit this role to only schemas DocumentDb has created, so we will iterate over all schemas and grant privileges to that schema.
+    * `For DB_SCHEMA in ALL DOC DB DATABASES:
+            GRANT SELECT ON ALL TABLES IN SCHEMA **DB_SCHEMA** TO docdb_read_any_database`
+* Primitive roles with a **database** is set and **collection** = NULL represent privileges on every and collection within that database, we will grant privileges to that schema.
+    * `GRANT SELECT ON ALL TABLES IN SCHEMA `**`DB_SCHEMA`**` TO docdb_read_database_23`
+* Primitive roles with **database** and **collection** set represent a privilege on a specific collection, and just that privilege is set.
+    * `GRANT SELECT ON "DB_SCHEMA"."COLLECTION" TO docdb_read_database_23_coll_11`
+* Primitive roles with **database** = NULL and **collection** is set represent privileges on any collection with that name:
+    * `FOR `**`DB_SCHEMA`**` in ALL DOC DB DATABASE WITH A COLLECTION NAMED `**`COLL_NAME`**`:
+            GRANT SELECT ON "`**`DB_SCHEMA`**`"."`**`COLL_NAME`**`" TO docdb_read_database_23_coll_11`
+
+##### Role Updates
+
+As DocumentDB roles are based on names, and Postgres creates grants based on objects we need to continuously update the primitive grants as collections and databases are created/updated/deleted. To track this we will use triggers on the collection metadata table. 
+
+ON INSERT:
+This is a new collection, and potentially a new database 
+
+    1. If its a new database find any role that applies to either all databases, or a database with that name, and apply the grant at the schema level .
+    2. Find any primitive role that matches the collection name, and apply the grant
+
+ON UPDATE:
+Update are treated as rename operations, since Postgres tracks permission by objects we need to revoke the grant to the primitive role associated with the old collection name, for the new collection 
+
+    1. If the database of collection has changed, revoke privileges from any roles based on the old collection name
+    2. If its a new database find any role that applies to either all databases, or a database with that name, and apply the grant at the schema level .
+    3. Find any primitive role that matches the collection name, and apply the grant
+
+ON DELETE:
+A delete should correspond to deleting a resource, where Postgres would automatically revoke any grants, so no action is needed. There is a potential issue if a rename is implemented as a delete and in insert into the collection metadata table, in that case the trigger would not be able to correctly revoke privileges on the old primitive roles. 
+
+We could implement revokes if the old collection still exists, but in the event of a rename + delete + insert the trigger would not be able to identify the old table to issue the revoke. 
+
+### Built In Roles
+
+Built in roles are created as needed, when they are granted to a user, if the roles does not exist the definition is loaded from a hardcoded version (or a template table?), and a Postgres role is created. Then any primitive roles are created, and granted privileges, then Postgres user is granted the new Postgres role, along with the role being assigned to the user in the DocumentDb users table.
+
+#### Example:
+
+A DocumentDb user is granted the “readAnyDatabase” built-in role, which has the definition:
+
+```
+{
+  "role": "readWriteAnyDatabase",
+  "database": "admin",
+  "privileges": [
+    {
+      "resource": {"db": "", "collection": ""},
+      "actions": [
+        "find", "insert", "update", "remove",
+        "createCollection", "dropCollection",
+        "createIndex", "dropIndex",
+        "collMod", "collStats", "dbStats",
+        "listCollections", "listIndexes"
+      ]
+    }
+  ]
+}
+```
+
+1. System checks for an existing role:“dbAdmin” db:“admin” role, and does not find it in the DocumentDb roles
+2. System creates a Postgres role: “docdb_admin_dbadmin”
+3. System creates an entry in the DocumentDb roles table for the dbAdmin role, referencing the new Postgres role name
+4. System identifies the new role has the following privileges that correspond to primitive roles:
+    1. {"db": "", "collection": ""}: find
+        {"db": "", "collection": ""}: insert
+        {"db": "", "collection": ""}: update
+        {"db": "", "collection": ""}: remove
+5. System checks if the primitive roles exist, they do not
+6. System creates the primitive roles, and grants them the correct privileges for the existing collections / databases
+7. System grants the Postgres role representing the primitive roles to the new Postgres role for readAnyDatabase
+
+```
+GRANT docdb_any_db_any_collection_find TO docdb_admin_readWriteAnyDatabase;
+GRANT docdb_any_db_any_collection_insert TO docdb_admin_readWriteAnyDatabase;
+GRANT docdb_any_db_any_collection_update TO docdb_admin_readWriteAnyDatabase;
+GRANT docdb_any_db_any_collection_remove TO docdb_admin_readWriteAnyDatabase;
+```
+
+### Custom Roles
+
+Custom roles will follow the exact same pattern as built-in roles, as they role entry is created on demand, and any dependencies are also created, the additional options with custom roles is the ability to have them inherit from other DocumentDb roles. 
+
+Inheriting roles will be implemented using Postgres’ inheritance, by granting dependent role to the new role. When deleting a role the system will first look for any DocumentDb roles that inherit from it, remove it from the DocumentDb roles document, and then revoking the role from the one that depends on it.
 
