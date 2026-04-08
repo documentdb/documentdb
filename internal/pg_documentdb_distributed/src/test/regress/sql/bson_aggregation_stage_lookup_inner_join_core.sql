@@ -36,18 +36,10 @@ SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch
 
 BEGIN;
 set local documentdb.forceBitmapScanForLookup to off;
-set local documentdb.enableLookupInnerJoin to off;
-SELECT document FROM bson_aggregation_pipeline('lookupdb', 
-    '{ "aggregate": "planes", "pipeline": [ { "$match": { "model": { "$exists": true } } }, { "$lookup": { "from": "gate_availability", "as": "matched_docs", "localField": "model", "foreignField": "plane_model" } }, { "$unwind": "$matched_docs" } ], "cursor": {} }');
-set local documentdb.enableLookupInnerJoin to on;
 SELECT document FROM bson_aggregation_pipeline('lookupdb', 
     '{ "aggregate": "planes", "pipeline": [ { "$match": { "model": { "$exists": true } } }, { "$lookup": { "from": "gate_availability", "as": "matched_docs", "localField": "model", "foreignField": "plane_model" } }, { "$unwind": "$matched_docs" } ], "cursor": {} }');
 
 set local documentdb.forceBitmapScanForLookup to on;
-set local documentdb.enableLookupInnerJoin to off;
-SELECT document FROM bson_aggregation_pipeline('lookupdb', 
-    '{ "aggregate": "planes", "pipeline": [ { "$match": { "model": { "$exists": true } } }, { "$lookup": { "from": "gate_availability", "as": "matched_docs", "localField": "model", "foreignField": "plane_model" } }, { "$unwind": "$matched_docs" } ], "cursor": {} }');
-set local documentdb.enableLookupInnerJoin to on;
 SELECT document FROM bson_aggregation_pipeline('lookupdb', 
     '{ "aggregate": "planes", "pipeline": [ { "$match": { "model": { "$exists": true } } }, { "$lookup": { "from": "gate_availability", "as": "matched_docs", "localField": "model", "foreignField": "plane_model" } }, { "$unwind": "$matched_docs" } ], "cursor": {} }');
 ROLLBACK;
@@ -82,26 +74,12 @@ $$;
 BEGIN;
 
 set local documentdb.forceBitmapScanForLookup to on;
-set local documentdb.enableLookupInnerJoin to off;
--- LEFT JOIN with force bitmap scan, should use materialize seq scan
-EXPLAIN (SUMMARY OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('lookupdb', 
-    '{ "aggregate": "planes", "pipeline": [ { "$match": { "model": { "$exists": true } } }, { "$lookup": { "from": "gate_availability", "as": "matched_docs", "localField": "model", "foreignField": "plane_model" } }, { "$unwind": "$matched_docs" } ], "cursor": {} }');
-
-set local documentdb.enableLookupInnerJoin to on;
--- RIGHT JOIN with force bitmap scan, should use materialize seq scan
+-- INNER JOIN with force bitmap scan, should use materialize seq scan
 EXPLAIN (SUMMARY OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('lookupdb', 
     '{ "aggregate": "planes", "pipeline": [ { "$match": { "model": { "$exists": true } } }, { "$lookup": { "from": "gate_availability", "as": "matched_docs", "localField": "model", "foreignField": "plane_model" } }, { "$unwind": "$matched_docs" } ], "cursor": {} }');
 
 set local documentdb.forceBitmapScanForLookup to off;
-set local documentdb.enableLookupInnerJoin to off;
-
--- LEFT JOIN without force bitmap scan, should use index scan
-EXPLAIN (SUMMARY OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('lookupdb', 
-    '{ "aggregate": "planes", "pipeline": [ { "$match": { "model": { "$exists": true } } }, { "$lookup": { "from": "gate_availability", "as": "matched_docs", "localField": "model", "foreignField": "plane_model" } }, { "$unwind": "$matched_docs" } ], "cursor": {} }');
-
-set local documentdb.enableLookupInnerJoin to on;
-
--- RIGHT JOIN without force bitmap scan, should use index scan
+-- INNER JOIN without force bitmap scan, should use index scan
 EXPLAIN (SUMMARY OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('lookupdb', 
     '{ "aggregate": "planes", "pipeline": [ { "$match": { "model": { "$exists": true } } }, { "$lookup": { "from": "gate_availability", "as": "matched_docs", "localField": "model", "foreignField": "plane_model" } }, { "$unwind": "$matched_docs" } ], "cursor": {} }');
 
@@ -133,12 +111,10 @@ SELECT 'ANALYZE documentdb_data.documents_' || :'shops_id' \gexec
 
 BEGIN;
 set local seq_page_cost to 1;
-set local documentdb.enableLookupInnerJoin to off;
 SELECT document FROM bson_aggregation_pipeline('lookupdb', '{"aggregate": "Dishes", "pipeline": [{"$match": {"dishId": 1}}, {"$unwind": "$ingredients"} , {"$lookup": {"from": "Ingredients", "localField": "ingredients", "foreignField": "_id", "as": "ingredient_info"}} , {"$unwind": "$ingredient_info"} , {"$lookup": {"from": "Shops", "localField": "ingredient_info.shopId", "foreignField": "_id", "as": "shop_info"}}, {"$unwind": "$shop_info"}]}');
 ROLLBACK;
 
 BEGIN;
 set local seq_page_cost to 1;
-set local documentdb.enableLookupInnerJoin to off;
 EXPLAIN (COSTS OFF, SUMMARY OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('lookupdb', '{"aggregate": "Dishes", "pipeline": [{"$match": {"dishId": 1}}, {"$unwind": "$ingredients"} , {"$lookup": {"from": "Ingredients", "localField": "ingredients", "foreignField": "_id", "as": "ingredient_info"}} , {"$unwind": "$ingredient_info"} , {"$lookup": {"from": "Shops", "localField": "ingredient_info.shopId", "foreignField": "_id", "as": "shop_info"}}, {"$unwind": "$shop_info"}]}');
 ROLLBACK;

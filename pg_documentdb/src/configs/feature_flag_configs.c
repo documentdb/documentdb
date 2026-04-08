@@ -212,10 +212,6 @@ bool EnableOrderByIndexTerm = DEFAULT_ENABLE_ORDER_BY_INDEX_TERM;
  * SECTION: Planner feature flags
  */
 
-/* Added in v108, enabled in v108, remove after v109 */
-#define DEFAULT_LOOKUP_ENABLE_INNER_JOIN true
-bool EnableLookupInnerJoin = DEFAULT_LOOKUP_ENABLE_INNER_JOIN;
-
 /* Added in v108, enabled in v108, remove after v110 */
 #define DEFAULT_LOW_SELECTIVITY_FOR_LOOKUP true
 bool LowSelectivityForLookup = DEFAULT_LOW_SELECTIVITY_FOR_LOOKUP;
@@ -587,14 +583,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Determines whether native authentication is enabled."),
 		NULL, &IsNativeAuthEnabled,
 		DEFAULT_ENABLE_NATIVE_AUTHENTICATION,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableLookupInnerJoin", newGucPrefix),
-		gettext_noop(
-			"Whether or not to enable lookup inner join."),
-		NULL, &EnableLookupInnerJoin,
-		DEFAULT_LOOKUP_ENABLE_INNER_JOIN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

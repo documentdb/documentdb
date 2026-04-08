@@ -55,7 +55,6 @@
 
 const int MaximumLookupPipelineDepth = 20;
 extern bool EnableLookupIdJoinOptimizationOnCollation;
-extern bool EnableLookupInnerJoin;
 extern bool EnableOperatorVariablesInLookup;
 extern bool EnableUseForeignKeyLookupInline;
 
@@ -2621,8 +2620,7 @@ ProcessLookupCoreWithLet(Query *query, AggregationPipelineBuildContext *context,
 	MakeBsonJoinVarsFromQuery(rightQueryRteIndex, rightQuery, &outputVars,
 							  &outputColNames, &rightJoinCols);
 
-	bool useInnerJoin = !lookupContext->preserveNullAndEmptyArrays &&
-						EnableLookupInnerJoin;
+	bool useInnerJoin = !lookupContext->preserveNullAndEmptyArrays;
 	RangeTblEntry *joinRte = MakeLookupJoinRte(outputVars, outputColNames, leftJoinCols,
 											   rightJoinCols, useInnerJoin);
 

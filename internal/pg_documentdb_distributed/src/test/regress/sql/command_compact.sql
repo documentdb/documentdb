@@ -35,13 +35,15 @@ $$;
 
 -- VALID, first need to analyze the table so that stats are up to date
 ANALYZE VERBOSE documentdb_data.documents_24321;
-SELECT documentdb_api.coll_stats('commands_compact_db','compact_test')->>'storageSize';
+SELECT documentdb_api.coll_stats('commands_compact_db','compact_test')->>'storageSize' as before_compact_size \gset
 
 -- TODO: even after analyze it seems like pg_class stats for toast tables are not updated for test run.
 -- Need to investigate this further for test, for live servers this should be okay because the analyze thereshold is set to 0.
 SELECT documentdb_api.compact('{"compact": "compact_test", "$db": "commands_compact_db", "dryRun": true}');
 SELECT documentdb_api.compact('{"compact": "compact_test", "$db": "commands_compact_db", "dryRun": false}');
-SELECT documentdb_api.coll_stats('commands_compact_db','compact_test')->>'storageSize';
+SELECT documentdb_api.coll_stats('commands_compact_db','compact_test')->>'storageSize' as after_compact_size \gset
+
+SELECT :after_compact_size::bigint < :before_compact_size::bigint as is_compacted;
 
 SELECT documentdb_api.drop_collection('commands_compact_db','compact_test');
 
@@ -73,13 +75,15 @@ $$;
 
 -- VALID, first need to analyze the table so that stats are up to date
 ANALYZE VERBOSE documentdb_data.documents_24322;
-SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize';
+SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize' AS sharded_before_compact_size \gset
 
 -- TODO: even after analyze it seems like pg_class stats for toast tables are not updated for test run.
 -- Need to investigate this further for test, for live servers this should be okay because the analyze thereshold is set to 0.
 SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": true}');
 SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false}');
-SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize';
+SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize' AS sharded_after_compact_size \gset
+
+SELECT :sharded_after_compact_size::bigint < :sharded_before_compact_size::bigint as is_sharded_compacted;
 
 SELECT documentdb_api.drop_collection('commands_compact_db','compact_test_sharded');
 
@@ -114,15 +118,26 @@ SET citus.show_shards_for_app_name_prefixes to '*';
 
 -- VALID, first need to analyze the table so that stats are up to date
 ANALYZE VERBOSE documentdb_data.documents_24323;
-SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize';
+SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize' AS big_relpages_before_compact \gset
 
 -- set relpages to INT32_MAX - 1
 UPDATE pg_class
 SET relpages = 2147483646
 WHERE oid = 'documentdb_data.documents_24323_2432023'::regclass;
 
-SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": true}');
-SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false}');
-SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize';
+-- Lets take a buffer of 6 * 8KB  for base estimated size as we consider toast and headers to be removed, we are still testing compact
+-- sees a good amount of space is available for compaction.
+SELECT (2147483640::bigint * 8 * 1024) as base_estimated_size \gset
+
+-- These tests can produce different size, so a better way to check would be to assume the estimated size is very high
+SELECT (documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": true}')->>'estimatedBytesFreed')::bigint as big_free_estimated_size \gset
+SELECT (documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false}')->>'bytesFreed')::bigint as big_free_byte_size \gset
+
+SELECT :big_free_estimated_size::bigint > :base_estimated_size::bigint as estimated_is_valid,
+       :big_free_byte_size::bigint > :base_estimated_size::bigint as actual_is_valid;
+
+SELECT documentdb_api.coll_stats('commands_compact_db','compact_test_sharded')->>'storageSize' AS big_relpages_after_compact \gset
+SELECT :big_relpages_after_compact::bigint < :big_relpages_before_compact::bigint as is_big_relpages_compacted;
+
 RESET citus.show_shards_for_app_name_prefixes;
 SELECT documentdb_api.drop_collection('commands_compact_db','compact_test_sharded');
