@@ -29,9 +29,6 @@ PGDLLEXPORT bool DocumentDBRumLoadCommonGUCs = true;
 PGDLLEXPORT bool RumThrowErrorOnInvalidDataPage =
 	RUM_DEFAULT_THROW_ERROR_ON_INVALID_DATA_PAGE;
 
-#define RUM_DEFAULT_USE_NEW_ITEM_PTR_DECODING true
-PGDLLEXPORT bool RumUseNewItemPtrDecoding = RUM_DEFAULT_USE_NEW_ITEM_PTR_DECODING;
-
 /* rumbtree.c */
 #define RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT true
 PGDLLEXPORT bool RumTrackIncompleteSplit = RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT;
@@ -62,9 +59,6 @@ PGDLLEXPORT bool RumDisableFastScan = RUM_DEFAULT_DISABLE_FAST_SCAN;
 #define DEFAULT_FORCE_RUM_ORDERED_INDEX_SCAN false
 PGDLLEXPORT bool RumForceOrderedIndexScan = DEFAULT_FORCE_RUM_ORDERED_INDEX_SCAN;
 
-#define RUM_DEFAULT_PREFER_ORDERED_INDEX_SCAN true
-PGDLLEXPORT bool RumPreferOrderedIndexScan = RUM_DEFAULT_PREFER_ORDERED_INDEX_SCAN;
-
 #define RUM_DEFAULT_ENABLE_SKIP_INTERMEDIATE_ENTRY true
 PGDLLEXPORT bool RumEnableSkipIntermediateEntry =
 	RUM_DEFAULT_ENABLE_SKIP_INTERMEDIATE_ENTRY;
@@ -79,9 +73,6 @@ PGDLLEXPORT bool RumEnableParallelIndexBuild = RUM_DEFAULT_ENABLE_PARALLEL_INDEX
 /* rumvacuum.c */
 #define RUM_DEFAULT_SKIP_RETRY_ON_DELETE_PAGE true
 PGDLLEXPORT bool RumSkipRetryOnDeletePage = RUM_DEFAULT_SKIP_RETRY_ON_DELETE_PAGE;
-
-#define RUM_DEFAULT_VACUUM_ENTRY_ITEMS true
-PGDLLEXPORT bool RumVacuumEntryItems = RUM_DEFAULT_VACUUM_ENTRY_ITEMS;
 
 #define RUM_DEFAULT_PRUNE_EMPTY_PAGES false
 PGDLLEXPORT bool RumPruneEmptyPages = RUM_DEFAULT_PRUNE_EMPTY_PAGES;
@@ -206,37 +197,11 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.preferOrderedIndexScan", documentDBRumGucPrefix),
-		"Sets whether or not to prefer the ordered scan when available",
-		NULL,
-		&RumPreferOrderedIndexScan,
-		RUM_DEFAULT_PREFER_ORDERED_INDEX_SCAN,
-		PGC_USERSET, 0,
-		NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enableSkipIntermediateEntry", documentDBRumGucPrefix),
 		"Sets whether or not to skip intermediate entries during scan",
 		NULL,
 		&RumEnableSkipIntermediateEntry,
 		RUM_DEFAULT_ENABLE_SKIP_INTERMEDIATE_ENTRY,
-		PGC_USERSET, 0,
-		NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.vacuum_cleanup_entries", documentDBRumGucPrefix),
-		"Sets whether or not to clean up entries during vacuuming",
-		NULL,
-		&RumVacuumEntryItems,
-		RUM_DEFAULT_VACUUM_ENTRY_ITEMS,
-		PGC_USERSET, 0,
-		NULL, NULL, NULL);
-	DefineCustomBoolVariable(
-		psprintf("%s.rum_use_new_item_ptr_decoding", documentDBRumGucPrefix),
-		"Sets whether or not to use new item pointer decoding",
-		NULL,
-		&RumUseNewItemPtrDecoding,
-		RUM_DEFAULT_USE_NEW_ITEM_PTR_DECODING,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 

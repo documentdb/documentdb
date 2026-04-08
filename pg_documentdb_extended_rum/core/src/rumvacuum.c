@@ -35,7 +35,6 @@
 #endif
 
 extern bool RumSkipRetryOnDeletePage;
-extern bool RumVacuumEntryItems;
 extern bool RumPruneEmptyPages;
 extern bool RumEnableNewBulkDelete;
 extern bool RumVacuumSkipPrunePostingTreePages;
@@ -1282,8 +1281,7 @@ rumVacuumEntryPage(RumVacuumState *gvs, Buffer buffer, BlockNumber *roots,
 	 * IsBufferCleanupOK will ensure we have a single Pin on the buffer
 	 * which means we're the only ones interested in this buffer.
 	 */
-	if (RumVacuumEntryItems &&
-		hasEmptyEntries &&
+	if (hasEmptyEntries &&
 		IsBufferCleanupOK(buffer))
 	{
 		if (tmppage == origpage)
@@ -1661,8 +1659,7 @@ rumPruneEmptyEntriesInEntryPage(Buffer buffer, RumState *rumState, bool *isEmpty
 	 * IsBufferCleanupOK will ensure we have a single Pin on the buffer
 	 * which means we're the only ones interested in this buffer.
 	 */
-	if (RumVacuumEntryItems &&
-		hasEmptyEntries &&
+	if (hasEmptyEntries &&
 		IsBufferCleanupOK(buffer))
 	{
 		if (tmppage == origpage)

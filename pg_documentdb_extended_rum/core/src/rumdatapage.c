@@ -1538,15 +1538,8 @@ updateItemIndexes(Page page, OffsetNumber attnum, RumState *rumstate)
 			j++;
 		}
 
-		if (RumUseNewItemPtrDecoding)
-		{
-			ptr = rumDataPageLeafReadWithBlockNumberIncr(ptr, attnum, &item, false,
-														 rumstate, &blocknoIncr);
-		}
-		else
-		{
-			ptr = rumDataPageLeafRead(ptr, attnum, &item, false, rumstate);
-		}
+		ptr = rumDataPageLeafReadWithBlockNumberIncr(ptr, attnum, &item, false,
+													 rumstate, &blocknoIncr);
 	}
 
 	/* Fill rest of page indexes with InvalidOffsetNumber if any */

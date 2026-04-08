@@ -51,7 +51,6 @@ SELECT COUNT(documentdb_api.insert_one('comp_db2', 'query_ordered_pref', FORMAT(
 ANALYZE documentdb_data.documents_68501;
 set enable_bitmapscan to off;
 set documentdb.forceDisableSeqScan to on;
-set documentdb_rum.preferOrderedIndexScan to off;
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2',
     '{ "find": "query_ordered_pref", "filter": { "a": { "$gt": 50 } }, "projection": { "_id": 1 }, "limit": 5 }');
                                                                                                           QUERY PLAN                                                                                                          
@@ -64,9 +63,9 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
          indexKey: {"a": 1}
          isMultiKey: false
          indexBounds: ["a": (50, Infinity]]
-         innerScanLoops: 5 loops
-         scanType: regular
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 9950)]
+         innerScanLoops: 6 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
          ->  Index Scan using a_1 on documentdb_data.documents_68501_685002 collection (actual rows=5 loops=1)
                Output: document
                Index Cond: (collection.document @> '{ "a" : { "$numberInt" : "50" } }'::bson)
@@ -84,15 +83,14 @@ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF
          indexKey: {"a": 1}
          isMultiKey: false
          indexBounds: ["a": (50, 900)]
-         innerScanLoops: 5 loops
-         scanType: regular
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 849)]
+         innerScanLoops: 6 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
          ->  Index Scan using a_1 on documentdb_data.documents_68501_685002 collection (actual rows=5 loops=1)
                Output: document
                Index Cond: ((collection.document @> '{ "a" : { "$numberInt" : "50" } }'::bson) AND (collection.document @< '{ "a" : { "$numberInt" : "900" } }'::bson))
 (14 rows)
 
-set documentdb_rum.preferOrderedIndexScan to on;
 EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('comp_db2',
     '{ "find": "query_ordered_pref", "filter": { "a": { "$gt": 50 } }, "projection": { "_id": 1 }, "limit": 5 }');
                                                                                                           QUERY PLAN                                                                                                          

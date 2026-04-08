@@ -5,7 +5,6 @@ SET documentdb.next_collection_index_id TO 800;
 set documentdb_rum.prune_rum_empty_pages to on;
 set documentdb_rum.enable_new_bulk_delete to on;
 set documentdb_rum.enable_new_bulk_delete_inline_data_pages to on;
-set documentdb_rum.vacuum_cleanup_entries to on;
 
 SELECT documentdb_api.drop_collection('pvacuum_split_db', 'pbulkdel');
 SELECT documentdb_api.create_collection('pvacuum_split_db', 'pbulkdel');

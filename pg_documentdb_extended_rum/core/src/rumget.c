@@ -44,7 +44,6 @@ typedef struct RumItemScanEntryBounds
 extern int RumFuzzySearchLimit;
 extern bool RumDisableFastScan;
 extern bool RumForceOrderedIndexScan;
-extern bool RumPreferOrderedIndexScan;
 extern bool RumEnableSkipIntermediateEntry;
 
 static bool scanPage(RumState *rumstate, RumScanEntry entry, RumItem *item,
@@ -869,8 +868,7 @@ restartScanEntry:
 			BlockNumber rootPostingTree = RumGetPostingTree(itup);
 			RumPostingTreeScan *gdi;
 			Page pageInner;
-			OffsetNumber maxoff,
-						 i;
+			OffsetNumber maxoff;
 			Pointer ptr;
 			RumItem item;
 
@@ -931,22 +929,9 @@ restartScanEntry:
 				entry->list[0] = item;
 				entry->nlist = 1;
 			}
-			else if (RumUseNewItemPtrDecoding)
-			{
-				rumPopulateDataPage(rumstate, entry, entry->nlist, pageInner);
-			}
 			else
 			{
-				ptr = RumDataPageGetData(pageInner);
-
-				/* Ensure the first entry is 0 initialized */
-				memset(&entry->list[0], 0, sizeof(RumItem));
-				for (i = FirstOffsetNumber; i <= maxoff; i = OffsetNumberNext(i))
-				{
-					ptr = rumDataPageLeafRead(ptr, entry->attnum, &item, true,
-											  rumstate);
-					entry->list[i - FirstOffsetNumber] = item;
-				}
+				rumPopulateDataPage(rumstate, entry, entry->nlist, pageInner);
 			}
 
 			LockBuffer(entry->buffer, RUM_UNLOCK);
@@ -1539,9 +1524,7 @@ PrepareOrderedMatchedEntry(RumScanOpaque so, RumScanEntry entry,
 		BlockNumber rootPostingTree = RumGetPostingTree(itup);
 		RumPostingTreeScan *gdi;
 		Page pageInner;
-		OffsetNumber maxoff,
-					 i;
-		Pointer ptr;
+		OffsetNumber maxoff;
 		RumItem item;
 
 		ItemPointerSetMin(&item.iptr);
@@ -1582,23 +1565,7 @@ PrepareOrderedMatchedEntry(RumScanOpaque so, RumScanEntry entry,
 		entry->nlist = maxoff;
 		entry->cachedLsn = PageGetLSN(pageInner);
 
-		if (RumUseNewItemPtrDecoding)
-		{
-			rumPopulateDataPage(&so->rumstate, entry, maxoff, pageInner);
-		}
-		else
-		{
-			ptr = RumDataPageGetData(pageInner);
-
-			/* Ensure the first entry is 0 initialized */
-			memset(&entry->list[0], 0, sizeof(RumItem));
-			for (i = FirstOffsetNumber; i <= maxoff; i = OffsetNumberNext(i))
-			{
-				ptr = rumDataPageLeafRead(ptr, entry->attnum, &item, true,
-										  &so->rumstate);
-				entry->list[i - FirstOffsetNumber] = item;
-			}
-		}
+		rumPopulateDataPage(&so->rumstate, entry, maxoff, pageInner);
 
 		LockBuffer(entry->buffer, RUM_UNLOCK);
 		entry->isFinished = setListPositionScanEntry(&so->rumstate, entry);
@@ -1900,7 +1867,7 @@ startScan(IndexScanDesc scan)
 		scanType = RumOrderedScan;
 		startOrderedScanEntries(scan, rumstate, so);
 	}
-	else if (isSupportedOrderedScan && RumPreferOrderedIndexScan &&
+	else if (isSupportedOrderedScan &&
 			 so->totalentries == 1 && so->entries[0]->isPartialMatch)
 	{
 		/* We can simply use an ordered scan if there's only 1 entry
@@ -2532,9 +2499,7 @@ entryGetNextItemList(RumState *rumstate, RumScanEntry entry, Snapshot snapshot)
 		BlockNumber rootPostingTree = RumGetPostingTree(itup);
 		RumPostingTreeScan *gdi;
 		Page pageInner;
-		OffsetNumber maxoff,
-					 i;
-		Pointer ptr;
+		OffsetNumber maxoff;
 		RumItem item;
 
 		ItemPointerSetMin(&item.iptr);
@@ -2574,23 +2539,7 @@ entryGetNextItemList(RumState *rumstate, RumScanEntry entry, Snapshot snapshot)
 		entry->nlist = maxoff;
 		entry->cachedLsn = PageGetLSN(pageInner);
 
-		if (RumUseNewItemPtrDecoding)
-		{
-			rumPopulateDataPage(rumstate, entry, maxoff, pageInner);
-		}
-		else
-		{
-			ptr = RumDataPageGetData(pageInner);
-
-			/* Ensure the first entry is 0 initialized */
-			memset(&entry->list[0], 0, sizeof(RumItem));
-			for (i = FirstOffsetNumber; i <= maxoff; i = OffsetNumberNext(i))
-			{
-				ptr = rumDataPageLeafRead(ptr, entry->attnum, &item, true,
-										  rumstate);
-				entry->list[i - FirstOffsetNumber] = item;
-			}
-		}
+		rumPopulateDataPage(rumstate, entry, maxoff, pageInner);
 
 		LockBuffer(entry->buffer, RUM_UNLOCK);
 		entry->isFinished = false;
