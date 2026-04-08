@@ -40,7 +40,7 @@
 * Support for TTL cron job to repeat deletes in batches until the one minute budget is exhausted, instead of deleting one batch per index per minute.*[Perf]*
 * Crash fix when zero rows reach $first/$last/$firstN/$lastN accumulators in $group stage with no $sort *[Bugfix]*. (#466)
 
-### documentdb v0.109-0 (Unreleased) ###
+### documentdb v0.109-0 (March 09, 2026) ###
 * Support collation with find positional queries *[Feature]*
 * Short-circuit in `$cond` runtime evaluation *[Perf]*
 * Support operator variables(eg: $map.as alias) in let variable spec *[Bugfix]*
