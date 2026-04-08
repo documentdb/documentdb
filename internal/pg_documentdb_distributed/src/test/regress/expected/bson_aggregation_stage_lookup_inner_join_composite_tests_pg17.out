@@ -110,18 +110,6 @@ SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch
 
 BEGIN;
 set local documentdb.forceBitmapScanForLookup to off;
-set local documentdb.enableLookupInnerJoin to off;
-SELECT document FROM bson_aggregation_pipeline('lookupdb', 
-    '{ "aggregate": "planes", "pipeline": [ { "$match": { "model": { "$exists": true } } }, { "$lookup": { "from": "gate_availability", "as": "matched_docs", "localField": "model", "foreignField": "plane_model" } }, { "$unwind": "$matched_docs" } ], "cursor": {} }');
-                                                                                                                    document                                                                                                                    
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "3" }, "model" : "A330", "price" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "5" }, "matched_docs" : { "_id" : { "$numberInt" : "1" }, "plane_model" : "A330", "gates" : { "$numberInt" : "30" } } }
- { "_id" : { "$numberInt" : "2" }, "model" : "A340", "price" : { "$numberInt" : "140" }, "quantity" : { "$numberInt" : "1" }, "matched_docs" : { "_id" : { "$numberInt" : "11" }, "plane_model" : "A340", "gates" : { "$numberInt" : "10" } } }
- { "_id" : { "$numberInt" : "1" }, "model" : "A380", "price" : { "$numberInt" : "280" }, "quantity" : { "$numberInt" : "20" }, "matched_docs" : { "_id" : { "$numberInt" : "2" }, "plane_model" : "A380", "gates" : { "$numberInt" : "5" } } }
- { "_id" : { "$numberInt" : "4" }, "model" : "737", "price" : { "$numberInt" : "50" }, "quantity" : { "$numberInt" : "30" }, "matched_docs" : { "_id" : { "$numberInt" : "4" }, "plane_model" : "737", "gates" : { "$numberInt" : "110" } } }
-(4 rows)
-
-set local documentdb.enableLookupInnerJoin to on;
 SELECT document FROM bson_aggregation_pipeline('lookupdb', 
     '{ "aggregate": "planes", "pipeline": [ { "$match": { "model": { "$exists": true } } }, { "$lookup": { "from": "gate_availability", "as": "matched_docs", "localField": "model", "foreignField": "plane_model" } }, { "$unwind": "$matched_docs" } ], "cursor": {} }');
                                                                                                                     document                                                                                                                    
@@ -133,18 +121,6 @@ SELECT document FROM bson_aggregation_pipeline('lookupdb',
 (4 rows)
 
 set local documentdb.forceBitmapScanForLookup to on;
-set local documentdb.enableLookupInnerJoin to off;
-SELECT document FROM bson_aggregation_pipeline('lookupdb', 
-    '{ "aggregate": "planes", "pipeline": [ { "$match": { "model": { "$exists": true } } }, { "$lookup": { "from": "gate_availability", "as": "matched_docs", "localField": "model", "foreignField": "plane_model" } }, { "$unwind": "$matched_docs" } ], "cursor": {} }');
-                                                                                                                    document                                                                                                                    
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "3" }, "model" : "A330", "price" : { "$numberInt" : "10" }, "quantity" : { "$numberInt" : "5" }, "matched_docs" : { "_id" : { "$numberInt" : "1" }, "plane_model" : "A330", "gates" : { "$numberInt" : "30" } } }
- { "_id" : { "$numberInt" : "2" }, "model" : "A340", "price" : { "$numberInt" : "140" }, "quantity" : { "$numberInt" : "1" }, "matched_docs" : { "_id" : { "$numberInt" : "11" }, "plane_model" : "A340", "gates" : { "$numberInt" : "10" } } }
- { "_id" : { "$numberInt" : "1" }, "model" : "A380", "price" : { "$numberInt" : "280" }, "quantity" : { "$numberInt" : "20" }, "matched_docs" : { "_id" : { "$numberInt" : "2" }, "plane_model" : "A380", "gates" : { "$numberInt" : "5" } } }
- { "_id" : { "$numberInt" : "4" }, "model" : "737", "price" : { "$numberInt" : "50" }, "quantity" : { "$numberInt" : "30" }, "matched_docs" : { "_id" : { "$numberInt" : "4" }, "plane_model" : "737", "gates" : { "$numberInt" : "110" } } }
-(4 rows)
-
-set local documentdb.enableLookupInnerJoin to on;
 SELECT document FROM bson_aggregation_pipeline('lookupdb', 
     '{ "aggregate": "planes", "pipeline": [ { "$match": { "model": { "$exists": true } } }, { "$lookup": { "from": "gate_availability", "as": "matched_docs", "localField": "model", "foreignField": "plane_model" } }, { "$unwind": "$matched_docs" } ], "cursor": {} }');
                                                                                                                     document                                                                                                                    
@@ -183,29 +159,7 @@ $$;
 -- Now test index usage
 BEGIN;
 set local documentdb.forceBitmapScanForLookup to on;
-set local documentdb.enableLookupInnerJoin to off;
--- LEFT JOIN with force bitmap scan, should use materialize seq scan
-EXPLAIN (SUMMARY OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('lookupdb', 
-    '{ "aggregate": "planes", "pipeline": [ { "$match": { "model": { "$exists": true } } }, { "$lookup": { "from": "gate_availability", "as": "matched_docs", "localField": "model", "foreignField": "plane_model" } }, { "$unwind": "$matched_docs" } ], "cursor": {} }');
-                                                                                                                            QUERY PLAN                                                                                                                             
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Node: host=localhost port=58070 dbname=regression
-         ->  Nested Loop
-               ->  Bitmap Heap Scan on documents_8910_891000 collection
-                     Recheck Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "model" : { "$minKey" : 1 } }'::documentdb_core.bson)
-                     ->  Bitmap Index Scan on planes_model_1
-                           Index Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "model" : { "$minKey" : 1 } }'::documentdb_core.bson)
-               ->  Index Scan using plane_model_1 on documents_8911_891002 collection_0_1
-                     Index Cond: (document OPERATOR(documentdb_api_catalog.@*=) documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "plane_model" : "model" }'::documentdb_core.bson))
-                     Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "plane_model" : "model" }'::documentdb_core.bson), 'plane_model'::text)
-(13 rows)
-
-set local documentdb.enableLookupInnerJoin to on;
--- RIGHT JOIN with force bitmap scan, should use materialize seq scan
+-- INNER JOIN with force bitmap scan, should use materialize seq scan
 EXPLAIN (SUMMARY OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('lookupdb', 
     '{ "aggregate": "planes", "pipeline": [ { "$match": { "model": { "$exists": true } } }, { "$lookup": { "from": "gate_availability", "as": "matched_docs", "localField": "model", "foreignField": "plane_model" } }, { "$unwind": "$matched_docs" } ], "cursor": {} }');
                                                                                                                             QUERY PLAN                                                                                                                             
@@ -226,29 +180,7 @@ EXPLAIN (SUMMARY OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline(
 (13 rows)
 
 set local documentdb.forceBitmapScanForLookup to off;
-set local documentdb.enableLookupInnerJoin to off;
--- LEFT JOIN without force bitmap scan, should use index scan
-EXPLAIN (SUMMARY OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('lookupdb', 
-    '{ "aggregate": "planes", "pipeline": [ { "$match": { "model": { "$exists": true } } }, { "$lookup": { "from": "gate_availability", "as": "matched_docs", "localField": "model", "foreignField": "plane_model" } }, { "$unwind": "$matched_docs" } ], "cursor": {} }');
-                                                                                                                            QUERY PLAN                                                                                                                             
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Node: host=localhost port=58070 dbname=regression
-         ->  Nested Loop
-               ->  Bitmap Heap Scan on documents_8910_891000 collection
-                     Recheck Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "model" : { "$minKey" : 1 } }'::documentdb_core.bson)
-                     ->  Bitmap Index Scan on planes_model_1
-                           Index Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "model" : { "$minKey" : 1 } }'::documentdb_core.bson)
-               ->  Index Scan using plane_model_1 on documents_8911_891002 collection_0_1
-                     Index Cond: (document OPERATOR(documentdb_api_catalog.@*=) documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "plane_model" : "model" }'::documentdb_core.bson))
-                     Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "plane_model" : "model" }'::documentdb_core.bson), 'plane_model'::text)
-(13 rows)
-
-set local documentdb.enableLookupInnerJoin to on;
--- RIGHT JOIN without force bitmap scan, should use index scan
+-- INNER JOIN without force bitmap scan, should use index scan
 EXPLAIN (SUMMARY OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('lookupdb', 
     '{ "aggregate": "planes", "pipeline": [ { "$match": { "model": { "$exists": true } } }, { "$lookup": { "from": "gate_availability", "as": "matched_docs", "localField": "model", "foreignField": "plane_model" } }, { "$unwind": "$matched_docs" } ], "cursor": {} }');
                                                                                                                             QUERY PLAN                                                                                                                             
@@ -285,14 +217,14 @@ SELECT documentdb_api.drop_collection('lookupdb', 'Dishes'), documentdb_api.drop
 
 -- lookup with point read where inner plan depends on external param crash fix scenario
 SELECT documentdb_api.insert_one('lookupdb','Dishes',' { "_id" : 1, "dishId" : 1, "ingredients": [1, 2, 3, 4] }', NULL);
-psql:sql/bson_aggregation_stage_lookup_inner_join_core.sql:117: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_inner_join_core.sql:95: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('lookupdb','Ingredients',' { "_id" : 1, "shopId" : 101, "name": "Salt" }', NULL);
-psql:sql/bson_aggregation_stage_lookup_inner_join_core.sql:118: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_inner_join_core.sql:96: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -317,7 +249,7 @@ SELECT documentdb_api.insert_one('lookupdb','Ingredients',' { "_id" : 4, "shopId
 (1 row)
 
 SELECT documentdb_api.insert_one('lookupdb','Shops',' { "_id" : 101, "name": "ABC Mart" }', NULL);
-psql:sql/bson_aggregation_stage_lookup_inner_join_core.sql:122: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_lookup_inner_join_core.sql:100: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -336,7 +268,6 @@ SELECT 'ANALYZE documentdb_data.documents_' || :'shops_id' \gexec
 ANALYZE documentdb_data.documents_8914
 BEGIN;
 set local seq_page_cost to 1;
-set local documentdb.enableLookupInnerJoin to off;
 SELECT document FROM bson_aggregation_pipeline('lookupdb', '{"aggregate": "Dishes", "pipeline": [{"$match": {"dishId": 1}}, {"$unwind": "$ingredients"} , {"$lookup": {"from": "Ingredients", "localField": "ingredients", "foreignField": "_id", "as": "ingredient_info"}} , {"$unwind": "$ingredient_info"} , {"$lookup": {"from": "Shops", "localField": "ingredient_info.shopId", "foreignField": "_id", "as": "shop_info"}}, {"$unwind": "$shop_info"}]}');
                                                                                                                                                 document                                                                                                                                                
 ---------------------------------------------------------------------
@@ -349,16 +280,15 @@ SELECT document FROM bson_aggregation_pipeline('lookupdb', '{"aggregate": "Dishe
 ROLLBACK;
 BEGIN;
 set local seq_page_cost to 1;
-set local documentdb.enableLookupInnerJoin to off;
 EXPLAIN (COSTS OFF, SUMMARY OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('lookupdb', '{"aggregate": "Dishes", "pipeline": [{"$match": {"dishId": 1}}, {"$unwind": "$ingredients"} , {"$lookup": {"from": "Ingredients", "localField": "ingredients", "foreignField": "_id", "as": "ingredient_info"}} , {"$unwind": "$ingredient_info"} , {"$lookup": {"from": "Shops", "localField": "ingredient_info.shopId", "foreignField": "_id", "as": "shop_info"}}, {"$unwind": "$shop_info"}]}');
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents_at_path(lookup_stage_1.document, "lookupRight_stage_1".document, 'shop_info'::text) AS document FROM ((SELECT agg_stage_3.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_array(agg_stage_3.document, '{ "_id" : "ingredient_info.shopId" }'::documentdb_core.bson) AS lookup_filter FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents_at_path(lookup_stage_1_1.document, "lookupRight_stage_1_1".document, 'ingredient_info'::text) AS document FROM ((SELECT agg_stage_2.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_array(agg_stage_2.document, '{ "_id" : "ingredients" }'::documentdb_core.bson) AS lookup_filter FROM (SELECT documentdb_api_catalog.bson_dollar_unwind(collection.document, '$ingredients'::text) AS document FROM documentdb_data.documents_8912_891004 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#=) '{ "dishId" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery) AND (collection.shard_key_value OPERATOR(pg_catalog.=) '8912'::bigint))) agg_stage_2) lookup_stage_1_1 LEFT JOIN LATERAL (SELECT lookup_right_query_stage_0.document FROM (SELECT collection_0_1.document, collection_0_1.object_id AS "objectId" FROM documentdb_data.documents_8913_891006 collection_0_1 WHERE (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '8913'::bigint)) lookup_right_query_stage_0 WHERE (lookup_right_query_stage_0."objectId" OPERATOR(documentdb_core.=) ANY (lookup_stage_1_1.lookup_filter))) "lookupRight_stage_1_1" ON (true)) WHERE ("lookupRight_stage_1_1".document IS NOT NULL)) agg_stage_3) lookup_stage_1 LEFT JOIN LATERAL (SELECT lookup_right_query_stage_0.document FROM (SELECT collection_0_1.document, collection_0_1.object_id AS "objectId" FROM documentdb_data.documents_8914_891008 collection_0_1 WHERE (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '8914'::bigint)) lookup_right_query_stage_0 WHERE (lookup_right_query_stage_0."objectId" OPERATOR(documentdb_core.=) ANY (lookup_stage_1.lookup_filter))) "lookupRight_stage_1" ON (true)) WHERE ("lookupRight_stage_1".document IS NOT NULL)
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents_at_path(lookup_stage_1.document, "lookupRight_stage_1".document, 'shop_info'::text) AS document FROM ((SELECT agg_stage_3.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_array(agg_stage_3.document, '{ "_id" : "ingredient_info.shopId" }'::documentdb_core.bson) AS lookup_filter FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents_at_path(lookup_stage_1_1.document, "lookupRight_stage_1_1".document, 'ingredient_info'::text) AS document FROM ((SELECT agg_stage_2.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_array(agg_stage_2.document, '{ "_id" : "ingredients" }'::documentdb_core.bson) AS lookup_filter FROM (SELECT documentdb_api_catalog.bson_dollar_unwind(collection.document, '$ingredients'::text) AS document FROM documentdb_data.documents_8912_891004 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#=) '{ "dishId" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery) AND (collection.shard_key_value OPERATOR(pg_catalog.=) '8912'::bigint))) agg_stage_2) lookup_stage_1_1 JOIN LATERAL (SELECT lookup_right_query_stage_0.document FROM (SELECT collection_0_1.document, collection_0_1.object_id AS "objectId" FROM documentdb_data.documents_8913_891006 collection_0_1 WHERE (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '8913'::bigint)) lookup_right_query_stage_0 WHERE (lookup_right_query_stage_0."objectId" OPERATOR(documentdb_core.=) ANY (lookup_stage_1_1.lookup_filter))) "lookupRight_stage_1_1" ON (true))) agg_stage_3) lookup_stage_1 JOIN LATERAL (SELECT lookup_right_query_stage_0.document FROM (SELECT collection_0_1.document, collection_0_1.object_id AS "objectId" FROM documentdb_data.documents_8914_891008 collection_0_1 WHERE (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '8914'::bigint)) lookup_right_query_stage_0 WHERE (lookup_right_query_stage_0."objectId" OPERATOR(documentdb_core.=) ANY (lookup_stage_1.lookup_filter))) "lookupRight_stage_1" ON (true))
          Node: host=localhost port=58070 dbname=regression
          ->  Nested Loop
                Output: documentdb_api_internal.bson_dollar_merge_documents_at_path(documentdb_api_internal.bson_dollar_merge_documents_at_path((documentdb_api_catalog.bson_dollar_unwind(collection.document, '$ingredients'::text)), collection_0_1.document, 'ingredient_info'::text), collection_0_1_1.document, 'shop_info'::text)
