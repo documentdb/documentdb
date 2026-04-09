@@ -13,6 +13,7 @@ use serde::Deserialize;
 use crate::{
     configuration::{CertificateOptions, SetupConfiguration},
     error::{DocumentDBError, Result},
+    telemetry::config::TelemetryOptions,
 };
 
 // Configurations which are populated statically on process start
@@ -67,6 +68,9 @@ pub struct DocumentDBSetupConfiguration {
 
     // Kind identifier for this gateway instance, included in hello command response.
     pub instance_kind: Option<String>,
+
+    // Telemetry configuration
+    pub telemetry_options: Option<TelemetryOptions>,
 }
 
 impl DocumentDBSetupConfiguration {
@@ -224,5 +228,17 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
 
     fn instance_kind(&self) -> &str {
         self.instance_kind.as_deref().unwrap_or("")
+    }
+
+    fn telemetry_options(&self) -> Option<&TelemetryOptions> {
+        self.telemetry_options.as_ref()
+    }
+}
+
+impl DocumentDBSetupConfiguration {
+    /// Returns the telemetry options from the configuration, if present.
+    #[must_use]
+    pub const fn telemetry_options(&self) -> Option<&TelemetryOptions> {
+        self.telemetry_options.as_ref()
     }
 }

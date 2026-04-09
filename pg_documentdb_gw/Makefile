@@ -9,6 +9,6 @@ all: notice
 
 # Regenerate NOTICE file when Cargo.toml or Cargo.lock changes
 NOTICE: Cargo.toml Cargo.lock
-	$(OSS_SRC_DIR)/scripts/generate_notice.sh -d $(DOCDB_GW_DIR) -o $(DOCDB_GW_DIR)/NOTICE
+	$(OSS_SRC_DIR)/scripts/generate_notice.sh -d $(DOCDB_GW_DIR)/documentdb_gateway_core -o $(DOCDB_GW_DIR)/NOTICE
 
 notice: NOTICE

@@ -188,6 +188,13 @@ impl ConnectionContext {
         &self.transport_protocol
     }
 
+    /// Returns `true` if request metrics are enabled for this connection.
+    /// This is a temporary measure until we have a more comprehensive metrics system in place.
+    #[must_use]
+    pub fn request_metrics_enabled(&self) -> bool {
+        self.service_context.request_metrics_enabled()
+    }
+
     #[must_use]
     pub const fn get_connection_id_hash(&self) -> i32 {
         self.connection_id_hash
