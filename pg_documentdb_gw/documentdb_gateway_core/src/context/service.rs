@@ -14,6 +14,7 @@ use crate::{
     postgres::{conn_mgmt::PoolManager, QueryCatalog},
     responses::CustomPostgresErrorMapper,
     service::TlsProvider,
+    telemetry::TelemetryConfig,
 };
 
 #[derive(Debug)]
@@ -25,6 +26,7 @@ pub struct ServiceContextInner {
     pub transaction_store: TransactionStore,
     pub tls_provider: TlsProvider,
     pub custom_pg_error_mapper: Option<Box<dyn CustomPostgresErrorMapper>>,
+    pub request_metrics_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +41,9 @@ impl ServiceContext {
         tls_provider: TlsProvider,
         custom_pg_error_mapper: Option<Box<dyn CustomPostgresErrorMapper>>,
     ) -> Self {
+        let request_metrics_enabled = TelemetryConfig::new(setup_configuration.telemetry_options())
+            .metrics()
+            .metrics_enabled();
         let timeout_secs = setup_configuration.transaction_timeout_secs();
         let cursor_store = CursorStore::new(Arc::clone(&dynamic_configuration), true);
 
@@ -50,6 +55,7 @@ impl ServiceContext {
             transaction_store: TransactionStore::new(Duration::from_secs(timeout_secs)),
             tls_provider,
             custom_pg_error_mapper,
+            request_metrics_enabled,
         };
         Self(Arc::new(inner))
     }
@@ -92,5 +98,10 @@ impl ServiceContext {
     #[must_use]
     pub fn custom_pg_error_mapper(&self) -> Option<&dyn CustomPostgresErrorMapper> {
         self.0.custom_pg_error_mapper.as_deref()
+    }
+
+    #[must_use]
+    pub fn request_metrics_enabled(&self) -> bool {
+        self.0.request_metrics_enabled
     }
 }

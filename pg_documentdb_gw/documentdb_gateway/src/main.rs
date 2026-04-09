@@ -25,6 +25,7 @@ use documentdb_gateway_core::{
     service::TlsProvider,
     shutdown_controller::SHUTDOWN_CONTROLLER,
     startup::{create_postgres_object, get_service_context},
+    telemetry::{TelemetryConfig, TelemetryManager},
 };
 use tokio::signal;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -64,6 +65,21 @@ fn main() {
 }
 
 async fn start_gateway(setup_configuration: DocumentDBSetupConfiguration) {
+    // Initialize telemetry (OTLP exporter requires the async runtime)
+    let telemetry_config = TelemetryConfig::new(setup_configuration.telemetry_options());
+
+    let telemetry_manager = if telemetry_config.any_signal_enabled() {
+        match TelemetryManager::init_telemetry(&telemetry_config, None) {
+            Ok(manager) => Some(manager),
+            Err(e) => {
+                tracing::error!("Failed to initialize OpenTelemetry: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let shutdown_token = SHUTDOWN_CONTROLLER.token();
 
     tokio::spawn(async move {
@@ -111,4 +127,10 @@ async fn start_gateway(setup_configuration: DocumentDBSetupConfiguration) {
     run_gateway::<DocumentDBDataClient>(service_context, None, shutdown_token)
         .await
         .unwrap();
+
+    if let Some(manager) = telemetry_manager {
+        if let Err(err) = manager.shutdown() {
+            tracing::error!("Failed to shutdown telemetry manager: {err}");
+        }
+    }
 }

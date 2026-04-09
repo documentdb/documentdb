@@ -90,14 +90,16 @@ impl ConnectionPoolStatus {
 /// Set once at pool creation; all subsequent timestamps are offsets from this.
 static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
+fn epoch() -> Instant {
+    *EPOCH.get_or_init(Instant::now)
+}
+
 fn instant_to_u64(instant: Instant) -> u64 {
-    let epoch = EPOCH.get_or_init(Instant::now);
-    u64::try_from(instant.duration_since(*epoch).as_nanos()).unwrap_or(u64::MAX)
+    u64::try_from(instant.duration_since(epoch()).as_nanos()).unwrap_or(u64::MAX)
 }
 
 fn u64_to_instant(nanos: u64) -> Instant {
-    let epoch = EPOCH.get_or_init(Instant::now);
-    *epoch + Duration::from_nanos(nanos)
+    epoch() + Duration::from_nanos(nanos)
 }
 
 #[derive(Debug)]
@@ -311,6 +313,7 @@ mod tests {
     )]
     #[test]
     fn test_instant_to_u64_with_roundtrip_preserves_value() {
+        let _ = epoch();
         let now = Instant::now();
         let encoded = instant_to_u64(now);
         let decoded = u64_to_instant(encoded);

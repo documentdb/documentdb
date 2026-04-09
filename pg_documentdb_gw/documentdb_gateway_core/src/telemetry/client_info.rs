@@ -6,8 +6,9 @@
  *-------------------------------------------------------------------------
  */
 
-use bson::raw::{RawDocument, RawDocumentBuf};
 use std::fmt;
+
+use bson::raw::{RawDocument, RawDocumentBuf};
 
 /// Represents metadata about a client connecting to the server.
 ///
