@@ -22,6 +22,9 @@ pub mod shutdown_controller;
 pub mod startup;
 pub mod telemetry;
 
+#[cfg(test)]
+pub(crate) mod testing;
+
 use std::{net::IpAddr, pin::Pin, sync::Arc};
 
 use either::Either::{Left, Right};
@@ -44,7 +47,7 @@ use crate::{
     requests::{request_tracker::RequestTracker, validation, Request, RequestIntervalKind},
     responses::{CommandError, Response},
     service::create_tcp_listeners,
-    telemetry::{client_info::parse_client_info, TelemetryProvider},
+    telemetry::{client_info::parse_client_info, record_gateway_metrics, TelemetryProvider},
 };
 // TCP keepalive configuration constants
 const TCP_KEEPALIVE_TIME_SECS: u64 = 180;
@@ -743,6 +746,16 @@ where
             .record_duration(RequestIntervalKind::WriteResponse, write_response_start);
     }
 
+    if connection_context.request_metrics_enabled() {
+        record_gateway_metrics(
+            header,
+            Some(request_context.payload),
+            Left(&response),
+            request_context.info.collection().unwrap_or(""),
+            request_context.tracker,
+        );
+    }
+
     if let Some(telemetry) = connection_context.telemetry_provider.as_ref() {
         let collection = request_context.info.collection().unwrap_or("").to_owned();
         telemetry
@@ -794,6 +807,18 @@ where
     // telemetry can block so do it after write and flush.
     telemetry::log_request_failure(error, connection_context, activity_id, request);
 
+    let collection = collection.unwrap_or_default();
+
+    if connection_context.request_metrics_enabled() {
+        record_gateway_metrics(
+            header,
+            request,
+            Right((&command_error, response.as_bytes().len())),
+            &collection,
+            request_tracker,
+        );
+    }
+
     if let Some(telemetry) = connection_context.telemetry_provider.as_ref() {
         telemetry
             .emit_request_event(
@@ -801,7 +826,7 @@ where
                 header,
                 request,
                 Right((&command_error, response.as_bytes().len())),
-                collection.unwrap_or_default(),
+                collection,
                 request_tracker,
                 activity_id,
                 &parse_client_info(connection_context.client_information.as_ref()),

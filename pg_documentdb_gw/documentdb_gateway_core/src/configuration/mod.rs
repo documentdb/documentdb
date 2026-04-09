@@ -21,6 +21,8 @@ pub use version::Version;
 use dyn_clone::{clone_trait_object, DynClone};
 use std::fmt::Debug;
 
+use crate::telemetry::config::TelemetryOptions;
+
 /// These are the required configuration fields.
 ///
 /// A trait that defines the configuration setup for the application.
@@ -108,6 +110,9 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
     /// Returns the kind identifier for this gateway instance.
     /// Included in the hello command's `internal` response document.
     fn instance_kind(&self) -> &str;
+
+    /// Returns telemetry options from static setup configuration, if present.
+    fn telemetry_options(&self) -> Option<&TelemetryOptions>;
 
     /// Provides a way to downcast the trait object to a concrete type.
     fn as_any(&self) -> &dyn std::any::Any;

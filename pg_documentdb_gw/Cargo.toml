@@ -38,6 +38,10 @@ mongodb = { version = "3.2.0", default-features = false, features = [
 ] }
 once_cell = "1.18.0"
 openssl = "0.10.73"
+opentelemetry = { version = "0.30", features = ["metrics"] }
+opentelemetry-otlp = { version = "0.30", features = ["grpc-tonic", "metrics"] }
+opentelemetry-semantic-conventions = "0.30"
+opentelemetry_sdk = { version = "0.30", features = ["rt-tokio", "metrics"] }
 rand = "0.8.5"
 regex = "1.10.2"
 serde = { version = "1.0.125", features = ["derive", "rc"] }
