@@ -86,6 +86,7 @@ extern bool FailOnGroupIdDuplicate;
 extern bool InlineChangeStreamMatchStage;
 extern bool RemoveMatchNamespaceFilters;
 extern bool EnableOrderByIndexTerm;
+extern bool EnableSortGroupStage;
 
 /* GUC to config tdigest compression */
 extern int TdigestCompressionAccuracy;
@@ -219,6 +220,8 @@ static Query * HandleGeoNear(const bson_value_t *existingValue, Query *query,
 static Query * HandleMatchAggregationStage(const bson_value_t *existingValue,
 										   Query *query,
 										   AggregationPipelineBuildContext *context);
+static Query * HandleSortGroup(const bson_value_t *existingValue, Query *query,
+							   AggregationPipelineBuildContext *context);
 
 static bool RequiresPersistentCursorFalse(const bson_value_t *pipelineValue,
 										  bool *isSingleRowResult);
@@ -294,6 +297,22 @@ static const AggregationStageDefinition LookupUnwindStageDefinition = {
 	.pipelineCheckFunc = NULL,
 	.allowBaseShardTablePushdown = false,
 	.stageEnum = Stage_LookupUnwind,
+};
+
+static const AggregationStageDefinition SortGroupStageDefinition = {
+	.stage = "$sortGroup",
+	.mutateFunc = &HandleSortGroup,
+	.requiresPersistentCursor = &RequiresPersistentCursorTrue,
+
+	/* Group and sort changes the output format (group) so no prior sorts
+	 * are valid after this*/
+	.preservesStableSortOrder = false,
+	.canHandleAgnosticQueries = false,
+	.isProjectTransform = false,
+	.isOutputStage = false,
+	.pipelineCheckFunc = NULL,
+	.allowBaseShardTablePushdown = true,
+	.stageEnum = Stage_SortGroup,
 };
 
 /* Stages and their definitions sorted by name.
@@ -5202,6 +5221,52 @@ HandleSortByCount(const bson_value_t *existingValue, Query *query,
 }
 
 
+static Query *
+HandleSortGroup(const bson_value_t *existingValue, Query *query,
+				AggregationPipelineBuildContext *context)
+{
+	bson_iter_t sortGroupSpec;
+	bson_value_t sortValue = { 0 };
+	bson_value_t groupValue = { 0 };
+	BsonValueInitIterator(existingValue, &sortGroupSpec);
+	while (bson_iter_next(&sortGroupSpec))
+	{
+		const char *fieldName = bson_iter_key(&sortGroupSpec);
+		if (strcmp(fieldName, "sort") == 0)
+		{
+			sortValue = *bson_iter_value(&sortGroupSpec);
+		}
+		else if (strcmp(fieldName, "group") == 0)
+		{
+			groupValue = *bson_iter_value(&sortGroupSpec);
+		}
+		else
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"Invalid specification for $sortGroup. Expected fields are 'sort' and 'group'.")));
+		}
+	}
+
+	if (sortValue.value_type == BSON_TYPE_EOD || groupValue.value_type == BSON_TYPE_EOD)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg(
+							"Invalid specification for $sortGroup. Both 'sort' and 'group' fields are required.")));
+	}
+
+	query = HandleSort(&sortValue, query, context);
+	if (context->requiresSubQuery || context->requiresSubQueryAfterProject)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg(
+							"Unexpected error - $sort stage demands a subquery when it should not.")));
+	}
+
+	return HandleGroup(&groupValue, query, context);
+}
+
+
 /*
  * Helper method that adds a group expression projection to the query's targetList.
  * Creates a VAR that can be used in the projector of the higher level sub-query.
@@ -8221,11 +8286,17 @@ TryOptimizeAggregationPipelines(List **aggregationStages,
 	foreach(cell, stagesList)
 	{
 		currentIndex = foreach_current_index(cell);
+
+		/* This may seem weird, but we do this since we delete cells directly
+		 * from the list - after deletion the currentIndex moves back so we skip
+		 * the stage we just visited and move this forward.
+		 */
 		if (currentIndex < nextIndex)
 		{
 			continue;
 		}
 
+		nextIndex = currentIndex + 1;
 		AggregationStage *stage = (AggregationStage *) lfirst(cell);
 		const AggregationStageDefinition *definition = stage->stageDefinition;
 		if (!definition->allowBaseShardTablePushdown)
@@ -8234,63 +8305,103 @@ TryOptimizeAggregationPipelines(List **aggregationStages,
 			allowShardBaseTable = false;
 		}
 
-		if (IsPipelineStageFollowedByOtherStage(Stage_Lookup, Stage_Unwind,
-												currentIndex, stagesList))
+		switch (stage->stageDefinition->stageEnum)
 		{
-			/* Optimization for $lookup stage
-			 * If the next stage is $unwind, we can merge the $lookup and $unwind stages into a single stage.
-			 * This is because $lookup followed by $unwind is a common pattern and can be optimized to a single stage,
-			 * if $unwind is requested on the same field which is the "as" field in lookup stage.
-			 */
-			AggregationStage *unwindStage =
-				(AggregationStage *) lfirst(list_nth_cell(stagesList, currentIndex +
-														  1));
-			bool preserveEmptyArrays = false;
-			if (CanInlineLookupWithUnwind(&stage->stageValue,
-										  &unwindStage->stageValue,
-										  &preserveEmptyArrays))
+			case Stage_Lookup:
 			{
-				*aggregationStages = foreach_delete_current(stagesList, cell);
-				AggregationStage *lookupUnwindStage = unwindStage;
-
-				/* merge preserve empty arrays and the lookup spec */
-				pgbson_writer writer;
-				PgbsonWriterInit(&writer);
-				PgbsonWriterAppendBool(&writer, "preserveNullAndEmptyArrays", 26,
-									   preserveEmptyArrays);
-				PgbsonWriterAppendValue(&writer, "lookup", 6, &stage->stageValue);
-
-				lookupUnwindStage->stageValue = ConvertPgbsonToBsonValue(
-					PgbsonWriterGetPgbson(&writer));
-				lookupUnwindStage->stageDefinition =
-					(AggregationStageDefinition *) &LookupUnwindStageDefinition;
-			}
-		}
-
-		if (InlineChangeStreamMatchStage &&
-			IsPipelineStageFollowedByOtherStage(Stage_ChangeStream, Stage_Match,
-												currentIndex, stagesList))
-		{
-			/* Inline $match stage collection filters */
-			AggregationStage *matchStage =
-				(AggregationStage *) lfirst(list_nth_cell(stagesList, currentIndex + 1));
-			bool inlinedCompletely = false;
-			if (TryInlineChangeStreamNamespaceFilters(stage, matchStage,
-													  &inlinedCompletely))
-			{
-				/* If the match stage has only collection namespace filters, we can
-				 * remove the next stage completely after inlining. */
-				if (RemoveMatchNamespaceFilters && inlinedCompletely)
+				if (IsPipelineStageFollowedByOtherStage(Stage_Lookup, Stage_Unwind,
+														currentIndex, stagesList))
 				{
-					memcpy(matchStage, stage, sizeof(AggregationStage));
+					/* Optimization for $lookup stage
+					 * If the next stage is $unwind, we can merge the $lookup and $unwind stages into a single stage.
+					 * This is because $lookup followed by $unwind is a common pattern and can be optimized to a single stage,
+					 * if $unwind is requested on the same field which is the "as" field in lookup stage.
+					 */
+					AggregationStage *unwindStage =
+						(AggregationStage *) lfirst(list_nth_cell(stagesList, nextIndex));
+					bool preserveEmptyArrays = false;
+					if (CanInlineLookupWithUnwind(&stage->stageValue,
+												  &unwindStage->stageValue,
+												  &preserveEmptyArrays))
+					{
+						AggregationStage *lookupUnwindStage = unwindStage;
 
-					/* delete the current stage */
+						/* merge preserve empty arrays and the lookup spec */
+						pgbson_writer writer;
+						PgbsonWriterInit(&writer);
+						PgbsonWriterAppendBool(&writer, "preserveNullAndEmptyArrays", 26,
+											   preserveEmptyArrays);
+						PgbsonWriterAppendValue(&writer, "lookup", 6, &stage->stageValue);
+
+						lookupUnwindStage->stageValue = ConvertPgbsonToBsonValue(
+							PgbsonWriterGetPgbson(&writer));
+						lookupUnwindStage->stageDefinition =
+							(AggregationStageDefinition *) &LookupUnwindStageDefinition;
+						*aggregationStages = foreach_delete_current(stagesList, cell);
+					}
+				}
+
+				continue;
+			}
+
+			case Stage_Sort:
+			{
+				if (EnableSortGroupStage &&
+					IsPipelineStageFollowedByOtherStage(Stage_Sort, Stage_Group,
+														currentIndex, stagesList))
+				{
+					/* If we have a sort followed by a group, create a combined stage that allows for
+					 * cross stage optimization.
+					 */
+					AggregationStage *nextStage =
+						(AggregationStage *) lfirst(list_nth_cell(stagesList, nextIndex));
+					pgbson_writer writer;
+					PgbsonWriterInit(&writer);
+					PgbsonWriterAppendValue(&writer, "sort", 4, &stage->stageValue);
+					PgbsonWriterAppendValue(&writer, "group", 5, &nextStage->stageValue);
+					nextStage->stageValue = ConvertPgbsonToBsonValue(
+						PgbsonWriterGetPgbson(&writer));
+					nextStage->stageDefinition =
+						(AggregationStageDefinition *) &SortGroupStageDefinition;
 					*aggregationStages = foreach_delete_current(stagesList, cell);
 				}
+
+				continue;
+			}
+
+			case Stage_ChangeStream:
+			{
+				if (InlineChangeStreamMatchStage &&
+					IsPipelineStageFollowedByOtherStage(Stage_ChangeStream, Stage_Match,
+														currentIndex, stagesList))
+				{
+					/* Inline $match stage collection filters */
+					AggregationStage *matchStage =
+						(AggregationStage *) lfirst(list_nth_cell(stagesList, nextIndex));
+					bool inlinedCompletely = false;
+					if (TryInlineChangeStreamNamespaceFilters(stage, matchStage,
+															  &inlinedCompletely))
+					{
+						/* If the match stage has only collection namespace filters, we can
+						 * remove the next stage completely after inlining. */
+						if (RemoveMatchNamespaceFilters && inlinedCompletely)
+						{
+							memcpy(matchStage, stage, sizeof(AggregationStage));
+
+							/* delete the current stage */
+							*aggregationStages = foreach_delete_current(stagesList, cell);
+						}
+					}
+				}
+
+				continue;
+			}
+
+			default:
+			{
+				continue;
 			}
 		}
-
-		nextIndex = currentIndex + 1;
 	}
 
 	context->allowShardBaseTable = allowShardBaseTable;
