@@ -38,23 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           pin_file="${{ env.TEST_IMAGE_PIN_FILE }}"
-
-          if [ ! -f "${pin_file}" ]; then
-            echo "Missing pinned test image file: ${pin_file}" >&2
-            exit 1
-          fi
-
-          current_image="$(sed \
-            -e 's/[[:space:]]*#.*$//' \
-            -e 's/^[[:space:]]*//' \
-            -e 's/[[:space:]]*$//' \
-            -e '/^[[:space:]]*$/d' \
-            "${pin_file}" | head -n 1)"
-
-          if [ -z "${current_image}" ]; then
-            echo "No pinned test image found in ${pin_file}" >&2
-            exit 1
-          fi
+          current_image="$(bash ./scripts/functional_tests/read_pin.sh "${pin_file}")"
 
           latest_digest="$(docker buildx imagetools inspect \
             ghcr.io/documentdb/functional-tests:latest \
@@ -137,7 +121,6 @@ jobs:
           exit_code=${PIPESTATUS[0]}
           set -e
 
-          echo "exit_code=${exit_code}" >> "$GITHUB_OUTPUT"
           if [ "${exit_code}" -eq 0 ]; then
             echo "Functional test run completed without failures."
           else

@@ -66,6 +66,7 @@ build/
 
 # txt files
 *.txt
+!scripts/functional_tests/test-image-pin.txt
 
 # temp schedules
 *.tmp

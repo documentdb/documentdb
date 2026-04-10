@@ -68,54 +68,87 @@ if [[ $# -gt 0 && "$1" != -* ]]; then
     shift
 fi
 
+function is_known_option {
+    case "$1" in
+        --os|--pg|--output-dir|--base-image|--username|--password|--host-port|--scope|--documentdb-image|--test-image|--results-dir|--pytest-args|--exclude-deselect-file|--skip-package-build|-h|--help)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+function require_option_value {
+    local flag="$1"
+    local value="${2-}"
+
+    if [[ -z "${value}" ]] || is_known_option "${value}"; then
+        echo "Missing value for ${flag}" >&2
+        exit 1
+    fi
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --os)
             shift
+            require_option_value "--os" "${1-}"
             package_os="$1"
             ;;
         --pg)
             shift
+            require_option_value "--pg" "${1-}"
             pg_version="$1"
             ;;
         --output-dir)
             shift
+            require_option_value "--output-dir" "${1-}"
             package_output_dir="$1"
             ;;
         --base-image)
             shift
+            require_option_value "--base-image" "${1-}"
             base_image="$1"
             ;;
         --username)
             shift
+            require_option_value "--username" "${1-}"
             docdb_username="$1"
             ;;
         --password)
             shift
+            require_option_value "--password" "${1-}"
             docdb_password="$1"
             ;;
         --host-port)
             shift
+            require_option_value "--host-port" "${1-}"
             docdb_host_port="$1"
             ;;
         --scope)
             shift
+            require_option_value "--scope" "${1-}"
             test_scope="$1"
             ;;
         --documentdb-image)
             shift
+            require_option_value "--documentdb-image" "${1-}"
             documentdb_image="$1"
             ;;
         --test-image)
             shift
+            require_option_value "--test-image" "${1-}"
             test_image="$1"
             ;;
         --results-dir)
             shift
+            require_option_value "--results-dir" "${1-}"
             results_dir="$1"
             ;;
         --pytest-args)
             shift
+            require_option_value "--pytest-args" "${1-}"
             pytest_extra_args="$1"
             ;;
         --exclude-deselect-file)
@@ -141,26 +174,7 @@ function require_docker_compose {
 }
 
 function read_pinned_test_image {
-    local pinned_image
-
-    if [[ ! -f "${test_image_pin_file}" ]]; then
-        return 1
-    fi
-
-    pinned_image="$(
-        sed \
-            -e 's/[[:space:]]*#.*$//' \
-            -e 's/^[[:space:]]*//' \
-            -e 's/[[:space:]]*$//' \
-            -e '/^[[:space:]]*$/d' \
-            "${test_image_pin_file}" | head -n 1
-    )"
-
-    if [[ -z "${pinned_image}" ]]; then
-        return 1
-    fi
-
-    printf '%s\n' "${pinned_image}"
+    bash "${script_dir}/read_pin.sh" "${test_image_pin_file}"
 }
 
 function resolve_default_test_image {
@@ -192,9 +206,14 @@ function resolve_deb_package {
     local abs_output_dir="${repo_root}/${package_output_dir}"
     local package_path
 
+    if [[ ! -d "${abs_output_dir}" ]]; then
+        echo "No Debian package found in ${abs_output_dir}. Run '$0 build' first, remove --skip-package-build, or point --output-dir at a directory containing a built package." >&2
+        exit 1
+    fi
+
     package_path="$(find "${abs_output_dir}" -maxdepth 1 -type f -name '*.deb' ! -name '*dbgsym*' | sort | head -n 1)"
     if [[ -z "${package_path}" ]]; then
-        echo "No Debian package found in ${abs_output_dir}" >&2
+        echo "No Debian package found in ${abs_output_dir}. Run '$0 build' first, remove --skip-package-build, or point --output-dir at a directory containing a built package." >&2
         exit 1
     fi
 
@@ -209,6 +228,11 @@ function resolve_deb_package {
 function resolve_deb_package_for_maintenance {
     local abs_output_dir="${repo_root}/${package_output_dir}"
     local package_path
+
+    if [[ ! -d "${abs_output_dir}" ]]; then
+        echo "${package_output_dir}/placeholder-documentdb.deb"
+        return 0
+    fi
 
     package_path="$(find "${abs_output_dir}" -maxdepth 1 -type f -name '*.deb' ! -name '*dbgsym*' | sort | head -n 1 || true)"
     if [[ -z "${package_path}" ]]; then
@@ -290,7 +314,12 @@ function prepare_compose_environment {
 }
 
 function prepare_maintenance_environment {
+    local prepare_results="${1:-false}"
     local deb_package_rel_path
+
+    if [[ "${prepare_results}" == true ]]; then
+        prepare_results_dir
+    fi
 
     deb_package_rel_path="$(resolve_deb_package_for_maintenance)"
     export_compose_env "${deb_package_rel_path}"
@@ -341,6 +370,8 @@ function run_test_service {
     local status
 
     ensure_test_image_available
+    # `docker compose run --no-deps` skips depends_on handling, so readiness is
+    # enforced explicitly here before the test container starts.
     start_documentdb_service
     wait_for_documentdb_service
 
@@ -362,7 +393,7 @@ function run_stack {
 }
 
 function test_stack {
-    prepare_compose_environment true
+    prepare_maintenance_environment true
     run_test_service
 }
 
