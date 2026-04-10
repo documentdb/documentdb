@@ -1,8 +1,8 @@
 * @documentdb/documentdb-maintainers
 
-/.pipelines/ @safern @visridha @shuaitian-git @lichoil @xgerman
-/.github/workflows/ @safern @visridha @shuaitian-git @lichoil @xgerman
-/packaging/ @safern @visridha @shuaitian-git @lichoil @fatmelon @xgerman
+/.pipelines/ @safern @visridha @xgerman
+/.github/workflows/ @safern @visridha @xgerman
+/packaging/ @safern @visridha @xgerman
 
 *.csv @documentdb/documentdb-maintainers
 *.sql @documentdb/documentdb-maintainers
