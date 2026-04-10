@@ -143,4 +143,12 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_maxmi
 
 /* $minN are subject to the 100 MB limit */
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_maxminn_group_test1", "pipeline": [ { "$group": { "_id": "$teamId", "NScore":{"$minN": {"input": "$points", "n": 12345678 } } } } ] }');
+
+-- regression test for crash in BSONMAXN/BSONMINN on empty sharded collection (similar to GitHub issue #531)
+BEGIN;
+SET citus.enable_local_execution TO off;
+SELECT documentdb_api.shard_collection('db', 'bsonMaxNMinNEmpty', '{"_id":"hashed"}', false);
+SELECT documentdb_api_internal.BSONMAXN(document) FROM documentdb_api.collection('db', 'bsonMaxNMinNEmpty');
+SELECT documentdb_api_internal.BSONMINN(document) FROM documentdb_api.collection('db', 'bsonMaxNMinNEmpty');
+ROLLBACK;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_maxminn_group_test1", "pipeline": [ { "$group": { "_id": "$teamId", "NScore":{"$minN": {"input": "$points", "n": 9223372036854775807 } } } } ] }');
