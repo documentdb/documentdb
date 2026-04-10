@@ -627,6 +627,29 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_maxmi
  { "_id" : "T2", "NScore" : [ { "$numberInt" : "7" }, { "$numberInt" : "18" }, { "$numberInt" : "40" }, { "$numberInt" : "60" } ] }
 (2 rows)
 
+-- regression test for crash in BSONMAXN/BSONMINN on empty sharded collection (similar to GitHub issue #531)
+BEGIN;
+SET citus.enable_local_execution TO off;
+SELECT documentdb_api.shard_collection('db', 'bsonMaxNMinNEmpty', '{"_id":"hashed"}', false);
+NOTICE:  creating collection
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api_internal.BSONMAXN(document) FROM documentdb_api.collection('db', 'bsonMaxNMinNEmpty');
+   bsonmaxn    
+---------------------------------------------------------------------
+ { "" : [  ] }
+(1 row)
+
+SELECT documentdb_api_internal.BSONMINN(document) FROM documentdb_api.collection('db', 'bsonMaxNMinNEmpty');
+   bsonminn    
+---------------------------------------------------------------------
+ { "" : [  ] }
+(1 row)
+
+ROLLBACK;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_maxminn_group_test1", "pipeline": [ { "$group": { "_id": "$teamId", "NScore":{"$minN": {"input": "$points", "n": 9223372036854775807 } } } } ] }');
                                                               document                                                              
 ---------------------------------------------------------------------
