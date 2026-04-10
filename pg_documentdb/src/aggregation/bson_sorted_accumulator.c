@@ -782,10 +782,6 @@ BsonOrderTransitionOnSorted(PG_FUNCTION_ARGS, bool invertSort, bool isSingle)
  * The args of PG_FUNCTION_ARGS are:
  *      0) left side partial aggregate
  *      1) right side partial aggregate
- *
- * Both left and right state are non null as the combine func was marked as strict.
- * 'strict' implies that if one the state is NULL, the combine func won't be called,
- * and the other state will be treated as the result.
  */
 Datum
 BsonOrderCombine(PG_FUNCTION_ARGS, bool invertSort)
@@ -795,6 +791,11 @@ BsonOrderCombine(PG_FUNCTION_ARGS, bool invertSort)
 	{
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg(
 							"Aggregate function invoked in non-aggregate context")));
+	}
+
+	if (PG_ARGISNULL(0) && PG_ARGISNULL(1))
+	{
+		PG_RETURN_NULL();
 	}
 
 	/* Check if either result is NULL and return Non-NULL */

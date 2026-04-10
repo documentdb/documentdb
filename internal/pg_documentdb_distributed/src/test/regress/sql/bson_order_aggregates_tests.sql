@@ -561,3 +561,13 @@ SELECT BSONFIRSTN(NULL, 1, ARRAY['{ "a": 1}', '{"c": 1}']::bson[]);
 SELECT BSONFIRSTNONSORTED(NULL, 1);
 SELECT BSONLASTN(NULL, 3, ARRAY['{ "a": 1}', '{"c": 1}']::bson[]) FROM documentdb_api.collection('db', 'bsonFirstNLastNCrash');
 SELECT BSONLASTNONSORTED(NULL, 3) FROM documentdb_api.collection('db', 'bsonFirstNLastNCrash');
+
+-- regression test for crash in BSONFIRSTN/BSONLASTN on empty sharded collection (GitHub issue #531)
+BEGIN;
+SET citus.enable_local_execution TO off;
+SELECT documentdb_api.shard_collection('db', 'bsonFirstNLastNEmpty', '{"_id":"hashed"}', false);
+SELECT BSONLASTN(document, 3, ARRAY['{ "a.c":-1}', '{"a.b":-1}']::bson[]) FROM documentdb_api.collection('db', 'bsonFirstNLastNEmpty');
+SELECT BSONFIRSTN(document, 3, ARRAY['{ "a.c":1}', '{"a.b":1}']::bson[]) FROM documentdb_api.collection('db', 'bsonFirstNLastNEmpty');
+SELECT BSONLASTNONSORTED(document, 2) FROM documentdb_api.collection('db', 'bsonFirstNLastNEmpty');
+SELECT BSONFIRSTNONSORTED(document, 2) FROM documentdb_api.collection('db', 'bsonFirstNLastNEmpty');
+ROLLBACK;
