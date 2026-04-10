@@ -1906,6 +1906,11 @@ bson_maxminn_combine(PG_FUNCTION_ARGS)
 					"Aggregate functions maxN or minN have been invoked within a non-aggregation context."));
 	}
 
+	if (PG_ARGISNULL(0) && PG_ARGISNULL(1))
+	{
+		PG_RETURN_NULL();
+	}
+
 	if (PG_ARGISNULL(0))
 	{
 		return PG_GETARG_DATUM(1);
