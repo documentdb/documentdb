@@ -1,0 +1,28 @@
+# One pytest node id per line. Blank lines and comments are ignored.
+
+# Use node IDs relative to the functional-tests pytest rootdir (`documentdb_tests`).
+
+# Unsupported feature in documentdb-local today.
+
+# Known product bug in documentdb-local today.
+
+# Needs triage -- added by update-test-image workflow on 2026-04-10.
+# Categorize these as "Unsupported feature" or "Known product bug" before merging.
+compatibility/tests/core/aggregation/commands/mapReduce/test_smoke_mapReduce.py::test_smoke_mapReduce
+compatibility/tests/core/collections/capped_collections/test_capped_collections_create.py::test_create_capped_collection
+compatibility/tests/core/collections/commands/cloneCollectionAsCapped/test_smoke_cloneCollectionAsCapped.py::test_smoke_cloneCollectionAsCapped
+compatibility/tests/core/collections/commands/collMod/test_smoke_collMod.py::test_smoke_collMod
+compatibility/tests/core/collections/commands/compact/test_smoke_compact.py::test_smoke_compact
+compatibility/tests/core/collections/commands/convertToCapped/test_smoke_convertToCapped.py::test_smoke_convertToCapped
+compatibility/tests/core/indexes/commands/createIndexes/test_smoke_createIndexes.py::test_smoke_createIndexes
+compatibility/tests/core/indexes/commands/dropIndexes/test_smoke_dropIndexes.py::test_smoke_dropIndexes
+compatibility/tests/core/indexes/commands/reIndex/test_smoke_reIndex.py::test_smoke_reIndex
+compatibility/tests/core/operator/accumulators/setUnion/test_smoke_accumulator_setUnion.py::test_smoke_accumulator_setUnion
+compatibility/tests/core/operator/expressions/accumulator/median/test_smoke_expression_median.py::test_smoke_expression_median
+compatibility/tests/core/operator/expressions/accumulator/percentile/test_smoke_expression_percentile.py::test_smoke_expression_percentile
+compatibility/tests/core/operator/expressions/accumulator/stdDevPop/test_smoke_expression_stdDevPop.py::test_smoke_expression_stdDevPop
+compatibility/tests/core/operator/expressions/accumulator/stdDevSamp/test_smoke_expression_stdDevSamp.py::test_smoke_expression_stdDevSamp
+compatibility/tests/core/operator/expressions/arithmetic/sigmoid/test_smoke_expression_sigmoid.py::test_smoke_expression_sigmoid
+compatibility/tests/core/operator/query/misc/where/test_smoke_where.py::test_smoke_where
+compatibility/tests/core/operator/stages/planCacheStats/test_smoke_planCacheStats.py::test_smoke_planCacheStats
+compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_invalid_collection

@@ -1,0 +1,60 @@
+name: documentdb-functional-tests
+
+services:
+  documentdb-local:
+    image: ${DOCUMENTDB_IMAGE:-documentdb-local-functional:local}
+    build:
+      context: ../..
+      dockerfile: .github/containers/Build-Ubuntu/Dockerfile_gateway
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-debian:trixie-slim}
+        POSTGRES_VERSION: ${PG_VERSION:-17}
+        DEB_PACKAGE_REL_PATH: ${DEB_PACKAGE_REL_PATH:?Set DEB_PACKAGE_REL_PATH to a built .deb path relative to the repo root.}
+    environment:
+      DOCDB_USERNAME: ${DOCDB_USERNAME:-docdb_user}
+      DOCDB_PASSWORD: ${DOCDB_PASSWORD:-DocDB_local}
+    command:
+      - --username
+      - ${DOCDB_USERNAME:-docdb_user}
+      - --password
+      - ${DOCDB_PASSWORD:-DocDB_local}
+      - --skip-init-data
+    ports:
+      - "${DOCDB_HOST_PORT:-10260}:10260"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh \"mongodb://$${DOCDB_USERNAME}:$${DOCDB_PASSWORD}@localhost:10260/?authMechanism=SCRAM-SHA-256&tls=true&tlsAllowInvalidCertificates=true\" --quiet --eval \"db.adminCommand({ ping: 1 }).ok\" | grep -q '^1$'",
+        ]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  functional-tests:
+    image: ${TEST_IMAGE:-ghcr.io/documentdb/functional-tests:latest}
+    # The helper script starts and health-checks documentdb-local explicitly
+    # before running this service with `docker compose run --no-deps`.
+    # Keep depends_on so direct `docker compose up` still preserves ordering.
+    depends_on:
+      documentdb-local:
+        condition: service_healthy
+    working_dir: /app
+    entrypoint:
+      - /usr/bin/bash
+      - /workspace/scripts/functional_tests/run_tests_in_container.sh
+    environment:
+      PYTEST_EXTRA_ARGS: ${PYTEST_EXTRA_ARGS:-}
+      TEST_CONNECTION_STRING: mongodb://${DOCDB_USERNAME:-docdb_user}:${DOCDB_PASSWORD:-DocDB_local}@documentdb-local:10260/?authMechanism=SCRAM-SHA-256&tls=true&tlsAllowInvalidCertificates=true
+      TEST_DESELECT_FILE: ${TEST_DESELECT_FILE-/workspace/scripts/functional_tests/deselect.list}
+      TEST_RESULTS_DIR: /app/.test-results
+      TEST_SCOPE: ${TEST_SCOPE:-smoke}
+    volumes:
+      - type: bind
+        source: ../..
+        target: /workspace
+        read_only: true
+      - type: bind
+        source: ${TEST_RESULTS_DIR:-../../functional-test-results}
+        target: /app/.test-results

@@ -160,6 +160,35 @@ for eachDocument in results:
 
 ```
 
+### Run functional tests locally with Docker Compose
+
+Contributors can reproduce the functional-test environment locally with Docker Compose:
+
+```bash
+./scripts/functional_tests/run_with_compose.sh run --test-image <image-ref-or-id>
+```
+
+This command builds the PostgreSQL 17 Debian package, builds a local `documentdb-local` image from that package, starts the service stack with Docker Compose, runs the `smoke` test scope by default, and writes the JSON/JUnit outputs to `functional-test-results/`.
+
+`--test-image` accepts any Docker image reference or a local image ID that already exists on your machine. If you omit it, the script defaults to `ghcr.io/documentdb/functional-tests:latest`.
+
+For the full local developer guide, see [scripts/functional_tests/README.md](scripts/functional_tests/README.md).
+
+To run the full suite instead:
+
+```bash
+./scripts/functional_tests/run_with_compose.sh run --test-image <image-ref-or-id> --scope full
+```
+
+Useful follow-up commands:
+
+```bash
+./scripts/functional_tests/run_with_compose.sh logs
+./scripts/functional_tests/run_with_compose.sh down
+```
+
+You need Docker with the Compose plugin (`docker compose`) installed before running the local flow.
+
 ### Helpful Links
 
 - Check out our [website](https://documentdb.io) to stay up to date with the latest on the project.

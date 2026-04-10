@@ -1,0 +1,357 @@
+name: DocumentDB functional tests
+run-name: ${{ github.event_name == 'schedule' && 'daily functional tests (all tests)' || github.event.pull_request.title || github.ref_name }}
+
+concurrency:
+  group: functional-tests-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *"
+
+  push:
+    branches:
+      - "main"
+    paths-ignore:
+      - ".devcontainer/**"
+      - "*.md"
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths-ignore:
+      - ".devcontainer/**"
+      - "*.md"
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  FUNCTIONAL_TESTS_COMPOSE_PATH: scripts/functional_tests/docker-compose.yml
+  PG_VERSION: "17"
+  PACKAGE_OUTPUT_DIR: downloaded-artifacts
+  COMPOSE_PROJECT_NAME: documentdb-functional-tests-${{ github.run_id }}-${{ github.run_attempt }}
+  DOCUMENTDB_IMAGE: documentdb-local-ci:${{ github.run_id }}-${{ github.run_attempt }}
+  DOCDB_USERNAME: docdb_user
+  DOCDB_PASSWORD: DocDB_${{ github.run_id }}_${{ github.run_attempt }}
+  TEST_IMAGE_PIN_FILE: scripts/functional_tests/test-image-pin.txt
+  TEST_RESULTS_DIR: ${{ github.workspace }}/functional-test-results
+  DAILY_BASELINE_ARTIFACT_NAME: functional-test-daily-baseline-pg17
+
+jobs:
+  functional-tests:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    name: Functional tests (documentdb-local PG17)
+    env:
+      EXCLUDE_DESELECT_FILE: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
+      TEST_SCOPE: full
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Resolve test image
+        id: resolve_test_image
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin_file="${{ env.TEST_IMAGE_PIN_FILE }}"
+          test_image="$(bash ./scripts/functional_tests/read_pin.sh "${pin_file}")"
+
+          case "${test_image}" in
+            ghcr.io/documentdb/functional-tests@sha256:*)
+              ;;
+            *)
+              echo "Pinned test image must use an immutable ghcr.io/documentdb/functional-tests@sha256:<digest> reference." >&2
+              echo "Found: ${test_image}" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "TEST_IMAGE=${test_image}" >> "$GITHUB_ENV"
+          echo "Resolved functional test image: ${test_image}"
+
+      - name: Build local documentdb-local image
+        id: build_documentdb_local
+        shell: bash
+        run: |
+          set -euo pipefail
+          logs_dir="${{ runner.temp }}/documentdb-local-logs"
+          build_log="${logs_dir}/build.log"
+          mkdir -p "${logs_dir}"
+
+          echo "Building ${DOCUMENTDB_IMAGE}; full output is being captured to ${build_log}."
+          set +e
+          bash ./scripts/functional_tests/run_with_compose.sh build \
+            --pg "${{ env.PG_VERSION }}" \
+            --output-dir "${{ env.PACKAGE_OUTPUT_DIR }}" \
+            --documentdb-image "${{ env.DOCUMENTDB_IMAGE }}" \
+            2>&1 | tee "${build_log}"
+          exit_code=${PIPESTATUS[0]}
+          set -e
+
+          if [ "${exit_code}" -eq 0 ]; then
+            echo "Build completed."
+          fi
+          exit "${exit_code}"
+
+      - name: Run functional tests with Docker Compose
+        id: run_functional_tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          logs_dir="${{ runner.temp }}/documentdb-local-logs"
+          test_log="${logs_dir}/test.log"
+          mkdir -p "${logs_dir}"
+          extra_args=()
+
+          if [ "${EXCLUDE_DESELECT_FILE}" = "true" ]; then
+            echo "Scheduled run detected: excluding deselect.list and running all tests."
+            extra_args+=( --exclude-deselect-file )
+          fi
+
+          echo "Running functional tests; full output is being captured to ${test_log}."
+          set +e
+          bash ./scripts/functional_tests/run_with_compose.sh test \
+            --pg "${{ env.PG_VERSION }}" \
+            --output-dir "${{ env.PACKAGE_OUTPUT_DIR }}" \
+            --documentdb-image "${{ env.DOCUMENTDB_IMAGE }}" \
+            --test-image "${{ env.TEST_IMAGE }}" \
+            --results-dir "${{ env.TEST_RESULTS_DIR }}" \
+            --username "${{ env.DOCDB_USERNAME }}" \
+            --password "${{ env.DOCDB_PASSWORD }}" \
+            --scope "${{ env.TEST_SCOPE }}" \
+            "${extra_args[@]}" \
+            2>&1 | tee "${test_log}"
+          exit_code=${PIPESTATUS[0]}
+          set -e
+
+          if [ "${exit_code}" -eq 0 ]; then
+            echo "Functional test run completed."
+          fi
+          exit "${exit_code}"
+
+      - name: Verify test results
+        id: verify_test_results
+        if: always() && steps.build_documentdb_local.outcome == 'success' && steps.run_functional_tests.outcome != 'skipped'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "results_ready=false" >> "$GITHUB_OUTPUT"
+
+          missing_results=false
+          for required_file in functional-report.json functional-results.xml; do
+            if [ ! -f "${{ env.TEST_RESULTS_DIR }}/$required_file" ]; then
+              echo "Missing expected test result file: ${{ env.TEST_RESULTS_DIR }}/$required_file" >&2
+              missing_results=true
+            fi
+          done
+
+          if [ "$missing_results" = true ]; then
+            echo "Functional tests did not produce the expected result files. Check the test container output for the earlier failure." >&2
+            exit 1
+          fi
+          echo "results_ready=true" >> "$GITHUB_OUTPUT"
+          find "${{ env.TEST_RESULTS_DIR }}" -maxdepth 1 -type f | sort
+
+      - name: Download latest daily baseline
+        if: always() && steps.verify_test_results.outputs.results_ready == 'true'
+        id: download_daily_baseline
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "baseline_available=false" >> "$GITHUB_OUTPUT"
+
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            exit 0
+          fi
+
+          output_dir="${{ runner.temp }}/daily-baseline"
+          zip_path="${{ runner.temp }}/daily-baseline.zip"
+          rm -rf "${output_dir}" "${zip_path}"
+          mkdir -p "${output_dir}"
+
+          artifact_id=""
+          baseline_run_url=""
+
+          while IFS= read -r run_id; do
+            [ -n "${run_id}" ] || continue
+
+            candidate_artifact_id="$(gh api \
+              "/repos/${{ github.repository }}/actions/runs/${run_id}/artifacts" \
+              --jq ".artifacts[] | select(.name == \"${{ env.DAILY_BASELINE_ARTIFACT_NAME }}\" and .expired == false) | .id" | head -n 1)"
+
+            if [ -z "${candidate_artifact_id}" ]; then
+              continue
+            fi
+
+            gh api "/repos/${{ github.repository }}/actions/artifacts/${candidate_artifact_id}/zip" > "${zip_path}"
+            unzip -o -q "${zip_path}" -d "${output_dir}"
+
+            baseline_path="${output_dir}/functional-test-daily-baseline.json"
+            if [ ! -f "${baseline_path}" ]; then
+              rm -f "${zip_path}"
+              continue
+            fi
+
+            artifact_id="${candidate_artifact_id}"
+            baseline_run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${run_id}"
+            echo "baseline_available=true" >> "$GITHUB_OUTPUT"
+            echo "baseline_path=${baseline_path}" >> "$GITHUB_OUTPUT"
+            echo "baseline_run_url=${baseline_run_url}" >> "$GITHUB_OUTPUT"
+            break
+          done < <(
+            gh api \
+              "/repos/${{ github.repository }}/actions/workflows/functional_tests.yml/runs?branch=main&event=schedule&status=completed&per_page=20" \
+              --jq '.workflow_runs[].id'
+          )
+
+          if [ -z "${artifact_id}" ]; then
+            echo "No daily baseline artifact found."
+          fi
+
+      - name: Analyze functional test results
+        if: always() && steps.verify_test_results.outputs.results_ready == 'true'
+        id: analyze_results
+        shell: bash
+        run: |
+          set -euo pipefail
+          analysis_json="${{ runner.temp }}/functional-test-analysis.json"
+          summary_markdown="${{ runner.temp }}/functional-test-summary.md"
+          baseline_output="${{ runner.temp }}/functional-test-daily-baseline.json"
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          deselect_mode="applied"
+          extra_args=()
+
+          if [ "${EXCLUDE_DESELECT_FILE}" = "true" ]; then
+            deselect_mode="excluded"
+            extra_args+=( --baseline-output "${baseline_output}" )
+          fi
+
+          if [ -n "${{ steps.download_daily_baseline.outputs.baseline_path }}" ]; then
+            extra_args+=( --baseline-input "${{ steps.download_daily_baseline.outputs.baseline_path }}" )
+          fi
+
+          python3 ./scripts/functional_tests/analyze_results.py \
+            --report "${{ env.TEST_RESULTS_DIR }}/functional-report.json" \
+            --deselect-list scripts/functional_tests/deselect.list \
+            --analysis-json "${analysis_json}" \
+            --summary-markdown "${summary_markdown}" \
+            --scope "${{ env.TEST_SCOPE }}" \
+            --deselect-mode "${deselect_mode}" \
+            --documentdb-image "${{ env.DOCUMENTDB_IMAGE }}" \
+            --test-image "${{ env.TEST_IMAGE }}" \
+            --run-url "${run_url}" \
+            "${extra_args[@]}"
+
+          echo "analysis_json=${analysis_json}" >> "$GITHUB_OUTPUT"
+          echo "summary_markdown=${summary_markdown}" >> "$GITHUB_OUTPUT"
+          if [ -f "${baseline_output}" ]; then
+            echo "baseline_output=${baseline_output}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload test results
+        if: always() && steps.verify_test_results.outputs.results_ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-test-results-pg${{ env.PG_VERSION }}
+          overwrite: true
+          path: |
+            ${{ env.TEST_RESULTS_DIR }}/functional-report.json
+            ${{ env.TEST_RESULTS_DIR }}/functional-results.xml
+            ${{ steps.analyze_results.outputs.analysis_json }}
+            ${{ steps.analyze_results.outputs.summary_markdown }}
+          if-no-files-found: error
+
+      - name: Upload daily baseline
+        if: always() && steps.analyze_results.outputs.baseline_output != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DAILY_BASELINE_ARTIFACT_NAME }}
+          overwrite: true
+          path: ${{ steps.analyze_results.outputs.baseline_output }}
+          if-no-files-found: error
+
+      - name: Generate test summary
+        if: always() && steps.verify_test_results.outputs.results_ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat "${{ steps.analyze_results.outputs.summary_markdown }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Collect documentdb-local logs
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ runner.temp }}/documentdb-local-logs"
+
+          container_id="$(docker compose -f "${{ env.FUNCTIONAL_TESTS_COMPOSE_PATH }}" -p "${{ env.COMPOSE_PROJECT_NAME }}" ps -q documentdb-local || true)"
+          if [ -n "$container_id" ]; then
+            docker compose -f "${{ env.FUNCTIONAL_TESTS_COMPOSE_PATH }}" -p "${{ env.COMPOSE_PROJECT_NAME }}" logs documentdb-local > "${{ runner.temp }}/documentdb-local-logs/documentdb-local.log" 2>&1 || true
+            docker logs "$container_id" > "${{ runner.temp }}/documentdb-local-logs/documentdb-local-container.log" 2>&1 || true
+            docker cp "$container_id:/var/log/documentdb/." "${{ runner.temp }}/documentdb-local-logs/" || true
+          fi
+
+      - name: Show documentdb-local Docker log tail
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          logs_dir="${{ runner.temp }}/documentdb-local-logs"
+          found_log=false
+
+          for log_file in documentdb-local.log documentdb-local-container.log; do
+            log_path="${logs_dir}/${log_file}"
+            if [ -f "${log_path}" ]; then
+              found_log=true
+              echo "::group::${log_file} (tail -n 200)"
+              tail -n 200 "${log_path}" || true
+              echo "::endgroup::"
+            fi
+          done
+
+          if [ "${found_log}" = false ]; then
+            echo "No documentdb-local Docker logs were captured."
+          fi
+
+      - name: Cleanup local functional test stack
+        id: cleanup_local_stack
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          logs_dir="${{ runner.temp }}/documentdb-local-logs"
+          cleanup_log="${logs_dir}/cleanup.log"
+          mkdir -p "${logs_dir}"
+
+          echo "Cleaning up local functional test stack; full output is being captured to ${cleanup_log}."
+          bash ./scripts/functional_tests/run_with_compose.sh down > "${cleanup_log}" 2>&1
+          echo "Cleanup completed."
+
+      - name: Show cleanup log tail
+        if: steps.cleanup_local_stack.outcome == 'failure'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup_log="${{ runner.temp }}/documentdb-local-logs/cleanup.log"
+          if [ ! -f "${cleanup_log}" ]; then
+            echo "No cleanup.log was captured."
+            exit 0
+          fi
+
+          echo "::group::cleanup.log (tail -n 200)"
+          tail -n 200 "${cleanup_log}" || true
+          echo "::endgroup::"
+
+      - name: Upload documentdb-local logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentdb-local-logs-pg${{ env.PG_VERSION }}
+          overwrite: true
+          path: ${{ runner.temp }}/documentdb-local-logs/

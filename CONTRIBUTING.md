@@ -33,6 +33,11 @@ For those looking to contribute code, whether for bug fixes or new features, ple
 - An accessible repository link that can be cloned, built, and run, providing a complete environment for testing and verifying the issue or feature.
 - Clear documentation or comments in the code explaining the changes made and their purpose.
 
+#### Functional Test Expectations
+
+- Contributions should add or expand functional test coverage when they introduce new behavior, fix a bug, or close a product gap. We expect the functional test suite to keep growing with the product.
+- Do not disable, deselect, or remove tests to make a change pass. If a test exposes a bug or unsupported behavior, fix the product or discuss the issue with the maintainers instead.
+
 ## Pull Requests
 
 We want to ensure all contributions made by the developer community are correctly licensed. To achieve this, DocumentDB uses a Developer Certificate of Origin (DCO). The DCO is a declaration attached to each commit to the project. A message that simply adds a Signed-off-by statement to every commit to DocumentDB is all that is needed and this confirms that the committer agrees to the DCO, which can be located at https://developercertificate.org/.
