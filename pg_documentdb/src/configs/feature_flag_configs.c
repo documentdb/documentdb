@@ -331,6 +331,10 @@ bool MultiplePositionalNotAllowed = DEFAULT_MULTIPLE_POSITONAL_OPERATORS_NOT_ALL
 #define DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG false
 bool FailOnNonEmptyGroupCountArg = DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG;
 
+/* Added in v112, enabled in v112, remove after v114 */
+#define DEFAULT_ENABLE_SORT_GROUP_STAGE true
+bool EnableSortGroupStage = DEFAULT_ENABLE_SORT_GROUP_STAGE;
+
 /*
  * SECTION: Let support feature flags
  */
@@ -780,6 +784,13 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to fail when $count accumulator in $group has non-empty arguments."),
 		NULL, &FailOnNonEmptyGroupCountArg,
 		DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableSortGroupStage", newGucPrefix),
+		gettext_noop(
+			"Whether to enable the $sortGroup stage."),
+		NULL, &EnableSortGroupStage, DEFAULT_ENABLE_SORT_GROUP_STAGE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
