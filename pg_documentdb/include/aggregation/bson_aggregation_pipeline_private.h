@@ -87,7 +87,8 @@ typedef enum
 
 	/* Start of pg_documentdb Custom or internal stages */
 	Stage_InverseMatch = 100,
-	Stage_LookupUnwind
+	Stage_LookupUnwind,
+	Stage_SortGroup,
 } Stage;
 
 
