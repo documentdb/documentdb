@@ -328,7 +328,22 @@ if [ "$START_POSTGRESQL" = "true" ]; then
     if [ "$DISABLE_EXTENDED_RUM" = "true" ]; then
         EXTENDED_RUM_FLAG=""
     fi
-    /home/documentdb/gateway/scripts/start_oss_server.sh $EXTENDED_RUM_FLAG $PGOPTIONS -d $DATA_PATH -p $POSTGRESQL_PORT | tee -a "$OSS_SERVER_LOG"
+    start_oss_server_args=()
+    if [ -n "$EXTENDED_RUM_FLAG" ]; then
+        start_oss_server_args+=("$EXTENDED_RUM_FLAG")
+    fi
+    if [ -n "${PGOPTIONS:-}" ]; then
+        IFS=' ' read -r -a pgoptions_array <<< "$PGOPTIONS"
+        start_oss_server_args+=("${pgoptions_array[@]}")
+    fi
+    if [ "$CREATE_USER" = "false" ]; then
+        start_oss_server_args+=(-u "")
+    else
+        start_oss_server_args+=(-u "$USERNAME" -a "$PASSWORD")
+    fi
+    start_oss_server_args+=(-d "$DATA_PATH" -p "$POSTGRESQL_PORT")
+
+    /home/documentdb/gateway/scripts/start_oss_server.sh "${start_oss_server_args[@]}" | tee -a "$OSS_SERVER_LOG"
 
     echo "OSS server started."
     echo "[ENTRYPOINT] Setting up PostgreSQL log streaming..."
