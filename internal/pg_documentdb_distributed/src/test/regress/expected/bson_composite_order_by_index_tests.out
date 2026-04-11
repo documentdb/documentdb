@@ -767,62 +767,59 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$exists": true } } }, { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
                                                                            QUERY PLAN                                                                            
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_1 (actual rows=100 loops=1)
-   ->  GroupAggregate (actual rows=100 loops=1)
-         Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
-               indexName: a_1
-               indexKey: {"a": 1,"_id": 1}
-               isMultiKey: false
-               indexBounds: ["a": [MinKey, MaxKey], "_id": (MinKey, MaxKey)]
-               innerScanLoops: 100 loops
-               scanType: ordered
-               scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
-               ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=100 loops=1)
-                     Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-                     Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(14 rows)
+ GroupAggregate (actual rows=100 loops=1)
+   Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
+         indexName: a_1
+         indexKey: {"a": 1,"_id": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey], "_id": (MinKey, MaxKey)]
+         innerScanLoops: 100 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
+         ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=100 loops=1)
+               Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+               Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
 
 set enable_bitmapscan to off;
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
                                                                            QUERY PLAN                                                                            
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_0 (actual rows=100 loops=1)
-   ->  GroupAggregate (actual rows=100 loops=1)
-         Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
-               indexName: a_1
-               indexKey: {"a": 1,"_id": 1}
-               isMultiKey: false
-               indexBounds: ["a": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
-               innerScanLoops: 100 loops
-               scanType: ordered
-               scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
-               ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=100 loops=1)
-                     Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-                     Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(14 rows)
+ GroupAggregate (actual rows=100 loops=1)
+   Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
+         indexName: a_1
+         indexKey: {"a": 1,"_id": 1}
+         isMultiKey: false
+         indexBounds: ["a": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
+         innerScanLoops: 100 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
+         ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=100 loops=1)
+               Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+               Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
 
 -- the same does not work on multi-key indexes
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$exists": true } } }, { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
                                                                            QUERY PLAN                                                                            
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_1 (actual rows=101 loops=1)
-   ->  HashAggregate (actual rows=101 loops=1)
-         Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         Batches: 1  Memory Usage: 40kB
-         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=101 loops=1)
-               indexName: a_1_id_1
-               indexKey: {"a": 1,"_id": 1}
-               isMultiKey: true
-               indexBounds: ["a": [MinKey, MaxKey], "_id": (MinKey, MaxKey)]
-               numDuplicates: 100 entries
-               innerScanLoops: 201 loops
-               scanType: ordered
-               scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 201)]
-               ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=101 loops=1)
-                     Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(15 rows)
+ HashAggregate (actual rows=101 loops=1)
+   Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Batches: 1  Memory Usage: 40kB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=101 loops=1)
+         indexName: a_1_id_1
+         indexKey: {"a": 1,"_id": 1}
+         isMultiKey: true
+         indexBounds: ["a": [MinKey, MaxKey], "_id": (MinKey, MaxKey)]
+         numDuplicates: 100 entries
+         innerScanLoops: 201 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 201)]
+         ->  Index Scan using a_1_id_1 on documents_68002_680004 collection (actual rows=101 loops=1)
+               Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+(14 rows)
 
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
 psql:sql/bson_composite_order_by_index_tests_core.sql:179: ERROR:  Could not find any valid index to push down for query
@@ -2007,21 +2004,20 @@ set documentdb.forceDisableSeqScan to on;
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "ordering_groups", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
                                                                            QUERY PLAN                                                                            
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_0 (actual rows=3 loops=1)
-   ->  GroupAggregate (actual rows=3 loops=1)
-         Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
-               indexName: a_1
-               indexKey: {"a": 1}
-               isMultiKey: false
-               indexBounds: ["a": (MinKey, MaxKey)]
-               innerScanLoops: 3 loops
-               scanType: ordered
-               scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
-               ->  Index Scan using a_1 on documents_68009_680018 collection (actual rows=100 loops=1)
-                     Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-                     Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(14 rows)
+ GroupAggregate (actual rows=3 loops=1)
+   Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (MinKey, MaxKey)]
+         innerScanLoops: 3 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
+         ->  Index Scan using a_1 on documents_68009_680018 collection (actual rows=100 loops=1)
+               Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+               Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
 
 SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "ordering_groups", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
                              document                              

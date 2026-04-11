@@ -430,22 +430,20 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 (2 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$first": "$_id" }, "e": { "$last":  "$_id" } } }], "cursor": {} }');
-                                                                                                                                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                                                                                                                                
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4, agg_stage_0.c5, agg_stage_0.c6)
-   ->  GroupAggregate
-         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'd'::text, bsonfirstonsorted(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'e'::text, bsonlastonsorted(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Sort
-               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_3500 collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                     Recheck Cond: (collection.shard_key_value = '3500'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '3500'::bigint)
-(13 rows)
+                                                                                                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                    
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'd'::text, bsonfirstonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'e'::text, bsonlastonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_3500 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '3500'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '3500'::bigint)
+(11 rows)
 
 -- $group with first/last sorted (TODO)
 -- add $sample
@@ -1853,5 +1851,39 @@ SELECT BSONLASTNONSORTED(NULL, 3) FROM documentdb_api.collection('db', 'bsonFirs
  { "" : [  ] }
 (1 row)
 
+-- $documents + $group: non-constant _id
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "category": "A", "val": 10 }, { "category": "B", "val": 20 }, { "category": "A", "val": 30 } ] }, { "$group": { "_id": "$category", "total": { "$sum": "$val" } } } ], "cursor": {}}');
+                documents_aggregate                 
+----------------------------------------------------
+ { "_id" : "B", "total" : { "$numberInt" : "20" } }
+ { "_id" : "A", "total" : { "$numberInt" : "40" } }
+(2 rows)
+
+-- $documents + $group: constant _id
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "val": 10 }, { "val": 20 }, { "val": 30 } ] }, { "$group": { "_id": "all", "total": { "$sum": "$val" }, "cnt": { "$count": {} } } } ], "cursor": {}}');
+                                 documents_aggregate                                  
+--------------------------------------------------------------------------------------
+ { "_id" : "all", "total" : { "$numberInt" : "60" }, "cnt" : { "$numberInt" : "3" } }
+(1 row)
+
+-- $documents + $group: with $first/$last accumulators
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "g": 1, "n": "a" }, { "g": 1, "n": "b" }, { "g": 2, "n": "c" } ] }, { "$group": { "_id": "$g", "first": { "$first": "$n" }, "last": { "$last": "$n" } } } ], "cursor": {}}');
+                       documents_aggregate                       
+-----------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "first" : "c", "last" : "c" }
+ { "_id" : { "$numberInt" : "1" }, "first" : "a", "last" : "b" }
+(2 rows)
+
+-- Toggle test: legacy path with enableGroupSubqueryElimination = off
+SET documentdb.enableGroupSubqueryElimination TO off;
+-- Legacy path should still produce correct results
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "category": "A", "val": 10 }, { "category": "B", "val": 20 }, { "category": "A", "val": 30 } ] }, { "$group": { "_id": "$category", "total": { "$sum": "$val" } } } ], "cursor": {}}');
+                documents_aggregate                 
+----------------------------------------------------
+ { "_id" : "B", "total" : { "$numberInt" : "20" } }
+ { "_id" : "A", "total" : { "$numberInt" : "40" } }
+(2 rows)
+
+SET documentdb.enableGroupSubqueryElimination TO on;
 RESET documentdb.failOnNonEmptyGroupCountArg;
 RESET documentdb.failOnGroupIdDuplicate;

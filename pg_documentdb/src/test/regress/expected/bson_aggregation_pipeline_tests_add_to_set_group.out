@@ -95,112 +95,100 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "
 (3 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "salesTest", "pipeline": [ { "$group": { "_id": "$year", "itemsSold": { "$addToSet": { "product" : "$product" } } } } ] }');
-                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                           
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
-   ->  GroupAggregate
-         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'itemsSold'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "product" : "$product" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Sort
-               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                     Recheck Cond: (collection.shard_key_value = '12200'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '12200'::bigint)
-(13 rows)
+                                                                                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'itemsSold'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(document, '{ "" : { "product" : "$product" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '12200'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '12200'::bigint)
+(11 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "salesTest", "pipeline": [ { "$group": { "_id": "$year", "itemsSold": { "$addToSet": "$product" } } } ] }');
-                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                   
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
-   ->  GroupAggregate
-         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'itemsSold'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$product" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Sort
-               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                     Recheck Cond: (collection.shard_key_value = '12200'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '12200'::bigint)
-(13 rows)
+                                                                                                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                                                                                                 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'itemsSold'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(document, '{ "" : "$product" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '12200'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '12200'::bigint)
+(11 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "salesTest", "pipeline": [ { "$group": { "_id": "$year", "pricingDeals": { "$addToSet": "$pricingInfo" } } } ] }');
-                                                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                                                       
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
-   ->  GroupAggregate
-         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'pricingDeals'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$pricingInfo" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Sort
-               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                     Recheck Cond: (collection.shard_key_value = '12200'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '12200'::bigint)
-(13 rows)
+                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                    
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'pricingDeals'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(document, '{ "" : "$pricingInfo" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '12200'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '12200'::bigint)
+(11 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "salesTest", "pipeline": [ { "$group": { "_id": "$year", "retailPrices": { "$addToSet": "$pricingInfo.retailPrice" } } } ] }');
-                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                             
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
-   ->  GroupAggregate
-         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'retailPrices'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$pricingInfo.retailPrice" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Sort
-               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                     Recheck Cond: (collection.shard_key_value = '12200'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '12200'::bigint)
-(13 rows)
+                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                          
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'retailPrices'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(document, '{ "" : "$pricingInfo.retailPrice" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '12200'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '12200'::bigint)
+(11 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "salesTest", "pipeline": [ { "$group": { "_id": "$year", "retailPrices": { "$addToSet": "$noValue" } } } ] }');
-                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                     
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
-   ->  GroupAggregate
-         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'retailPrices'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$noValue" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Sort
-               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                     Recheck Cond: (collection.shard_key_value = '12200'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '12200'::bigint)
-(13 rows)
+                                                                                                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                                                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'retailPrices'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(document, '{ "" : "$noValue" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '12200'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '12200'::bigint)
+(11 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "salesTest", "pipeline": [ { "$group": { "_id": "$year", "items": { "$addToSet": { "$getField": { "field": "a", "input": { "b": 1 } } } } } } ] }');
-                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                    
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
-   ->  GroupAggregate
-         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'items'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$getField" : { "field" : "a", "input" : { "b" : { "$numberInt" : "1" } } } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Sort
-               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                     Recheck Cond: (collection.shard_key_value = '12200'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '12200'::bigint)
-(13 rows)
+                                                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'items'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(document, '{ "" : { "$getField" : { "field" : "a", "input" : { "b" : { "$numberInt" : "1" } } } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '12200'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '12200'::bigint)
+(11 rows)
 
 SET documentdb.enableAddToSetAggregationRewrite to on;
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "salesTest", "pipeline": [ { "$group": { "_id": "$year", "itemsSold": { "$addToSet": { "product" : "$product" } } } } ] }');
@@ -252,112 +240,100 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "
 (3 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "salesTest", "pipeline": [ { "$group": { "_id": "$year", "itemsSold": { "$addToSet": { "product" : "$product" } } } } ] }');
-                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                           
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
-   ->  GroupAggregate
-         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'itemsSold'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "product" : "$product" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Sort
-               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                     Recheck Cond: (collection.shard_key_value = '12200'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '12200'::bigint)
-(13 rows)
+                                                                                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'itemsSold'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(document, '{ "" : { "product" : "$product" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '12200'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '12200'::bigint)
+(11 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "salesTest", "pipeline": [ { "$group": { "_id": "$year", "itemsSold": { "$addToSet": "$product" } } } ] }');
-                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                   
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
-   ->  GroupAggregate
-         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'itemsSold'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$product" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Sort
-               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                     Recheck Cond: (collection.shard_key_value = '12200'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '12200'::bigint)
-(13 rows)
+                                                                                                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                                                                                                 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'itemsSold'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(document, '{ "" : "$product" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '12200'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '12200'::bigint)
+(11 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "salesTest", "pipeline": [ { "$group": { "_id": "$year", "pricingDeals": { "$addToSet": "$pricingInfo" } } } ] }');
-                                                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                                                       
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
-   ->  GroupAggregate
-         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'pricingDeals'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$pricingInfo" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Sort
-               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                     Recheck Cond: (collection.shard_key_value = '12200'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '12200'::bigint)
-(13 rows)
+                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                    
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'pricingDeals'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(document, '{ "" : "$pricingInfo" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '12200'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '12200'::bigint)
+(11 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "salesTest", "pipeline": [ { "$group": { "_id": "$year", "retailPrices": { "$addToSet": "$pricingInfo.retailPrice" } } } ] }');
-                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                             
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
-   ->  GroupAggregate
-         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'retailPrices'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$pricingInfo.retailPrice" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Sort
-               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                     Recheck Cond: (collection.shard_key_value = '12200'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '12200'::bigint)
-(13 rows)
+                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                          
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'retailPrices'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(document, '{ "" : "$pricingInfo.retailPrice" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '12200'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '12200'::bigint)
+(11 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "salesTest", "pipeline": [ { "$group": { "_id": "$year", "retailPrices": { "$addToSet": "$noValue" } } } ] }');
-                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                     
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
-   ->  GroupAggregate
-         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'retailPrices'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$noValue" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Sort
-               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                     Recheck Cond: (collection.shard_key_value = '12200'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '12200'::bigint)
-(13 rows)
+                                                                                                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                                                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'retailPrices'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(document, '{ "" : "$noValue" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '12200'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '12200'::bigint)
+(11 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "salesTest", "pipeline": [ { "$group": { "_id": "$year", "items": { "$addToSet": { "$getField": { "field": "a", "input": { "b": 1 } } } } } } ] }');
-                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                    
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   Output: bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
-   ->  GroupAggregate
-         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'items'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$getField" : { "field" : "a", "input" : { "b" : { "$numberInt" : "1" } } } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Sort
-               Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-               Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                     Recheck Cond: (collection.shard_key_value = '12200'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '12200'::bigint)
-(13 rows)
+                                                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'items'::text, documentdb_api_internal.bson_add_to_set(documentdb_api_internal.bson_expression_get(document, '{ "" : { "$getField" : { "field" : "a", "input" : { "b" : { "$numberInt" : "1" } } } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_12200 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$year" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '12200'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '12200'::bigint)
+(11 rows)
 
 /* running $addToSet with document that exceeds 16MB */
 DO $$

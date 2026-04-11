@@ -112,6 +112,9 @@ bool ForceCollStatsDataCollection = DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION;
 #define DEFAULT_FORCE_BITMAP_SCAN_FOR_LOOKUP false
 bool ForceBitmapScanForLookup = DEFAULT_FORCE_BITMAP_SCAN_FOR_LOOKUP;
 
+#define DEFAULT_FORCE_GROUP_SUBQUERY_ELIMINATION false
+bool ForceGroupSubqueryElimination = DEFAULT_FORCE_GROUP_SUBQUERY_ELIMINATION;
+
 void
 InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 {
@@ -383,5 +386,13 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 			"Whether or not to force bitmap scan for lookup."),
 		NULL, &ForceBitmapScanForLookup,
 		DEFAULT_FORCE_BITMAP_SCAN_FOR_LOOKUP,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceGroupSubqueryElimination", newGucPrefix),
+		gettext_noop(
+			"Forces subquery elimination in $group even for sharded collections with non-constant _id. For testing only."),
+		NULL, &ForceGroupSubqueryElimination,
+		DEFAULT_FORCE_GROUP_SUBQUERY_ELIMINATION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }
