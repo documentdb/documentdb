@@ -29,122 +29,112 @@ set enable_seqscan to off;
 set enable_bitmapscan to off;
 -- push basic group to the index.
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$a", "count": { "$sum": 1 } } } ] }');
-                                                                           QUERY PLAN                                                                            
+                                                                   QUERY PLAN                                                                   
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   ->  GroupAggregate
-         Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Index Scan using a_1 on documents_8601_860002 collection
-               Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-               Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(6 rows)
+ GroupAggregate
+   Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Scan using a_1 on documents_8601_860002 collection
+         Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(5 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$b", "count": { "$sum": 1 } } } ] }');
-                                                                           QUERY PLAN                                                                            
+                                                                   QUERY PLAN                                                                   
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   ->  GroupAggregate
-         Group Key: bson_expression_get(collection.document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Index Scan using b_c_1 on documents_8601_860002 collection
-               Index Cond: (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-               Order By: (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson)
-(6 rows)
+ GroupAggregate
+   Group Key: bson_expression_get(document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Scan using b_c_1 on documents_8601_860002 collection
+         Index Cond: (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+         Order By: (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson)
+(5 rows)
 
 -- works with filters
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$match": { "a": { "$exists": true } } }, { "$group": { "_id": "$a", "count": { "$sum": 1 } } } ] }');
-                                                                           QUERY PLAN                                                                            
+                                                                   QUERY PLAN                                                                   
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_1
-   ->  GroupAggregate
-         Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Index Scan using a_1 on documents_8601_860002 collection
-               Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-               Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(6 rows)
+ GroupAggregate
+   Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Scan using a_1 on documents_8601_860002 collection
+         Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(5 rows)
 
 -- works with suffix filters
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$match": { "c": { "$exists": true } } }, { "$group": { "_id": "$b", "count": { "$sum": 1 } } } ] }');
-                                                                           QUERY PLAN                                                                            
+                                                                        QUERY PLAN                                                                        
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_1
-   ->  GroupAggregate
-         Group Key: bson_expression_get(collection.document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Index Scan using b_c_1 on documents_8601_860002 collection
-               Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-               Order By: (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson)
-(6 rows)
+ GroupAggregate
+   Group Key: bson_expression_get(document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Scan using b_c_1 on documents_8601_860002 collection
+         Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+         Order By: (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson)
+(5 rows)
 
 -- equality with group suffix works.
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$match": { "b": 10 } }, { "$group": { "_id": "$c", "count": { "$sum": 1 } } } ] }');
-                                                                           QUERY PLAN                                                                            
+                                                                   QUERY PLAN                                                                   
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_1
-   ->  GroupAggregate
-         Group Key: bson_expression_get(collection.document, '{ "" : "$c" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Index Scan using b_c_1 on documents_8601_860002 collection
-               Index Cond: (document @= '{ "b" : { "$numberInt" : "10" } }'::bson)
-               Order By: (document |-<> '{ "c" : { "$numberInt" : "1" } }'::bson)
-(6 rows)
+ GroupAggregate
+   Group Key: bson_expression_get(document, '{ "" : "$c" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Scan using b_c_1 on documents_8601_860002 collection
+         Index Cond: (document @= '{ "b" : { "$numberInt" : "10" } }'::bson)
+         Order By: (document |-<> '{ "c" : { "$numberInt" : "1" } }'::bson)
+(5 rows)
 
 ---------------------------------------------------------------------
 -- single-field document _id pushdown
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "a": "$a" }, "count": { "$sum": 1 } } } ] }');
-                                                                                QUERY PLAN                                                                                 
+                                                                        QUERY PLAN                                                                        
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   ->  GroupAggregate
-         Group Key: bson_expression_get(collection.document, '{ "" : { "a" : "$a" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Index Scan using a_1 on documents_8601_860002 collection
-               Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-               Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(6 rows)
+ GroupAggregate
+   Group Key: bson_expression_get(document, '{ "" : { "a" : "$a" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Scan using a_1 on documents_8601_860002 collection
+         Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+         Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(5 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b" }, "count": { "$sum": 1 } } } ] }');
-                                                                                QUERY PLAN                                                                                 
+                                                                        QUERY PLAN                                                                        
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   ->  GroupAggregate
-         Group Key: bson_expression_get(collection.document, '{ "" : { "b" : "$b" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Index Scan using b_c_1 on documents_8601_860002 collection
-               Index Cond: (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-               Order By: (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson)
-(6 rows)
+ GroupAggregate
+   Group Key: bson_expression_get(document, '{ "" : { "b" : "$b" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Scan using b_c_1 on documents_8601_860002 collection
+         Index Cond: (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+         Order By: (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson)
+(5 rows)
 
 -- multi-field document _id: these scenarios don't work yet (even though they should).
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "count": { "$sum": 1 } } } ] }');
-                                                                                      QUERY PLAN                                                                                       
+                                                                              QUERY PLAN                                                                              
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   ->  HashAggregate
-         Group Key: bson_expression_get(collection.document, '{ "" : { "b" : "$b", "c" : "$c" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Index Scan using _id_ on documents_8601_860002 collection
-               Index Cond: (shard_key_value = '8601'::bigint)
-(5 rows)
+ HashAggregate
+   Group Key: bson_expression_get(document, '{ "" : { "b" : "$b", "c" : "$c" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Scan using _id_ on documents_8601_860002 collection
+         Index Cond: (shard_key_value = '8601'::bigint)
+(4 rows)
 
 -- same with filters
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$match": { "c": { "$exists": true } } }, { "$group": { "_id": { "b": "$b", "c": "$c" }, "count": { "$sum": 1 } } } ] }');
-                                                                                      QUERY PLAN                                                                                       
+                                                                              QUERY PLAN                                                                              
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_1
-   ->  HashAggregate
-         Group Key: bson_expression_get(collection.document, '{ "" : { "b" : "$b", "c" : "$c" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Index Scan using _id_ on documents_8601_860002 collection
-               Index Cond: (shard_key_value = '8601'::bigint)
-               Filter: (document @>= '{ "c" : { "$minKey" : 1 } }'::bson)
-(6 rows)
+ HashAggregate
+   Group Key: bson_expression_get(document, '{ "" : { "b" : "$b", "c" : "$c" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Scan using _id_ on documents_8601_860002 collection
+         Index Cond: (shard_key_value = '8601'::bigint)
+         Filter: (document @>= '{ "c" : { "$minKey" : 1 } }'::bson)
+(5 rows)
 
 ---------------------------------------------------------------------
 -- these don't work:
 -- does not work with inequality prefix
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$group": { "_id": "$c", "count": { "$sum": 1 } } } ] }');
-                                                                           QUERY PLAN                                                                            
+                                                                   QUERY PLAN                                                                   
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_1
-   ->  HashAggregate
-         Group Key: bson_expression_get(collection.document, '{ "" : "$c" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Index Scan using b_c_1 on documents_8601_860002 collection
-               Index Cond: (document @>= '{ "b" : { "$minKey" : 1 } }'::bson)
-(5 rows)
+ HashAggregate
+   Group Key: bson_expression_get(document, '{ "" : "$c" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Scan using b_c_1 on documents_8601_860002 collection
+         Index Cond: (document @>= '{ "b" : { "$minKey" : 1 } }'::bson)
+(4 rows)
 
 -- insert an array breaks pushdown
 SELECT documentdb_api.insert_one('group_idx_db', 'group_push', '{ "_id": 1001, "a": [ 1, 2, 3 ], "b": [ 1, 2, 3 ], "c": 1 }' );
@@ -155,24 +145,22 @@ SELECT documentdb_api.insert_one('group_idx_db', 'group_push', '{ "_id": 1001, "
 
 -- can no longer push down.
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$a", "count": { "$sum": 1 } } } ] }');
-                                                                           QUERY PLAN                                                                            
+                                                                   QUERY PLAN                                                                   
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   ->  HashAggregate
-         Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Index Scan using _id_ on documents_8601_860002 collection
-               Index Cond: (shard_key_value = '8601'::bigint)
-(5 rows)
+ HashAggregate
+   Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Scan using _id_ on documents_8601_860002 collection
+         Index Cond: (shard_key_value = '8601'::bigint)
+(4 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$b", "count": { "$sum": 1 } } } ] }');
-                                                                           QUERY PLAN                                                                            
+                                                                   QUERY PLAN                                                                   
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_0
-   ->  HashAggregate
-         Group Key: bson_expression_get(collection.document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Index Scan using _id_ on documents_8601_860002 collection
-               Index Cond: (shard_key_value = '8601'::bigint)
-(5 rows)
+ HashAggregate
+   Group Key: bson_expression_get(document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Scan using _id_ on documents_8601_860002 collection
+         Index Cond: (shard_key_value = '8601'::bigint)
+(4 rows)
 
 TRUNCATE documentdb_data.documents_8601;
 SELECT COUNT(documentdb_api.insert_one('group_idx_db', 'group_push', bson_build_document('_id', i, 'a', i % 100, 'b', i % 10, 'c', i) )) FROM generate_series(1, 1000) AS i;
@@ -271,7 +259,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
                                                                                                                                         QUERY PLAN                                                                                                                                        
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 49_1
+   ->  Distributed Subplan 50_1
          ->  HashAggregate
                Group Key: remote_scan.c2
                ->  Custom Scan (Citus Adaptive)
@@ -296,7 +284,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
                                                                                                               QUERY PLAN                                                                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 51_1
+   ->  Distributed Subplan 52_1
          ->  HashAggregate
                Group Key: remote_scan.c2
                ->  Custom Scan (Citus Adaptive)

@@ -54,3 +54,16 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 SET documentdb.enableNewWithExprAccumulators TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group_exp", "pipeline": [ { "$group": { "_id": "$a", "c": { "$avg": "$b" }}}]}');
 SET documentdb.enableNewWithExprAccumulators TO off;
+
+-- Subquery elimination EXPLAIN tests (using $documents so no collection setup needed)
+
+-- Non-constant _id: subquery eliminated (no Subquery Scan)
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "a": 1 }, { "a": 2 } ] }, { "$group": { "_id": "$a", "c": { "$count": {} } } } ], "cursor": {}}');
+
+-- Constant _id: subquery eliminated
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "a": 1 }, { "a": 2 } ] }, { "$group": { "_id": "1", "c": { "$count": {} } } } ], "cursor": {}}');
+
+-- Legacy path with enableGroupSubqueryElimination = off (should show Subquery Scan)
+SET documentdb.enableGroupSubqueryElimination TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "a": 1 }, { "a": 2 } ] }, { "$group": { "_id": "$a", "c": { "$count": {} } } } ], "cursor": {}}');
+SET documentdb.enableGroupSubqueryElimination TO on;

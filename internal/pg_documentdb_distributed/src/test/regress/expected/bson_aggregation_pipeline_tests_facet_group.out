@@ -151,3 +151,42 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_
  { "_id" : { "$numberInt" : "1" }, "first" : { "$numberInt" : "3" }, "last" : { "$numberInt" : "1" } }
 (3 rows)
 
+-- Sharded + non-constant _id: should use legacy path (read_intermediate_result present).
+-- NOTE: This test is expected to change (has_legacy_subplan -> 'f') once we consume a
+-- Citus version that correctly handles the inlined bson_repath_and_build target list
+-- during distributed decomposition. At that point the forceGroupSubqueryElimination
+-- guard can be removed and this assertion should flip to 'f'.
+SELECT COUNT(*) > 0 AS has_legacy_subplan FROM
+  documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} }}}]}')$$) AS plan
+WHERE plan LIKE '%intermediate_result%';
+ has_legacy_subplan 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- Sharded + constant _id: should use inline path (no intermediate_result)
+SELECT COUNT(*) > 0 AS has_legacy_subplan FROM
+  documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$group": { "_id": "1", "c": { "$count": {} }}}]}')$$) AS plan
+WHERE plan LIKE '%intermediate_result%';
+ has_legacy_subplan 
+---------------------------------------------------------------------
+ f
+(1 row)
+
+-- Force subquery elimination for sharded + non-constant _id (no intermediate_result)
+SET documentdb.forceGroupSubqueryElimination TO on;
+SELECT COUNT(*) > 0 AS has_legacy_subplan FROM
+  documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} }}}]}')$$) AS plan
+WHERE plan LIKE '%intermediate_result%';
+ has_legacy_subplan 
+---------------------------------------------------------------------
+ f
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_facet_group", "pipeline": [ { "$group": { "_id": "const", "c": { "$count": {} }}}]}');
+                     document                      
+---------------------------------------------------------------------
+ { "_id" : "const", "c" : { "$numberInt" : "9" } }
+(1 row)
+
+SET documentdb.forceGroupSubqueryElimination TO off;

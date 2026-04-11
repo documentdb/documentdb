@@ -44,32 +44,30 @@ NOTICE:  There are open held portals. Closing them
 
 -- Check if we are really are doing hash aggregations
 EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT * FROM bson_aggregation_pipeline('testdb', '{ "aggregate": "hash_aggTest", "pipeline": [ { "$group": { "_id": "$key", "items": { "$push": "$$ROOT" } } } ], "cursor" : {  } }');
-                                                                                        QUERY PLAN                                                                                         
+                                                                                QUERY PLAN                                                                                
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_0 (actual rows=2 loops=1)
-   ->  HashAggregate (actual rows=2 loops=1)
-         Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$key" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         Batches: 1  Memory Usage: 24kB
-         ->  Bitmap Heap Scan on documents_1431_143002 collection (actual rows=3 loops=1)
-               Recheck Cond: (shard_key_value = '1431'::bigint)
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=3 loops=1)
-                     Index Cond: (shard_key_value = '1431'::bigint)
-(9 rows)
+ HashAggregate (actual rows=2 loops=1)
+   Group Key: documentdb_api_internal.bson_expression_get(document, '{ "" : "$key" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Batches: 1  Memory Usage: 24kB
+   ->  Bitmap Heap Scan on documents_1431_143002 collection (actual rows=3 loops=1)
+         Recheck Cond: (shard_key_value = '1431'::bigint)
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on _id_ (actual rows=3 loops=1)
+               Index Cond: (shard_key_value = '1431'::bigint)
+(8 rows)
 
 EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT * FROM bson_aggregation_pipeline('testdb', '{ "aggregate": "hash_aggTest", "pipeline": [ { "$group": { "_id": "$key", "items": { "$addToSet": "$$ROOT" } } } ], "cursor" : {  } }');
-                                                                                        QUERY PLAN                                                                                         
+                                                                                QUERY PLAN                                                                                
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_0 (actual rows=2 loops=1)
-   ->  HashAggregate (actual rows=2 loops=1)
-         Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$key" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         Batches: 1  Memory Usage: 24kB
-         ->  Bitmap Heap Scan on documents_1431_143002 collection (actual rows=3 loops=1)
-               Recheck Cond: (shard_key_value = '1431'::bigint)
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=3 loops=1)
-                     Index Cond: (shard_key_value = '1431'::bigint)
-(9 rows)
+ HashAggregate (actual rows=2 loops=1)
+   Group Key: documentdb_api_internal.bson_expression_get(document, '{ "" : "$key" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Batches: 1  Memory Usage: 40kB
+   ->  Bitmap Heap Scan on documents_1431_143002 collection (actual rows=3 loops=1)
+         Recheck Cond: (shard_key_value = '1431'::bigint)
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on _id_ (actual rows=3 loops=1)
+               Index Cond: (shard_key_value = '1431'::bigint)
+(8 rows)
 
 RESET enable_hashagg;
 RESET enable_sort;
