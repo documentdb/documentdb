@@ -460,42 +460,40 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_maxmi
 
 /* sharded tests */
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_maxminn_group_test4", "pipeline": [ { "$group": { "_id": "$teamId", "NScore":{"$maxN": {"input": "$points", "n": 3 } } } } ] }');
-                                                                                                                   QUERY PLAN                                                                                                                    
+                                                                                                           QUERY PLAN                                                                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
    Tasks Shown: All
    ->  Task
          Node: host=localhost port=58070 dbname=regression
-         ->  Subquery Scan on agg_stage_0
-               ->  GroupAggregate
-                     Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$teamId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                     ->  Sort
-                           Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$teamId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                           ->  Bitmap Heap Scan on documents_11163_1116049 collection
-                                 Recheck Cond: (shard_key_value = '11163'::bigint)
-                                 ->  Bitmap Index Scan on _id_
-                                       Index Cond: (shard_key_value = '11163'::bigint)
-(14 rows)
+         ->  GroupAggregate
+               Group Key: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$teamId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+               ->  Sort
+                     Sort Key: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$teamId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                     ->  Bitmap Heap Scan on documents_11163_1116049 collection
+                           Recheck Cond: (shard_key_value = '11163'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (shard_key_value = '11163'::bigint)
+(13 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_maxminn_group_test4", "pipeline": [ { "$group": { "_id": "$teamId", "NScore":{"$minN": {"input": "$points", "n": 3 } } } } ] }');
-                                                                                                                   QUERY PLAN                                                                                                                    
+                                                                                                           QUERY PLAN                                                                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
    Tasks Shown: All
    ->  Task
          Node: host=localhost port=58070 dbname=regression
-         ->  Subquery Scan on agg_stage_0
-               ->  GroupAggregate
-                     Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$teamId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                     ->  Sort
-                           Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$teamId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                           ->  Bitmap Heap Scan on documents_11163_1116049 collection
-                                 Recheck Cond: (shard_key_value = '11163'::bigint)
-                                 ->  Bitmap Index Scan on _id_
-                                       Index Cond: (shard_key_value = '11163'::bigint)
-(14 rows)
+         ->  GroupAggregate
+               Group Key: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$teamId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+               ->  Sort
+                     Sort Key: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$teamId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                     ->  Bitmap Heap Scan on documents_11163_1116049 collection
+                           Recheck Cond: (shard_key_value = '11163'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (shard_key_value = '11163'::bigint)
+(13 rows)
 
 SELECT documentdb_api.shard_collection('db', 'bson_maxminn_group_test4', '{ "_id": "hashed" }', false);
  shard_collection 
@@ -507,7 +505,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
                                                                                                                 QUERY PLAN                                                                                                                 
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 133_1
+   ->  Distributed Subplan 138_1
          ->  HashAggregate
                Group Key: remote_scan.c2
                ->  Custom Scan (Citus Adaptive)
@@ -529,7 +527,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
                                                                                                                 QUERY PLAN                                                                                                                 
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 135_1
+   ->  Distributed Subplan 140_1
          ->  HashAggregate
                Group Key: remote_scan.c2
                ->  Custom Scan (Citus Adaptive)

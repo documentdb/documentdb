@@ -949,9 +949,10 @@ fn get_stage_from_plan(
                     {
                         return (p.to_owned(), None);
                     }
-                } else {
-                    return ("GROUP".to_owned(), None);
                 }
+
+                // An Aggregate with a group_key is always a $group stage
+                return ("GROUP".to_owned(), None);
             } else if plan.group_key.is_some() {
                 return ("GROUP".to_owned(), None);
             } else if let Some(o) = plan.output.as_ref() {

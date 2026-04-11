@@ -83,6 +83,9 @@ extern bool EnableFindProjectionAfterOffset;
 extern bool EnableNewCountAggregates;
 extern bool FailOnNonEmptyGroupCountArg;
 extern bool FailOnGroupIdDuplicate;
+extern bool EnableGroupSubqueryElimination;
+extern bool ForceGroupSubqueryElimination;
+extern bool EnableUseLookupNewProjectInlineMethod;
 extern bool InlineChangeStreamMatchStage;
 extern bool RemoveMatchNamespaceFilters;
 extern bool EnableOrderByIndexTerm;
@@ -6077,6 +6080,7 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 	}
 
 	pgbson *groupValue = BsonValueToDocumentPgbson(&idValue);
+
 	ParseState *parseState = make_parsestate(NULL);
 	parseState->p_next_resno = 1;
 	parseState->p_expr_kind = EXPR_KIND_GROUP_BY;
@@ -6760,22 +6764,68 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 			currentQuals);
 	}
 
-	/* Now that the group + accumulators are done, push to a subquery
-	 * Request preserving the N-entry T-list
+	/*
+	 * TODO: Remove this guard once distributed decomposition handles inlined
+	 * target lists correctly.
+	 *
+	 * Skip for sharded + non-constant _id: distributed query decomposition
+	 * cannot handle the inlined bson_repath_and_build target list and breaks
+	 * the GROUP BY contract. Constant _id is safe since the group key has no
+	 * document column references.
 	 */
-	context->expandTargetList = true;
-	query = MigrateQueryToSubQuery(query, context);
+	bool isSharded = (context->mongoCollection != NULL &&
+					  context->mongoCollection->shardKey != NULL);
+	bool isGroupIdConstant = IsA(groupIdDocumentExpr, Const);
 
-	/* Take the output and replace it with the repath_and_build */
-	TargetEntry *entry = linitial(query->targetList);
+	bool canEliminateSubquery = ForceGroupSubqueryElimination ||
+								(EnableGroupSubqueryElimination &&
+								 (!isSharded || isGroupIdConstant));
 
-	/* $group doesn't allow dotted path so no need to override */
-	bool overrideArrayInProjection = false;
-	Expr *repathExpression = GenerateMultiExpressionRepathExpression(repathArgs,
-																	 overrideArrayInProjection);
+	if (canEliminateSubquery)
+	{
+		/* Collect the actual expressions from the target entries */
+		List *inlineRepathArgs = NIL;
+		ListCell *cell;
+		foreach(cell, query->targetList)
+		{
+			TargetEntry *entry = lfirst(cell);
+			inlineRepathArgs = lappend(inlineRepathArgs, entry->expr);
+		}
 
-	entry->expr = repathExpression;
-	entry->resname = origEntry->resname;
+		/* $group doesn't allow dotted path, no array override needed */
+		bool overrideArrayInProjection = false;
+		Expr *repathExpression = GenerateMultiExpressionRepathExpression(
+			inlineRepathArgs, overrideArrayInProjection);
+
+		/*
+		 * Build new target list: repath as the output + resjunk copy of group key for GROUP BY
+		 * Copy groupEntry since we're replacing the targetList; don't mutate the original
+		 */
+		TargetEntry *repathEntry = makeTargetEntry(repathExpression, 1,
+												   origEntry->resname, false);
+		TargetEntry *groupResjunk = copyObject(groupEntry);
+		groupResjunk->resno = 2;
+		groupResjunk->resjunk = true;
+
+		query->targetList = list_make2(repathEntry, groupResjunk);
+	}
+	else
+	{
+		/* Legacy path: push to a subquery, then apply repath on the outer query */
+		context->expandTargetList = true;
+		query = MigrateQueryToSubQuery(query, context);
+
+		/* Take the output and replace it with the repath_and_build */
+		TargetEntry *entry = linitial(query->targetList);
+
+		/* $group doesn't allow dotted path so no need to override */
+		bool overrideArrayInProjection = false;
+		Expr *repathExpression = GenerateMultiExpressionRepathExpression(repathArgs,
+																		 overrideArrayInProjection);
+
+		entry->expr = repathExpression;
+		entry->resname = origEntry->resname;
+	}
 
 	/* Mark new stages to push a new subquery */
 	context->requiresSubQuery = true;

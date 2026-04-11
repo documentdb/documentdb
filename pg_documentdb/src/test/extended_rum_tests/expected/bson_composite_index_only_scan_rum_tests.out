@@ -168,17 +168,15 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 
 -- composite index only scan with $group sum
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$gte": "Brazil"}} }, { "$group" : { "_id" : "1", "n" : { "$sum" : 1 } } }]}') $$, p_ignore_heap_fetches => true);
-                                               run_explain_and_trim                                                
--------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_1 (actual rows=1 loops=1)
-   Output: bson_repath_and_build(agg_stage_1.c1, agg_stage_1.c2, agg_stage_1.c3, agg_stage_1.c4)
-   ->  GroupAggregate (actual rows=1 loops=1)
-         Output: '_id'::text, '{ "" : "1" }'::bson, 'n'::text, documentdb_api_internal.bsoncount(1)
-         ->  Index Only Scan using country_1 on documentdb_data.documents_9001 collection (actual rows=16 loops=1)
-               Output: collection.document
-               Index Cond: (collection.document @>= '{ "country" : "Brazil" }'::bson)
-               Heap Fetches: xxx
-(8 rows)
+                                                           run_explain_and_trim                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual rows=1 loops=1)
+   Output: bson_repath_and_build('_id'::text, '{ "" : "1" }'::bson, 'n'::text, documentdb_api_internal.bsoncount(1)), '{ "" : "1" }'::bson
+   ->  Index Only Scan using country_1 on documentdb_data.documents_9001 collection (actual rows=16 loops=1)
+         Output: document
+         Index Cond: (collection.document @>= '{ "country" : "Brazil" }'::bson)
+         Heap Fetches: xxx
+(6 rows)
 
 -- range query on composite index
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$gt": "Brazil"}, "country": {"$lt": "Mexico"}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
@@ -207,19 +205,17 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 (8 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{"$match": { "country": {"$gt": "Brazil"}, "country": {"$lt": "Mexico"} }}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$sum": 1 } } }]}') $$, p_ignore_heap_fetches => true);
-                                                                   run_explain_and_trim                                                                    
------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_2 (actual rows=1 loops=1)
-   Output: bson_repath_and_build(agg_stage_2.c1, agg_stage_2.c2, agg_stage_2.c3, agg_stage_2.c4)
-   ->  GroupAggregate (actual rows=1 loops=1)
-         Output: '_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, documentdb_api_internal.bsoncount(1)
-         ->  Limit (actual rows=5 loops=1)
+                                                                              run_explain_and_trim                                                                               
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual rows=1 loops=1)
+   Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, documentdb_api_internal.bsoncount(1)), '{ "" : { "$numberInt" : "1" } }'::bson
+   ->  Limit (actual rows=5 loops=1)
+         Output: NULL::bson
+         ->  Index Only Scan using country_1 on documentdb_data.documents_9001 collection (actual rows=5 loops=1)
                Output: NULL::bson
-               ->  Index Only Scan using country_1 on documentdb_data.documents_9001 collection (actual rows=5 loops=1)
-                     Output: NULL::bson
-                     Index Cond: ((collection.document @> '{ "country" : "Brazil" }'::bson) AND (collection.document @< '{ "country" : "Mexico" }'::bson))
-                     Heap Fetches: xxx
-(10 rows)
+               Index Cond: ((collection.document @> '{ "country" : "Brazil" }'::bson) AND (collection.document @< '{ "country" : "Mexico" }'::bson))
+               Heap Fetches: xxx
+(8 rows)
 
 -- compound index
 SELECT documentdb_api_internal.create_indexes_non_concurrently('iosdb_rum', '{ "createIndexes": "iosc_comp", "indexes": [ { "key": { "country": 1, "provider": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "country_provider_1" }] }', true);

@@ -250,17 +250,15 @@ set documentdb.forceDisableSeqScan to on;
 EXPLAIN (ANALYZE OFF, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('comp_db2', '{ "aggregate": "ordered_delete", "pipeline": [ { "$match": { "a": { "$lte": 4 } } }, { "$group": { "_id": "$a", "c": { "$count": {} } }} ] }');
                                                                                               QUERY PLAN                                                                                              
 ---------------------------------------------------------------------
- Subquery Scan on agg_stage_1
-   Output: bson_repath_and_build(agg_stage_1.c1, agg_stage_1.c2, agg_stage_1.c3, agg_stage_1.c4)
-   ->  HashAggregate
-         Output: '_id'::text, (bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'c'::text, bsoncount(1)
-         Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Bitmap Heap Scan on documentdb_data.documents_68502_685004 collection
-               Output: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-               Recheck Cond: (collection.document @<= '{ "a" : { "$numberInt" : "4" } }'::bson)
-               ->  Bitmap Index Scan on a_1
-                     Index Cond: (collection.document @<= '{ "a" : { "$numberInt" : "4" } }'::bson)
-(10 rows)
+ HashAggregate
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'c'::text, bsoncount(1)), (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Bitmap Heap Scan on documentdb_data.documents_68502_685004 collection
+         Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Recheck Cond: (collection.document @<= '{ "a" : { "$numberInt" : "4" } }'::bson)
+         ->  Bitmap Index Scan on a_1
+               Index Cond: (collection.document @<= '{ "a" : { "$numberInt" : "4" } }'::bson)
+(8 rows)
 
 SELECT document FROM bson_aggregation_pipeline('comp_db2', '{ "aggregate": "ordered_delete", "pipeline": [ { "$match": { "a": { "$lte": 4 } } }, { "$group": { "_id": "$a", "c": { "$count": {} } }} ] }');
                               document                               

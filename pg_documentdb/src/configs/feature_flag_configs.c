@@ -327,6 +327,10 @@ bool RemoveMatchNamespaceFilters = DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS;
 #define DEFAULT_MULTIPLE_POSITONAL_OPERATORS_NOT_ALLOWED true
 bool MultiplePositionalNotAllowed = DEFAULT_MULTIPLE_POSITONAL_OPERATORS_NOT_ALLOWED;
 
+/* Added in v112, enabled in v112, remove after v114 */
+#define DEFAULT_ENABLE_GROUP_SUBQUERY_ELIMINATION true
+bool EnableGroupSubqueryElimination = DEFAULT_ENABLE_GROUP_SUBQUERY_ELIMINATION;
+
 /* Added in v111, Pending stabilization */
 #define DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG false
 bool FailOnNonEmptyGroupCountArg = DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG;
@@ -807,6 +811,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable logging extended explain on explain with analyze off."),
 		NULL, &EnableExtendedExplainOnAnalyzeOff,
 		DEFAULT_ENABLE_EXTENDED_EXPLAIN_ON_ANALYZEOFF,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableGroupSubqueryElimination", newGucPrefix),
+		gettext_noop(
+			"Whether to eliminate the subquery migration in $group by inlining bson_repath_and_build."),
+		NULL, &EnableGroupSubqueryElimination,
+		DEFAULT_ENABLE_GROUP_SUBQUERY_ELIMINATION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
