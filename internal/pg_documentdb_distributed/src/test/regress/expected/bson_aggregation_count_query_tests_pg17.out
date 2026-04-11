@@ -212,7 +212,7 @@ SELECT documentdb_api.shard_collection('countdb', 'countcoll', '{ "_id": "hashed
 (1 row)
 
 EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_count('countdb', '{ "count": "countcoll", "query": {"value": {"$gt": 20}, "value": {"$lt": 150} } }');
-                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                     
+                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                 
 ---------------------------------------------------------------------
  Aggregate
    Output: coord_combine_agg('xxxx'::oid, remote_scan.document, NULL::bson)
@@ -231,7 +231,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
 (14 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate": "countcoll", "pipeline": [{"$match": {"value": {"$gt": 20}, "value": {"$lt": 150} }}, {"$count": "c"}] }');
-                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                 
+                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                              
 ---------------------------------------------------------------------
  Aggregate
    Output: bson_repath_and_build('c'::text, coord_combine_agg('xxxx'::oid, remote_scan.document, NULL::bson))
@@ -250,69 +250,47 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
 (14 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate": "countcoll", "pipeline": [{"$match": {"value": {"$gt": 20}, "value": {"$lt": 150} }}, {"$group": {"_id": null, "count": {"$sum": 1}}}] }');
-                                                                                                                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                                                                                                                      
+                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                            
 ---------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Output: remote_scan.document
-   ->  Distributed Subplan 51_1
-         ->  HashAggregate
-               Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson)
-               Group Key: remote_scan.c2
-               ->  Custom Scan (Citus Adaptive)
-                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4
-                     Task Count: 8
-                     Tasks Shown: One of 8
-                     ->  Task
-                           Query: SELECT '_id'::text AS c1, '{ "" : null }'::documentdb_core.bson AS c2, 'count'::text AS c3, worker_partial_agg('documentdb_api_internal.bsoncount(integer)'::regprocedure, 1) AS c4 FROM documentdb_data.documents_58001_58000004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "20" } }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#<) '{ "value" : { "$numberInt" : "150" } }'::documentdb_core.bsonquery)) GROUP BY '{ "" : null }'::documentdb_core.bson
-                           Node: host=localhost port=58070 dbname=regression
-                           ->  GroupAggregate
-                                 Output: '_id'::text, '{ "" : null }'::documentdb_core.bson, 'count'::text, worker_partial_agg('xxxx'::oid, 1)
-                                 ->  Seq Scan on documentdb_data.documents_58001_58000004 collection
-                                       Output: shard_key_value, object_id, document
-                                       Filter: ((collection.document OPERATOR(documentdb_api_catalog.@>) '{ "value" : { "$numberInt" : "20" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@<) '{ "value" : { "$numberInt" : "150" } }'::documentdb_core.bson))
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('51_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_1
-         Node: host=localhost port=58070 dbname=regression
-         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
-               Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4)
-               Function Call: read_intermediate_result('51_1'::text, 'binary'::citus_copy_format)
-(26 rows)
+ HashAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'count'::text, coord_combine_agg('xxxx'::oid, remote_scan.document, NULL::bson)), remote_scan.c2
+   Group Key: remote_scan.c2
+   ->  Custom Scan (Citus Adaptive)
+         Output: remote_scan.document, remote_scan.c2
+         Task Count: 8
+         Tasks Shown: One of 8
+         ->  Task
+               Query: SELECT worker_partial_agg('documentdb_api_internal.bsoncount(integer)'::regprocedure, 1) AS document, '{ "" : null }'::documentdb_core.bson AS c2 FROM documentdb_data.documents_58001_58000004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "20" } }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#<) '{ "value" : { "$numberInt" : "150" } }'::documentdb_core.bsonquery)) GROUP BY '{ "" : null }'::documentdb_core.bson
+               Node: host=localhost port=58070 dbname=regression
+               ->  GroupAggregate
+                     Output: worker_partial_agg('xxxx'::oid, 1), '{ "" : null }'::documentdb_core.bson
+                     ->  Seq Scan on documentdb_data.documents_58001_58000004 collection
+                           Output: shard_key_value, object_id, document
+                           Filter: ((collection.document OPERATOR(documentdb_api_catalog.@>) '{ "value" : { "$numberInt" : "20" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@<) '{ "value" : { "$numberInt" : "150" } }'::documentdb_core.bson))
+(15 rows)
 
 -- Test $sum with empty object, null, and non-numeric values (should all result in 0)
 -- $sum: {}
 EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF)
     SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate" : "countcoll", "pipeline" : [{ "$match" : { "value" : { "$gt" : 50 } } }, { "$group" : { "_id" : { "$literal" : "sumEmpty" }, "cnt" : { "$sum" : {} } } }] }');
-                                                                                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                                                                                      
+                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                            
 ---------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Output: remote_scan.document
-   ->  Distributed Subplan 53_1
-         ->  HashAggregate
-               Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson)
-               Group Key: remote_scan.c2
-               ->  Custom Scan (Citus Adaptive)
-                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4
-                     Task Count: 8
-                     Tasks Shown: One of 8
-                     ->  Task
-                           Query: SELECT '_id'::text AS c1, '{ "" : "sumEmpty" }'::documentdb_core.bson AS c2, 'cnt'::text AS c3, worker_partial_agg('documentdb_api_catalog.bsonsum(documentdb_core.bson)'::regprocedure, '{ "" : {  } }'::documentdb_core.bson) AS c4 FROM documentdb_data.documents_58001_58000004 collection WHERE (document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bsonquery) GROUP BY '{ "" : "sumEmpty" }'::documentdb_core.bson
-                           Node: host=localhost port=58070 dbname=regression
-                           ->  GroupAggregate
-                                 Output: '_id'::text, '{ "" : "sumEmpty" }'::documentdb_core.bson, 'cnt'::text, worker_partial_agg('xxxx'::oid, '{ "" : {  } }'::documentdb_core.bson)
-                                 ->  Seq Scan on documentdb_data.documents_58001_58000004 collection
-                                       Output: shard_key_value, object_id, document
-                                       Filter: (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bson)
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('53_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_1
-         Node: host=localhost port=58070 dbname=regression
-         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
-               Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4)
-               Function Call: read_intermediate_result('53_1'::text, 'binary'::citus_copy_format)
-(26 rows)
+ HashAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : "sumEmpty" }'::bson, 'cnt'::text, coord_combine_agg('xxxx'::oid, remote_scan.document, NULL::bson)), remote_scan.c2
+   Group Key: remote_scan.c2
+   ->  Custom Scan (Citus Adaptive)
+         Output: remote_scan.document, remote_scan.c2
+         Task Count: 8
+         Tasks Shown: One of 8
+         ->  Task
+               Query: SELECT worker_partial_agg('documentdb_api_catalog.bsonsum(documentdb_core.bson)'::regprocedure, '{ "" : {  } }'::documentdb_core.bson) AS document, '{ "" : "sumEmpty" }'::documentdb_core.bson AS c2 FROM documentdb_data.documents_58001_58000004 collection WHERE (document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bsonquery) GROUP BY '{ "" : "sumEmpty" }'::documentdb_core.bson
+               Node: host=localhost port=58070 dbname=regression
+               ->  GroupAggregate
+                     Output: worker_partial_agg('xxxx'::oid, '{ "" : {  } }'::documentdb_core.bson), '{ "" : "sumEmpty" }'::documentdb_core.bson
+                     ->  Seq Scan on documentdb_data.documents_58001_58000004 collection
+                           Output: shard_key_value, object_id, document
+                           Filter: (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bson)
+(15 rows)
 
 SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate" : "countcoll", "pipeline" : [{ "$match" : { "value" : { "$gt" : 50 } } }, { "$group" : { "_id" : { "$literal" : "sumEmpty" }, "cnt" : { "$sum" : {} } } }] }');
                         document                        
@@ -323,35 +301,24 @@ SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate" : "coun
 -- $sum: null
 EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF)
     SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate" : "countcoll", "pipeline" : [{ "$match" : { "value" : { "$gt" : 50 } } }, { "$group" : { "_id" : { "$literal" : "sumNull" }, "cnt" : { "$sum" : null } } }] }');
-                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                     
+                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                           
 ---------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Output: remote_scan.document
-   ->  Distributed Subplan 57_1
-         ->  HashAggregate
-               Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson)
-               Group Key: remote_scan.c2
-               ->  Custom Scan (Citus Adaptive)
-                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4
-                     Task Count: 8
-                     Tasks Shown: One of 8
-                     ->  Task
-                           Query: SELECT '_id'::text AS c1, '{ "" : "sumNull" }'::documentdb_core.bson AS c2, 'cnt'::text AS c3, worker_partial_agg('documentdb_api_catalog.bsonsum(documentdb_core.bson)'::regprocedure, '{ "" : null }'::documentdb_core.bson) AS c4 FROM documentdb_data.documents_58001_58000004 collection WHERE (document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bsonquery) GROUP BY '{ "" : "sumNull" }'::documentdb_core.bson
-                           Node: host=localhost port=58070 dbname=regression
-                           ->  GroupAggregate
-                                 Output: '_id'::text, '{ "" : "sumNull" }'::documentdb_core.bson, 'cnt'::text, worker_partial_agg('xxxx'::oid, '{ "" : null }'::documentdb_core.bson)
-                                 ->  Seq Scan on documentdb_data.documents_58001_58000004 collection
-                                       Output: shard_key_value, object_id, document
-                                       Filter: (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bson)
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('57_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_1
-         Node: host=localhost port=58070 dbname=regression
-         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
-               Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4)
-               Function Call: read_intermediate_result('57_1'::text, 'binary'::citus_copy_format)
-(26 rows)
+ HashAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : "sumNull" }'::bson, 'cnt'::text, coord_combine_agg('xxxx'::oid, remote_scan.document, NULL::bson)), remote_scan.c2
+   Group Key: remote_scan.c2
+   ->  Custom Scan (Citus Adaptive)
+         Output: remote_scan.document, remote_scan.c2
+         Task Count: 8
+         Tasks Shown: One of 8
+         ->  Task
+               Query: SELECT worker_partial_agg('documentdb_api_catalog.bsonsum(documentdb_core.bson)'::regprocedure, '{ "" : null }'::documentdb_core.bson) AS document, '{ "" : "sumNull" }'::documentdb_core.bson AS c2 FROM documentdb_data.documents_58001_58000004 collection WHERE (document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bsonquery) GROUP BY '{ "" : "sumNull" }'::documentdb_core.bson
+               Node: host=localhost port=58070 dbname=regression
+               ->  GroupAggregate
+                     Output: worker_partial_agg('xxxx'::oid, '{ "" : null }'::documentdb_core.bson), '{ "" : "sumNull" }'::documentdb_core.bson
+                     ->  Seq Scan on documentdb_data.documents_58001_58000004 collection
+                           Output: shard_key_value, object_id, document
+                           Filter: (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bson)
+(15 rows)
 
 SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate" : "countcoll", "pipeline" : [{ "$match" : { "value" : { "$gt" : 50 } } }, { "$group" : { "_id" : { "$literal" : "sumNull" }, "cnt" : { "$sum" : null } } }] }');
                        document                        
@@ -362,35 +329,24 @@ SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate" : "coun
 -- $sum: <constant non-numeric>
 EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF)
     SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate" : "countcoll", "pipeline" : [{ "$match" : { "value" : { "$gt" : 50 } } }, { "$group" : { "_id" : { "$literal" : "sumUtf8" }, "cnt" : { "$sum" : "constant-non-numeric" } } }] }');
-                                                                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                                                                              
+                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                    
 ---------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Output: remote_scan.document
-   ->  Distributed Subplan 61_1
-         ->  HashAggregate
-               Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson)
-               Group Key: remote_scan.c2
-               ->  Custom Scan (Citus Adaptive)
-                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4
-                     Task Count: 8
-                     Tasks Shown: One of 8
-                     ->  Task
-                           Query: SELECT '_id'::text AS c1, '{ "" : "sumUtf8" }'::documentdb_core.bson AS c2, 'cnt'::text AS c3, worker_partial_agg('documentdb_api_catalog.bsonsum(documentdb_core.bson)'::regprocedure, '{ "" : "constant-non-numeric" }'::documentdb_core.bson) AS c4 FROM documentdb_data.documents_58001_58000004 collection WHERE (document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bsonquery) GROUP BY '{ "" : "sumUtf8" }'::documentdb_core.bson
-                           Node: host=localhost port=58070 dbname=regression
-                           ->  GroupAggregate
-                                 Output: '_id'::text, '{ "" : "sumUtf8" }'::documentdb_core.bson, 'cnt'::text, worker_partial_agg('xxxx'::oid, '{ "" : "constant-non-numeric" }'::documentdb_core.bson)
-                                 ->  Seq Scan on documentdb_data.documents_58001_58000004 collection
-                                       Output: shard_key_value, object_id, document
-                                       Filter: (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bson)
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('61_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_1
-         Node: host=localhost port=58070 dbname=regression
-         ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
-               Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4)
-               Function Call: read_intermediate_result('61_1'::text, 'binary'::citus_copy_format)
-(26 rows)
+ HashAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : "sumUtf8" }'::bson, 'cnt'::text, coord_combine_agg('xxxx'::oid, remote_scan.document, NULL::bson)), remote_scan.c2
+   Group Key: remote_scan.c2
+   ->  Custom Scan (Citus Adaptive)
+         Output: remote_scan.document, remote_scan.c2
+         Task Count: 8
+         Tasks Shown: One of 8
+         ->  Task
+               Query: SELECT worker_partial_agg('documentdb_api_catalog.bsonsum(documentdb_core.bson)'::regprocedure, '{ "" : "constant-non-numeric" }'::documentdb_core.bson) AS document, '{ "" : "sumUtf8" }'::documentdb_core.bson AS c2 FROM documentdb_data.documents_58001_58000004 collection WHERE (document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bsonquery) GROUP BY '{ "" : "sumUtf8" }'::documentdb_core.bson
+               Node: host=localhost port=58070 dbname=regression
+               ->  GroupAggregate
+                     Output: worker_partial_agg('xxxx'::oid, '{ "" : "constant-non-numeric" }'::documentdb_core.bson), '{ "" : "sumUtf8" }'::documentdb_core.bson
+                     ->  Seq Scan on documentdb_data.documents_58001_58000004 collection
+                           Output: shard_key_value, object_id, document
+                           Filter: (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bson)
+(15 rows)
 
 SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate" : "countcoll", "pipeline" : [{ "$match" : { "value" : { "$gt" : 50 } } }, { "$group" : { "_id" : { "$literal" : "sumUtf8" }, "cnt" : { "$sum" : "constant-non-numeric" } } }] }');
                        document                        
