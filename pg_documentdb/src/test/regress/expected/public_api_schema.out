@@ -786,80 +786,127 @@ primary key, btree, for table "documentdb_api_catalog.roles"
 --------+------+------------------+---------------------+------
 (0 rows)
 
--- show roles and privileges for v2 schema, below tests intentionally obfuscate role privileges by replacing superuser role names with 'root' to make it easier to test and assert roles for different environments where superuser role names may vary.
-SELECT n.nspname as schema, proname, regexp_replace(proacl::text, pg_get_userbyid(p.proowner), 'root', 'g') AS proacl FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'documentdb_api_v2' ORDER BY n.nspname, proname;
-      schema       |              proname               |                                          proacl                                          
--------------------+------------------------------------+------------------------------------------------------------------------------------------
- documentdb_api_v2 | aggregate_cursor_first_page        | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_find_role=X/root}
- documentdb_api_v2 | coll_stats                         | {root=X/root}
- documentdb_api_v2 | collection                         | {root=X/root}
- documentdb_api_v2 | count_query                        | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_find_role=X/root}
- documentdb_api_v2 | create_collection                  | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | create_collection_view             | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | create_indexes                     | 
- documentdb_api_v2 | create_indexes_background          | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | current_op_command                 | {root=X/root}
- documentdb_api_v2 | cursor_get_more                    | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_find_role=X/root}
- documentdb_api_v2 | db_stats                           | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | delete                             | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_remove_role=X/root}
- documentdb_api_v2 | distinct_query                     | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_find_role=X/root}
- documentdb_api_v2 | drop_collection                    | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | drop_database                      | {root=X/root}
- documentdb_api_v2 | drop_indexes                       | 
- documentdb_api_v2 | find_and_modify                    | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | find_cursor_first_page             | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_find_role=X/root}
- documentdb_api_v2 | insert                             | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_insert_role=X/root}
- documentdb_api_v2 | insert_bulk                        | {=X/root,root=X/root,documentdb_api_insert_role=X/root}
- documentdb_api_v2 | insert_one                         | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_insert_role=X/root}
- documentdb_api_v2 | list_collections_cursor_first_page | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | list_databases                     | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | list_indexes_cursor_first_page     | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | rename_collection                  | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | rename_collection                  | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | update                             | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_update_role=X/root}
- documentdb_api_v2 | update_bulk                        | {=X/root,root=X/root,documentdb_readwrite_role=X/root,documentdb_api_update_role=X/root}
- documentdb_api_v2 | validate                           | {root=X/root}
+-- show roles and privileges per schema using has_function_privilege
+SELECT n.nspname AS schema, proname,
+       has_function_privilege('documentdb_readonly_role', p.oid, 'EXECUTE') AS readonly_role_has_exec,
+       has_function_privilege('documentdb_readwrite_role', p.oid, 'EXECUTE') AS readwrite_role_has_exec,
+       has_function_privilege('documentdb_admin_role', p.oid, 'EXECUTE') AS admin_role_has_exec,
+       has_function_privilege('documentdb_api_find_role', p.oid, 'EXECUTE') AS find_role_has_exec,
+       has_function_privilege('documentdb_api_insert_role', p.oid, 'EXECUTE') AS insert_role_has_exec,
+       has_function_privilege('documentdb_api_update_role', p.oid, 'EXECUTE') AS update_role_has_exec,
+       has_function_privilege('documentdb_api_remove_role', p.oid, 'EXECUTE') AS remove_role_has_exec
+FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+WHERE n.nspname = 'documentdb_api_v2' ORDER BY n.nspname, proname;
+      schema       |              proname               | readonly_role_has_exec | readwrite_role_has_exec | admin_role_has_exec | find_role_has_exec | insert_role_has_exec | update_role_has_exec | remove_role_has_exec 
+-------------------+------------------------------------+------------------------+-------------------------+---------------------+--------------------+----------------------+----------------------+----------------------
+ documentdb_api_v2 | aggregate_cursor_first_page        | t                      | t                       | t                   | t                  | f                    | f                    | f
+ documentdb_api_v2 | coll_stats                         | t                      | t                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | collection                         | t                      | t                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | count_query                        | t                      | t                       | t                   | t                  | f                    | f                    | f
+ documentdb_api_v2 | create_collection                  | f                      | t                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | create_collection_view             | f                      | t                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | create_indexes                     | f                      | t                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | create_indexes_background          | f                      | t                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | current_op_command                 | f                      | f                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | cursor_get_more                    | t                      | t                       | t                   | t                  | f                    | f                    | f
+ documentdb_api_v2 | db_stats                           | t                      | t                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | delete                             | f                      | t                       | t                   | f                  | f                    | f                    | t
+ documentdb_api_v2 | distinct_query                     | t                      | t                       | t                   | t                  | f                    | f                    | f
+ documentdb_api_v2 | drop_collection                    | f                      | t                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | drop_database                      | f                      | f                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | drop_indexes                       | f                      | t                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | find_and_modify                    | f                      | t                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | find_cursor_first_page             | t                      | t                       | t                   | t                  | f                    | f                    | f
+ documentdb_api_v2 | insert                             | f                      | t                       | t                   | f                  | t                    | f                    | f
+ documentdb_api_v2 | insert_bulk                        | f                      | t                       | t                   | f                  | t                    | f                    | f
+ documentdb_api_v2 | insert_one                         | f                      | t                       | t                   | f                  | t                    | f                    | f
+ documentdb_api_v2 | list_collections_cursor_first_page | t                      | t                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | list_databases                     | t                      | t                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | list_indexes_cursor_first_page     | t                      | t                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | rename_collection                  | f                      | t                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | rename_collection                  | f                      | t                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_v2 | update                             | f                      | t                       | t                   | f                  | f                    | t                    | f
+ documentdb_api_v2 | update_bulk                        | f                      | t                       | t                   | f                  | f                    | t                    | f
+ documentdb_api_v2 | validate                           | f                      | f                       | t                   | f                  | f                    | f                    | f
 (29 rows)
 
-SELECT n.nspname as schema, proname, regexp_replace(proacl::text, pg_get_userbyid(p.proowner), 'root', 'g') AS proacl FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'documentdb_api_internal_readonly' ORDER BY n.nspname, proname;
-              schema              |         proname          | proacl 
-----------------------------------+--------------------------+--------
- documentdb_api_internal_readonly | check_build_index_status | 
- documentdb_api_internal_readonly | coll_stats_aggregation   | 
- documentdb_api_internal_readonly | coll_stats_worker        | 
- documentdb_api_internal_readonly | current_cursor_state     | 
- documentdb_api_internal_readonly | current_op_aggregation   | 
- documentdb_api_internal_readonly | current_op_worker        | 
- documentdb_api_internal_readonly | cursor_state             | 
- documentdb_api_internal_readonly | db_stats_worker          | 
+-- For internal schemas, check schema USAGE privileges per role (functions use default PUBLIC ACL,
+-- so access is controlled at the schema level).
+SELECT n.nspname AS schema, proname,
+       has_schema_privilege('documentdb_readonly_role', n.nspname, 'USAGE') AS readonly_role_has_exec,
+       has_schema_privilege('documentdb_readwrite_role', n.nspname, 'USAGE') AS readwrite_role_has_exec,
+       has_schema_privilege('documentdb_admin_role', n.nspname, 'USAGE') AS admin_role_has_exec,
+       has_schema_privilege('documentdb_api_find_role', n.nspname, 'USAGE') AS find_role_has_exec,
+       has_schema_privilege('documentdb_api_insert_role', n.nspname, 'USAGE') AS insert_role_has_exec,
+       has_schema_privilege('documentdb_api_update_role', n.nspname, 'USAGE') AS update_role_has_exec,
+       has_schema_privilege('documentdb_api_remove_role', n.nspname, 'USAGE') AS remove_role_has_exec
+FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+WHERE n.nspname = 'documentdb_api_internal_readonly' ORDER BY n.nspname, proname;
+              schema              |         proname          | readonly_role_has_exec | readwrite_role_has_exec | admin_role_has_exec | find_role_has_exec | insert_role_has_exec | update_role_has_exec | remove_role_has_exec 
+----------------------------------+--------------------------+------------------------+-------------------------+---------------------+--------------------+----------------------+----------------------+----------------------
+ documentdb_api_internal_readonly | check_build_index_status | t                      | t                       | t                   | t                  | t                    | t                    | t
+ documentdb_api_internal_readonly | coll_stats_aggregation   | t                      | t                       | t                   | t                  | t                    | t                    | t
+ documentdb_api_internal_readonly | coll_stats_worker        | t                      | t                       | t                   | t                  | t                    | t                    | t
+ documentdb_api_internal_readonly | current_cursor_state     | t                      | t                       | t                   | t                  | t                    | t                    | t
+ documentdb_api_internal_readonly | current_op_aggregation   | t                      | t                       | t                   | t                  | t                    | t                    | t
+ documentdb_api_internal_readonly | current_op_worker        | t                      | t                       | t                   | t                  | t                    | t                    | t
+ documentdb_api_internal_readonly | cursor_state             | t                      | t                       | t                   | t                  | t                    | t                    | t
+ documentdb_api_internal_readonly | db_stats_worker          | t                      | t                       | t                   | t                  | t                    | t                    | t
 (8 rows)
 
-SELECT n.nspname as schema, proname, regexp_replace(proacl::text, pg_get_userbyid(p.proowner), 'root', 'g') AS proacl FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'documentdb_api_internal_readwrite' ORDER BY n.nspname, proname;
-              schema               |              proname               | proacl 
------------------------------------+------------------------------------+--------
- documentdb_api_internal_readwrite | build_index_concurrently           | 
- documentdb_api_internal_readwrite | create_builtin_id_index            | 
- documentdb_api_internal_readwrite | create_indexes_background_internal | 
- documentdb_api_internal_readwrite | create_indexes_non_concurrently    | 
- documentdb_api_internal_readwrite | delete_one                         | 
- documentdb_api_internal_readwrite | delete_worker                      | 
- documentdb_api_internal_readwrite | empty_data_table                   | 
- documentdb_api_internal_readwrite | insert_one                         | 
- documentdb_api_internal_readwrite | insert_worker                      | 
- documentdb_api_internal_readwrite | record_id_index                    | 
- documentdb_api_internal_readwrite | update_one                         | 
- documentdb_api_internal_readwrite | update_worker                      | 
+SELECT n.nspname AS schema, proname,
+       has_schema_privilege('documentdb_readonly_role', n.nspname, 'USAGE') AS readonly_role_has_exec,
+       has_schema_privilege('documentdb_readwrite_role', n.nspname, 'USAGE') AS readwrite_role_has_exec,
+       has_schema_privilege('documentdb_admin_role', n.nspname, 'USAGE') AS admin_role_has_exec,
+       has_schema_privilege('documentdb_api_find_role', n.nspname, 'USAGE') AS find_role_has_exec,
+       has_schema_privilege('documentdb_api_insert_role', n.nspname, 'USAGE') AS insert_role_has_exec,
+       has_schema_privilege('documentdb_api_update_role', n.nspname, 'USAGE') AS update_role_has_exec,
+       has_schema_privilege('documentdb_api_remove_role', n.nspname, 'USAGE') AS remove_role_has_exec
+FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+WHERE n.nspname = 'documentdb_api_internal_readwrite' ORDER BY n.nspname, proname;
+              schema               |              proname               | readonly_role_has_exec | readwrite_role_has_exec | admin_role_has_exec | find_role_has_exec | insert_role_has_exec | update_role_has_exec | remove_role_has_exec 
+-----------------------------------+------------------------------------+------------------------+-------------------------+---------------------+--------------------+----------------------+----------------------+----------------------
+ documentdb_api_internal_readwrite | build_index_concurrently           | f                      | t                       | t                   | f                  | t                    | t                    | t
+ documentdb_api_internal_readwrite | create_builtin_id_index            | f                      | t                       | t                   | f                  | t                    | t                    | t
+ documentdb_api_internal_readwrite | create_indexes_background_internal | f                      | t                       | t                   | f                  | t                    | t                    | t
+ documentdb_api_internal_readwrite | create_indexes_non_concurrently    | f                      | t                       | t                   | f                  | t                    | t                    | t
+ documentdb_api_internal_readwrite | delete_one                         | f                      | t                       | t                   | f                  | t                    | t                    | t
+ documentdb_api_internal_readwrite | delete_worker                      | f                      | t                       | t                   | f                  | t                    | t                    | t
+ documentdb_api_internal_readwrite | empty_data_table                   | f                      | t                       | t                   | f                  | t                    | t                    | t
+ documentdb_api_internal_readwrite | insert_one                         | f                      | t                       | t                   | f                  | t                    | t                    | t
+ documentdb_api_internal_readwrite | insert_worker                      | f                      | t                       | t                   | f                  | t                    | t                    | t
+ documentdb_api_internal_readwrite | record_id_index                    | f                      | t                       | t                   | f                  | t                    | t                    | t
+ documentdb_api_internal_readwrite | update_one                         | f                      | t                       | t                   | f                  | t                    | t                    | t
+ documentdb_api_internal_readwrite | update_worker                      | f                      | t                       | t                   | f                  | t                    | t                    | t
 (12 rows)
 
-SELECT n.nspname as schema, proname, regexp_replace(proacl::text, pg_get_userbyid(p.proowner), 'root', 'g') AS proacl FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'documentdb_api_internal_admin' ORDER BY n.nspname, proname;
-            schema             |               proname               | proacl 
--------------------------------+-------------------------------------+--------
- documentdb_api_internal_admin | reindex_index_background            | 
- documentdb_api_internal_admin | reindex_indexes_background_internal | 
+SELECT n.nspname AS schema, proname,
+       has_schema_privilege('documentdb_readonly_role', n.nspname, 'USAGE') AS readonly_role_has_exec,
+       has_schema_privilege('documentdb_readwrite_role', n.nspname, 'USAGE') AS readwrite_role_has_exec,
+       has_schema_privilege('documentdb_admin_role', n.nspname, 'USAGE') AS admin_role_has_exec,
+       has_schema_privilege('documentdb_api_find_role', n.nspname, 'USAGE') AS find_role_has_exec,
+       has_schema_privilege('documentdb_api_insert_role', n.nspname, 'USAGE') AS insert_role_has_exec,
+       has_schema_privilege('documentdb_api_update_role', n.nspname, 'USAGE') AS update_role_has_exec,
+       has_schema_privilege('documentdb_api_remove_role', n.nspname, 'USAGE') AS remove_role_has_exec
+FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+WHERE n.nspname = 'documentdb_api_internal_admin' ORDER BY n.nspname, proname;
+            schema             |               proname               | readonly_role_has_exec | readwrite_role_has_exec | admin_role_has_exec | find_role_has_exec | insert_role_has_exec | update_role_has_exec | remove_role_has_exec 
+-------------------------------+-------------------------------------+------------------------+-------------------------+---------------------+--------------------+----------------------+----------------------+----------------------
+ documentdb_api_internal_admin | reindex_index_background            | f                      | f                       | t                   | f                  | f                    | f                    | f
+ documentdb_api_internal_admin | reindex_indexes_background_internal | f                      | f                       | t                   | f                  | f                    | f                    | f
 (2 rows)
 
-SELECT n.nspname as schema, proname, regexp_replace(proacl::text, pg_get_userbyid(p.proowner), 'root', 'g') AS proacl FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'documentdb_api_internal_bgworker' ORDER BY n.nspname, proname;
- schema | proname | proacl 
---------+---------+--------
+SELECT n.nspname AS schema, proname,
+       has_schema_privilege('documentdb_readonly_role', n.nspname, 'USAGE') AS readonly_role_has_exec,
+       has_schema_privilege('documentdb_readwrite_role', n.nspname, 'USAGE') AS readwrite_role_has_exec,
+       has_schema_privilege('documentdb_admin_role', n.nspname, 'USAGE') AS admin_role_has_exec,
+       has_schema_privilege('documentdb_api_find_role', n.nspname, 'USAGE') AS find_role_has_exec,
+       has_schema_privilege('documentdb_api_insert_role', n.nspname, 'USAGE') AS insert_role_has_exec,
+       has_schema_privilege('documentdb_api_update_role', n.nspname, 'USAGE') AS update_role_has_exec,
+       has_schema_privilege('documentdb_api_remove_role', n.nspname, 'USAGE') AS remove_role_has_exec
+FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+WHERE n.nspname = 'documentdb_api_internal_bgworker' ORDER BY n.nspname, proname;
+ schema | proname | readonly_role_has_exec | readwrite_role_has_exec | admin_role_has_exec | find_role_has_exec | insert_role_has_exec | update_role_has_exec | remove_role_has_exec 
+--------+---------+------------------------+-------------------------+---------------------+--------------------+----------------------+----------------------+----------------------
 (0 rows)
 
