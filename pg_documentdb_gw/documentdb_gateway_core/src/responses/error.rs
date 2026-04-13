@@ -11,7 +11,7 @@ use deadpool_postgres::PoolError;
 
 use crate::{
     context::ConnectionContext,
-    error::{DocumentDBError, ErrorCode},
+    error::{DocumentDBError, ErrorCode, ErrorKind},
     protocol::OK_FAILED,
     responses::{self, constant::generic_internal_error_message},
 };
@@ -77,12 +77,11 @@ impl CommandError {
         err: &DocumentDBError,
         activity_id: &str,
     ) -> Self {
-        match err {
-            DocumentDBError::PostgresError(e, _)
-            | DocumentDBError::PoolError(PoolError::Backend(e), _) => {
+        match err.kind() {
+            ErrorKind::PostgresError(e, _) | ErrorKind::PoolError(PoolError::Backend(e), _) => {
                 Self::from_pg_error(connection_context, e, activity_id)
             }
-            DocumentDBError::PostgresDocumentDBError(error_code, msg, _) => {
+            ErrorKind::PostgresDocumentDBError(error_code, msg, _) => {
                 if let Ok(state) = responses::i32_to_postgres_sqlstate(*error_code) {
                     let mapped_response = responses::map_pg_error(
                         connection_context,
@@ -102,10 +101,10 @@ impl CommandError {
                 );
                 Self::internal_error()
             }
-            DocumentDBError::DocumentDBError(error_code, msg, _, _) => {
+            ErrorKind::DocumentDBError(error_code, msg, _, _) => {
                 Self::new(*error_code, msg.clone())
             }
-            DocumentDBError::ValueAccessError(error, _) => match &error.kind {
+            ErrorKind::ValueAccessError(error, _) => match &error.kind {
                 ValueAccessErrorKind::UnexpectedType {
                     actual, expected, ..
                 } => {
@@ -138,13 +137,13 @@ impl CommandError {
                     Self::new(ErrorCode::BadValue, "Unexpected value".to_owned())
                 }
             },
-            DocumentDBError::IoError(_, _)
-            | DocumentDBError::RawBsonError(_, _)
-            | DocumentDBError::PoolError(_, _)
-            | DocumentDBError::CreatePoolError(_, _)
-            | DocumentDBError::BuildPoolError(_, _)
-            | DocumentDBError::SSLErrorStack(_, _)
-            | DocumentDBError::SSLError(_, _) => Self::internal_error(),
+            ErrorKind::IoError(_, _)
+            | ErrorKind::RawBsonError(_, _)
+            | ErrorKind::PoolError(_, _)
+            | ErrorKind::CreatePoolError(_, _)
+            | ErrorKind::BuildPoolError(_, _)
+            | ErrorKind::SSLErrorStack(_, _)
+            | ErrorKind::SSLError(_, _) => Self::internal_error(),
         }
     }
 

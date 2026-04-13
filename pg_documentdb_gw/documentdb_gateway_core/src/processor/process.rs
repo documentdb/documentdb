@@ -8,7 +8,7 @@
 
 use crate::{
     context::{ConnectionContext, RequestContext},
-    error::{DocumentDBError, ErrorCode, Result},
+    error::{DocumentDBError, ErrorCode, ErrorKind, Result},
     explain,
     postgres::PgDataClient,
     processor::{
@@ -350,9 +350,14 @@ pub async fn process_request(
     };
 
     if connection_context.transaction.is_some() {
-        match result {
+        match &result {
             // In the case of write conflict, we need to abort the transaction.
-            Err(DocumentDBError::DocumentDBError(ErrorCode::WriteConflict, _, _, _)) => {
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::DocumentDBError(ErrorCode::WriteConflict, _, _, _)
+                ) =>
+            {
                 transaction::process_abort(connection_context).await?;
             }
             // In the case of failures with aggregate/find, we need to abort the transaction.

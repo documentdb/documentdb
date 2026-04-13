@@ -8,7 +8,7 @@
 
 use crate::{
     context::{ConnectionContext, RequestContext},
-    error::{DocumentDBError, ErrorCode, Result},
+    error::{DocumentDBError, ErrorCode, ErrorKind, Result},
     postgres::PgDataClient,
     requests::RequestType,
     responses::Response,
@@ -49,10 +49,14 @@ pub async fn handle(
         if let Err(e) = transaction_result {
             return match (request.request_type(), &e) {
                 // Especially allow the transaction to remain unfilled if it is committing a committed transaction
-                (
-                    RequestType::CommitTransaction,
-                    DocumentDBError::DocumentDBError(ErrorCode::TransactionCommitted, _, _, _),
-                ) => Ok(()),
+                (RequestType::CommitTransaction, error)
+                    if matches!(
+                        error.kind(),
+                        ErrorKind::DocumentDBError(ErrorCode::TransactionCommitted, _, _, _)
+                    ) =>
+                {
+                    Ok(())
+                }
                 _ => Err(e),
             };
         }
