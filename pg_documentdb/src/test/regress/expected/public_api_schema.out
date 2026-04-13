@@ -790,34 +790,34 @@ primary key, btree, for table "documentdb_api_catalog.roles"
 SELECT n.nspname as schema, proname, regexp_replace(proacl::text, pg_get_userbyid(p.proowner), 'root', 'g') AS proacl FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'documentdb_api_v2' ORDER BY n.nspname, proname;
       schema       |              proname               |                                          proacl                                          
 -------------------+------------------------------------+------------------------------------------------------------------------------------------
- documentdb_api_v2 | aggregate_cursor_first_page        | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_find_role=X/root}
+ documentdb_api_v2 | aggregate_cursor_first_page        | {root=X/root,root_readwrite_role=X/root,root_api_find_role=X/root}
  documentdb_api_v2 | coll_stats                         | {root=X/root}
  documentdb_api_v2 | collection                         | {root=X/root}
- documentdb_api_v2 | count_query                        | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_find_role=X/root}
- documentdb_api_v2 | create_collection                  | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | create_collection_view             | {root=X/root,documentdb_readwrite_role=X/root}
+ documentdb_api_v2 | count_query                        | {root=X/root,root_readwrite_role=X/root,root_api_find_role=X/root}
+ documentdb_api_v2 | create_collection                  | {root=X/root,root_readwrite_role=X/root}
+ documentdb_api_v2 | create_collection_view             | {root=X/root,root_readwrite_role=X/root}
  documentdb_api_v2 | create_indexes                     | 
- documentdb_api_v2 | create_indexes_background          | {root=X/root,documentdb_readwrite_role=X/root}
+ documentdb_api_v2 | create_indexes_background          | {root=X/root,root_readwrite_role=X/root}
  documentdb_api_v2 | current_op_command                 | {root=X/root}
- documentdb_api_v2 | cursor_get_more                    | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_find_role=X/root}
- documentdb_api_v2 | db_stats                           | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | delete                             | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_remove_role=X/root}
- documentdb_api_v2 | distinct_query                     | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_find_role=X/root}
- documentdb_api_v2 | drop_collection                    | {root=X/root,documentdb_readwrite_role=X/root}
+ documentdb_api_v2 | cursor_get_more                    | {root=X/root,root_readwrite_role=X/root,root_api_find_role=X/root}
+ documentdb_api_v2 | db_stats                           | {root=X/root,root_readwrite_role=X/root}
+ documentdb_api_v2 | delete                             | {root=X/root,root_readwrite_role=X/root,root_api_remove_role=X/root}
+ documentdb_api_v2 | distinct_query                     | {root=X/root,root_readwrite_role=X/root,root_api_find_role=X/root}
+ documentdb_api_v2 | drop_collection                    | {root=X/root,root_readwrite_role=X/root}
  documentdb_api_v2 | drop_database                      | {root=X/root}
  documentdb_api_v2 | drop_indexes                       | 
- documentdb_api_v2 | find_and_modify                    | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | find_cursor_first_page             | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_find_role=X/root}
- documentdb_api_v2 | insert                             | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_insert_role=X/root}
- documentdb_api_v2 | insert_bulk                        | {=X/root,root=X/root,documentdb_api_insert_role=X/root}
- documentdb_api_v2 | insert_one                         | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_insert_role=X/root}
- documentdb_api_v2 | list_collections_cursor_first_page | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | list_databases                     | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | list_indexes_cursor_first_page     | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | rename_collection                  | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | rename_collection                  | {root=X/root,documentdb_readwrite_role=X/root}
- documentdb_api_v2 | update                             | {root=X/root,documentdb_readwrite_role=X/root,documentdb_api_update_role=X/root}
- documentdb_api_v2 | update_bulk                        | {=X/root,root=X/root,documentdb_readwrite_role=X/root,documentdb_api_update_role=X/root}
+ documentdb_api_v2 | find_and_modify                    | {root=X/root,root_readwrite_role=X/root}
+ documentdb_api_v2 | find_cursor_first_page             | {root=X/root,root_readwrite_role=X/root,root_api_find_role=X/root}
+ documentdb_api_v2 | insert                             | {root=X/root,root_readwrite_role=X/root,root_api_insert_role=X/root}
+ documentdb_api_v2 | insert_bulk                        | {=X/root,root=X/root,root_api_insert_role=X/root}
+ documentdb_api_v2 | insert_one                         | {root=X/root,root_readwrite_role=X/root,root_api_insert_role=X/root}
+ documentdb_api_v2 | list_collections_cursor_first_page | {root=X/root,root_readwrite_role=X/root}
+ documentdb_api_v2 | list_databases                     | {root=X/root,root_readwrite_role=X/root}
+ documentdb_api_v2 | list_indexes_cursor_first_page     | {root=X/root,root_readwrite_role=X/root}
+ documentdb_api_v2 | rename_collection                  | {root=X/root,root_readwrite_role=X/root}
+ documentdb_api_v2 | rename_collection                  | {root=X/root,root_readwrite_role=X/root}
+ documentdb_api_v2 | update                             | {root=X/root,root_readwrite_role=X/root,root_api_update_role=X/root}
+ documentdb_api_v2 | update_bulk                        | {=X/root,root=X/root,root_readwrite_role=X/root,root_api_update_role=X/root}
  documentdb_api_v2 | validate                           | {root=X/root}
 (29 rows)
 
@@ -862,4 +862,3 @@ SELECT n.nspname as schema, proname, regexp_replace(proacl::text, pg_get_userbyi
  schema | proname | proacl 
 --------+---------+--------
 (0 rows)
-
