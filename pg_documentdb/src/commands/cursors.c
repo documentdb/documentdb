@@ -49,6 +49,14 @@ extern bool EnablePrimaryKeyCursorScan;
 extern bool UseFileBasedPersistedCursors;
 extern bool EnableDebugQueryText;
 extern bool EnableDelayedHoldPortal;
+extern bool EnableStreamingCursorDrainViaDestReceiver;
+
+/*
+ * Overhead of the array index per document (The string "1", "2" etc).
+ * We use a simple const of 9 digits as 16 MB in bytes has 8 digits, so
+ * realistically we won't have more than 16,777,216 entries with trailing 0.
+ */
+#define PER_DOC_OVERHEAD 9
 
 static char LastOpenPortalName[NAMEDATALEN] = { 0 };
 
@@ -83,7 +91,7 @@ typedef struct CursorContinuationEntry
 	/* The TID inside the shard that is the continuation. */
 	ItemPointerData continuation;
 
-	/* The cursor entry */
+	/* The cursor entry. cursorEntry is specifically used with EnablePrimaryKeyCursorScan */
 	pgbson *cursorEntry;
 } CursorContinuationEntry;
 
@@ -101,23 +109,18 @@ typedef struct TailableCursorContinuationEntry
 
 
 /*
- * BsonStoreTupleDestReceiver is a DestReceiver that forwards tuples to a
- * BSON output target. When isSingleResult is true, the first row is captured
- * as a standalone pgbson pointer in singleResult. Otherwise, rows are
- * streamed into the writer as elements of a BSON array.
+ * BsonStoreTupleDestReceiverBase is the base DestReceiver for forwarding tuples
+ * to a BSON output target.  It holds the fields common to both the streaming
+ * and persistent execution paths.  Concrete sub-types embed this struct as
+ * their first member so that a pointer to the sub-type can safely be cast to
+ * (DestReceiver *) or (BsonStoreTupleDestReceiverBase *).
  */
-typedef struct BsonStoreTupleDestReceiver
+typedef struct BsonStoreTupleDestReceiverBase
 {
 	DestReceiver pub;
 
 	/* Array writer for multi-result mode; receives each row as an array element. */
 	pgbson_array_writer *writer;
-
-	/* Captured document for single-result mode; set after the first row. */
-	pgbson *singleResult;
-
-	/* When true, use singleResult path; when false, use writer path. */
-	bool isSingleResult;
 
 	MemoryContext writerContext;
 
@@ -126,15 +129,73 @@ typedef struct BsonStoreTupleDestReceiver
 	uint32_t currentAccumulatedSize;
 
 	int32_t batchSize;
+} BsonStoreTupleDestReceiverBase;
 
-	bool closeCursor;
 
+/*
+ * StreamingTupleDestReceiver handles the streaming (distributed) execution
+ * path where rows arrive as 2-column tuples (data + continuation token) and
+ * are written into the array writer while tracking per-shard continuations.
+ */
+typedef struct StreamingTupleDestReceiver
+{
+	/* Must be first for casting to BsonStoreTupleDestReceiverBase / DestReceiver. */
+	BsonStoreTupleDestReceiverBase base;
+
+	/* Cursor map for per-shard continuation tracking. */
+	HTAB *cursorMap;
+
+	/* Raw data size for the current iteration (no per-doc overhead). */
+	uint64_t streamingAccumulatedSize;
+
+	/* Reason the receiver stopped accepting rows. */
+	TerminationReason terminationReason;
+} StreamingTupleDestReceiver;
+
+
+/*
+ * PersistentTupleDestReceiver handles the persistent-cursor and single-result
+ * execution paths.  Rows are single-column BSON values written into the array
+ * writer (or captured as a standalone pgbson for single-result queries).
+ */
+typedef struct PersistentTupleDestReceiver
+{
+	/* Must be first for casting to BsonStoreTupleDestReceiverBase / DestReceiver. */
+	BsonStoreTupleDestReceiverBase base;
+
+	/* Captured document for single-result mode; set after the first row. */
+	pgbson *singleResult;
+
+	/* When true, use singleResult path; when false, use writer path. */
+	bool isSingleResult;
+
+	/*
+	 * Name of the portal/cursor (e.g. "cursor_4294967294"). Used to create
+	 * file-backed cursor state when batch overflow spills to disk.
+	 */
 	const char *cursorName;
 
+	/*
+	 * When true, stop enumeration once the batch/size limit is hit rather
+	 * than spilling overflow rows to a file. Set for single-batch and
+	 * point-read queries where no getMore is expected.
+	 */
+	bool closeCursor;
+
+	/*
+	 * Handle to the on-disk file that stores overflow rows beyond the first
+	 * batch. Created lazily in PersistentDestReceiveCore when the batch limit
+	 * is exceeded and closeCursor is false. NULL until first overflow.
+	 */
 	CursorFileState *cursorFileState;
 
+	/*
+	 * Serialized file position returned by CursorFileStateClose() during
+	 * shutdown. The caller stores this in the cursor continuation document
+	 * so that DrainPersistedFileCursor can resume reading on the next getMore.
+	 */
 	bytea *continuationState;
-} BsonStoreTupleDestReceiver;
+} PersistentTupleDestReceiver;
 
 static void HoldPortal(Portal portal);
 static uint32 CursorHashEntryHashFunc(const void *obj, size_t objsize);
@@ -184,7 +245,15 @@ static pgbson * ProcessCursorResultRowContinuationAttribute(HTAB *cursorMap,
 static void AppendLastContinuationTokenToCursor(pgbson_writer *writer,
 												pgbson *continuationDoc);
 
-static BsonStoreTupleDestReceiver * CreateBsonStoreTupleDestReceiver(
+static StreamingTupleDestReceiver * CreateStreamingTupleDestReceiver(
+	pgbson_array_writer *arrayWriter,
+	MemoryContext
+	writerContext,
+	int32_t batchSize,
+	uint32_t
+	accumulatedSize,
+	HTAB *cursorMap);
+static PersistentTupleDestReceiver * CreatePersistentTupleDestReceiver(
 	pgbson_array_writer *arrayWriter,
 	MemoryContext
 	writerContext,
@@ -192,8 +261,8 @@ static BsonStoreTupleDestReceiver * CreateBsonStoreTupleDestReceiver(
 	const char *
 	cursorName,
 	uint32_t
-	accumulatedSize, bool
-	closeCursor,
+	accumulatedSize,
+	bool closeCursor,
 	bool isSingleResult);
 static void DrainStatementViaExecutor(PlannedStmt *queryPlan, ParamListInfo paramList,
 									  const char *sourceText, DestReceiver *destReceiver,
@@ -235,7 +304,7 @@ DrainSingleResultQuery(Query *query)
 	uint32_t accumulatedSize = 0;
 	bool closeCursor = true;
 	bool isSingleResult = true;
-	BsonStoreTupleDestReceiver *receiver = CreateBsonStoreTupleDestReceiver(
+	PersistentTupleDestReceiver *receiver = CreatePersistentTupleDestReceiver(
 		arrayWriter, currentContext, batchSize, cursorName,
 		accumulatedSize, closeCursor, isSingleResult);
 
@@ -247,14 +316,13 @@ DrainSingleResultQuery(Query *query)
 
 
 /*
- * Drain a streaming query by planning the query fetch results using a
- * cursor and then drain the cursor until the page size/batch size
- * or the cursor is fully drained.
+ * Drain a streaming query using the old SPI cursor-based path.
+ * This is the fallback when EnableStreamingCursorDrainViaDestReceiver is off.
  */
-bool
-DrainStreamingQuery(HTAB *cursorMap, Query *query, int batchSize,
-					int32_t *numIterations, uint32_t accumulatedSize,
-					pgbson_array_writer *arrayWriter)
+static bool
+DrainStreamingQueryViaSPI(HTAB *cursorMap, Query *query, int batchSize,
+						  int32_t *numIterations, uint32_t accumulatedSize,
+						  pgbson_array_writer *arrayWriter)
 {
 	bool queryFullyDrained = false;
 	int32_t accumulatedRows = 0;
@@ -282,6 +350,122 @@ DrainStreamingQuery(HTAB *cursorMap, Query *query, int batchSize,
 		SPI_cursor_close(queryPortal);
 
 		SPI_finish();
+
+		(*numIterations)++;
+
+		if (cursorMap == NULL)
+		{
+			queryFullyDrained = reason == TerminationReason_CursorCompletion;
+			break;
+		}
+		else if (reason == TerminationReason_CursorCompletion)
+		{
+			if (currentAccumulatedSize < (uint64_t) MaxWorkerCursorSize)
+			{
+				queryFullyDrained = true;
+				break;
+			}
+		}
+		else
+		{
+			/* We terminated because of size or batchSize limits */
+			break;
+		}
+	}
+
+	return queryFullyDrained;
+}
+
+
+/*
+ * Drain a streaming query by planning the query and executing it directly
+ * through the executor with a DestReceiver. Each iteration re-plans with
+ * an updated continuation parameter. Loops until the page size/batch size
+ * is reached or the cursor is fully drained.
+ *
+ * When EnableStreamingCursorDrainViaDestReceiver is off, falls back to the
+ * SPI cursor-based path (DrainStreamingQueryViaSPI).
+ */
+bool
+DrainStreamingQuery(HTAB *cursorMap, Query *query, int batchSize,
+					int32_t *numIterations, uint32_t accumulatedSize,
+					pgbson_array_writer *arrayWriter)
+{
+	if (!EnableStreamingCursorDrainViaDestReceiver)
+	{
+		return DrainStreamingQueryViaSPI(cursorMap, query, batchSize,
+										 numIterations, accumulatedSize,
+										 arrayWriter);
+	}
+
+	bool queryFullyDrained = false;
+	int32_t accumulatedRows = 0;
+	bool isTailableCursor = false;
+	int cursorOptions = CURSOR_OPT_NO_SCROLL | CURSOR_OPT_BINARY;
+
+	/* batchSize=0 means no documents should be returned; skip executor startup. */
+	if (batchSize == 0)
+	{
+		(*numIterations)++;
+		return false;
+	}
+
+	MemoryContext currentContext = CurrentMemoryContext;
+	while (true)
+	{
+		/*
+		 * Each iteration allocates a query copy, plan, params, and receiver.
+		 * Use a per-iteration context so these are freed on each round.
+		 * The array writer and cursor map live in currentContext and are
+		 * written via writerContext switches inside the receiver callbacks.
+		 */
+		MemoryContext iterationContext = AllocSetContextCreate(currentContext,
+															   "DrainStreamingIteration",
+															   ALLOCSET_DEFAULT_SIZES);
+		MemoryContext oldContext = MemoryContextSwitchTo(iterationContext);
+
+		Datum continuationParam = (Datum) 0;
+		if (cursorMap != NULL)
+		{
+			pgbson *continuation = SerializeContinuationForWorker(cursorMap, batchSize,
+																  isTailableCursor);
+			continuationParam = PointerGetDatum(continuation);
+		}
+
+		ParamListInfo paramListInfo = makeParamList(1);
+		paramListInfo->numParams = 1;
+		paramListInfo->params[0].isnull = false;
+		paramListInfo->params[0].ptype = BsonTypeId();
+		paramListInfo->params[0].pflags = PARAM_FLAG_CONST;
+		paramListInfo->params[0].value = continuationParam;
+
+		Query *copiedQuery = copyObject(query);
+		PlannedStmt *queryPlan = pg_plan_query(copiedQuery, NULL, cursorOptions,
+											   paramListInfo);
+
+		char *sourceText = "";
+		if (EnableDebugQueryText)
+		{
+			bool pretty = false;
+			sourceText = pg_get_querydef(query, pretty);
+		}
+
+		StreamingTupleDestReceiver *receiver = CreateStreamingTupleDestReceiver(
+			arrayWriter, currentContext, batchSize,
+			accumulatedSize, cursorMap);
+		receiver->base.numRowsFetched = accumulatedRows;
+
+		DrainStatementViaExecutor(queryPlan, paramListInfo, sourceText,
+								  (DestReceiver *) receiver, currentContext);
+
+		/* Extract scalar results before freeing the iteration context. */
+		TerminationReason reason = receiver->terminationReason;
+		uint64_t currentAccumulatedSize = receiver->streamingAccumulatedSize;
+		accumulatedRows = receiver->base.numRowsFetched;
+		accumulatedSize = receiver->base.currentAccumulatedSize;
+
+		MemoryContextSwitchTo(oldContext);
+		MemoryContextDelete(iterationContext);
 
 		(*numIterations)++;
 
@@ -392,7 +576,7 @@ CreateAndDrainSingleBatchQuery(const char *cursorName, Query *query,
 	ParamListInfo paramList = NULL;
 	PlannedStmt *queryPlan = pg_plan_query(query, NULL, cursorOptions, paramList);
 	bool isSingleResult = false;
-	BsonStoreTupleDestReceiver *receiver = CreateBsonStoreTupleDestReceiver(
+	PersistentTupleDestReceiver *receiver = CreatePersistentTupleDestReceiver(
 		arrayWriter,
 		CurrentMemoryContext,
 		batchSize,
@@ -587,13 +771,13 @@ CreateAndDrainPersistedQueryWithFiles(const char *cursorName, Query *query,
 	PlannedStmt *queryPlan = pg_plan_query(query, NULL, cursorOptions, paramList);
 
 	bool isSingleResult = false;
-	BsonStoreTupleDestReceiver *receiver = CreateBsonStoreTupleDestReceiver(arrayWriter,
-																			CurrentMemoryContext,
-																			batchSize,
-																			cursorName,
-																			accumulatedSize,
-																			closeCursor,
-																			isSingleResult);
+	PersistentTupleDestReceiver *receiver = CreatePersistentTupleDestReceiver(arrayWriter,
+																			  CurrentMemoryContext,
+																			  batchSize,
+																			  cursorName,
+																			  accumulatedSize,
+																			  closeCursor,
+																			  isSingleResult);
 	DrainStatementViaExecutor(queryPlan, paramList, sourceText, (DestReceiver *) receiver,
 							  currentContext);
 
@@ -640,7 +824,7 @@ CreateAndDrainPointReadQuery(const char *cursorName, Query *query,
 	int32_t batchSize = INT32_MAX;
 	bool closeCursor = true;
 	bool isSingleResult = false;
-	BsonStoreTupleDestReceiver *receiver = CreateBsonStoreTupleDestReceiver(
+	PersistentTupleDestReceiver *receiver = CreatePersistentTupleDestReceiver(
 		arrayWriter,
 		CurrentMemoryContext,
 		batchSize, cursorName,
@@ -652,18 +836,127 @@ CreateAndDrainPointReadQuery(const char *cursorName, Query *query,
 }
 
 
+/*
+ * ---- Streaming DestReceiver callbacks ----
+ */
 static void
-BsonStoreDestReceiverStartup(DestReceiver *destReceiver, int operation,
+StreamingDestReceiverStartup(DestReceiver *destReceiver, int operation,
 							 TupleDesc inputTupleDesc)
+{
+	if (inputTupleDesc->natts != 2)
+	{
+		ereport(ERROR, (errmsg(
+							"Cursor return more than 2 column not supported: Found %d. This is a bug",
+							inputTupleDesc->natts)));
+	}
+
+	if (TupleDescAttr(inputTupleDesc, 0)->atttypid != BsonTypeId() ||
+		TupleDescAttr(inputTupleDesc, 1)->atttypid != BsonTypeId())
+	{
+		ereport(ERROR, (errmsg(
+							"Cursor return cannot be anything other than Bson. This is a bug")));
+	}
+}
+
+
+static bool
+StreamingDestReceiverReceive(TupleTableSlot *slot,
+							 DestReceiver *destReceiver)
+{
+	StreamingTupleDestReceiver *receiver =
+		(StreamingTupleDestReceiver *) destReceiver;
+	BsonStoreTupleDestReceiverBase *base = &receiver->base;
+
+	bool isNull = false;
+	Datum result = slot_getattr(slot, 1, &isNull);
+	if (isNull)
+	{
+		/*
+		 * For streaming receivers: NULL data rows are skipped.
+		 * Return true (continue) so the executor keeps sending rows.
+		 */
+		return true;
+	}
+
+	pgbson *documentValue = DatumGetPgBsonPacked(result);
+	uint32_t datumSize = VARSIZE_ANY_EXHDR(documentValue);
+
+	if (datumSize > BSON_MAX_ALLOWED_SIZE)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BSONOBJECTTOOLARGE),
+						errmsg("Size %u is larger than MaxDocumentSize %u",
+							   datumSize, BSON_MAX_ALLOWED_SIZE)));
+	}
+
+	receiver->streamingAccumulatedSize += datumSize;
+
+	int64_t totalSize = base->currentAccumulatedSize + datumSize +
+						PER_DOC_OVERHEAD;
+
+	bool sizeLimitReached = (totalSize >= BSON_MAX_ALLOWED_SIZE &&
+							 base->numRowsFetched > 0);
+	if (sizeLimitReached ||
+		base->numRowsFetched >= (uint32_t) base->batchSize)
+	{
+		receiver->terminationReason = sizeLimitReached ?
+									  TerminationReason_BatchSizeLimit :
+									  TerminationReason_BatchItemLimit;
+		return false;
+	}
+
+	MemoryContext oldContext = MemoryContextSwitchTo(base->writerContext);
+	PgbsonArrayWriterWriteDocument(base->writer, documentValue);
+	MemoryContextSwitchTo(oldContext);
+
+	base->numRowsFetched++;
+	base->currentAccumulatedSize += (datumSize + PER_DOC_OVERHEAD);
+
+	/* Process continuation token (column 2) and update the cursor map. */
+	bool isContinuationNull = false;
+	Datum continuationDatum = slot_getattr(slot, 2, &isContinuationNull);
+	if (!isContinuationNull)
+	{
+		pgbson *continuation = DatumGetPgBsonPacked(continuationDatum);
+		MemoryContext oldCtx = MemoryContextSwitchTo(base->writerContext);
+		UpdateCursorInContinuationMap(continuation,
+									  receiver->cursorMap, false);
+		MemoryContextSwitchTo(oldCtx);
+	}
+
+	return true;
+}
+
+
+static void
+StreamingDestReceiverShutdown(DestReceiver *destReceiver)
+{
+	/* Nothing to do for streaming receivers. */
+}
+
+
+static void
+StreamingDestReceiverDestroy(DestReceiver *destReceiver)
 {
 	/* nothing to do */
 }
 
 
-static bool
-BsonStoreDestReceiveCore(pgbson *resultBson,
-						 BsonStoreTupleDestReceiver *tupleDestReceiver)
+/*
+ * ---- Persistent DestReceiver callbacks ----
+ */
+static void
+PersistentDestReceiverStartup(DestReceiver *destReceiver, int operation,
+							  TupleDesc inputTupleDesc)
 {
+	/* No tuple-descriptor validation needed for persistent receivers. */
+}
+
+
+static bool
+PersistentDestReceiveCore(pgbson *resultBson,
+						  PersistentTupleDestReceiver *receiver)
+{
+	BsonStoreTupleDestReceiverBase *base = &receiver->base;
 	uint32_t datumSize = VARSIZE_ANY_EXHDR(resultBson);
 
 	/* if the new total size is > Max Bson Size */
@@ -674,39 +967,35 @@ BsonStoreDestReceiveCore(pgbson *resultBson,
 							   datumSize, BSON_MAX_ALLOWED_SIZE)));
 	}
 
-	/* this is the overhead of the array index (The string "1", "2" etc). */
-	/* we use a simple const of 9 digits as 16 MB in bytes has 8 digits, so */
-	/* realistically we won't have more than 16,777,216 entries with trailing 0. */
-	const int perDocOverhead = 9;
-	int64_t totalSize = tupleDestReceiver->currentAccumulatedSize + datumSize +
-						perDocOverhead;
+	int64_t totalSize = base->currentAccumulatedSize + datumSize +
+						PER_DOC_OVERHEAD;
 
 	/* we need to allow at least 1 tuple per response. */
 	bool sizeLimitReached = (totalSize >= BSON_MAX_ALLOWED_SIZE &&
-							 tupleDestReceiver->numRowsFetched > 0);
+							 base->numRowsFetched > 0);
 
 	if (sizeLimitReached ||
-		(tupleDestReceiver->numRowsFetched >= (uint32_t) tupleDestReceiver->batchSize))
+		(base->numRowsFetched >= (uint32_t) base->batchSize))
 	{
 		/* We exhausted the current batch. We need to either persist or move on */
-		if (tupleDestReceiver->closeCursor)
+		if (receiver->closeCursor)
 		{
 			/* We need to close the cursor stop - no point enumerating any further */
 			return false;
 		}
 		else if (UseFileBasedPersistedCursors)
 		{
-			if (tupleDestReceiver->cursorFileState == NULL)
+			if (receiver->cursorFileState == NULL)
 			{
 				MemoryContext oldContext = MemoryContextSwitchTo(
-					tupleDestReceiver->writerContext);
-				tupleDestReceiver->cursorFileState = CreateCursorFile(
-					tupleDestReceiver->cursorName);
+					base->writerContext);
+				receiver->cursorFileState = CreateCursorFile(
+					receiver->cursorName);
 				MemoryContextSwitchTo(oldContext);
 			}
 
 			/* Dump the tuple into the cursor state */
-			WriteToCursorFile(tupleDestReceiver->cursorFileState, resultBson);
+			WriteToCursorFile(receiver->cursorFileState, resultBson);
 		}
 		else
 		{
@@ -718,12 +1007,11 @@ BsonStoreDestReceiveCore(pgbson *resultBson,
 	else
 	{
 		/* We need to create a persistent hold store and dump the tuple there. */
-		MemoryContext oldContext = MemoryContextSwitchTo(
-			tupleDestReceiver->writerContext);
-		PgbsonArrayWriterWriteDocument(tupleDestReceiver->writer, resultBson);
+		MemoryContext oldContext = MemoryContextSwitchTo(base->writerContext);
+		PgbsonArrayWriterWriteDocument(base->writer, resultBson);
 		MemoryContextSwitchTo(oldContext);
-		tupleDestReceiver->numRowsFetched++;
-		tupleDestReceiver->currentAccumulatedSize += (datumSize + perDocOverhead);
+		base->numRowsFetched++;
+		base->currentAccumulatedSize += (datumSize + PER_DOC_OVERHEAD);
 	}
 
 	return true;
@@ -731,76 +1019,124 @@ BsonStoreDestReceiveCore(pgbson *resultBson,
 
 
 static bool
-BsonStoreDestReceiverReceive(TupleTableSlot *slot,
-							 DestReceiver *destReceiver)
+PersistentDestReceiverReceive(TupleTableSlot *slot,
+							  DestReceiver *destReceiver)
 {
-	BsonStoreTupleDestReceiver *tupleDestReceiver =
-		(BsonStoreTupleDestReceiver *) destReceiver;
+	PersistentTupleDestReceiver *receiver =
+		(PersistentTupleDestReceiver *) destReceiver;
+	BsonStoreTupleDestReceiverBase *base = &receiver->base;
 
-	/*
-	 * DestReceiver doesn't support multiple result sets with different shapes.
-	 */
 	bool isNull = false;
 	Datum result = slot_getattr(slot, 1, &isNull);
 	if (isNull)
 	{
-		return !tupleDestReceiver->isSingleResult;
+		if (receiver->isSingleResult)
+		{
+			/*
+			 * For single-result receivers (count/distinct): NULL means "no data".
+			 * Return false (stop) — nothing to fetch; the caller reads
+			 * receiver->singleResult which stays NULL.
+			 */
+			return false;
+		}
+		else
+		{
+			/*
+			 * For multi-row persistent receivers: NULL data rows are
+			 * skipped.  Return true (continue) so the executor keeps sending
+			 * rows, matching the old SPI path behaviour.  The col2 continuation
+			 * token is intentionally not processed here — for non-tailable
+			 * cursors the old SPI path (FetchCursorAndWriteUntilPageOrSize)
+			 * also skips continuation when isDataNull is true.  Tailable
+			 * cursors use a separate code path (DrainTailableQuery /
+			 * FetchTailableCursorAndWriteUntilPageOrSize).
+			 */
+			return true;
+		}
 	}
 
-	if (tupleDestReceiver->isSingleResult)
+	if (receiver->isSingleResult)
 	{
-		MemoryContext oldContext = MemoryContextSwitchTo(
-			tupleDestReceiver->writerContext);
-		tupleDestReceiver->singleResult = (pgbson *) PG_DETOAST_DATUM_COPY(result);
+		MemoryContext oldContext = MemoryContextSwitchTo(base->writerContext);
+		receiver->singleResult = (pgbson *) PG_DETOAST_DATUM_COPY(result);
 		MemoryContextSwitchTo(oldContext);
 		return false; /* stop after first row */
 	}
 
 	pgbson *resultBson = DatumGetPgBsonPacked(result);
-	return BsonStoreDestReceiveCore(resultBson, tupleDestReceiver);
+	return PersistentDestReceiveCore(resultBson, receiver);
 }
 
 
 static void
-BsonStoreDestReceiverShutdown(DestReceiver *destReceiver)
+PersistentDestReceiverShutdown(DestReceiver *destReceiver)
 {
-	BsonStoreTupleDestReceiver *tupleDestReceiver =
-		(BsonStoreTupleDestReceiver *) destReceiver;
-	if (tupleDestReceiver->cursorFileState != NULL)
+	PersistentTupleDestReceiver *receiver =
+		(PersistentTupleDestReceiver *) destReceiver;
+	if (receiver->cursorFileState != NULL)
 	{
-		tupleDestReceiver->continuationState = CursorFileStateClose(
-			tupleDestReceiver->cursorFileState, tupleDestReceiver->writerContext);
+		receiver->continuationState = CursorFileStateClose(
+			receiver->cursorFileState, receiver->base.writerContext);
 	}
 }
 
 
 static void
-BsonStoreDestReceiverDestroy(DestReceiver *destReceiver)
+PersistentDestReceiverDestroy(DestReceiver *destReceiver)
 {
 	/* nothing to do */
 }
 
 
-static BsonStoreTupleDestReceiver *
-CreateBsonStoreTupleDestReceiver(pgbson_array_writer *arrayWriter,
+/*
+ * ---- Constructor functions ----
+ */
+static StreamingTupleDestReceiver *
+CreateStreamingTupleDestReceiver(pgbson_array_writer *arrayWriter,
 								 MemoryContext writerContext,
-								 int32_t batchSize, const char *cursorName,
-								 uint32_t accumulatedSize, bool closeCursor,
-								 bool isSingleResult)
+								 int32_t batchSize,
+								 uint32_t accumulatedSize,
+								 HTAB *cursorMap)
 {
-	BsonStoreTupleDestReceiver *destReceiver =
-		(BsonStoreTupleDestReceiver *) palloc0(sizeof(BsonStoreTupleDestReceiver));
+	StreamingTupleDestReceiver *receiver =
+		(StreamingTupleDestReceiver *) palloc0(sizeof(StreamingTupleDestReceiver));
 
-	destReceiver->pub.rStartup = BsonStoreDestReceiverStartup;
-	destReceiver->pub.receiveSlot = BsonStoreDestReceiverReceive;
-	destReceiver->pub.rShutdown = BsonStoreDestReceiverShutdown;
-	destReceiver->pub.rDestroy = BsonStoreDestReceiverDestroy;
-	destReceiver->currentAccumulatedSize = accumulatedSize;
-	destReceiver->isSingleResult = isSingleResult;
-	destReceiver->writerContext = writerContext;
-	destReceiver->batchSize = batchSize;
+	receiver->base.pub.rStartup = StreamingDestReceiverStartup;
+	receiver->base.pub.receiveSlot = StreamingDestReceiverReceive;
+	receiver->base.pub.rShutdown = StreamingDestReceiverShutdown;
+	receiver->base.pub.rDestroy = StreamingDestReceiverDestroy;
+	receiver->base.currentAccumulatedSize = accumulatedSize;
+	receiver->base.writerContext = writerContext;
+	receiver->base.batchSize = batchSize;
+	receiver->base.writer = arrayWriter;
+
+	receiver->cursorMap = cursorMap;
+	receiver->terminationReason = TerminationReason_CursorCompletion;
+
+	return receiver;
+}
+
+
+static PersistentTupleDestReceiver *
+CreatePersistentTupleDestReceiver(pgbson_array_writer *arrayWriter,
+								  MemoryContext writerContext,
+								  int32_t batchSize, const char *cursorName,
+								  uint32_t accumulatedSize, bool closeCursor,
+								  bool isSingleResult)
+{
+	PersistentTupleDestReceiver *destReceiver =
+		(PersistentTupleDestReceiver *) palloc0(sizeof(PersistentTupleDestReceiver));
+
+	destReceiver->base.pub.rStartup = PersistentDestReceiverStartup;
+	destReceiver->base.pub.receiveSlot = PersistentDestReceiverReceive;
+	destReceiver->base.pub.rShutdown = PersistentDestReceiverShutdown;
+	destReceiver->base.pub.rDestroy = PersistentDestReceiverDestroy;
+	destReceiver->base.currentAccumulatedSize = accumulatedSize;
+	destReceiver->base.writerContext = writerContext;
+	destReceiver->base.batchSize = batchSize;
 	destReceiver->cursorName = cursorName;
 	destReceiver->closeCursor = closeCursor;
+	destReceiver->isSingleResult = isSingleResult;
 
 	if (isSingleResult)
 	{
@@ -808,9 +1144,8 @@ CreateBsonStoreTupleDestReceiver(pgbson_array_writer *arrayWriter,
 	}
 	else
 	{
-		destReceiver->writer = arrayWriter;
+		destReceiver->base.writer = arrayWriter;
 	}
-
 
 	return destReceiver;
 }
@@ -1076,7 +1411,7 @@ DrainPersistedFileCursor(const char *cursorName, int batchSize,
 
 	bool closeCursor = true;
 	bool isSingleResult = false;
-	BsonStoreTupleDestReceiver *destReceiver = CreateBsonStoreTupleDestReceiver(
+	PersistentTupleDestReceiver *destReceiver = CreatePersistentTupleDestReceiver(
 		arrayWriter,
 		CurrentMemoryContext,
 		batchSize, cursorName,
@@ -1088,7 +1423,7 @@ DrainPersistedFileCursor(const char *cursorName, int batchSize,
 	pgbson *nextDocument = ReadFromCursorFile(cursorState);
 	while (nextDocument != NULL)
 	{
-		if (!BsonStoreDestReceiveCore(nextDocument, destReceiver))
+		if (!PersistentDestReceiveCore(nextDocument, destReceiver))
 		{
 			/* Batch size limit reached */
 			break;
@@ -1098,7 +1433,7 @@ DrainPersistedFileCursor(const char *cursorName, int batchSize,
 		nextDocument = ReadFromCursorFile(cursorState);
 	}
 
-	BsonStoreDestReceiverShutdown((DestReceiver *) destReceiver);
+	PersistentDestReceiverShutdown((DestReceiver *) destReceiver);
 
 	if (nextDocument == NULL)
 	{
@@ -1337,11 +1672,7 @@ ProcessCursorResultRowDataAttribute(TerminationReason *reason,
 
 	*currentAccumulatedSize += datumSize;
 
-	/* this is the overhead of the array index (The string "1", "2" etc). */
-	/* we use a simple const of 9 digits as 16 MB in bytes has 8 digits, so */
-	/* realistically we won't have more than 16,777,216 entries with trailing 0. */
-	const int perDocOverhead = 9;
-	int64_t totalSize = *accumulatedSize + datumSize + perDocOverhead;
+	int64_t totalSize = *accumulatedSize + datumSize + PER_DOC_OVERHEAD;
 
 	/*
 	 * Allow at least one document to get through for the size limit - this accounts for
@@ -1359,7 +1690,7 @@ ProcessCursorResultRowDataAttribute(TerminationReason *reason,
 	}
 
 	(*numRowsFetched)++;
-	*accumulatedSize += datumSize + 9;
+	*accumulatedSize += datumSize + PER_DOC_OVERHEAD;
 
 	/* copy and insert the tuple */
 	MemoryContext spiContext = MemoryContextSwitchTo(writerContext);

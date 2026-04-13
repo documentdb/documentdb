@@ -1,0 +1,520 @@
+
+CREATE SCHEMA aggregation_cursor_test;
+
+DO $$
+DECLARE i int;
+BEGIN
+-- each doc is "a": 500KB, "c": 5 MB - ~5.5 MB & there's 10 of them
+FOR i IN 1..10 LOOP
+PERFORM documentdb_api.insert_one('db', 'get_aggregation_cursor_test', FORMAT('{ "_id": %s, "a": "%s", "c": [ %s "d" ] }',  i, repeat('Sample', 100000), repeat('"' || repeat('a', 1000) || '", ', 5000))::documentdb_core.bson);
+END LOOP;
+END;
+$$;
+
+DO $$
+DECLARE i int;
+BEGIN
+FOR i IN 1..10 LOOP
+PERFORM documentdb_api.insert_one('db', 'get_aggregation_cursor_smalldoc_test', FORMAT('{ "_id": %s, "a": "%s", "c": [ %s "d" ] }',  i, repeat('Sample', 10), repeat('"' || repeat('a', 10) || '", ', 5))::documentdb_core.bson);
+END LOOP;
+END;
+$$;
+
+CREATE TYPE aggregation_cursor_test.drain_result AS (filteredDoc bson, docSize int, continuationFiltered bson, persistConnection bool);
+
+
+CREATE FUNCTION aggregation_cursor_test.drain_find_query(
+    loopCount int, pageSize int, project bson DEFAULT NULL, skipVal int4 DEFAULT NULL, limitVal int4 DEFAULT NULL,
+    sort bson DEFAULT NULL, filter bson default null,
+    obfuscate_id bool DEFAULT false) RETURNS SETOF aggregation_cursor_test.drain_result AS
+$$
+    DECLARE
+        i int;
+        doc bson;
+        docSize int;
+        cont bson;
+        contProcessed bson;
+        persistConn bool;
+        findSpec bson;
+        getMoreSpec bson;
+    BEGIN
+
+    WITH r1 AS (SELECT 'get_aggregation_cursor_test' AS "find", filter AS "filter", sort AS "sort", project AS "projection", skipVal AS "skip", limitVal as "limit", pageSize AS "batchSize")
+    SELECT row_get_bson(r1) INTO findSpec FROM r1;
+
+    WITH r1 AS (SELECT 'get_aggregation_cursor_test' AS "collection", 4294967294::int8 AS "getMore", pageSize AS "batchSize")
+    SELECT row_get_bson(r1) INTO getMoreSpec FROM r1;
+
+    SELECT cursorPage, continuation, persistConnection INTO STRICT doc, cont, persistConn FROM
+                    documentdb_api.find_cursor_first_page(database => 'db', commandSpec => findSpec, cursorId => 4294967294);
+    SELECT documentdb_api_catalog.bson_dollar_project(doc,
+        ('{ "ok": 1, "cursor.id": 1, "cursor.ns": 1, "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } }, ' ||
+        ' "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }')::documentdb_core.bson), length(doc::bytea)::int INTO STRICT doc, docSize;
+
+    IF obfuscate_id THEN
+        SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
+    END IF;
+    
+    SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+    RETURN NEXT ROW(doc, docSize, contProcessed, persistConn)::aggregation_cursor_test.drain_result;
+
+    FOR i IN 1..loopCount LOOP
+        SELECT cursorPage, continuation INTO STRICT doc, cont FROM documentdb_api.cursor_get_more(database => 'db', getMoreSpec => getMoreSpec, continuationSpec => cont);
+
+        SELECT documentdb_api_catalog.bson_dollar_project(doc,
+        ('{ "ok": 1, "cursor.id": 1, "cursor.ns": 1, "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } }, ' ||
+        ' "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }')::documentdb_core.bson), length(doc::bytea)::int INTO STRICT doc, docSize;
+
+        IF obfuscate_id THEN
+            SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
+        END IF;
+
+        SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+        RETURN NEXT ROW(doc, docSize, contProcessed, FALSE)::aggregation_cursor_test.drain_result;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE FUNCTION aggregation_cursor_test.drain_aggregation_query(
+    loopCount int, pageSize int, pipeline bson DEFAULT NULL, obfuscate_id bool DEFAULT false, singleBatch bool DEFAULT NULL, collection_name text DEFAULT 'get_aggregation_cursor_test') RETURNS SETOF aggregation_cursor_test.drain_result AS
+$$
+    DECLARE
+        i int;
+        doc bson;
+        docSize int;
+        cont bson;
+        contProcessed bson;
+        persistConn bool;
+        aggregateSpec bson;
+        getMoreSpec bson;
+    BEGIN
+
+    IF pipeline IS NULL THEN
+        pipeline = '{ "": [] }'::bson;
+    END IF;
+
+    WITH r0 AS (SELECT pageSize AS "batchSize", singleBatch AS "singleBatch" ),
+    r1 AS (SELECT collection_name AS "aggregate", pipeline AS "pipeline", row_get_bson(r0) AS "cursor" FROM r0)
+    SELECT row_get_bson(r1) INTO aggregateSpec FROM r1;
+
+    WITH r1 AS (SELECT collection_name AS "collection", 4294967294::int8 AS "getMore", pageSize AS "batchSize" )
+    SELECT row_get_bson(r1) INTO getMoreSpec FROM r1;
+
+    SELECT cursorPage, continuation, persistConnection INTO STRICT doc, cont, persistConn FROM
+                    documentdb_api.aggregate_cursor_first_page(database => 'db', commandSpec => aggregateSpec, cursorId => 4294967294);
+    SELECT documentdb_api_catalog.bson_dollar_project(doc,
+        ('{ "ok": 1, "cursor.id": 1, "cursor.ns": 1, "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } }, ' ||
+        ' "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }')::documentdb_core.bson), length(doc::bytea)::int INTO STRICT doc, docSize;
+
+    IF obfuscate_id THEN
+        SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
+    END IF;
+    
+    SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+    RETURN NEXT ROW(doc, docSize, contProcessed, persistConn)::aggregation_cursor_test.drain_result;
+
+    FOR i IN 1..loopCount LOOP
+        SELECT cursorPage, continuation INTO STRICT doc, cont FROM documentdb_api.cursor_get_more(database => 'db', getMoreSpec => getMoreSpec, continuationSpec => cont);
+
+        SELECT documentdb_api_catalog.bson_dollar_project(doc,
+        ('{ "ok": 1, "cursor.id": 1, "cursor.ns": 1, "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } }, ' ||
+        ' "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }')::documentdb_core.bson), length(doc::bytea)::int INTO STRICT doc, docSize;
+
+        IF obfuscate_id THEN
+            SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
+        END IF;
+
+        SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+        RETURN NEXT ROW(doc, docSize, contProcessed, FALSE)::aggregation_cursor_test.drain_result;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+-- STREAMING BASED:
+-- test getting the first page (with max page size) - should limit to 2 docs at a time.
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 6, pageSize => 100000);
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 6, pageSize => 100000);
+
+
+-- test smaller docs (500KB)
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 2, pageSize => 100000, project => '{ "a": 1 }');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 2, pageSize => 100000, pipeline => '{ "": [{ "$project": { "a": 1 } }]}');
+
+-- test smaller batch size(s)
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 2, pageSize => 0, project => '{ "a": 1 }');
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 12, pageSize => 1, project => '{ "a": 1 }');
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 2, project => '{ "a": 1 }');
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 4, pageSize => 3, project => '{ "a": 1 }');
+
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 2, pageSize => 0, pipeline => '{ "": [{ "$project": { "a": 1 } }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 12, pageSize => 1, pipeline => '{ "": [{ "$project": { "a": 1 } }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$project": { "a": 1 } }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 3, pipeline => '{ "": [{ "$project": { "a": 1 } }]}');
+
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 3, pipeline => '{ "": [{ "$project": { "a": 1 } }, { "$skip": 0 }]}');
+
+-- test singleBatch
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 3, pipeline => '{ "": [{ "$project": { "a": 1 } }]}', singleBatch => TRUE);
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 3, pipeline => '{ "": [{ "$project": { "a": 1 } }]}', singleBatch => FALSE);
+
+-- FIND: Test streaming vs not
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 4, pageSize => 100000, filter => '{ "_id": { "$gt": 2 }} ');
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 4, pageSize => 100000, limitVal => 3);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 2, pageSize => 100000, limitVal => 1);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 1, pageSize => 0, limitVal => 1);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, sort => '{ "_id": -1 }');
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 4, pageSize => 100000, filter => '{ "_id": { "$gt": 2 }} ', skipVal => 0, limitVal => 0);
+
+-- AGGREGATE: Test streaming vs not
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$skip": 2 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$limit": 3 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 2, pageSize => 100000, pipeline => '{ "": [{ "$limit": 1 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 0, pipeline => '{ "": [{ "$limit": 1 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$sort": { "_id": -1 } }]}');
+
+-- Unsharded $sum/$avg
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+SET documentdb.enableNewWithExprAccumulators TO off;
+
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET documentdb.enableNewWithExprAccumulators TO off;
+
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }, { "$limit": 1 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }, { "$limit": 1 }, { "$addFields": { "c": "$a" }}]}');
+
+BEGIN;
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 0, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }, { "$limit": 1 }, { "$addFields": { "c": "$a" }}]}');
+ROLLBACK;
+
+-- inside a transaction block
+BEGIN;
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 4, pageSize => 100000, filter => '{ "_id": { "$gt": 2 }} ');
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 4, pageSize => 100000, limitVal => 3);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 2, pageSize => 100000, limitVal => 1);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 1, pageSize => 0, limitVal => 1);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, sort => '{ "_id": -1 }');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$skip": 2 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$limit": 3 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 2, pageSize => 100000, pipeline => '{ "": [{ "$limit": 1 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 0, pipeline => '{ "": [{ "$limit": 1 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$sort": { "_id": -1 } }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET documentdb.enableNewWithExprAccumulators TO off;
+
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+SET documentdb.enableNewWithExprAccumulators TO off;
+
+ROLLBACK;
+
+-- with sharded
+SELECT documentdb_api.shard_collection('db', 'get_aggregation_cursor_test', '{ "_id": "hashed" }', false);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 6, pageSize => 100000);
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 6, pageSize => 100000);
+
+-- FIND: Test streaming vs not
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 4, pageSize => 100000, filter => '{ "_id": { "$gt": 2 }} ');
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 4, pageSize => 100000, limitVal => 3);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 2, pageSize => 100000, limitVal => 1);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 1, pageSize => 0, limitVal => 1);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, sort => '{ "_id": -1 }');
+
+-- AGGREGATE: Test streaming vs not
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$skip": 2 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$limit": 3 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 2, pageSize => 100000, pipeline => '{ "": [{ "$limit": 1 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 0, pipeline => '{ "": [{ "$limit": 1 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$sort": { "_id": -1 } }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET documentdb.enableNewWithExprAccumulators TO off;
+
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+SET documentdb.enableNewWithExprAccumulators TO off;
+
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 6, pageSize => 2, pipeline => '{ "": [{ "$unwind": "$c" }, { "$limit": 10 }] }', collection_name => 'get_aggregation_cursor_smalldoc_test');
+
+
+-- inside a transaction block
+BEGIN;
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 4, pageSize => 100000, filter => '{ "_id": { "$gt": 2 }} ');
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 4, pageSize => 100000, limitVal => 3);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 2, pageSize => 100000, limitVal => 1);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 1, pageSize => 0, limitVal => 1);
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, sort => '{ "_id": -1 }');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$skip": 2 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$limit": 3 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 2, pageSize => 100000, pipeline => '{ "": [{ "$limit": 1 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 0, pipeline => '{ "": [{ "$limit": 1 }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$sort": { "_id": -1 } }]}');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET documentdb.enableNewWithExprAccumulators TO off;
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+SET documentdb.enableNewWithExprAccumulators TO off;
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 6, pageSize => 2, pipeline => '{ "": [{ "$unwind": "$c" }, { "$limit": 10 }] }', collection_name => 'get_aggregation_cursor_smalldoc_test');
+ROLLBACK;
+
+-- test for errors when returnKey is set to true
+SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies", "filter" : { "title" : "a" }, "limit" : 1, "singleBatch" : true, "batchSize" : 1, "returnKey" : true, "lsid" : { "id" : { "$binary" : { "base64": "apfUje6LTzKH9YfO3smIGA==", "subType" : "04" } } }, "$db" : "db" }');
+
+-- test for no errors when returnKey is set to false
+SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies", "filter" : { "title" : "a" }, "limit" : 1, "singleBatch" : true, "batchSize" : 1, "returnKey" : false, "lsid" : { "id" : { "$binary" : { "base64": "apfUje6LTzKH9YfO3smIGA==", "subType" : "04" } } }, "$db" : "db" }');
+
+-- test for errors when returnKey and showRecordId are set to true
+SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies", "filter" : { "title" : "a" }, "limit" : 1, "singleBatch" : true, "batchSize" : 1, "showRecordId": true, "returnKey" : true, "lsid" : { "id" : { "$binary" : { "base64": "apfUje6LTzKH9YfO3smIGA==", "subType" : "04" } } }, "$db" : "db" }');
+
+-- test for ntoreturn in find command with unset documentdb.version
+SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies",  "limit" : 1,  "batchSize" : 1, "ntoreturn":1 ,"$db" : "db" }');
+SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies", "ntoreturn":1 ,"$db" : "db" }');
+SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies", "ntoreturn":1 , "batchSize":1, "$db" : "db" }');
+SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies", "ntoreturn":1 , "limit":1, "$db" : "db" }');
+
+-- GUC to change default batch size should be honored but should follow the 16MB limit
+BEGIN;
+set local documentdb.defaultCursorFirstPageBatchSize = 10;
+with cte as (SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "get_aggregation_cursor_smalldoc_test", "$db" : "db" }')) SELECT documentdb_api_catalog.bson_dollar_project(cte.cursorPage,
+    '{ "ok": 1, "cursor.ns": 1, "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } }}') FROM cte;
+set local documentdb.defaultCursorFirstPageBatchSize = 5;
+with cte as (SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "get_aggregation_cursor_smalldoc_test", "$db" : "db" }')) SELECT documentdb_api_catalog.bson_dollar_project(cte.cursorPage,
+    '{ "ok": 1, "cursor.ns": 1, "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } }}') FROM cte;
+set local documentdb.defaultCursorFirstPageBatchSize = 500;
+with cte as (SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "get_aggregation_cursor_test", "$db" : "db" }')) SELECT documentdb_api_catalog.bson_dollar_project(cte.cursorPage,
+    '{ "ok": 1,  "cursor.ns": 1, "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } }}') FROM cte;
+END;
+
+
+-- testing with batchSize that doesn't drain
+-- first drain one time with a batchSize of 2 - this leaves a cursor state around
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 1, pipeline => '{ "": [{ "$skip": 2 }]}');
+
+-- now run a new query - this should close the cursor above, and continue with a fresh query
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 1, pipeline => '{ "": [{ "$skip": 2 }]}');
+
+
+-- add 200 docs with larger fields so that they use more pages and we test continuation with multiple pages.
+DO $$
+DECLARE i int;
+BEGIN
+FOR i IN 1..200 LOOP
+PERFORM documentdb_api.insert_one('db', 'bitmap_cursor_continuation', FORMAT('{ "_id": %s, "sk": "skval", "a": "aval-%s%s", "c": [ "%s", "d" ] }', i, i, repeat('a', 200), repeat('b', 100))::documentdb_core.bson);
+END LOOP;
+END;
+$$;
+
+-- create an index on field 'a'
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "bitmap_cursor_continuation", "indexes": [{"key": {"a": 1}, "name": "a_1" }]}', TRUE);
+
+-- Store results with fast bitmap lookup ON
+set documentdb.enableContinuationFastBitmapLookup to on;
+CREATE TEMP TABLE results_fast AS
+SELECT row_number() OVER () as batch_num, (filteredDoc->>'ids')::text as ids
+FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 40, 
+    pipeline => '{ "": [{ "$match": { "a": { "$gte": "aval-" } } }] }', 
+    collection_name => 'bitmap_cursor_continuation');
+
+select * from results_fast;
+
+-- Store results with fast bitmap lookup OFF
+set documentdb.enableContinuationFastBitmapLookup to off;
+CREATE TEMP TABLE results_slow AS
+SELECT row_number() OVER () as batch_num, (filteredDoc->>'ids')::text as ids
+FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 40, 
+    pipeline => '{ "": [{ "$match": { "a": { "$gte": "aval-" } } }] }', 
+    collection_name => 'bitmap_cursor_continuation');
+
+select * from results_slow;
+
+-- compare results
+SELECT f.batch_num, 
+       f.ids = s.ids as ids_match
+FROM results_fast f
+FULL OUTER JOIN results_slow s ON f.batch_num = s.batch_num
+ORDER BY COALESCE(f.batch_num, s.batch_num);
+
+-- now check the explain to make sure it is bitmap.
+set documentdb.enableCursorsOnAggregationQueryRewrite to on;
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('db', '{ "find": "bitmap_cursor_continuation", "projection": { "_id": 1 }, "filter": { "a": { "$gte": "aval-" } } , "batchSize": 1 }');
+
+CREATE TEMP TABLE firstPageResponse AS
+SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid FROM
+    find_cursor_first_page(database => 'db', commandSpec => '{ "find": "bitmap_cursor_continuation",  "projection": { "_id": 1 }, "filter": { "a": { "$gte": "aval-" } }, "batchSize": 2 }', cursorId => 4294967294);
+
+SELECT continuation AS r1_continuation FROM firstPageResponse \gset
+
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('db',
+    '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation", "batchSize": 1 }', :'r1_continuation');
+
+DROP TABLE firstPageResponse;
+DROP TABLE results_fast;
+DROP TABLE results_slow;
+
+set documentdb.enableContinuationFastBitmapLookup to on;
+
+BEGIN;
+CREATE TEMP TABLE firstPageResponse AS
+SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid FROM
+    find_cursor_first_page(database => 'db', commandSpec => '{ "find": "bitmap_cursor_continuation", "projection": { "_id": 1 }, "filter": { "a": { "$gte": "aval-" } }, "batchSize": 2  }', cursorId => 4294967294);
+
+SELECT continuation AS r1_continuation FROM firstPageResponse \gset
+
+-- now delete in between to invalidate some of the bitmap entries.
+SELECT documentdb_api.delete('db', '{ "delete": "bitmap_cursor_continuation", "deletes": [ {"q": {"_id": { "$gte": 1, "$lte": 190 } }, "limit": 0 } ]}');
+
+SELECT cursorPage FROM cursor_get_more(database => 'db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation" }'::bson,
+    continuationSpec => :'r1_continuation');
+
+set documentdb.enableContinuationFastBitmapLookup to off;
+
+SELECT cursorPage FROM cursor_get_more(database => 'db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation" }'::bson,
+    continuationSpec => :'r1_continuation');
+
+ROLLBACK;
+
+-- now leave some blocks before and after the deleted range.
+BEGIN;
+CREATE TEMP TABLE firstPageResponse AS
+SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid FROM
+    find_cursor_first_page(database => 'db', commandSpec => '{ "find": "bitmap_cursor_continuation", "projection": { "_id": 1 }, "filter": { "a": { "$gte": "aval-" } }, "batchSize": 100  }', cursorId => 4294967294);
+
+SELECT continuation AS r1_continuation FROM firstPageResponse \gset
+
+-- now delete in between to invalidate some of the bitmap entries.
+SELECT documentdb_api.delete('db', '{ "delete": "bitmap_cursor_continuation", "deletes": [ {"q": {"_id": { "$gte": 81, "$lte": 190 } }, "limit": 0 } ]}');
+
+SELECT cursorPage FROM cursor_get_more(database => 'db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation" }'::bson,
+    continuationSpec => :'r1_continuation');
+
+set documentdb.enableContinuationFastBitmapLookup to off;
+
+SELECT cursorPage FROM cursor_get_more(database => 'db',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation" }'::bson,
+    continuationSpec => :'r1_continuation');
+
+ROLLBACK;
+
+-- Regression test for GitHub issue documentdb#484: crash in pg_get_querydef
+-- when called after pg_plan_query mutates the query tree.
+-- Exercise different cursor types with enableDebugQueryText on non-existent collection.
+SET documentdb.enableDebugQueryText TO on;
+SELECT document FROM documentdb_api.count_query('db', '{ "count": "nonexistent_coll_484" }');
+-- Streamable cursor (simple find, no sort/skip/limit)
+SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find": "nonexistent_coll_484", "filter": {} }');
+-- SingleBatch cursor (find with limit 1)
+SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find": "nonexistent_coll_484", "filter": {}, "limit": 1 }');
+-- Persistent cursor (find with sort)
+SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find": "nonexistent_coll_484", "filter": {}, "sort": {"a": 1} }');
+-- PointRead cursor (find by _id on non-existent collection, falls back to Streamable)
+SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find": "nonexistent_coll_484", "filter": {"_id": 1} }');
+-- PointRead cursor (find by _id on existing collection with _id index)
+SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find": "get_aggregation_cursor_smalldoc_test", "filter": {"_id": 1} }');
+SET documentdb.enableDebugQueryText TO off;
+
+-- Regression tests for DrainSingleResultQuery DestReceiver migration:
+-- Verify count/distinct produce correct results including NULL/empty cases.
+
+-- Count on existing populated collection
+SELECT document FROM documentdb_api.count_query('db', '{ "count": "get_aggregation_cursor_smalldoc_test" }');
+
+-- Count with filter matching nothing (exercises NULL result → default response)
+SELECT document FROM documentdb_api.count_query('db', '{ "count": "get_aggregation_cursor_smalldoc_test", "query": { "_id": { "$eq": "nonexistent_id" } } }');
+
+-- Distinct on existing populated collection
+SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_smalldoc_test", "key": "_id" }');
+
+-- Distinct with filter matching nothing
+SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_smalldoc_test", "key": "_id", "query": { "_id": { "$eq": "nonexistent_id" } } }');
+
+-- Distinct on a key that does not exist in any document (exercises NULL datum path)
+SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_smalldoc_test", "key": "no_such_field" }');
+
+-- Count/Distinct on a large-document collection (exercises PG_DETOAST_DATUM_COPY path)
+SELECT document FROM documentdb_api.count_query('db', '{ "count": "get_aggregation_cursor_test" }');
+SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_test", "key": "_id" }');
+
+-- Count/Distinct on a nonexistent collection (exercises error/default handling)
+SELECT document FROM documentdb_api.count_query('db', '{ "count": "completely_nonexistent_collection" }');
+SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "completely_nonexistent_collection", "key": "a" }');
+-- Regression tests for DrainStreamingQuery DestReceiver migration:
+-- These tests exercise the streaming cursor path (cursorMap != NULL)
+-- which extracts data (col1) + continuation tokens (col2) from the executor.
+-- This core file is included with the GUC on and off to test both paths.
+
+-- Create a collection with an odd number of documents (7) to test partial final batch
+DO $$
+DECLARE i int;
+BEGIN
+FOR i IN 1..7 LOOP
+PERFORM documentdb_api.insert_one('db', 'partial_final_batch_coll', FORMAT('{ "_id": %s, "val": "item-%s" }', i, i)::documentdb_core.bson);
+END LOOP;
+END;
+$$;
+
+-- Streaming aggregate: 7 docs with batchSize=3 → batches of [3, 3, 1] then empty
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 3, collection_name => 'partial_final_batch_coll');
+
+-- Streaming aggregate: 7 docs with batchSize=4 → batches of [4, 3] then empty
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 3, pageSize => 4, collection_name => 'partial_final_batch_coll');
+
+-- Streaming aggregate: 7 docs with batchSize=2 → batches of [2, 2, 2, 1] then empty
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, collection_name => 'partial_final_batch_coll');
+
+-- Streaming aggregate: all 7 docs in one batch (batchSize large enough)
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 2, pageSize => 100000, collection_name => 'partial_final_batch_coll');
+
+-- Streaming aggregate on nonexistent collection (exercises CursorCompletion on first iteration)
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 10, collection_name => 'nonexistent_streaming_coll');
+
+-- Streaming aggregate with $match that filters to subset + continuation across batches
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 3, pageSize => 2, pipeline => '{ "": [{ "$match": { "_id": { "$gte": 3 } } }] }', collection_name => 'partial_final_batch_coll');
+
+-- Streaming aggregate with $match + $limit across batch boundaries
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 3, pageSize => 2, pipeline => '{ "": [{ "$match": { "_id": { "$lte": 5 } } }, { "$limit": 3 }] }', collection_name => 'partial_final_batch_coll');
+
+-- Streaming aggregate with batchSize=1 and filter: single-row batches with continuation
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 1, pipeline => '{ "": [{ "$match": { "_id": { "$gte": 5 } } }] }', collection_name => 'partial_final_batch_coll');
+
+-- Clean up the collection so the next run (with different GUC) starts fresh
+SELECT documentdb_api.drop_collection('db', 'partial_final_batch_coll');
+SELECT documentdb_api.drop_collection('db', 'get_aggregation_cursor_test');
+SELECT documentdb_api.drop_collection('db', 'get_aggregation_cursor_smalldoc_test');
+SELECT documentdb_api.drop_collection('db', 'bitmap_cursor_continuation');
+DROP SCHEMA aggregation_cursor_test CASCADE;
