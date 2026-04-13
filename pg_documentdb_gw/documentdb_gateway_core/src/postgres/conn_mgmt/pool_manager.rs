@@ -283,7 +283,7 @@ mod tests {
     use super::*;
     use crate::{
         configuration::{CertInputType, CertificateOptions, DocumentDBSetupConfiguration},
-        error::ErrorCode,
+        error::{ErrorCode, ErrorKind},
         postgres::create_query_catalog,
     };
     use bson::{rawbson, RawBson};
@@ -567,8 +567,8 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(
-            err,
-            DocumentDBError::DocumentDBError(ErrorCode::InternalError, _, _, _)
+            err.kind(),
+            ErrorKind::DocumentDBError(ErrorCode::InternalError, _, _, _)
         ));
     }
 

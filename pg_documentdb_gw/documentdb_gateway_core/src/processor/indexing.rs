@@ -14,7 +14,7 @@ use tokio::time::{Duration, Instant};
 use crate::{
     configuration::DynamicConfiguration,
     context::{ConnectionContext, RequestContext},
-    error::{DocumentDBError, ErrorCode, Result},
+    error::{DocumentDBError, ErrorCode, ErrorKind, Result},
     postgres::{PgDataClient, PgDocument},
     responses::{
         constant::pg_returned_invalid_response_message, PgResponse, RawResponse, Response,
@@ -144,11 +144,11 @@ fn parse_create_index_error(response: &PgResponse) -> Result<Response> {
     let errmsg = errmsg.ok_or(DocumentDBError::internal_error(
         "errmsg was missing in create index result".to_owned(),
     ))?;
-    Err(DocumentDBError::PostgresDocumentDBError(
+    Err(DocumentDBError::new(ErrorKind::PostgresDocumentDBError(
         code,
         errmsg.to_owned(),
         std::backtrace::Backtrace::capture(),
-    ))
+    )))
 }
 
 pub async fn process_reindex(
@@ -190,11 +190,11 @@ pub async fn process_drop_indexes(
             DocumentDBError::internal_error(pg_returned_invalid_response_message(e))
         })?;
 
-        Err(DocumentDBError::PostgresDocumentDBError(
+        Err(DocumentDBError::new(ErrorKind::PostgresDocumentDBError(
             error_code,
             error_message.to_owned(),
             std::backtrace::Backtrace::capture(),
-        ))
+        )))
     }
 }
 

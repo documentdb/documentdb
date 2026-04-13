@@ -18,7 +18,7 @@ use bson::RawDocument;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::{
-    error::{DocumentDBError, Result},
+    error::{DocumentDBError, ErrorKind as DocumentDBErrorKind, Result},
     protocol::{
         header::Header,
         message::{self, Message, MessageSection},
@@ -39,17 +39,24 @@ where
 {
     match Header::read_from(stream).await {
         Ok(header) => Ok(Some(header)),
-        Err(DocumentDBError::IoError(e, b)) => {
-            if e.kind() == ErrorKind::UnexpectedEof
-                || e.kind() == ErrorKind::BrokenPipe
-                || e.kind() == ErrorKind::ConnectionReset
-            {
+        Err(error) => {
+            let is_disconnect = matches!(
+                error.kind(),
+                DocumentDBErrorKind::IoError(io_error, _)
+                    if matches!(
+                        io_error.kind(),
+                        ErrorKind::UnexpectedEof
+                            | ErrorKind::BrokenPipe
+                            | ErrorKind::ConnectionReset
+                    )
+            );
+
+            if is_disconnect {
                 Ok(None)
             } else {
-                Err(DocumentDBError::IoError(e, b))
+                Err(error)
             }
         }
-        Err(e) => Err(e),
     }
 }
 

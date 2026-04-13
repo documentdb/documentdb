@@ -12,7 +12,7 @@ use tokio_postgres::error::SqlState;
 
 use crate::{
     context::ConnectionContext,
-    error::{should_log_on_postgres_error, DocumentDBError},
+    error::{should_log_on_postgres_error, DocumentDBError, ErrorKind},
     requests::Request,
     responses,
     telemetry::{event_id::EventId, utils},
@@ -67,8 +67,8 @@ pub fn log_request_failure(
     request: Option<&Request<'_>>,
 ) {
     let operation_name = utils::get_safe_operation_name(request);
-    match error {
-        DocumentDBError::IoError(error, backtrace) => {
+    match error.kind() {
+        ErrorKind::IoError(error, backtrace) => {
             let error_message_loggable = error.to_string();
             log_request_failure_inner(&RequestFailureLogFields {
                 activity_id,
@@ -79,7 +79,7 @@ pub fn log_request_failure(
                 ..Default::default()
             });
         }
-        DocumentDBError::DocumentDBError(code, _msg, error_message_loggable, backtrace) => {
+        ErrorKind::DocumentDBError(code, _msg, error_message_loggable, backtrace) => {
             let error_code = *code as i32;
             log_request_failure_inner(&RequestFailureLogFields {
                 activity_id,
@@ -91,7 +91,7 @@ pub fn log_request_failure(
                 ..Default::default()
             });
         }
-        DocumentDBError::PostgresError(error, backtrace) => {
+        ErrorKind::PostgresError(error, backtrace) => {
             if let Some(dbe) = error.as_db_error() {
                 if should_log_on_postgres_error(dbe.code()) {
                     tracing::error!(
@@ -134,7 +134,7 @@ pub fn log_request_failure(
                 });
             }
         }
-        DocumentDBError::PostgresDocumentDBError(pg_code, msg, backtrace) => {
+        ErrorKind::PostgresDocumentDBError(pg_code, msg, backtrace) => {
             let (sql_state, error_message_loggable): (Option<SqlState>, Option<String>) =
                 match responses::i32_to_postgres_sqlstate(*pg_code) {
                     Ok(state) => {
@@ -172,7 +172,7 @@ pub fn log_request_failure(
                 ..Default::default()
             });
         }
-        DocumentDBError::PoolError(error, backtrace) => {
+        ErrorKind::PoolError(error, backtrace) => {
             let error_message_loggable = match error {
                 deadpool_postgres::PoolError::Backend(e) => {
                     if let Some(dbe) = e.as_db_error() {
@@ -200,7 +200,7 @@ pub fn log_request_failure(
                 ..Default::default()
             });
         }
-        DocumentDBError::CreatePoolError(error, backtrace) => {
+        ErrorKind::CreatePoolError(error, backtrace) => {
             let error_message_loggable = error.to_string();
             log_request_failure_inner(&RequestFailureLogFields {
                 activity_id,
@@ -211,7 +211,7 @@ pub fn log_request_failure(
                 ..Default::default()
             });
         }
-        DocumentDBError::BuildPoolError(error, backtrace) => {
+        ErrorKind::BuildPoolError(error, backtrace) => {
             let error_message_loggable = error.to_string();
             log_request_failure_inner(&RequestFailureLogFields {
                 activity_id,
@@ -222,7 +222,7 @@ pub fn log_request_failure(
                 ..Default::default()
             });
         }
-        DocumentDBError::RawBsonError(error, backtrace) => {
+        ErrorKind::RawBsonError(error, backtrace) => {
             log_request_failure_inner(&RequestFailureLogFields {
                 activity_id,
                 error_source: "RawBsonError",
@@ -232,7 +232,7 @@ pub fn log_request_failure(
                 ..Default::default()
             });
         }
-        DocumentDBError::SSLError(error, backtrace) => {
+        ErrorKind::SSLError(error, backtrace) => {
             let error_message_loggable = error.to_string();
             log_request_failure_inner(&RequestFailureLogFields {
                 activity_id,
@@ -243,7 +243,7 @@ pub fn log_request_failure(
                 ..Default::default()
             });
         }
-        DocumentDBError::SSLErrorStack(error, backtrace) => {
+        ErrorKind::SSLErrorStack(error, backtrace) => {
             let error_message_loggable = error.to_string();
             log_request_failure_inner(&RequestFailureLogFields {
                 activity_id,
@@ -254,7 +254,7 @@ pub fn log_request_failure(
                 ..Default::default()
             });
         }
-        DocumentDBError::ValueAccessError(error, backtrace) => {
+        ErrorKind::ValueAccessError(error, backtrace) => {
             log_request_failure_inner(&RequestFailureLogFields {
                 activity_id,
                 error_source: "ValueAccessError",
