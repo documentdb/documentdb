@@ -847,7 +847,39 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                            Index Cond: (collection.shard_key_value = '25701000'::bigint)
 (13 rows)
 
--- 28. Cleanup original test collection
+-- =============================================================================
+-- 28. enableSortGroupStage must keep the user $sort for order-sensitive
+--     $first/$last accumulators
+-- =============================================================================
+SET documentdb.enableSortGroupStage TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$sort": { "v": 1 } }, { "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                    
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Subquery Scan on agg_stage_1
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate
+               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'l'::text, documentdb_api_internal.bson_expression_get(bsonlast(agg_stage_0.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Sort
+                     Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
+                     Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     ->  Subquery Scan on agg_stage_0
+                           Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+                           ->  Sort
+                                 Output: collection.document, (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson))
+                                 Sort Key: (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+                                 ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+                                       Output: collection.document, bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)
+                                       Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+                                       ->  Bitmap Index Scan on _id_
+                                             Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(21 rows)
+
+RESET documentdb.enableSortGroupStage;
+-- 29. Cleanup original test collection
 SELECT documentdb_api.drop_collection('db', 'fl_grp_test');
  drop_collection 
 -----------------

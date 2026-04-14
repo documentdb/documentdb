@@ -626,3 +626,53 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb_core.enableCollation TO off;
 RESET documentdb.enableNewWithExprAccumulators;
+
+-- =============================================================================
+-- Test 28: enableSortGroupStage drops dead outer $sort for order-insensitive
+--          $group accumulators while preserving results
+-- =============================================================================
+
+SELECT documentdb_api.insert_one('db','sortgroup_safe_test','{ "_id": 1, "g": "A", "seq": 30, "v": 10, "bonus": 2 }');
+SELECT documentdb_api.insert_one('db','sortgroup_safe_test','{ "_id": 2, "g": "A", "seq": 10, "v": 6, "bonus": 4 }');
+SELECT documentdb_api.insert_one('db','sortgroup_safe_test','{ "_id": 3, "g": "B", "seq": 20, "v": 5, "bonus": 1 }');
+SELECT documentdb_api.insert_one('db','sortgroup_safe_test','{ "_id": 4, "g": "B", "seq": 40, "v": 9, "bonus": 3 }');
+
+-- With sortGroup disabled, the user $sort on seq should remain in the plan.
+SET documentdb.enableSortGroupStage TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "adjustedAverage": { "$avg": { "$add": ["$v", "$bonus"] } }, "lo": { "$min": "$v" }, "hi": { "$max": "$v" }, "count": { "$count": {} } } }, { "$sort": { "_id": 1 } } ] }');
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "adjustedAverage": { "$avg": { "$add": ["$v", "$bonus"] } }, "lo": { "$min": "$v" }, "hi": { "$max": "$v" }, "count": { "$count": {} } } }, { "$sort": { "_id": 1 } } ] }');
+
+-- With sortGroup enabled, the dead outer $sort on seq should disappear, but
+-- the grouped results should stay identical.
+SET documentdb.enableSortGroupStage TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "adjustedAverage": { "$avg": { "$add": ["$v", "$bonus"] } }, "lo": { "$min": "$v" }, "hi": { "$max": "$v" }, "count": { "$count": {} } } }, { "$sort": { "_id": 1 } } ] }');
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "adjustedAverage": { "$avg": { "$add": ["$v", "$bonus"] } }, "lo": { "$min": "$v" }, "hi": { "$max": "$v" }, "count": { "$count": {} } } }, { "$sort": { "_id": 1 } } ] }');
+
+-- Test 29: Invalid sort direction with order-insensitive accumulators
+-- Even when the sort could be dropped, an invalid sort spec should still error.
+SET documentdb.enableSortGroupStage TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "myFoobar": "InvalidDirection" } }, { "$group": { "_id": null, "c": { "$max": "$v" } } } ] }');
+
+-- Test 30: Non-$ prefixed path in accumulator should fail in group validation
+SET documentdb.enableSortGroupStage TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": null, "c": { "notAnOperator": "$v" } } } ] }');
+
+-- Test 31: $push is order-sensitive — sort must be preserved
+SET documentdb.enableSortGroupStage TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "vals": { "$push": "$v" } } }, { "$sort": { "_id": 1 } } ] }');
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "vals": { "$push": "$v" } } }, { "$sort": { "_id": 1 } } ] }');
+
+-- Test 32: $stdDevPop is order-insensitive but not in the allowlist — sort must be preserved
+SET documentdb.enableSortGroupStage TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "sd": { "$stdDevPop": "$v" } } }, { "$sort": { "_id": 1 } } ] }');
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "sd": { "$stdDevPop": "$v" } } }, { "$sort": { "_id": 1 } } ] }');
+
+-- Test 33: Mixed accumulators ($sum + $first) — sort must be preserved
+-- When order-insensitive and order-sensitive accumulators appear in the same
+-- $group, the sort cannot be dropped because $first depends on encounter order.
+SET documentdb.enableSortGroupStage TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "firstVal": { "$first": "$v" } } }, { "$sort": { "_id": 1 } } ] }');
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "firstVal": { "$first": "$v" } } }, { "$sort": { "_id": 1 } } ] }');
+
+RESET documentdb.enableSortGroupStage;
+SELECT documentdb_api.drop_collection('db', 'sortgroup_safe_test');

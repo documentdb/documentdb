@@ -247,6 +247,27 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "
 
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjectsGroupColl", "pipeline": [ { "$sort": { "category": 1 } }, { "$group": { "_id": "$year", "shouldFail": { "$mergeObjects": "$category" } } } ] }');
 ERROR:  $mergeObjects needs both inputs to be objects, but the provided input "X" has the type string
+/* enableSortGroupStage should not drop the user sort for order-sensitive
+ * $mergeObjects accumulators. */
+SET documentdb.enableSortGroupStage TO on;
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjectsGroupColl", "pipeline": [ { "$sort": { "category": 1 } }, { "$group": { "_id": "$year", "mergedStats": { "$mergeObjects": "$stats" } } } ] }');
+                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_0
+   Output: documentdb_core.bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4)
+   ->  HashAggregate
+         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0_1.document, '{ "" : "$year" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'mergedStats'::text, documentdb_api_internal.bson_merge_objects(agg_stage_0_1.document, '2147483647'::bigint, '{"{ \"category\" : { \"$numberInt\" : \"1\" } }"}'::documentdb_core.bson[], '{ "" : "$stats" }'::documentdb_core.bson)
+         Group Key: documentdb_api_internal.bson_expression_get(agg_stage_0_1.document, '{ "" : "$year" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+         ->  Subquery Scan on agg_stage_0_1
+               Output: documentdb_api_internal.bson_expression_get(agg_stage_0_1.document, '{ "" : "$year" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), agg_stage_0_1.document
+               ->  Sort
+                     Output: collection.document, (bson_orderby(collection.document, '{ "category" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+                     Sort Key: (bson_orderby(collection.document, '{ "category" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
+                     ->  Seq Scan on documentdb_data.documents_14200 collection
+                           Output: collection.document, bson_orderby(collection.document, '{ "category" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+(12 rows)
+
+RESET documentdb.enableSortGroupStage;
 select documentdb_api.drop_collection('db','mergeObjectsGroupColl');
  drop_collection 
 -----------------

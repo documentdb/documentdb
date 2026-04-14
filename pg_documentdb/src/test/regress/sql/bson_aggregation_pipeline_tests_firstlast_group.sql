@@ -286,5 +286,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 SET documentdb.enableNewWithExprAccumulators TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "f": { "$first": { "$add": ["$v", "$$bonus"] } } } } }], "cursor": {}, "let": { "bonus": 100 } }');
 
--- 28. Cleanup original test collection
+-- =============================================================================
+-- 28. enableSortGroupStage must keep the user $sort for order-sensitive
+--     $first/$last accumulators
+-- =============================================================================
+SET documentdb.enableSortGroupStage TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$sort": { "v": 1 } }, { "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
+RESET documentdb.enableSortGroupStage;
+
+-- 29. Cleanup original test collection
 SELECT documentdb_api.drop_collection('db', 'fl_grp_test');

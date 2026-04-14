@@ -5224,6 +5224,129 @@ HandleSortByCount(const bson_value_t *existingValue, Query *query,
 }
 
 
+/* Returns true if the $sort stage can be dropped before the $group stage. This is
+ * possible if all the accumulators in the $group stage are order-insensitive,
+ * such as $sum, $avg, $max, $min, and $count. Order-sensitive accumulators like
+ * $first and $last require the $sort stage to be preserved.
+ */
+static bool
+CanDropSortBeforeGroup(const bson_value_t *groupValue)
+{
+	bson_iter_t groupIter;
+	BsonValueInitIterator(groupValue, &groupIter);
+
+	while (bson_iter_next(&groupIter))
+	{
+		StringView keyView = bson_iter_key_string_view(&groupIter);
+		if (StringViewEquals(&keyView, &IdFieldStringView))
+		{
+			continue;
+		}
+
+		bson_iter_t accumulatorIterator;
+		if (!BSON_ITER_HOLDS_DOCUMENT(&groupIter) ||
+			!bson_iter_recurse(&groupIter, &accumulatorIterator))
+		{
+			/* HandleGroup will report this error */
+			return false;
+		}
+
+		pgbsonelement accumulatorElement;
+		if (!TryGetSinglePgbsonElementFromBsonIterator(&accumulatorIterator,
+													   &accumulatorElement))
+		{
+			/* HandleGroup will report this error */
+			return false;
+		}
+
+		StringView accumulatorName = {
+			.length = accumulatorElement.pathLength, .string = accumulatorElement.path
+		};
+
+		/*
+		 * For now, only drop the outer `$sort` for accumulators that
+		 * are order-insensitive. These depend only on the grouped
+		 * values, not on encounter order like $first/$last.
+		 * TODO(4/10/2026): Add support for other order-insensitive accumulators in the future.
+		 */
+		if (!(StringViewEqualsCString(&accumulatorName, "$avg") ||
+			  StringViewEqualsCString(&accumulatorName, "$sum") ||
+			  StringViewEqualsCString(&accumulatorName, "$max") ||
+			  StringViewEqualsCString(&accumulatorName, "$min") ||
+			  StringViewEqualsCString(&accumulatorName, "$count")))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+
+static void
+ValidateSortSpec(const bson_value_t *sortValue)
+{
+	if (sortValue->value_type != BSON_TYPE_DOCUMENT)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40236),
+						errmsg(
+							"The sort specification must be a document.")));
+	}
+
+	bson_iter_t sortIter;
+	BsonValueInitIterator(sortValue, &sortIter);
+
+	int naturalCount = 0;
+	int nonNaturalCount = 0;
+
+	while (bson_iter_next(&sortIter))
+	{
+		pgbsonelement element;
+		BsonIterToPgbsonElement(&sortIter, &element);
+
+		if (strcmp(element.path, "$natural") == 0)
+		{
+			if (!BsonValueIsNumber(&element.bsonValue))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg("Sort direction value %s is not valid",
+									   BsonValueToJsonForLogging(
+										   &element.bsonValue))));
+			}
+
+			int64_t naturalValue = BsonValueAsInt64(&element.bsonValue);
+			if (naturalValue != 1 && naturalValue != -1)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"$natural sort cannot be set to a value other than -1 or 1.")));
+			}
+			naturalCount++;
+		}
+		else
+		{
+			nonNaturalCount++;
+			pgbson *sortDoc = PgbsonElementToPgbson(&element);
+			ValidateOrderbyExpressionAndGetIsAscending(sortDoc);
+		}
+	}
+
+	if (naturalCount > 0 && nonNaturalCount > 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg(
+							"$natural sort cannot be set to a value other than -1 or 1.")));
+	}
+
+	if (naturalCount == 0 && nonNaturalCount == 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION15976),
+						errmsg(
+							"The $sort stage requires specifying at least one sorting key to proceed")));
+	}
+}
+
+
 static Query *
 HandleSortGroup(const bson_value_t *existingValue, Query *query,
 				AggregationPipelineBuildContext *context)
@@ -5258,12 +5381,22 @@ HandleSortGroup(const bson_value_t *existingValue, Query *query,
 							"Invalid specification for $sortGroup. Both 'sort' and 'group' fields are required.")));
 	}
 
-	query = HandleSort(&sortValue, query, context);
-	if (context->requiresSubQuery || context->requiresSubQueryAfterProject)
+	if (!CanDropSortBeforeGroup(&groupValue))
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-						errmsg(
-							"Unexpected error - $sort stage demands a subquery when it should not.")));
+		query = HandleSort(&sortValue, query, context);
+		if (context->requiresSubQuery || context->requiresSubQueryAfterProject)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"Unexpected error - $sort stage demands a subquery when it should not.")));
+		}
+	}
+	else
+	{
+		/* HandleSort validates internally; when dropping the sort we must
+		 * still validate the spec to catch bad inputs (empty spec, mixed
+		 * $natural and non-$natural keys, invalid direction values, etc). */
+		ValidateSortSpec(&sortValue);
 	}
 
 	return HandleGroup(&groupValue, query, context);
