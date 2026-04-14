@@ -37,7 +37,6 @@ pub enum ErrorKind {
     RawBsonError(bson::raw::Error, Backtrace),
     SSLError(openssl::ssl::Error, Backtrace),
     SSLErrorStack(ErrorStack, Backtrace),
-    ValueAccessError(ValueAccessError, Backtrace),
 }
 
 pub struct DocumentDBError(Box<ErrorKind>);
@@ -280,12 +279,6 @@ impl From<openssl::ssl::Error> for DocumentDBError {
     }
 }
 
-impl From<ValueAccessError> for DocumentDBError {
-    fn from(error: ValueAccessError) -> Self {
-        Self::new(ErrorKind::ValueAccessError(error, Backtrace::capture()))
-    }
-}
-
 #[expect(
     clippy::use_debug,
     reason = "debug formatting for Display implementation"
@@ -366,9 +359,6 @@ fn fmt_error_kind_pii_safe(
         }
         ErrorKind::SSLErrorStack(e, _) => {
             write!(f, "TLS/SSL error: {e}")
-        }
-        ErrorKind::ValueAccessError(e, _) => {
-            write!(f, "value access error: {e}")
         }
     }
 }

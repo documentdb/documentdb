@@ -254,15 +254,5 @@ pub fn log_request_failure(
                 ..Default::default()
             });
         }
-        ErrorKind::ValueAccessError(error, backtrace) => {
-            log_request_failure_inner(&RequestFailureLogFields {
-                activity_id,
-                error_source: "ValueAccessError",
-                operation_name: &operation_name,
-                backtrace: Some(backtrace),
-                error_message_loggable: Some(error.to_string().as_str()),
-                ..Default::default()
-            });
-        }
     }
 }

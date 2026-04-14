@@ -6,7 +6,7 @@
  *-------------------------------------------------------------------------
  */
 
-use bson::{raw::ValueAccessErrorKind, RawDocumentBuf};
+use bson::RawDocumentBuf;
 use deadpool_postgres::PoolError;
 
 use crate::{
@@ -104,39 +104,6 @@ impl CommandError {
             ErrorKind::DocumentDBError(error_code, msg, _, _) => {
                 Self::new(*error_code, msg.clone())
             }
-            ErrorKind::ValueAccessError(error, _) => match &error.kind {
-                ValueAccessErrorKind::UnexpectedType {
-                    actual, expected, ..
-                } => {
-                    tracing::error!(
-                        activity_id = activity_id,
-                        "Type mismatch error: expected {expected:?} but got {actual:?}"
-                    );
-                    Self::new(
-                        ErrorCode::TypeMismatch,
-                        format!(
-                            "Expected {:?} but got {:?}, at key {}",
-                            expected,
-                            actual,
-                            error.key()
-                        ),
-                    )
-                }
-                ValueAccessErrorKind::InvalidBson(_) => {
-                    let error_message = "Value is not a valid BSON";
-                    tracing::error!(activity_id = activity_id, "{error_message}");
-                    Self::new(ErrorCode::BadValue, error_message.to_owned())
-                }
-                ValueAccessErrorKind::NotPresent => {
-                    let error_message = "Value is not present";
-                    tracing::error!(activity_id = activity_id, "{error_message}");
-                    Self::new(ErrorCode::BadValue, error_message.to_owned())
-                }
-                _ => {
-                    tracing::error!(activity_id = activity_id, "Hit generic ValueAccessError.");
-                    Self::new(ErrorCode::BadValue, "Unexpected value".to_owned())
-                }
-            },
             ErrorKind::IoError(_, _)
             | ErrorKind::RawBsonError(_, _)
             | ErrorKind::PoolError(_, _)
