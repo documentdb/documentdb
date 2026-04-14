@@ -593,18 +593,1139 @@ FROM documentdb_api_internal.documentdb_rum_page_get_entries(
 ) entry;
 
 
--- ===== Section 15: Query with matching collation (index pushdown not yet supported) ======
-BEGIN;
-SET LOCAL enable_seqscan TO OFF;
-SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_numord_true", "filter": { "item": { "$eq": "item1" } }, "collation": { "locale": "en", "numericOrdering": true } }');
-EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_numord_true", "filter": { "item": { "$eq": "item1" } }, "collation": { "locale": "en", "numericOrdering": true } }');
-ROLLBACK;
+-- ===== Section 15: Ordered scans with collation — $not comparison operators ======
+-- Category A: Overlapping intervals, bound precision, edge cases
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+SET enable_seqscan TO OFF;
 
-BEGIN;
-SET LOCAL enable_seqscan TO OFF;
-SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_compound_numord_true", "filter": { "item": { "$eq": "item1" } }, "collation": { "locale": "en", "numericOrdering": true } }');
-EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_compound_numord_true", "filter": { "item": { "$eq": "item1" } }, "collation": { "locale": "en", "numericOrdering": true } }');
-ROLLBACK;
+-- Setup: collection with dense data spanning the full alphabet, plus mixed types.
+-- This gives us plenty of rows in every interval so we can validate that the
+-- ordered scan correctly includes/excludes documents across disjoint bounds.
+-- Strings: apple(x3 cases), apricot, avocado, banana(x3), blueberry, cantaloupe,
+--          cherry(x3), cranberry, date(x2), elderberry, fig, grape, honeydew,
+--          kiwi, lemon, mango
+-- Non-string: 42, true, null, missing-field
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 1, "a": "apple"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 2, "a": "Apple"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 3, "a": "APPLE"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 4, "a": "apricot"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 5, "a": "avocado"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 6, "a": "banana"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 7, "a": "Banana"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 8, "a": "BANANA"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 9, "a": "blueberry"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 10, "a": "cantaloupe"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 11, "a": "cherry"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 12, "a": "Cherry"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 13, "a": "CHERRY"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 14, "a": "cranberry"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 15, "a": "date"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 16, "a": "Date"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 17, "a": "elderberry"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 18, "a": "fig"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 19, "a": "grape"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 20, "a": "honeydew"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 21, "a": "kiwi"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 22, "a": "lemon"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 23, "a": "mango"}', NULL);
+-- Non-string types: should appear in the non-string bound of $not operators
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 24, "a": 42}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 25, "a": true}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 26, "a": null}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_not_intervals', '{"_id": 27}', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_not_intervals",
+    "indexes": [{
+      "key": { "a": 1 },
+      "name": "idx_intervals_en_strength1",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+-- Verify index creation
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{ "listIndexes": "ord_not_intervals" }');
+
+-- ===== A1: Overlapping intervals with dense excluded data =====
+-- $not $gt "cherry" → [MinKey, "cherry"] ∪ (non-string types, MaxKey]
+-- Excluded intermediate range: strings > "cherry" (cranberry, date, elderberry, fig, grape, honeydew, kiwi, lemon, mango)
+-- Should return: apple(x3), apricot, avocado, banana(x3), blueberry, cantaloupe, cherry(x3), 42, true, null, missing = 17 docs
+-- Should NOT return: cranberry, date(x2), elderberry, fig, grape, honeydew, kiwi, lemon, mango = 10 docs
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- ===== A2: Inclusive vs exclusive boundary — $not $gt (≤) vs $not $gte (<) =====
+-- $not $gt "cherry" → a ≤ "cherry" (inclusive of cherry)
+-- $not $gte "cherry" → a < "cherry" (exclusive of cherry)
+-- The ONLY difference should be the 3 cherry docs (ids 11,12,13)
+
+-- A2a: $not $gt "cherry" — cherry IS included (≤)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- A2b: $not $gte "cherry" — cherry is NOT included (<)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gte": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gte": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- A2c: $not $lt "cherry" — cherry IS included (≥)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$lt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- A2d: $not $lte "cherry" — cherry is NOT included (>)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$lte": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$lte": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- ===== A3: Boundary at empty string =====
+-- $not $gt "" — everything ≤ "" plus non-strings.
+-- At strength-1, "" is the minimum string, so all strings are ≥ "".
+-- $not $gt "" means a ≤ "" — no regular string matches, only non-strings + null + missing
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- $not $lt "" — everything ≥ "" plus non-strings.
+-- All strings are ≥ "" so all strings match; plus non-strings
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$lt": "" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- ===== A4: All documents match — boundary beyond all data =====
+-- $not $gt "zzzzz" — everything ≤ "zzzzz" — all strings are below "zzzzz" so all match
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "zzzzz" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "zzzzz" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- $not $lt "a" — everything ≥ "a" — only strings starting at "a" or later
+-- Should exclude nothing because even "apple" ≥ "a" at strength-1
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$lt": "a" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- ===== A5: No string documents match — boundary below all data =====
+-- $not $lt "zzzzz" — everything ≥ "zzzzz" plus non-strings.
+-- No string in our data is ≥ "zzzzz", so only non-string types match
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$lt": "zzzzz" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$lt": "zzzzz" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- ===== A6: Overlapping negations on same field — narrow band =====
+-- $not $gt "cherry" AND $not $lt "banana" → banana ≤ a ≤ cherry (collation-wise)
+-- Should return: banana(x3), blueberry, cantaloupe, cherry(x3) = 8 string docs + non-strings
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "$and": [ { "a": { "$not": { "$gt": "cherry" } } }, { "a": { "$not": { "$lt": "banana" } } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "$and": [ { "a": { "$not": { "$gt": "cherry" } } }, { "a": { "$not": { "$lt": "banana" } } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- A6b: Exclusive band — $not $gte "cherry" AND $not $lte "banana" → banana < a < cherry
+-- Should return: blueberry, cantaloupe = 2 string docs + non-strings
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "$and": [ { "a": { "$not": { "$gte": "cherry" } } }, { "a": { "$not": { "$lte": "banana" } } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- A6c: Very narrow band — $not $gt "cantaloupe" AND $not $lt "cantaloupe" → exactly "cantaloupe"
+-- Should return: cantaloupe (id 10) + non-strings
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "$and": [ { "a": { "$not": { "$gt": "cantaloupe" } } }, { "a": { "$not": { "$lt": "cantaloupe" } } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- A6d: Impossible band — $not $gt "banana" AND $not $lt "cherry" → banana ≥ a AND a ≥ cherry
+-- With banana < cherry collation-wise, no string can satisfy both → only non-strings
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "$and": [ { "a": { "$not": { "$gt": "banana" } } }, { "a": { "$not": { "$lt": "cherry" } } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- ===== A7: Dense data in the excluded middle =====
+-- $not $gt "avocado" — everything ≤ "avocado"
+-- Excluded: banana(x3), blueberry, cantaloupe, cherry(x3), cranberry, date(x2),
+--           elderberry, fig, grape, honeydew, kiwi, lemon, mango = 18 docs excluded
+-- Included: apple(x3), apricot, avocado = 5 strings + non-strings
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "avocado" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "avocado" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- $not $lt "lemon" — everything ≥ "lemon"
+-- Excluded: apple(x3), apricot, avocado, banana(x3), blueberry, cantaloupe,
+--           cherry(x3), cranberry, date(x2), elderberry, fig, grape, honeydew, kiwi = 21 docs excluded
+-- Included: lemon, mango = 2 strings + non-strings
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$lt": "lemon" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- ===== A8: Case-insensitivity proof at the boundary =====
+-- At strength-1: "CHERRY" = "cherry" = "Cherry"
+-- $not $gt "CHERRY" should produce same results as $not $gt "cherry"
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "CHERRY" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- $not $lte "BANANA" should produce same results as $not $lte "banana"
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$lte": "BANANA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- ===== A9: $ne with collation ordered scan =====
+-- $ne "cherry" — everything except cherry (all 3 case variants are excluded at strength-1)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$ne": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$ne": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- $ne "banana" — everything except banana (all 3 case variants excluded)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$ne": "banana" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- ===== A10: Mismatched collation — should fall back to _id index =====
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 2 } }')
+$cmd$);
+
+-- No collation on query — should also fall back
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 } }')
+$cmd$);
+
+-- ===== Section 16: Composite index (a, b) — positive on first key, negation on second =====
+-- Setup: collection with two string fields, dense data across both dimensions
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 1, "a": "apple", "b": "red"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 2, "a": "apple", "b": "green"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 3, "a": "apple", "b": "yellow"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 4, "a": "banana", "b": "red"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 5, "a": "banana", "b": "green"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 6, "a": "banana", "b": "yellow"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 7, "a": "cherry", "b": "red"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 8, "a": "cherry", "b": "green"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 9, "a": "cherry", "b": "yellow"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 10, "a": "cherry", "b": "blue"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 11, "a": "date", "b": "red"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 12, "a": "date", "b": "green"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 13, "a": "elderberry", "b": "red"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 14, "a": "elderberry", "b": "purple"}', NULL);
+-- Mixed-case variants: at strength-1 these equal their lowercase counterparts,
+-- at strength-3 they are distinct values
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 15, "a": "Cherry", "b": "Red"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 16, "a": "Cherry", "b": "Green"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 17, "a": "CHERRY", "b": "RED"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 18, "a": "CHERRY", "b": "YELLOW"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 19, "a": "Banana", "b": "Red"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 20, "a": "APPLE", "b": "GREEN"}', NULL);
+-- Non-matching types to test bound behavior
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 21, "a": "cherry", "b": 99}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 22, "a": "cherry", "b": null}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 23, "a": 42, "b": "red"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_comp_pos_neg', '{"_id": 24, "a": "cherry"}', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_comp_pos_neg",
+    "indexes": [{
+      "key": { "a": 1, "b": 1 },
+      "name": "idx_comp_ab_en_strength1",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{ "listIndexes": "ord_comp_pos_neg" }');
+
+-- B1: a = "cherry" AND b: {$not: {$gt: "red"}}
+-- Equality on first key, negation on second. b ≤ "red" at strength-1
+-- At strength-1 "cherry"="Cherry"="CHERRY", "red"="Red"="RED"
+-- cherry-like docs: 7,8,9,10,15,16,17,18,21,22,24
+-- b ≤ "red": red/Red/RED(7,15,17), green/Green(8,16), blue(10), 99(21), null(22), missing(24)
+-- b > "red": yellow/YELLOW(9,18) excluded
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": "cherry", "b": { "$not": { "$gt": "red" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": "cherry", "b": { "$not": { "$gt": "red" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- B2: a = "cherry" AND b: {$not: {$lt: "red"}}
+-- b ≥ "red" at strength-1.
+-- cherry-like docs with b ≥ "red": red/Red/RED(7,15,17), yellow/YELLOW(9,18) + non-strings: 99(21), null(22), missing(24)
+-- cherry-like docs with b < "red": green/Green(8,16), blue(10) excluded
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": "cherry", "b": { "$not": { "$lt": "red" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- B3: a = "cherry" AND b: {$ne: "green"}
+-- All cherry-like docs except b = "green"/"Green" at strength-1
+-- Excluded: green(8), Green(16)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": "cherry", "b": { "$ne": "green" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- B4: a: {$gt: "cherry"} AND b: {$not: {$gt: "red"}}
+-- Range on first key (date, elderberry), negation on second key
+-- date+green(12), elderberry+purple(14) have b ≤ "red"
+-- date+red(11), elderberry+red(13) also have b ≤ "red"
+-- Nothing excluded since all b values for date/elderberry are ≤ "red"
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$gt": "cherry" }, "b": { "$not": { "$gt": "red" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$gt": "cherry" }, "b": { "$not": { "$gt": "red" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- B5: a: {$gte: "cherry"} AND b: {$not: {$lte: "green"}}
+-- a ≥ "cherry": cherry-like(7-10,15-18,21,22,24), date(11,12), elderberry(13,14)
+-- b > "green": red/Red/RED(7,11,13,15,17), yellow/YELLOW(9,18), purple(14) + non-string b(21,22,24)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$gte": "cherry" }, "b": { "$not": { "$lte": "green" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- B6: a: {$lt: "cherry"} AND b: {$not: {$gte: "red"}}
+-- a < "cherry": apple(1-3,20), banana(4-6,19)
+-- b < "red": green/GREEN(2,5,20); red/Red(1,4,19) and yellow(3,6) excluded
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$lt": "cherry" }, "b": { "$not": { "$gte": "red" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- B7: a: {$gt: "banana", $lt: "elderberry"} AND b: {$not: {$gt: "green"}}
+-- a range: cherry-like(7-10,15-18,21,22,24), date(11,12)
+-- b ≤ "green": green/Green(8,12,16), blue(10) + non-string b(21,22,24)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$gt": "banana", "$lt": "elderberry" }, "b": { "$not": { "$gt": "green" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$gt": "banana", "$lt": "elderberry" }, "b": { "$not": { "$gt": "green" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+
+-- ===== Section 17: Composite index (a, b) — negation on first key, positive on second =====
+-- Reuse ord_comp_pos_neg collection and index
+
+-- C1: a: {$not: {$gt: "cherry"}} AND b = "red"
+-- a ≤ "cherry" (or non-string a) AND b = "red" at strength-1
+-- Matches: apple+red(1), banana+red(4), cherry+red(7), Cherry+Red(15),
+-- CHERRY+RED(17), Banana+Red(19), 42+red(23)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": "red" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": "red" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- C2: a: {$not: {$gt: "cherry"}} AND b: {$gt: "green"}
+-- a ≤ "cherry" (or non-string a) AND b > "green" (positive op, strings only)
+-- red/Red/RED(1,4,7,15,17,19,23), yellow/YELLOW(3,6,9,18) = 11 docs
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$gt": "green" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$gt": "green" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- C3: a: {$not: {$lt: "cherry"}} AND b = "green"
+-- a ≥ "cherry": cherry+green(8), Cherry+Green(16), date+green(12)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$lt": "cherry" } }, "b": "green" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- C4: a: {$not: {$lte: "banana"}} AND b: {$lt: "red"}
+-- a > "banana" (or non-string a): cherry-like, date, elderberry, 42(23)
+-- b < "red" (positive — only string b): green/Green(8,12,16), blue(10), purple(14)
+-- 42+red(23) excluded because b="red" is NOT < "red"
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$lte": "banana" } }, "b": { "$lt": "red" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$lte": "banana" } }, "b": { "$lt": "red" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- C5: a: {$ne: "cherry"} AND b: {$gte: "red"}
+-- All docs except a="cherry" at strength-1, with b ≥ "red" (positive, strings only)
+-- apple+red(1), apple+yellow(3), banana+red(4), banana+yellow(6),
+-- date+red(11), elderberry+red(13), Banana+Red(19), 42+red(23)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$ne": "cherry" }, "b": { "$gte": "red" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- C6: a: {$not: {$gt: "cherry"}} AND b: {$gt: "green", $lt: "yellow"}
+-- a ≤ "cherry" (or non-string) AND green < b < yellow → b in (purple, red) at strength-1
+-- red/Red/RED(1,4,7,15,17,19), 42+red(23) = 7 docs
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$gt": "green", "$lt": "yellow" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+
+-- ===== Section 18: Composite index (a, b) — negation on both keys =====
+-- Reuse ord_comp_pos_neg collection and index
+
+-- D1: a: {$not: {$gt: "cherry"}} AND b: {$not: {$gt: "green"}}
+-- a ≤ "cherry" (or non-string a) AND b ≤ "green" (or non-string b)
+-- green/Green/GREEN(2,5,8,16,20), blue(10) + non-string b: 99(21), null(22), missing(24)
+-- 42+red(23) excluded because b="red" > "green"
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$gt": "green" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$gt": "green" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- D2: a: {$not: {$lt: "cherry"}} AND b: {$not: {$lt: "red"}}
+-- a ≥ "cherry" (or non-string a) AND b ≥ "red" (or non-string b)
+-- red/Red/RED(7,11,13,15,17), yellow/YELLOW(9,18) + non-string b(21,22,24)
+-- + non-string a: 42+red(23)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$lt": "cherry" } }, "b": { "$not": { "$lt": "red" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$lt": "cherry" } }, "b": { "$not": { "$lt": "red" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- D3: a: {$not: {$gte: "cherry"}} AND b: {$not: {$lte: "green"}}
+-- a < "cherry" (or non-string a) AND b > "green" (or non-string b)
+-- red/Red(1,4,19), yellow(3,6) + 42+red(23) = 6 docs
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gte": "cherry" } }, "b": { "$not": { "$lte": "green" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- D4: a: {$ne: "cherry"} AND b: {$ne: "red"}
+-- Excludes a="cherry" at strength-1 (ids 7-10,15-18,21,22,24) AND b="red" (1,4,11,13,19,23)
+-- Remaining: green/GREEN(2,5,20), yellow(3,6), date+green(12), elderberry+purple(14)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$ne": "cherry" }, "b": { "$ne": "red" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$ne": "cherry" }, "b": { "$ne": "red" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- D5: a: {$not: {$gt: "banana"}} AND b: {$not: {$lt: "red"}}
+-- a ≤ "banana" (or non-string a) AND b ≥ "red" (or non-string b)
+-- red/Red(1,4,19), yellow(3,6) + 42+red(23) = 6 docs
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "banana" } }, "b": { "$not": { "$lt": "red" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- D6: Mixed — a: {$not: {$gt: "cherry"}}, b: {$not: {$lt: "green"}}, a: {$gt: "banana"}
+-- Effectively: "banana" < a ≤ "cherry" AND b ≥ "green" (or non-string b)
+-- Only cherry-like docs qualify for a range (cantaloupe would match if it existed)
+-- b ≥ "green": green/Green(8,16), red/Red/RED(7,15,17), yellow/YELLOW(9,18) + non-string b(21,22,24)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" }, "$gt": "banana" }, "b": { "$not": { "$lt": "green" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" }, "$gt": "banana" }, "b": { "$not": { "$lt": "green" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+
+-- ===== Section 19: Collation case-flavor variations on composite index =====
+-- Reuse ord_comp_pos_neg collection and idx_comp_ab_en_strength1 (strength-1)
+-- At strength-1: "CHERRY" = "cherry" = "Cherry", "RED" = "red" = "Red"
+-- These tests prove that UPPERCASE/MixedCase filter values produce identical results
+-- to their lowercase equivalents, exercising the collation comparison path.
+
+-- E1: UPPERCASE filter values — same result as B1 (a="cherry", b $not $gt "red")
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": "CHERRY", "b": { "$not": { "$gt": "RED" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- E2: MixedCase filter values — same result as B1
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": "Cherry", "b": { "$not": { "$gt": "Red" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- E3: UPPERCASE negation on first key — same result as C1 (a $not $gt "cherry", b="red")
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "CHERRY" } }, "b": "RED" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- E4: MixedCase both-negation — same result as D1 (a $not $gt "cherry", b $not $gt "green")
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "Cherry" } }, "b": { "$not": { "$gt": "Green" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- E5: $ne with UPPERCASE — same result as D4 (a $ne "cherry", b $ne "red")
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$ne": "CHERRY" }, "b": { "$ne": "RED" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- E6: Vinod's example with ALL CAPS — same result as D6
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "CHERRY" }, "$gt": "BANANA" }, "b": { "$not": { "$lt": "GREEN" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+
+-- ===== Section 20: Strength-3 (case-sensitive) — different results than strength-1 =====
+-- Create a second composite index with strength-3 (case-sensitive) collation.
+-- At strength-3: "cherry" ≠ "Cherry", "red" ≠ "Red"
+-- Collation order at strength-3: "cherry" < "Cherry" < "CHERRY" (lowercase first)
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_comp_pos_neg",
+    "indexes": [{
+      "key": { "a": 1, "b": 1 },
+      "name": "idx_comp_ab_en_strength3",
+      "collation": { "locale": "en", "strength": 3 }
+    }]
+  }',
+  TRUE
+);
+
+-- F1: a = "cherry" with strength-3 — only matches lowercase "cherry"
+-- cherry docs at strength-3: 7,8,9,10,21,22,24 (not Cherry/CHERRY)
+-- b $not $gt "red": b ≤ "red" or non-string → excludes yellow(9)
+-- Result: 7,8,10,21,22,24 (6 rows)
+-- Contrast with B1 at strength-1 which also matched Cherry/CHERRY docs
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": "cherry", "b": { "$not": { "$gt": "red" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": "cherry", "b": { "$not": { "$gt": "red" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }')
+$cmd$);
+
+-- F2: a = "Cherry" with strength-3 — matches Cherry docs (ids 15,16)
+-- b $not $gt "red" at strength-3: "Red"(15) > "red" (lowercase first) → excluded
+-- "Green"(16) < "red" → included. Result: only id 16 (1 row)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": "Cherry", "b": { "$not": { "$gt": "red" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }');
+
+-- F3: $not $gt "cherry" at strength-3 — case-sensitive ordering matters
+-- At strength-3: "cherry" < "Cherry" < "CHERRY" (lowercase first)
+-- a ≤ "cherry": lowercase apple/banana/cherry + APPLE(20), Banana(19), plus 42(23)
+-- b = "red" at strength-3: only exact lowercase "red" → ids 1,4,7,23
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": "red" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }');
+
+-- F4: $not $gt "Cherry" at strength-3 — wider a range than F3 but same result
+-- a ≤ "Cherry" includes lowercase cherry too (since "cherry" < "Cherry")
+-- Cherry docs (15,16) have b="Red"/"Green" ≠ "red" at strength-3 → excluded by b
+-- Result: apple+red(1), banana+red(4), cherry+red(7), 42+red(23) — same as F3
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "Cherry" } }, "b": "red" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }');
+
+-- F5: $ne "cherry" at strength-3 — only excludes exact lowercase "cherry"
+-- $ne "cherry" excludes only lowercase cherry: 7,8,9,10,21,22,24 (not Cherry/CHERRY)
+-- $ne "red" excludes only lowercase red: 1,4,11,13,23
+-- Remaining: 2,3,5,6,12,14,15,16,17,18,19,20 (12 rows, includes Cherry/CHERRY/Banana/APPLE)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$ne": "cherry" }, "b": { "$ne": "red" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }');
+
+-- F6: Both negation at strength-3 — a $not $gt "cherry", b $not $gt "green"
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$gt": "green" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$gt": "green" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }')
+$cmd$);
+
+RESET documentdb.max_non_ordered_term_scan_threshold;
+RESET documentdb.enableExtendedExplainPlans;
+RESET enable_seqscan;
+
+
+-- =============================================================================
+-- Section 21: Disjoint bound merging with dense intermediate data
+-- =============================================================================
+-- A $not comparison operator (e.g. $not $gt "cherry") generates TWO disjoint
+-- index bounds that the ordered scan must merge:
+--   Bound A  — strings satisfying the negation  (e.g. [MinKey, "cherry"])
+--   Bound B  — non-string BSON types            (numbers, bools, null, missing)
+-- Strings that violate the negation sit in the EXCLUDED intermediate range
+-- between the two bounds. The ordered scan must skip them all.
+--
+-- This section uses a 40-doc collection with 25 strings spread across the
+-- alphabet and 15 non-string values.  We slide the negation boundary from
+-- near the start to near the end of the string space, producing gaps of
+-- varying width, and verify the scan merges both bounds correctly.
+
+-- Data: 25 strings (ids 1-25), 15 non-strings (ids 26-40)
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 1,  "a": "aardvark"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 2,  "a": "apple"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 3,  "a": "Apple"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 4,  "a": "APPLE"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 5,  "a": "apricot"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 6,  "a": "avocado"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 7,  "a": "banana"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 8,  "a": "Banana"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 9,  "a": "blueberry"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 10, "a": "cantaloupe"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 11, "a": "cherry"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 12, "a": "Cherry"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 13, "a": "CHERRY"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 14, "a": "cranberry"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 15, "a": "date"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 16, "a": "elderberry"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 17, "a": "fig"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 18, "a": "grape"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 19, "a": "honeydew"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 20, "a": "kiwi"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 21, "a": "lemon"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 22, "a": "mango"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 23, "a": "nectarine"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 24, "a": "papaya"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 25, "a": "zucchini"}', NULL);
+-- Non-string types: integers, floats, negative, zero, booleans, nulls, missing
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 26, "a": 1}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 27, "a": 2}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 28, "a": 42}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 29, "a": 100}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 30, "a": 999}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 31, "a": -5}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 32, "a": 3.14}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 33, "a": 0}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 34, "a": true}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 35, "a": false}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 36, "a": null}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 37, "a": null}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 38}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 39}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_disjoint_dense', '{"_id": 40, "a": []}', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_disjoint_dense",
+    "indexes": [{
+      "key": { "a": 1 },
+      "name": "idx_disjoint_en_strength1",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+SET enable_seqscan TO OFF;
+
+-- ---------------------------------------------------------------------------
+-- 21a: $not $gt "cherry" — mid-alphabet boundary
+-- ---------------------------------------------------------------------------
+-- Bound A (strings ≤ "cherry" at strength-1):
+--   aardvark(1), apple(2), Apple(3), APPLE(4), apricot(5), avocado(6),
+--   banana(7), Banana(8), blueberry(9), cantaloupe(10),
+--   cherry(11), Cherry(12), CHERRY(13)                             = 13 strings
+-- Bound B (non-strings):
+--   1(26), 2(27), 42(28), 100(29), 999(30), -5(31), 3.14(32), 0(33),
+--   true(34), false(35), null(36), null(37), missing(38), missing(39), [](40)
+--                                                                  = 15 non-strings
+-- EXCLUDED intermediate (strings > "cherry"):
+--   cranberry(14), date(15), elderberry(16), fig(17), grape(18),
+--   honeydew(19), kiwi(20), lemon(21), mango(22), nectarine(23),
+--   papaya(24), zucchini(25)                                       = 12 strings
+-- Total returned: 28.  Excluded: 12.
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- ---------------------------------------------------------------------------
+-- 21b: $not $gt "avocado" — early boundary, HUGE excluded middle
+-- ---------------------------------------------------------------------------
+-- Bound A (strings ≤ "avocado" at strength-1):
+--   aardvark(1), apple(2), Apple(3), APPLE(4), apricot(5), avocado(6)
+--                                                                  = 6 strings
+-- Bound B (non-strings):                                           = 15
+-- EXCLUDED intermediate (strings > "avocado"):
+--   banana(7), Banana(8), blueberry(9), cantaloupe(10),
+--   cherry(11), Cherry(12), CHERRY(13), cranberry(14), date(15),
+--   elderberry(16), fig(17), grape(18), honeydew(19), kiwi(20),
+--   lemon(21), mango(22), nectarine(23), papaya(24), zucchini(25)
+--                                                                  = 19 strings
+-- Total returned: 21.  Excluded: 19.  Gap is larger than the match set.
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gt": "avocado" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gt": "avocado" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- ---------------------------------------------------------------------------
+-- 21c: $not $gt "aardvark" — boundary at first value, nearly ALL excluded
+-- ---------------------------------------------------------------------------
+-- Bound A (strings ≤ "aardvark"):  aardvark(1) only                = 1 string
+-- Bound B (non-strings):                                            = 15
+-- EXCLUDED: 24 strings (everything from apple to zucchini)
+-- Total returned: 16.  Excluded: 24.  Scan must skip the vast majority.
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gt": "aardvark" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gt": "aardvark" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- ---------------------------------------------------------------------------
+-- 21d: $not $lt "lemon" — late boundary, flips which bound is large
+-- ---------------------------------------------------------------------------
+-- Bound A (strings ≥ "lemon" at strength-1):
+--   lemon(21), mango(22), nectarine(23), papaya(24), zucchini(25)  = 5 strings
+-- Bound B (non-strings):                                            = 15
+-- EXCLUDED (strings < "lemon"):
+--   aardvark(1), apple(2), Apple(3), APPLE(4), apricot(5), avocado(6),
+--   banana(7), Banana(8), blueberry(9), cantaloupe(10),
+--   cherry(11), Cherry(12), CHERRY(13), cranberry(14), date(15),
+--   elderberry(16), fig(17), grape(18), honeydew(19), kiwi(20)
+--                                                                   = 20 strings
+-- Total returned: 20.  Excluded: 20.  Half the collection skipped.
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$lt": "lemon" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$lt": "lemon" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- ---------------------------------------------------------------------------
+-- 21e: $not $lt "zucchini" — boundary at last value, tiny excluded set
+-- ---------------------------------------------------------------------------
+-- Bound A (strings ≥ "zucchini"):  zucchini(25) only               = 1 string
+-- Bound B (non-strings):                                            = 15
+-- EXCLUDED: 24 strings.  Mirror of 21c.
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$lt": "zucchini" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- ---------------------------------------------------------------------------
+-- 21f: $ne "cherry" — THREE disjoint string intervals + non-strings
+-- ---------------------------------------------------------------------------
+-- $ne creates [MinKey, "cherry") ∪ ("cherry", MaxKey] ∪ non-strings.
+-- At strength-1 "cherry"="Cherry"="CHERRY", so all three cherry variants
+-- are excluded, leaving three separate string intervals.
+-- Bound A (strings < "cherry"):
+--   aardvark(1), apple(2), Apple(3), APPLE(4), apricot(5), avocado(6),
+--   banana(7), Banana(8), blueberry(9), cantaloupe(10)              = 10
+-- Bound B (strings > "cherry"):
+--   cranberry(14), date(15), elderberry(16), fig(17), grape(18),
+--   honeydew(19), kiwi(20), lemon(21), mango(22), nectarine(23),
+--   papaya(24), zucchini(25)                                        = 12
+-- Bound C (non-strings):                                            = 15
+-- EXCLUDED: cherry(11), Cherry(12), CHERRY(13)                      = 3
+-- Total returned: 37.  Excluded: 3.
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$ne": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$ne": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- ---------------------------------------------------------------------------
+-- 21g: $ne "cherry" at strength-3 — only lowercase "cherry" excluded
+-- ---------------------------------------------------------------------------
+-- At strength-3: "cherry" ≠ "Cherry" ≠ "CHERRY".
+-- EXCLUDED: cherry(11) only = 1.
+-- Total returned: 39.
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$ne": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }');
+
+-- ---------------------------------------------------------------------------
+-- 21h: Combined negations creating narrow band inside dense data
+-- ---------------------------------------------------------------------------
+-- $not $gt "grape" AND $not $lt "cantaloupe"  →  cantaloupe ≤ a ≤ grape
+-- Matching strings:
+--   cantaloupe(10), cherry(11), Cherry(12), CHERRY(13), cranberry(14),
+--   date(15), elderberry(16), fig(17), grape(18)                    = 9
+-- Non-strings: all 15 match (both negations include non-strings)
+-- EXCLUDED low  (< cantaloupe): aardvark(1)..blueberry(9)          = 9
+-- EXCLUDED high (> grape): honeydew(19)..zucchini(25)              = 7
+-- Total returned: 24.  Excluded: 16.
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "$and": [ { "a": { "$not": { "$gt": "grape" } } }, { "a": { "$not": { "$lt": "cantaloupe" } } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "$and": [ { "a": { "$not": { "$gt": "grape" } } }, { "a": { "$not": { "$lt": "cantaloupe" } } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- ---------------------------------------------------------------------------
+-- 21i: Impossible band — excluded range consumes everything
+-- ---------------------------------------------------------------------------
+-- $not $gt "avocado" AND $not $lt "lemon"  →  lemon ≤ a ≤ avocado
+-- Since lemon > avocado, no string can satisfy both. Only non-strings match.
+-- Total returned: 15 (non-strings only).  Excluded: all 25 strings.
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "$and": [ { "a": { "$not": { "$gt": "avocado" } } }, { "a": { "$not": { "$lt": "lemon" } } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "$and": [ { "a": { "$not": { "$gt": "avocado" } } }, { "a": { "$not": { "$lt": "lemon" } } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- ---------------------------------------------------------------------------
+-- 21j: $not $gte "cherry" — exclusive boundary (< cherry)
+-- ---------------------------------------------------------------------------
+-- Compared with 21a ($not $gt, inclusive ≤): here cherry variants are EXCLUDED.
+-- Bound A (strings < "cherry"):
+--   aardvark(1), apple(2), Apple(3), APPLE(4), apricot(5), avocado(6),
+--   banana(7), Banana(8), blueberry(9), cantaloupe(10)              = 10
+-- Bound B (non-strings):                                            = 15
+-- EXCLUDED: cherry(11), Cherry(12), CHERRY(13) + everything after   = 15
+-- Total returned: 25.  Excluded: 15.
+-- Compare: 21a returned 28 (3 more — the cherry variants).
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gte": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gte": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+RESET documentdb.max_non_ordered_term_scan_threshold;
+RESET documentdb.enableExtendedExplainPlans;
+RESET enable_seqscan;
+
+
+-- ===== Section 22: Data variety & negative cases =====
+-- Reuse ord_not_intervals which has mixed types, null, missing.
+-- Test that $not operators correctly handle non-string types in isolation.
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+SET enable_seqscan TO OFF;
+
+-- G1: Filter on a field with mixed types — $not $gt "cherry" should include
+-- non-string types (42, true, null, missing) alongside strings ≤ cherry.
+-- This is already tested in A1, but here we focus on the type breakdown:
+-- Strings matching: apple(x3), apricot, avocado, banana(x3), blueberry, cantaloupe, cherry(x3) = 13
+-- Non-strings matching: 42(id24), true(id25), null(id26), missing(id27) = 4
+-- Total = 17
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- G2: $ne on null — excludes null (id26) and missing (id27), keeps everything else.
+-- Total = 25 (27 - 2)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$ne": null } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$ne": null } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- G3: Duplicate collation-equivalent values — count verification
+-- At strength-1: "apple"="Apple"="APPLE" (3 docs), "cherry"="Cherry"="CHERRY" (3 docs)
+-- $not $gt "apple" at strength-1 → a ≤ "apple" → includes all 3 apple variants + non-strings
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "apple" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- G3b: Same at strength-3 — "apple" ≠ "Apple" ≠ "APPLE"
+-- At strength-3 ordering: "apple" < "Apple" < "APPLE" (lowercase first).
+-- $not $gt "apple" → only lowercase "apple"(id1) is ≤ "apple"; Apple(id2)
+-- and APPLE(id3) are > "apple" at strength-3, so they're excluded.
+-- Result: apple(1) + non-strings(24,25,26,27) = 5 rows.
+-- Compare with strength-1 above which returned 7 (all three variants matched).
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "apple" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }');
+
+RESET documentdb.max_non_ordered_term_scan_threshold;
+RESET documentdb.enableExtendedExplainPlans;
+RESET enable_seqscan;
+
+
+-- ===== Section 23: Sort direction =====
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+SET enable_seqscan TO OFF;
+
+-- H1: Descending sort with $not $gt — should return same docs as A1 but in reverse _id order
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- H1b: Descending sort with $not $lt
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$lt": "cherry" } } }, "sort": { "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- H2: Compound sort {a: 1, _id: 1} on composite index with negation
+-- Uses ord_comp_pos_neg and idx_comp_ab_en_strength1
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$gt": "green" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$gt": "green" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- H2b: Reverse compound sort {a: -1, _id: -1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$gt": "green" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+RESET documentdb.max_non_ordered_term_scan_threshold;
+RESET documentdb.enableExtendedExplainPlans;
+RESET enable_seqscan;
+
+
+-- ===== Section 24: Collation-specific edge cases =====
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+SET enable_seqscan TO OFF;
+
+-- I1: Accented characters — "café" vs "cafe"
+-- Key finding: In ICU collation, the accent on "é" makes "café" a different
+-- primary character from "cafe" — they are NOT equal even at strength-1.
+-- "cafe" = "CAFE" (case only) at strength-1, but "café" ≠ "cafe" at any strength.
+-- Ordering: cafe/CAFE < café/Café < caff (accent sorts after non-accent).
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 1, "a": "cafe"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 2, "a": "café"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 3, "a": "caff"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 4, "a": "apple"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 5, "a": "banana"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 6, "a": "date"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 7, "a": "elderberry"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 8, "a": "Café"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 9, "a": "CAFE"}', NULL);
+
+-- Strength-1 index (case-insensitive; cafe/café remain distinct)
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_accent_coll",
+    "indexes": [{
+      "key": { "a": 1 },
+      "name": "idx_accent_en_strength1",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+-- Strength-2 index (accent sensitive, case insensitive)
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_accent_coll",
+    "indexes": [{
+      "key": { "a": 1 },
+      "name": "idx_accent_en_strength2",
+      "collation": { "locale": "en", "strength": 2 }
+    }]
+  }',
+  TRUE
+);
+
+-- I1a: $ne "cafe" at strength-1 — excludes "cafe"(1) and "CAFE"(9) (case-only equiv)
+-- "café"(2) and "Café"(8) are NOT excluded — accent makes them different at all strengths.
+-- Should return: café(2), caff(3), apple(4), banana(5), date(6), elderberry(7), Café(8) = 7 docs
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$ne": "cafe" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$ne": "cafe" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- I1b: $ne "cafe" at strength-2 — excludes "cafe" and "CAFE" (case equiv) but NOT "café"/"Café" (accent differs)
+-- Should return: café(2), caff(3), apple(4), banana(5), date(6), elderberry(7), Café(8) = 7 docs
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$ne": "cafe" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 2 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$ne": "cafe" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 2 } }')
+$cmd$);
+
+-- I1c: $not $gt "cafe" at strength-1 — a ≤ "cafe"
+-- Since "café" > "cafe" even at strength-1, only cafe(1), CAFE(9) are ≤ "cafe", plus apple, banana.
+-- Should return: cafe(1), apple(4), banana(5), CAFE(9) = 4 docs
+-- Excluded: café(2), caff(3), date(6), elderberry(7), Café(8)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$not": { "$gt": "cafe" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- I1d: $not $gt "cafe" at strength-2 — a ≤ "cafe" at strength-2
+-- At strength-2: "cafe" < "café" (accent matters), so "café" > "cafe"
+-- Should return: cafe(1), apple(4), banana(5), CAFE(9) but NOT café(2), Café(8)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$not": { "$gt": "cafe" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 2 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$not": { "$gt": "cafe" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 2 } }')
+$cmd$);
+
+-- I1e: $not $gt "café" at strength-2 — a ≤ "café"
+-- At strength-2: "cafe" < "café" so "cafe" IS ≤ "café"
+-- Should include cafe(1), café(2), apple(4), banana(5), Café(8), CAFE(9)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$not": { "$gt": "café" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 2 } }');
+
+-- I2: Overlapping negations — already well-tested in A6a-d.
+-- One more variation with accented boundary:
+-- $not $gt "café" AND $not $lt "banana" at strength-1
+-- banana ≤ a ≤ "café". Since café > cafe at all strengths, the upper bound is "café".
+-- Should return: banana(5), cafe(1), café(2), Café(8), CAFE(9) = 5 docs
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "$and": [ { "a": { "$not": { "$gt": "café" } } }, { "a": { "$not": { "$lt": "banana" } } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- I2b: Same at strength-2 — café ≠ cafe, so the boundary is "café" not "cafe"
+-- banana ≤ a ≤ "café" at strength-2
+-- Should return: banana(5), cafe(1), café(2), CAFE(9), Café(8)
+-- Plus caff(3)? "caff" at strength-2: cafe < café < caff, so caff > café → excluded
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "$and": [ { "a": { "$not": { "$gt": "café" } } }, { "a": { "$not": { "$lt": "banana" } } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 2 } }');
+
+RESET documentdb.max_non_ordered_term_scan_threshold;
+RESET documentdb.enableExtendedExplainPlans;
+RESET enable_seqscan;
+
+
+-- =============================================================================
+-- Section 25: Three-key composite index
+-- =============================================================================
+-- Tests $not operators on a 3-key composite index {a:1, b:1, c:1} with
+-- strength-1 collation, covering: equality prefix + trailing negation,
+-- negation on middle key, and all-negation on 3 keys.
+
+-- 18 docs covering a×b×c combinations + non-string types
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 1,  "a": "apple",  "b": "red",    "c": 10}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 2,  "a": "apple",  "b": "red",    "c": 20}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 3,  "a": "apple",  "b": "green",  "c": 30}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 4,  "a": "apple",  "b": "green",  "c": 5}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 5,  "a": "banana", "b": "red",    "c": 15}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 6,  "a": "banana", "b": "yellow", "c": 25}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 7,  "a": "cherry", "b": "red",    "c": 10}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 8,  "a": "cherry", "b": "green",  "c": 20}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 9,  "a": "cherry", "b": "blue",   "c": 30}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 10, "a": "Cherry", "b": "Red",    "c": 40}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 11, "a": "date",   "b": "red",    "c": 50}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 12, "a": "date",   "b": "green",  "c": 60}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 13, "a": "elderberry", "b": "red", "c": 5}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 14, "a": "apple",  "b": "red",    "c": null}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 15, "a": "cherry", "b": null,     "c": 10}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 16, "a": null,     "b": "red",    "c": 10}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 17, "a": 42,       "b": "red",    "c": 10}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_three_key_coll', '{"_id": 18, "a": "cherry", "b": "red"}', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_three_key_coll",
+    "indexes": [{
+      "key": { "a": 1, "b": 1, "c": 1 },
+      "name": "idx_three_key_abc_s1",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+SET enable_seqscan TO OFF;
+
+-- 25a: Equality prefix on first two keys + negation on trailing key
+-- a = "apple", b = "red", c: $not $gt 15
+-- a="apple", b="red": ids 1(c=10), 2(c=20), 14(c=null)
+-- c $not $gt 15 → c ≤ 15 or c is non-numeric: 1(c=10) ✓, 2(c=20) ✗, 14(c=null) ✓
+-- Returned: 2 docs (ids 1, 14).
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_three_key_coll", "filter": { "a": "apple", "b": "red", "c": { "$not": { "$gt": 15 } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_three_key_coll", "filter": { "a": "apple", "b": "red", "c": { "$not": { "$gt": 15 } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 25b: Negation on middle key — a = "cherry", b: $not $gt "green", c: $gt 5
+-- a="cherry" at s1: ids 7-10, 15, 18
+-- b $not $gt "green" → b ≤ "green" or non-string b: green(8) ✓, blue(9) ✓,
+--   null(15) ✓, missing(18) ✓. red(7) ✗, Red(10) ✗ (red > green).
+-- c $gt 5: 8(c=20) ✓, 9(c=30) ✓, 15(c=10) ✓, 18(missing c) ✗.
+-- Intersection: ids 8, 9, 15.
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_three_key_coll", "filter": { "a": "cherry", "b": { "$not": { "$gt": "green" } }, "c": { "$gt": 5 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_three_key_coll", "filter": { "a": "cherry", "b": { "$not": { "$gt": "green" } }, "c": { "$gt": 5 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 25c: All three keys negation
+-- a: $not $gt "cherry", b: $not $gt "red", c: $not $gt 25
+-- a ≤ "cherry" at s1: apple(1-4,14), banana(5-6), cherry(7-10,15,18),
+--   null(16), 42(17) = 16 docs. Excluded: date(11,12), elderberry(13).
+-- b ≤ "red" at s1: red/Red ✓, green ✓, blue ✓, yellow ✗, null ✓, missing ✓.
+-- c ≤ 25 or non-numeric c: 10 ✓, 20 ✓, 5 ✓, 15 ✓, 25 ✓, null ✓, missing ✓. 30 ✗.
+-- Step through the 16 matching a ≤ cherry:
+--   1(apple,red,10): b≤red ✓, c≤25 ✓ → ✓
+--   2(apple,red,20): b≤red ✓, c≤25 ✓ → ✓
+--   3(apple,green,30): b≤red ✓, c≤25 ✗ → ✗
+--   4(apple,green,5): b≤red ✓, c≤25 ✓ → ✓
+--   5(banana,red,15): b≤red ✓, c≤25 ✓ → ✓
+--   6(banana,yellow,25): b≤red ✗ → ✗
+--   7(cherry,red,10): b≤red ✓, c≤25 ✓ → ✓
+--   8(cherry,green,20): b≤red ✓, c≤25 ✓ → ✓
+--   9(cherry,blue,30): b≤red ✓, c≤25 ✗ → ✗
+--   10(Cherry,Red,40): b≤red ✓, c≤25 ✗ → ✗
+--   14(apple,red,null): b≤red ✓, c=null (non-numeric) ✓ → ✓
+--   15(cherry,null,10): b=null (non-string) ✓, c≤25 ✓ → ✓
+--   16(null,red,10): a=null (non-string) ✓, b≤red ✓, c≤25 ✓ → ✓
+--   17(42,red,10): a=42 (non-string) ✓, b≤red ✓, c≤25 ✓ → ✓
+--   18(cherry,red,missing): b≤red ✓, c=missing (non-numeric) ✓ → ✓
+-- Total: 11 docs.
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_three_key_coll", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$gt": "red" } }, "c": { "$not": { "$gt": 25 } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_three_key_coll", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$gt": "red" } }, "c": { "$not": { "$gt": 25 } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 25d: Negation on first key, equality on middle, range on third
+-- a: $not $gt "banana", b = "red", c: $gt 10
+-- a ≤ "banana": apple(1-4,14), banana(5-6), null(16), 42(17) = 10 docs.
+-- b = "red": 1(red), 2(red), 5(red), 14(red), 16(red), 17(red) = 6 docs.
+-- c > 10: 2(c=20) ✓, 5(c=15) ✓. 1(c=10) ✗, 14(c=null) ✗, 16(c=10) ✗, 17(c=10) ✗.
+-- Returned: 2 docs (ids 2, 5).
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_three_key_coll", "filter": { "a": { "$not": { "$gt": "banana" } }, "b": "red", "c": { "$gt": 10 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_three_key_coll", "filter": { "a": { "$not": { "$gt": "banana" } }, "b": "red", "c": { "$gt": 10 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 25e: $ne on first key with equality on second — 3-key index
+-- a $ne "cherry", b = "red"
+-- Excluded a: cherry(7,10,18) where b=red: 7(cherry,red), 10(Cherry,Red), 18(cherry,red)
+-- Matching a≠cherry AND b=red: 1, 2, 5, 11, 13, 14, 16, 17 = 8 docs
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_three_key_coll", "filter": { "a": { "$ne": "cherry" }, "b": "red" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+RESET documentdb.max_non_ordered_term_scan_threshold;
+RESET documentdb.enableExtendedExplainPlans;
+RESET enable_seqscan;
+
+
+-- =============================================================================
+-- Section 26: Descending and mixed-direction indexes
+-- =============================================================================
+-- Tests indexes with descending key direction and mixed {a:1, b:-1} indexes,
+-- verifying that $not operators work correctly with non-ascending key order.
+
+-- Descending single-field index
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_disjoint_dense",
+    "indexes": [{
+      "key": { "a": -1 },
+      "name": "idx_disjoint_desc_s1",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+-- Mixed-direction compound index on ord_comp_pos_neg: {a: 1, b: -1}
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_comp_pos_neg",
+    "indexes": [{
+      "key": { "a": 1, "b": -1 },
+      "name": "idx_comp_ab_mixed_s1",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+SET enable_seqscan TO OFF;
+
+-- 26a: $not $gt "cherry" on DESCENDING index
+-- Same logical result as 21a (28 docs) but index is {a: -1}.
+-- Verifies the ordered scan adapts to descending key direction.
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 26b: $not $lt "lemon" on DESCENDING index — 20 docs (same as 21d)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$lt": "lemon" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 26c: $ne "cherry" on DESCENDING index — 37 docs (same as 21f)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$ne": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$ne": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 26d: Descending sort on DESCENDING index — natural order for descending
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gt": "avocado" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 26e: Mixed-direction index {a:1, b:-1} with $not on both keys
+-- a: $not $gt "cherry", b: $not $lt "green"
+-- a ≤ "cherry" at s1: apple(1-3,20), banana(4-6,19), cherry(7-10,15-18,21-22,24)
+-- b $not $lt "green" → b ≥ "green" or non-string b:
+--   red ≥ green ✓, yellow ≥ green ✓, green = green ✓, blue < green ✗
+-- Combined matching from ord_comp_pos_neg (24 docs):
+--   1(apple,red) ✓, 3(apple,yellow) ✓, 2(apple,green) ✓,
+--   4(banana,red) ✓, 6(banana,yellow) ✓, 5(banana,green) ✓,
+--   7(cherry,red) ✓, 9(cherry,yellow) ✓, 8(cherry,green) ✓,
+--   15(Cherry,Red) ✓, 16(Cherry,Green) ✓, 18(CHERRY,YELLOW) ✓,
+--   17(CHERRY,RED) ✓, 19(Banana,Red) ✓, 20(APPLE,GREEN) ✓,
+--   21(cherry,b=99) b=99 non-string ✓, 22(cherry,b=null) ✓, 24(cherry,b=missing) ✓
+--   10(cherry,blue) b < green ✗
+--   23(a=42,b=red) a non-string ✓
+-- Total: 19 docs (all except 10(cherry,blue)).
+-- Wait — need to also exclude docs where a > cherry: 11(date), 12(date),
+-- 13(elderberry), 14(elderberry) → a > cherry, excluded.
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$lt": "green" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$lt": "green" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 26f: Mixed-direction sort {a: 1, b: -1} — leverages the mixed index
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$lt": "green" } } }, "sort": { "a": 1, "b": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$lt": "green" } } }, "sort": { "a": 1, "b": -1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+RESET documentdb.max_non_ordered_term_scan_threshold;
+RESET documentdb.enableExtendedExplainPlans;
+RESET enable_seqscan;
+
+
+-- =============================================================================
+-- Section 27: Array values and edge types
+-- =============================================================================
+-- Test $not operators on documents containing array values in the indexed field.
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_array_coll', '{"_id": 1, "a": "apple"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_array_coll', '{"_id": 2, "a": "cherry"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_array_coll', '{"_id": 3, "a": "grape"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_array_coll', '{"_id": 4, "a": ["apple", "cherry"]}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_array_coll', '{"_id": 5, "a": ["banana", "date"]}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_array_coll', '{"_id": 6, "a": ["grape", "kiwi"]}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_array_coll', '{"_id": 7, "a": [1, "cherry"]}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_array_coll', '{"_id": 8, "a": []}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_array_coll', '{"_id": 9, "a": null}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_array_coll', '{"_id": 10, "a": "Cherry"}', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_array_coll",
+    "indexes": [{
+      "key": { "a": 1 },
+      "name": "idx_array_en_s1",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+SET enable_seqscan TO OFF;
+
+-- 27a: $not $gt "cherry" with array docs
+-- For arrays, $not $gt "cherry" matches if ANY element is ≤ "cherry" or non-string,
+-- or if the document's "a" is not > "cherry" at any element.
+-- Scalar docs: apple(1) ≤ cherry ✓, cherry(2) ≤ cherry ✓, grape(3) > cherry ✗,
+--   Cherry(10) = cherry at s1 ✓
+-- Array docs: [apple,cherry](4) has apple ≤ cherry ✓, [banana,date](5) has banana ≤ cherry ✓,
+--   [grape,kiwi](6) all > cherry ✗, [1,cherry](7) has 1 (non-string) ✓
+-- Other: [](8), null(9)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_array_coll", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_array_coll", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 27b: $ne "cherry" with array docs
+-- $ne excludes docs where ANY element equals "cherry" at s1.
+-- cherry(2) ✗, Cherry(10) ✗ (case-equiv), [apple,cherry](4) ✗ (contains cherry),
+-- [1,cherry](7) ✗ (contains cherry)
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_array_coll", "filter": { "a": { "$ne": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_array_coll", "filter": { "a": { "$ne": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 27c: Overlapping negations with arrays
+-- $not $gt "cherry" AND $not $lt "banana"  →  banana ≤ a ≤ cherry
+-- Scalar: apple(1) < banana ✗, cherry(2) ✓, grape(3) > cherry ✗, Cherry(10) ✓
+-- Arrays: [apple,cherry](4) — cherry ≤ cherry but apple < banana → depends on semantics
+-- [banana,date](5) — banana ≥ banana ✓ AND date > cherry → depends on semantics
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_array_coll", "filter": { "$and": [ { "a": { "$not": { "$gt": "cherry" } } }, { "a": { "$not": { "$lt": "banana" } } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+RESET documentdb.max_non_ordered_term_scan_threshold;
+RESET documentdb.enableExtendedExplainPlans;
+RESET enable_seqscan;
 
 
 DROP SCHEMA collation_ordered_test_schema CASCADE;
