@@ -1206,7 +1206,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 
 
 bool
-IsValidRecheckForIndexValue(const BsonIndexTerm *compareTerm,
+IsValidRecheckForIndexValue(SerializedCompositeTermPair *termPair,
 							IndexRecheckArgs *recheckArgs,
 							const char *indexCollation)
 {
@@ -1214,15 +1214,16 @@ IsValidRecheckForIndexValue(const BsonIndexTerm *compareTerm,
 	{
 		case BSON_INDEX_STRATEGY_DOLLAR_REGEX:
 		{
-			if (IsIndexTermTruncated(compareTerm))
+			if (IsSerializedIndexTermTruncated(termPair->serializedTerm))
 			{
 				/* don't bother, let the runtime check on this */
 				return true;
 			}
 
+			InitializeBsonIndexTermIfNeeded(termPair);
 			CompositeRegexData *compositeRegexData =
 				(CompositeRegexData *) recheckArgs->queryDatum;
-			bool result = CompareRegexTextMatch(&compareTerm->element.bsonValue,
+			bool result = CompareRegexTextMatch(&termPair->term.element.bsonValue,
 												compositeRegexData->regexData);
 			return compositeRegexData->isNegationOperator ? !result : result;
 		}
@@ -1230,29 +1231,33 @@ IsValidRecheckForIndexValue(const BsonIndexTerm *compareTerm,
 		case BSON_INDEX_STRATEGY_DOLLAR_EXISTS:
 		{
 			bool *exists = (bool *) recheckArgs->queryDatum;
+			bool isValueUndefined = IsTermPairValueUndefined(termPair);
 			if (!*exists)
 			{
 				/* exists: false, matches all values except that are defined */
-				return IsIndexTermValueUndefined(compareTerm);
+				return isValueUndefined;
 			}
 			else
 			{
 				/* exists: true, check that it's not undefined */
-				return !IsIndexTermValueUndefined(compareTerm);
+				return !isValueUndefined;
 			}
 		}
 
 		case BSON_INDEX_STRATEGY_DOLLAR_MOD:
 		{
+			/* $mod only operates on numeric values which are never truncated,
+			 * so no IsSerializedIndexTermTruncated guard is needed here. */
 			bson_value_t *modQuery = (bson_value_t *) recheckArgs->queryDatum;
-			return CompareModOperator(&compareTerm->element.bsonValue, modQuery);
+			InitializeBsonIndexTermIfNeeded(termPair);
+			return CompareModOperator(&termPair->term.element.bsonValue, modQuery);
 		}
 
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_EQUAL:
 		{
 			bson_value_t *notEqualQuery = (bson_value_t *) recheckArgs->queryDatum;
 
-			if (IsIndexTermTruncated(compareTerm))
+			if (IsSerializedIndexTermTruncated(termPair->serializedTerm))
 			{
 				/* don't bother, let the runtime check on this */
 				return true;
@@ -1262,67 +1267,72 @@ IsValidRecheckForIndexValue(const BsonIndexTerm *compareTerm,
 			 * undefined or an empty array - thunk to runtime
 			 * TODO(Composite): Can we differentiate between empty array and literal null?
 			 */
+			InitializeBsonIndexTermIfNeeded(termPair);
 			if (notEqualQuery->value_type == BSON_TYPE_NULL)
 			{
 				/* if the value is *maybe* undefined then there's another value that's defined
 				 * let the other value determine matched-ness
 				 */
-				return !IsIndexTermMaybeUndefined(compareTerm);
+				return !IsIndexTermMaybeUndefined(&termPair->term);
 			}
 
-			return !BsonValueEqualsWithCollation(&compareTerm->element.bsonValue,
+			return !BsonValueEqualsWithCollation(&termPair->term.element.bsonValue,
 												 notEqualQuery, indexCollation);
 		}
 
 		case BSON_INDEX_STRATEGY_DOLLAR_BITS_ALL_CLEAR:
 		{
 			bson_value_t *bitsQuery = (bson_value_t *) recheckArgs->queryDatum;
-			if (IsIndexTermTruncated(compareTerm))
+			if (IsSerializedIndexTermTruncated(termPair->serializedTerm))
 			{
 				/* don't bother, let the runtime check on this */
 				return true;
 			}
 
-			return CompareBitwiseOperator(&compareTerm->element.bsonValue,
+			InitializeBsonIndexTermIfNeeded(termPair);
+			return CompareBitwiseOperator(&termPair->term.element.bsonValue,
 										  bitsQuery, CompareArrayForBitsAllClear);
 		}
 
 		case BSON_INDEX_STRATEGY_DOLLAR_BITS_ANY_CLEAR:
 		{
 			bson_value_t *bitsQuery = (bson_value_t *) recheckArgs->queryDatum;
-			if (IsIndexTermTruncated(compareTerm))
+			if (IsSerializedIndexTermTruncated(termPair->serializedTerm))
 			{
 				/* don't bother, let the runtime check on this */
 				return true;
 			}
 
-			return CompareBitwiseOperator(&compareTerm->element.bsonValue,
+			InitializeBsonIndexTermIfNeeded(termPair);
+			return CompareBitwiseOperator(&termPair->term.element.bsonValue,
 										  bitsQuery, CompareArrayForBitsAnyClear);
 		}
 
 		case BSON_INDEX_STRATEGY_DOLLAR_BITS_ALL_SET:
 		{
 			bson_value_t *bitsQuery = (bson_value_t *) recheckArgs->queryDatum;
-			if (IsIndexTermTruncated(compareTerm))
+			if (IsSerializedIndexTermTruncated(termPair->serializedTerm))
 			{
 				/* don't bother, let the runtime check on this */
 				return true;
 			}
 
-			return CompareBitwiseOperator(&compareTerm->element.bsonValue,
+			InitializeBsonIndexTermIfNeeded(termPair);
+			return CompareBitwiseOperator(&termPair->term.element.bsonValue,
 										  bitsQuery, CompareArrayForBitsAllSet);
 		}
 
 		case BSON_INDEX_STRATEGY_DOLLAR_BITS_ANY_SET:
 		{
 			bson_value_t *bitsQuery = (bson_value_t *) recheckArgs->queryDatum;
-			if (IsIndexTermTruncated(compareTerm))
+			if (IsSerializedIndexTermTruncated(termPair->serializedTerm))
 			{
 				/* don't bother, let the runtime check on this */
 				return true;
 			}
 
-			return CompareBitwiseOperator(&compareTerm->element.bsonValue,
+			InitializeBsonIndexTermIfNeeded(termPair);
+			return CompareBitwiseOperator(&termPair->term.element.bsonValue,
 										  bitsQuery, CompareArrayForBitsAnySet);
 		}
 

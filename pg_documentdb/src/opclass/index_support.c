@@ -1840,7 +1840,7 @@ void
 ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 					  Index rti, ReplaceExtensionFunctionContext *context)
 {
-	if (rte->rtekind != RTE_RELATION)
+	if (rte->rtekind != RTE_RELATION || !enable_indexonlyscan)
 	{
 		return;
 	}
@@ -2075,7 +2075,7 @@ documentdb_btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 		ConsiderBtreeOrderByPushdown(root, path);
 	}
 
-	if (EnableIdIndexCustomCostFunction && EnableIndexOnlyScan &&
+	if (EnableIdIndexCustomCostFunction && enable_indexonlyscan && EnableIndexOnlyScan &&
 		IsQueryValidForIndexOnlyScan(root))
 	{
 		bool hasOtherQuals = false;
@@ -2983,6 +2983,7 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 
 
 	bool indexOnlyScanPossible = EnableIndexOnlyScan &&
+								 enable_indexonlyscan &&
 								 EnableIndexOnlyScanOnCostFunction &&
 								 indexPath->path.pathtype != T_IndexOnlyScan &&
 								 IsQueryValidForIndexOnlyScan(root) &&

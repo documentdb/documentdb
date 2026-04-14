@@ -213,6 +213,7 @@ initRumState(RumState *state, Relation index)
 
 		rumConfig->addInfoTypeOid = InvalidOid;
 		rumConfig->skipGenerateEmptyEntries = false;
+		rumConfig->compareFunctionHasRecheck = false;
 
 		if (index_getprocid(index, i + 1, RUM_CONFIG_PROC) != InvalidOid)
 		{

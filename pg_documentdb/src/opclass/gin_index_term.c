@@ -1154,6 +1154,37 @@ IsIndexTermMetadata(const BsonIndexTerm *indexTerm)
 }
 
 
+bool
+IsTermPairValueUndefined(SerializedCompositeTermPair *termPair)
+{
+	const uint8_t *buffer = (const uint8_t *) VARDATA_ANY(termPair->serializedTerm);
+	uint32_t indexTermSize PG_USED_FOR_ASSERTS_ONLY = VARSIZE_ANY_EXHDR(
+		termPair->serializedTerm);
+
+	/* size must be bigger than metadata + bson overhead */
+	Assert(indexTermSize >= (sizeof(uint8_t) + 1));
+	switch (buffer[0])
+	{
+		case IndexTermUndefinedValue:
+		case IndexTermDescendingUndefinedValue:
+		{
+			return true;
+		}
+
+		case IndexTermComparableV1:
+		case IndexTermDescendingComparableV1:
+		{
+			return IsComparableIndexTermValueUndefined(&buffer[1], indexTermSize - 1);
+		}
+
+		default:
+		{
+			return false;
+		}
+	}
+}
+
+
 static void
 InitializeBsonIndexTermFromBuffer(const uint8_t *buffer, uint32_t indexTermSize,
 								  BsonIndexTerm *indexTerm)

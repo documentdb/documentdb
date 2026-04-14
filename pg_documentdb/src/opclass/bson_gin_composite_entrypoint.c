@@ -109,6 +109,7 @@ PGDLLIMPORT typedef struct RumConfig
 	}       strategyInfo[MAX_STRATEGIES];
 
 	bool skipGenerateEmptyEntries;
+	bool compareFunctionHasRecheck;
 }   RumConfig;
 
 /* --------------------------------------------------------- */
@@ -134,6 +135,7 @@ extern int MaxNonOrderedTermScanThreshold;
 extern bool EnableOrderedCompositeOperatorScan;
 extern bool EnableBinarySearchForOrderedMove;
 extern bool EnableComparableTerms;
+extern bool EnablePartialMatchHasRecheck;
 
 static void ValidateCompositePathSpec(const char *prefix);
 static Size FillCompositePathSpec(const char *prefix, void *buffer);
@@ -182,7 +184,8 @@ static void OptimizeVariableBoundsForOrderedScans(CompositeQueryRunData *runData
 												  VariableIndexBounds *variableBounds,
 												  bool hasArrayPaths);
 static int RunCompareOnOrderedIndexSet(CompositeQueryRunData *runData,
-									   SerializedCompositeTermPair *serializedTermsSet);
+									   SerializedCompositeTermPair *serializedTermsSet,
+									   bool *hasTruncation);
 static Datum * GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
 														BsonGinCompositePathOptions *
 														options,
@@ -220,7 +223,8 @@ static Datum * ProcessOrderedCompositeQueryEntries(int32_t totalPathTerms,
 												   bool isOrderedScan,
 												   int32_t *searchMode);
 static int RunCompareOnStandardIndexSet(CompositeQueryRunData *runData,
-										SerializedCompositeTermPair *serializedTermsSet);
+										SerializedCompositeTermPair *serializedTermsSet,
+										bool *hasTruncation);
 
 inline static IndexTermCreateMetadata
 GetSinglePathTermCreateMetadata(void *options, int32_t numPaths)
@@ -903,6 +907,8 @@ gin_bson_composite_path_compare_partial(PG_FUNCTION_ARGS)
 	StrategyNumber strategy = PG_GETARG_UINT16(2);
 	Pointer extraData = PG_GETARG_POINTER(3);
 
+	bool *recheckEntry = PG_NARGS() > 4 ? (bool *) PG_GETARG_POINTER(4) : NULL;
+
 	CompositeQueryRunData *runData = (CompositeQueryRunData *) extraData;
 	SerializedCompositeTermPair serializedTerms[INDEX_MAX_KEYS] = { 0 };
 	int32_t numTerms = LazyInitializeSerializedCompositeIndexTerm(compareValue,
@@ -1002,7 +1008,7 @@ gin_bson_composite_path_compare_partial(PG_FUNCTION_ARGS)
 		PG_RETURN_INT32(1);
 	}
 
-	if (numTerms != runData->metaInfo->numIndexPaths)
+	if (unlikely(numTerms != runData->metaInfo->numIndexPaths))
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 						errmsg("Number of terms in the index term (%d) does not match "
@@ -1011,9 +1017,11 @@ gin_bson_composite_path_compare_partial(PG_FUNCTION_ARGS)
 	}
 
 	int compareResult;
+	bool hasTruncation = false;
 	if (runData->metaInfo->orderedScanEntryData == NULL)
 	{
-		compareResult = RunCompareOnStandardIndexSet(runData, serializedTerms);
+		compareResult = RunCompareOnStandardIndexSet(runData, serializedTerms,
+													 &hasTruncation);
 	}
 	else
 	{
@@ -1021,7 +1029,15 @@ gin_bson_composite_path_compare_partial(PG_FUNCTION_ARGS)
 		 * If not, we need to advance the scan keys until we find a key that satisfies the bounds
 		 * or we exhaust the keys.
 		 */
-		compareResult = RunCompareOnOrderedIndexSet(runData, serializedTerms);
+		compareResult = RunCompareOnOrderedIndexSet(runData, serializedTerms,
+													&hasTruncation);
+	}
+
+	if (recheckEntry && compareResult == 0 &&
+		(hasTruncation || runData->metaInfo->requiresRuntimeRecheck))
+	{
+		/* With extended comparePartial on ordered scans, we can return 2 to signify recheck */
+		*recheckEntry = true;
 	}
 
 	PG_FREE_IF_COPY(compareValue, 1);
@@ -1036,16 +1052,9 @@ RunCompareOnPathIndex(CompositeQueryRunData *runData,
 					  bool *priorMatchesEquality, bool *hasUnspecifiedPrefix,
 					  bool *hasEqualityPrefix, int compareIndex)
 {
-	if (runData->indexBounds[compareIndex].lowerBound.bound.value_type == BSON_TYPE_EOD &&
-		runData->indexBounds[compareIndex].upperBound.bound.value_type == BSON_TYPE_EOD &&
-		runData->indexBounds[compareIndex].indexRecheckFunctions == NIL)
-	{
-		/* Skip deserializing and validating */
-		*priorMatchesEquality = false;
-		*hasUnspecifiedPrefix = true;
-		return 0;
-	}
-
+	/* No early-return for empty bounds: RunCompareOnBounds already handles the
+	 * EOD case (sets *hasUnspecifiedPrefix = true and returns 0), so we always
+	 * fall through to the recheck loop below. */
 	*hasEqualityPrefix = *hasEqualityPrefix && *priorMatchesEquality;
 	int32_t compareInBounds = RunCompareOnBounds(
 		&runData->indexBounds[compareIndex],
@@ -1059,20 +1068,16 @@ RunCompareOnPathIndex(CompositeQueryRunData *runData,
 		return compareInBounds;
 	}
 
-	if (runData->indexBounds[compareIndex].indexRecheckFunctions != NIL)
+	ListCell *recheckFuncs;
+	foreach(recheckFuncs,
+			runData->indexBounds[compareIndex].indexRecheckFunctions)
 	{
-		InitializeBsonIndexTermIfNeeded(&serializedTerms[compareIndex]);
-		ListCell *recheckFuncs;
-		foreach(recheckFuncs,
-				runData->indexBounds[compareIndex].indexRecheckFunctions)
+		IndexRecheckArgs *recheckStrategy = lfirst(recheckFuncs);
+		if (!IsValidRecheckForIndexValue(&serializedTerms[compareIndex],
+										 recheckStrategy,
+										 runData->metaInfo->collation))
 		{
-			IndexRecheckArgs *recheckStrategy = lfirst(recheckFuncs);
-			if (!IsValidRecheckForIndexValue(&serializedTerms[compareIndex].term,
-											 recheckStrategy,
-											 runData->metaInfo->collation))
-			{
-				return -1;
-			}
+			return -1;
 		}
 	}
 
@@ -1082,7 +1087,8 @@ RunCompareOnPathIndex(CompositeQueryRunData *runData,
 
 static int
 RunCompareOnStandardIndexSet(CompositeQueryRunData *runData,
-							 SerializedCompositeTermPair *serializedTerms)
+							 SerializedCompositeTermPair *serializedTerms,
+							 bool *hasTruncation)
 {
 	bool priorMatchesEquality = true;
 	bool hasEqualityPrefix = true;
@@ -1100,6 +1106,9 @@ RunCompareOnStandardIndexSet(CompositeQueryRunData *runData,
 			return cmp;
 		}
 
+		*hasTruncation = *hasTruncation ||
+						 IsSerializedIndexTermTruncated(
+			serializedTerms[compareIndex].serializedTerm);
 		allowSkipScanBoundaries = allowSkipScanBoundaries || hasUnspecifiedPrefix;
 	}
 
@@ -1252,7 +1261,8 @@ PinEqualityBoundForRange(CompositeQueryRunData *runData,
  */
 static int
 RunCompareOnOrderedIndexSet(CompositeQueryRunData *runData,
-							SerializedCompositeTermPair *serializedTerms)
+							SerializedCompositeTermPair *serializedTerms,
+							bool *hasTruncation)
 {
 	bool hasUnspecifiedPrefix = false;
 	bool hasSkipScanBoundary = false;
@@ -1305,6 +1315,9 @@ RunCompareOnOrderedIndexSet(CompositeQueryRunData *runData,
 		}
 		else
 		{
+			*hasTruncation = *hasTruncation ||
+							 IsSerializedIndexTermTruncated(
+				serializedTerms[compareIndex].serializedTerm);
 			priorMatchesEquality = true;
 			hasSkipScanBoundary = false;
 			if (!runData->indexBounds[compareIndex].isEqualityBound &&
@@ -2378,10 +2391,15 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 Datum
 gin_bson_composite_rum_config(PG_FUNCTION_ARGS)
 {
+	RumConfig *config = (RumConfig *) PG_GETARG_POINTER(0);
 	if (EnableCompositeWildcardSkipEmptyEntries)
 	{
-		RumConfig *config = (RumConfig *) PG_GETARG_POINTER(0);
 		config->skipGenerateEmptyEntries = true;
+	}
+
+	if (EnablePartialMatchHasRecheck)
+	{
+		config->compareFunctionHasRecheck = true;
 	}
 
 	PG_RETURN_VOID();

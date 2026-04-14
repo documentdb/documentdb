@@ -217,6 +217,46 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                Heap Fetches: xxx
 (8 rows)
 
+-- index only scan respects the enable_indexonlyscan guc 
+set enable_indexonlyscan to off;
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{"$match": { "country": {"$gt": "Brazil"}, "country": {"$lt": "Mexico"} }}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$sum": 1 } } }]}') $$, p_ignore_heap_fetches => true);
+                                                                              run_explain_and_trim                                                                               
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual rows=1 loops=1)
+   Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, documentdb_api_internal.bsoncount(1)), '{ "" : { "$numberInt" : "1" } }'::bson
+   ->  Limit (actual rows=5 loops=1)
+         Output: NULL::bson
+         ->  Index Scan using country_1 on documentdb_data.documents_9001 collection (actual rows=5 loops=1)
+               Output: NULL::bson
+               Index Cond: ((collection.document @> '{ "country" : "Brazil" }'::bson) AND (collection.document @< '{ "country" : "Mexico" }'::bson))
+(7 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{"$match": { "_id": {"$gt": 3} } }, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$sum": 1 } } }]}') $$, p_ignore_heap_fetches => true);
+                                                                                                      run_explain_and_trim                                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual rows=1 loops=1)
+   Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, documentdb_api_internal.bsoncount(1)), '{ "" : { "$numberInt" : "1" } }'::bson
+   ->  Limit (actual rows=10 loops=1)
+         Output: NULL::bson
+         ->  Index Scan using _id_ on documentdb_data.documents_9001 collection (actual rows=10 loops=1)
+               Output: NULL::bson
+               Index Cond: ((collection.shard_key_value = '9001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(7 rows)
+
+reset enable_indexonlyscan;
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{"$match": { "_id": {"$gt": 3} } }, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$sum": 1 } } }]}') $$, p_ignore_heap_fetches => true);
+                                                                                                      run_explain_and_trim                                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual rows=1 loops=1)
+   Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, documentdb_api_internal.bsoncount(1)), '{ "" : { "$numberInt" : "1" } }'::bson
+   ->  Limit (actual rows=10 loops=1)
+         Output: NULL::bson
+         ->  Index Only Scan using _id_ on documentdb_data.documents_9001 collection (actual rows=10 loops=1)
+               Output: NULL::bson
+               Index Cond: ((collection.shard_key_value = '9001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+               Heap Fetches: xxx
+(8 rows)
+
 -- compound index
 SELECT documentdb_api_internal.create_indexes_non_concurrently('iosdb_rum', '{ "createIndexes": "iosc_comp", "indexes": [ { "key": { "country": 1, "provider": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "country_provider_1" }] }', true);
                                                                                                    create_indexes_non_concurrently                                                                                                    

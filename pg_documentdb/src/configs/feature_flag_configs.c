@@ -208,6 +208,10 @@ bool EnableComparableTerms = DEFAULT_ENABLE_COMPARABLE_TERMS;
 #define DEFAULT_ENABLE_ORDER_BY_INDEX_TERM false
 bool EnableOrderByIndexTerm = DEFAULT_ENABLE_ORDER_BY_INDEX_TERM;
 
+/* Added in v112, enabled in v112, remove after v116 */
+#define DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK true
+bool EnablePartialMatchHasRecheck = DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK;
+
 /*
  * SECTION: Planner feature flags
  */
@@ -670,6 +674,13 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Whether to enable index only scan on cost function or planner."),
 		NULL, &EnableIndexOnlyScanOnCostFunction, DEFAULT_ENABLE_INDEX_ONLY_SCAN_ON_COST,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enablePartialMatchHasRecheck", newGucPrefix),
+		gettext_noop(
+			"Whether to enable partial match has recheck for queries that have partial index matches."),
+		NULL, &EnablePartialMatchHasRecheck, DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

@@ -178,7 +178,7 @@ CreateCompositeIndexBoundsSet(int32_t numTerms, int32_t indexAttribute,
 }
 
 
-bool IsValidRecheckForIndexValue(const BsonIndexTerm *compareTerm,
+bool IsValidRecheckForIndexValue(SerializedCompositeTermPair *compareTerm,
 								 IndexRecheckArgs *recheckArgs,
 								 const char *indexCollation);
 

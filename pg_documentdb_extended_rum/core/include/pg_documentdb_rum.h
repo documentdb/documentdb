@@ -455,6 +455,7 @@ typedef struct RumConfig
 	}       strategyInfo[MAX_STRATEGIES];
 
 	bool skipGenerateEmptyEntries;
+	bool compareFunctionHasRecheck;
 }   RumConfig;
 
 /*
@@ -515,8 +516,6 @@ typedef struct RumState
 
 	/* Collations to pass to the support functions */
 	Oid supportCollation[INDEX_MAX_KEYS];
-
-	bool skipGenerateEmptyEntries[INDEX_MAX_KEYS];
 }   RumState;
 
 /* Accessor for the i'th attribute of tupdesc. */
@@ -894,6 +893,8 @@ typedef struct RumOrderByScanData
 	bool isPageValid;
 	RumScanEntry orderByEntry;
 	IndexTuple boundEntryTuple;
+	RumBtreeData orderByBtree;
+	bool canSkipConsistentCheck;
 } RumOrderByScanData;
 
 typedef struct RumScanOpaqueData

@@ -455,6 +455,13 @@ WriteComparableIndexTermToWriter(const IndexTermCreateMetadata *createMetadata,
 }
 
 
+bool
+IsComparableIndexTermValueUndefined(const uint8_t *buffer, uint32_t indexTermSize)
+{
+	return buffer[0] == SORT_TYPE_UNDEFINED_VALUE;
+}
+
+
 void
 ComparableBufferToBsonIndexTerm(const uint8_t *buffer, uint32_t indexTermSize,
 								BsonIndexTerm *bsonIndexTerm)

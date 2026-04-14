@@ -117,6 +117,7 @@ bool IsSerializedIndexTermTruncated(bytea *indexTermSerialized);
 bool IsSerializedIndexTermMetadata(bytea *indexTermSerialized);
 bool IsSerializedRootTruncationTerm(bytea *indexTermSerialized);
 bool IsSerializedTermValueDescending(bytea *indexTermSerialized);
+bool IsTermPairValueUndefined(SerializedCompositeTermPair *termPair);
 
 void InitializeBsonIndexTerm(bytea *indexTermSerialized, BsonIndexTerm *indexTerm);
 

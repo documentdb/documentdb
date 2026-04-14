@@ -73,4 +73,6 @@ bytea * WriteComparableIndexTermToWriter(const IndexTermCreateMetadata *createMe
 void ComparableBufferToBsonIndexTerm(const uint8_t *buffer, uint32_t indexTermSize,
 									 BsonIndexTerm *bsonIndexTerm);
 
+bool IsComparableIndexTermValueUndefined(const uint8_t *buffer, uint32_t indexTermSize);
+
 #endif
