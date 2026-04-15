@@ -36,6 +36,7 @@
 * Integrate cargo tools to identify dependencies for pg_documentdb_gw *[Feature]* (#263)
 * Add support for killSessions command *[Feature]* (#402)
 * Support arbitrary database user and password *[Feature]* (#306)
+* Expose DocumentDB version metadata via `buildInfo`, matching `hello` / `isMaster` version reporting *[Bugfix]* (#547)
 * Improved performance for `$max` and `$min` accumulators in `$group` and `$setWindowFields` pipeline stages under flag `enableNewMinMaxAccumulators`. (#457)
 * Fix crash in `bson_dollar_lookup_project` when matched documents array contains NULL elements from LEFT JOIN *[Bugfix]* (#465)
 * Fix crash in `$densify` with `partitionByFields` on shard key due to mismatched sort operators for INT8 partition expression *[Bugfix]* (#464)

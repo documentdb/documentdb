@@ -20,3 +20,12 @@ async fn is_master() -> Result<(), Error> {
 
     constant::validate_is_master_unauthenticated(&client).await
 }
+
+#[tokio::test]
+async fn build_info() -> Result<(), Error> {
+    let _ = initialize::initialize().await?;
+
+    let client = clients::get_client_unauthenticated()?;
+
+    constant::validate_build_info_unauthenticated(&client).await
+}

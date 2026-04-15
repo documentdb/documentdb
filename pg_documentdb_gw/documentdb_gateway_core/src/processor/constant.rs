@@ -34,6 +34,7 @@ pub fn process_build_info(dynamic_config: &Arc<dyn DynamicConfiguration>) -> Res
         "versionArray": version.as_bson_array(),
         "bits": 64,
         "maxBsonObjectSize": protocol::MAX_BSON_OBJECT_SIZE,
+        "internal": dynamic_config.topology(),
         "ok":OK_SUCCEEDED,
     }))
 }
@@ -658,6 +659,90 @@ static SUPPORTED_COMMANDS : [CommandInfo; 62] = [
 		secondary_override_ok: None,
 	}
 ];
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use bson::rawbson;
+
+    use super::process_build_info;
+    use crate::configuration::{DynamicConfiguration, Version};
+
+    #[derive(Debug)]
+    struct BuildInfoConfig;
+
+    impl DynamicConfiguration for BuildInfoConfig {
+        fn get_str(&self, key: &str) -> Option<String> {
+            (key == "serverVersion").then(|| Version::Seven.as_str().to_owned())
+        }
+
+        fn get_bool(&self, _: &str, default: bool) -> bool {
+            default
+        }
+
+        fn get_i32(&self, _: &str, default: i32) -> i32 {
+            default
+        }
+
+        fn get_u64(&self, _: &str, default: u64) -> u64 {
+            default
+        }
+
+        fn equals_value(&self, _: &str, _: &str) -> bool {
+            false
+        }
+
+        fn topology(&self) -> bson::RawBson {
+            rawbson!({
+                "documentdb_versions": ["0.110-0", "0.110.0"],
+                "kind": "documentdb"
+            })
+        }
+
+        fn enable_developer_explain(&self) -> bool {
+            false
+        }
+
+        fn max_connections(&self) -> usize {
+            0
+        }
+
+        fn allow_transaction_snapshot(&self) -> bool {
+            false
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    #[test]
+    fn build_info_includes_documentdb_topology() {
+        let config: Arc<dyn DynamicConfiguration> = Arc::new(BuildInfoConfig);
+        let response = process_build_info(&config);
+
+        let doc = response
+            .as_json()
+            .expect("buildInfo response should deserialize to BSON document");
+
+        assert_eq!(doc.get_str("version").unwrap(), Version::Seven.as_str());
+        assert!(doc.get_array("versionArray").is_ok());
+
+        let internal = doc
+            .get_document("internal")
+            .expect("buildInfo response should contain internal document");
+        let versions = internal
+            .get_array("documentdb_versions")
+            .expect("internal document should contain documentdb_versions");
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0].as_str(), Some("0.110-0"));
+        assert_eq!(versions[1].as_str(), Some("0.110.0"));
+        assert_eq!(internal.get_str("kind").unwrap(), "documentdb");
+
+        assert_eq!(doc.get_f64("ok").unwrap(), 1.0);
+    }
+}
 
 pub fn list_commands() -> Response {
     let mut commands_doc = RawDocumentBuf::new();

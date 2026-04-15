@@ -27,7 +27,7 @@
     reason = "Test assertions compare exact float values returned from database"
 )]
 
-use bson::doc;
+use bson::{doc, Document};
 use mongodb::{error::Error, Client, Database};
 
 pub async fn validate_rw_concern(client: &Client) -> Result<(), Error> {
@@ -112,6 +112,29 @@ pub async fn validate_connectivity(client: &Client) -> Result<(), Error> {
     Ok(())
 }
 
+fn validate_documentdb_versions(result: &Document, response_name: &str) {
+    let internal = result
+        .get_document("internal")
+        .unwrap_or_else(|_| panic!("{response_name} must contain 'internal' document"));
+    let versions = internal
+        .get_array("documentdb_versions")
+        .unwrap_or_else(|_| panic!("{response_name} must contain 'documentdb_versions' array"));
+    assert!(
+        !versions.is_empty(),
+        "{response_name} documentdb_versions array must not be empty"
+    );
+    for (i, v) in versions.iter().enumerate() {
+        assert!(
+            v.as_str().is_some(),
+            "{response_name} documentdb_versions[{i}] must be a string"
+        );
+    }
+    assert!(
+        internal.get_str("kind").is_ok(),
+        "{response_name} must contain 'kind' string"
+    );
+}
+
 pub async fn validate_is_master_unauthenticated(client: &Client) -> Result<(), Error> {
     let result = client
         .database("admin")
@@ -121,29 +144,21 @@ pub async fn validate_is_master_unauthenticated(client: &Client) -> Result<(), E
     assert_eq!(result.get_f64("ok").unwrap(), 1.0);
     assert_eq!(result.get_str("msg").unwrap(), "isdbgrid");
 
-    // Validate the internal.documentdb_versions structure
-    let internal = result
-        .get_document("internal")
-        .expect("hello response must contain 'internal' document");
-    let versions = internal
-        .get_array("documentdb_versions")
-        .expect("internal must contain 'documentdb_versions' array");
-    assert!(
-        !versions.is_empty(),
-        "documentdb_versions array must not be empty"
-    );
-    for (i, v) in versions.iter().enumerate() {
-        assert!(
-            v.as_str().is_some(),
-            "documentdb_versions[{i}] must be a string"
-        );
-    }
+    validate_documentdb_versions(&result, "isMaster response");
 
-    // Validate kind field is present as a string
-    assert!(
-        internal.get_str("kind").is_ok(),
-        "internal must contain 'kind' string"
-    );
+    Ok(())
+}
+
+pub async fn validate_build_info_unauthenticated(client: &Client) -> Result<(), Error> {
+    let result = client
+        .database("admin")
+        .run_command(doc! {"buildInfo":1})
+        .await?;
+
+    assert_eq!(result.get_f64("ok").unwrap(), 1.0);
+    assert!(result.get_str("version").is_ok());
+    assert!(result.get_array("versionArray").is_ok());
+    validate_documentdb_versions(&result, "buildInfo response");
 
     Ok(())
 }
