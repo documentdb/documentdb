@@ -63,7 +63,7 @@ ARG BASE_IMAGE
 
 # Install dependencies (conditionally add software-properties-common unless base is debian:trixie-slim)
 RUN apt-get update; \
-    PKGS="jq curl sudo git make build-essential openssl pkg-config libssl-dev upx-ucl"; \
+    PKGS="jq curl sudo git make build-essential openssl pkg-config libssl-dev"; \
     if [ "${BASE_IMAGE}" != "debian:trixie-slim" ]; then \
         PKGS="$PKGS software-properties-common"; \
     else \
@@ -92,8 +92,6 @@ RUN sudo chown -R documentdb:documentdb /home/documentdb/code
 WORKDIR /home/documentdb/code/pg_documentdb_gw
 
 RUN CARGO_MANIFEST_DIR=/home/documentdb/code/pg_documentdb_gw cargo build --profile=release-with-symbols
-RUN upx --best --lzma /home/documentdb/code/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway
-
 # Install mongosh in a throwaway stage so the final image only copies the runtime files.
 FROM prebuild AS mongosh
 
