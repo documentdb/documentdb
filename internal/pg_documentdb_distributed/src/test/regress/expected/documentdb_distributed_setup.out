@@ -111,6 +111,8 @@ NOTICE:  column "validator" of relation "collections_102008" already exists, ski
 NOTICE:  column "validation_level" of relation "collections_102008" already exists, skipping
 NOTICE:  column "validation_action" of relation "collections_102008" already exists, skipping
 NOTICE:  table "documentdb_index_queue" does not exist, skipping
+NOTICE:  column "options" of relation "collections" already exists, skipping
+NOTICE:  column "options" of relation "collections_102008" already exists, skipping
 NOTICE:  Invalidating cached cluster version data
  initialize_cluster 
 ---------------------------------------------------------------------

@@ -599,6 +599,7 @@ primary key, btree, for table "documentdb_api_catalog.collection_indexes"
  validator         | documentdb_core.bson |           |          | 
  validation_level  | text                 |           |          | 
  validation_action | text                 |           |          | 
+ options           | documentdb_core.bson |           |          | 
 Indexes:
     "collections_pkey" PRIMARY KEY, btree (database_name, collection_name)
     "collections_collection_id_key" UNIQUE CONSTRAINT, btree (collection_id)

@@ -75,6 +75,7 @@ static void CheckAndReplicateReferenceTable(const char *schema, const char *tabl
 static void UpdateChangesTableOwnerToAdminRole(void);
 static bool RunUpgradeActions(ExtensionVersion installedVersion, ExtensionVersion
 							  lastUpgradeVersion);
+static void AddMetadataCollectionOptionsColumn(void);
 
 
 PG_FUNCTION_INFO_V1(command_initialize_cluster);
@@ -358,6 +359,14 @@ RunUpgradeActions(ExtensionVersion installedVersion, ExtensionVersion lastUpgrad
 		CreateReferenceTable(tableName->data);
 	}
 
+	if (ShouldRunSetupForVersion(&versions, DocDB_V0, 112, 0))
+	{
+		/*
+		 * Add a BSON column for capturing collection level options in catalog.collections referrence table
+		 */
+		AddMetadataCollectionOptionsColumn();
+	}
+
 	/* we call the post setup cluster hook to allow the extension to do any additional setup */
 	PostSetupClusterHook(&ShouldRunSetupForVersionForHook, &versions);
 
@@ -481,6 +490,21 @@ CreateIndexBuildsTable(bool includeOptions, bool includeDropCommandType)
 					 "SELECT citus_add_local_table_to_metadata('%s')",
 					 indexQueueTableName);
 	ExtensionExecuteQueryViaSPI(queryStr->data, readOnly, SPI_OK_SELECT,
+								&isNull);
+}
+
+
+static void
+AddMetadataCollectionOptionsColumn()
+{
+	bool readOnly = false;
+	bool isNull = false;
+	StringInfo queryStr = makeStringInfo();
+	appendStringInfo(queryStr,
+					 "ALTER TABLE %s.collections "
+					 "ADD COLUMN IF NOT EXISTS options %s.bson DEFAULT NULL",
+					 ApiCatalogSchemaName, CoreSchemaName);
+	ExtensionExecuteQueryViaSPI(queryStr->data, readOnly, SPI_OK_UTILITY,
 								&isNull);
 }
 

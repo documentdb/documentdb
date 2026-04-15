@@ -35,6 +35,7 @@
 extern bool EnablePrepareUnique;
 extern bool EnableCollModUnique;
 extern bool ForceUpdateIndexInline;
+extern bool EnablePreImages;
 extern bool EnablePerCollectionPlannerStatistics;
 
 extern Datum command_reindex_index_background_internal(PG_FUNCTION_ARGS);
@@ -83,6 +84,8 @@ typedef struct
 	/* The validation action for the collection */
 	char *validationAction;
 
+	/* Whether changeStreamPreAndPostImages is enabled */
+	bool changeStreamPreAndPostImagesEnabled;
 	bson_value_t plannerStatistics;
 
 	/* TODO: Add more options when they are supported e.g.: Validators etc */
@@ -114,6 +117,9 @@ typedef enum CollModSpecFlags
 
 	/* Per-collection planner statistics */
 	HAS_COLLECTION_PLANNER_STATISTICS = 1 << 11,
+
+	/* change stream pre and post images option */
+	HAS_CHANGE_STREAM_PRE_AND_POST_IMAGES = 1 << 12,
 
 	/* TODO: More OPTIONS to follow */
 } CollModSpecFlags;
@@ -321,6 +327,22 @@ command_coll_mod(PG_FUNCTION_ARGS)
 							   collModOptions.validationAction);
 	}
 
+	if (specFlags & HAS_CHANGE_STREAM_PRE_AND_POST_IMAGES)
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_COLLMOD_PREIMAGE);
+
+		if (collection->viewDefinition != NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
+							errmsg(
+								"Cannot specify changeStreamPreAndPostImages on a view")));
+		}
+
+		UpdateChangeStreamPreAndPostImages(
+			collection,
+			collModOptions.changeStreamPreAndPostImagesEnabled);
+	}
+
 	PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
 }
 
@@ -410,6 +432,27 @@ ParseSpecSetCollModOptions(const pgbson *collModSpec,
 																				 "collMod.validationAction",
 																				 &
 																				 hasSchemaValidation);
+		}
+		else if (strcmp(key, "changeStreamPreAndPostImages") == 0)
+		{
+			ReportFeatureUsage(FEATURE_COMMAND_COLLMOD_PREIMAGE);
+			if (!EnablePreImages || !IsClusterVersionAtleast(DocDB_V0, 112, 0))
+			{
+				/*
+				 * We were not failing earlier so silently ignore this with a message
+				 */
+				ereport(DEBUG1, (errmsg(
+									 "changeStreamPreAndPostImages is not supported yet.")));
+			}
+			else
+			{
+				EnsureTopLevelFieldType("collMod.changeStreamPreAndPostImages", &iter,
+										BSON_TYPE_DOCUMENT);
+				collModOptions->changeStreamPreAndPostImagesEnabled =
+					ParseChangeStreamPreAndPostImageOption(value,
+														   "collMod.changeStreamPreAndPostImages");
+				specFlags |= HAS_CHANGE_STREAM_PRE_AND_POST_IMAGES;
+			}
 		}
 		else if (strcmp(key, "$db") == 0)
 		{

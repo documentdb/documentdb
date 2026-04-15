@@ -57,6 +57,9 @@ typedef struct CreateSpec
 
 	/* idIndex */
 	bson_value_t idIndex;
+
+	/* enable or disable change stream pre and post images */
+	bool changeStreamPreAndPostImageEnabled;
 } CreateSpec;
 
 static const StringView SystemPrefix = { .string = "system.", .length = 7 };
@@ -79,6 +82,7 @@ static bool CreateView(Datum databaseDatum, const char *viewName,
 PG_FUNCTION_INFO_V1(command_create_collection_view);
 
 extern bool EnableSchemaValidation;
+extern bool EnablePreImages;
 
 /*
  * command_create_collection_view represents the wire
@@ -130,6 +134,18 @@ command_create_collection_view(PG_FUNCTION_ARGS)
 								   createDefinition->validator,
 								   createDefinition->validationLevel,
 								   createDefinition->validationAction);
+		}
+
+		if (createDefinition->changeStreamPreAndPostImageEnabled)
+		{
+			/*
+			 * replica identity can only be updated once the collection is created.
+			 */
+			collection = GetMongoCollectionOrViewByNameDatum(
+				databaseDatum, createDatum, AccessShareLock);
+			UpdateChangeStreamPreAndPostImages(collection,
+											   createDefinition->
+											   changeStreamPreAndPostImageEnabled);
 		}
 	}
 
@@ -317,9 +333,23 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 		}
 		else if (strcmp(key, "changeStreamPreAndPostImages") == 0)
 		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-							errmsg(
-								"changeStreamPreAndPostImages is currently unsupported")));
+			if (!EnablePreImages || !IsClusterVersionAtleast(DocDB_V0, 112, 0))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+								errmsg(
+									"changeStreamPreAndPostImages is currently unsupported")));
+			}
+			else
+			{
+				EnsureTopLevelFieldType("create.changeStreamPreAndPostImages",
+										&createIter,
+										BSON_TYPE_DOCUMENT);
+				const bson_value_t *value = bson_iter_value(&createIter);
+				bool enabled = ParseChangeStreamPreAndPostImageOption(
+					value,
+					"create.changeStreamPreAndPostImages");
+				spec->changeStreamPreAndPostImageEnabled = enabled;
+			}
 		}
 		else if (strcmp(key, "autoIndexId") == 0)
 		{

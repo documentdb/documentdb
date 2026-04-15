@@ -800,18 +800,42 @@ BuildSingleFunctionQuery(Oid queryFunctionOid, List *queryArgs, bool isMultiRow)
 }
 
 
-/* build project to get schema validation information
- *  {"validator": "$validator", "validationLevel":"$validation_level", "validationAction":"$validation_action"}
+/* build project to get all the options for list collection response
+ * Uses $mergeObjects to combine schema validation fields from their dedicated
+ * columns with all options from the options column as-is.
  */
 static bson_value_t
-WriteConditionForSchemaValidation()
+WriteConditionForListCollectionOptions()
 {
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
 
-	PgbsonWriterAppendUtf8(&writer, "validator", 9, "$validator");
-	PgbsonWriterAppendUtf8(&writer, "validationLevel", 15, "$validation_level");
-	PgbsonWriterAppendUtf8(&writer, "validationAction", 16, "$validation_action");
+	pgbson_array_writer mergeArrayWriter;
+	PgbsonWriterStartArray(&writer, "$mergeObjects", 13, &mergeArrayWriter);
+
+	/* First object: schema validation options from dedicated columns */
+	pgbson_writer validationWriter;
+	PgbsonArrayWriterStartDocument(&mergeArrayWriter, &validationWriter);
+	PgbsonWriterAppendUtf8(&validationWriter, "validator", 9, "$validator");
+	PgbsonWriterAppendUtf8(&validationWriter, "validationLevel", 15,
+						   "$validation_level");
+	PgbsonWriterAppendUtf8(&validationWriter, "validationAction", 16,
+						   "$validation_action");
+	PgbsonArrayWriterEndDocument(&mergeArrayWriter, &validationWriter);
+
+	/* Second object: merge all options from the options column as-is */
+	pgbson_writer ifNullWriter;
+	PgbsonArrayWriterStartDocument(&mergeArrayWriter, &ifNullWriter);
+	pgbson_array_writer ifNullArrayWriter;
+	PgbsonWriterStartArray(&ifNullWriter, "$ifNull", 7, &ifNullArrayWriter);
+	PgbsonArrayWriterWriteUtf8(&ifNullArrayWriter, "$options");
+	pgbson_writer emptyDocWriter;
+	PgbsonArrayWriterStartDocument(&ifNullArrayWriter, &emptyDocWriter);
+	PgbsonArrayWriterEndDocument(&ifNullArrayWriter, &emptyDocWriter);
+	PgbsonWriterEndArray(&ifNullWriter, &ifNullArrayWriter);
+	PgbsonArrayWriterEndDocument(&mergeArrayWriter, &ifNullWriter);
+
+	PgbsonWriterEndArray(&writer, &mergeArrayWriter);
 
 	return ConvertPgbsonToBsonValue(PgbsonWriterGetPgbson(&writer));
 }
@@ -875,7 +899,7 @@ HandleListCollectionsProjector(Query *query, AggregationPipelineBuildContext *co
 	if (!nameOnly)
 	{
 		/* "options": { "$cond": [ { "$toBool": "$view_definition" }, "$view_definition",  {"validator": "$validator", "validationLevel":"$validation_level", "validationAction":"$validation_action"} ] } */
-		bson_value_t collectionValue = WriteConditionForSchemaValidation();
+		bson_value_t collectionValue = WriteConditionForListCollectionOptions();
 
 		bson_value_t viewValue = { 0 };
 		viewValue.value_type = BSON_TYPE_UTF8;

@@ -1,3 +1,5 @@
+ALTER TABLE __API_CATALOG_SCHEMA__.collections ADD COLUMN IF NOT EXISTS options __CORE_SCHEMA__.bson DEFAULT NULL;
+
 -- Revoke public execute on all functions, procedures and aggregates in documentdb_api_v2 schema
 REVOKE EXECUTE ON ALL ROUTINES IN SCHEMA documentdb_api_v2 FROM PUBLIC;
 

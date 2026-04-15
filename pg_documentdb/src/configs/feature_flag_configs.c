@@ -424,6 +424,14 @@ bool EnableStreamingCursorDrainViaDestReceiver =
 	DEFAULT_ENABLE_STREAMING_CURSOR_DRAIN_VIA_DESTRECEIVER;
 
 /*
+ * SECTION: Changestream feature flags
+ */
+
+/* Added in v111, Pending stabilization */
+#define DEFAULT_ENABLE_PREIMAGES false
+bool EnablePreImages = DEFAULT_ENABLE_PREIMAGES;
+
+/*
  * SECTION: Schedule jobs via background worker.
  */
 
@@ -1052,6 +1060,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable new min and max aggregate optimizations."),
 		NULL, &EnableNewMinMaxAccumulators,
 		DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enablePreImages", newGucPrefix),
+		gettext_noop(
+			"Whether to enable changestream preimages with the entire row logged in the WAL messages."),
+		NULL, &EnablePreImages,
+		DEFAULT_ENABLE_PREIMAGES,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

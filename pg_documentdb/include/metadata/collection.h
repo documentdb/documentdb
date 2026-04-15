@@ -82,6 +82,14 @@ typedef struct
 	ValidationActions validationAction;
 } SchemaValidatorInfo;
 
+
+typedef struct MongoCollectionOptions
+{
+	/* Whether changeStreamPreAndPostImages is enabled for this collection */
+	bool changeStreamPreAndPostImagesEnabled;
+} MongoCollectionOptions;
+
+
 /*
  * MongoCollection contains metadata of a single Mongo collection.
  */
@@ -122,6 +130,9 @@ typedef struct
 
 	/* Schema Validator if applicable */
 	SchemaValidatorInfo schemaValidator;
+
+	/* Collection options */
+	MongoCollectionOptions options;
 } MongoCollection;
 
 
@@ -255,4 +266,8 @@ bool GetMongoCollectionShardOidsAndNames(MongoCollection *collection,
 										 ArrayType **shardNames);
 bool CheckRelNameValidity(const char *relName, uint64_t *collectionId,
 						  bool validateShardTable);
+
+bool ParseChangeStreamPreAndPostImageOption(const bson_value_t *optionValue,
+											const char *commandPrefix);
+void UpdateChangeStreamPreAndPostImages(MongoCollection *collection, bool enabled);
 #endif

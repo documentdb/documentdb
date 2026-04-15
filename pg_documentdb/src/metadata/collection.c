@@ -13,6 +13,8 @@
 
 #include "access/xact.h"
 #include "catalog/pg_attribute.h"
+#include "catalog/pg_class.h"
+#include "catalog/namespace.h"
 #include "commands/extension.h"
 #include "executor/spi.h"
 #include "lib/stringinfo.h"
@@ -131,6 +133,13 @@ static MongoCollection * GetMongoCollectionByNameDatumCore(Datum databaseNameDat
 														   Datum collectionNameDatum,
 														   LOCKMODE lockMode);
 static Datum GetCollectionOrViewCore(PG_FUNCTION_ARGS, bool allowViews);
+static void CopyCollectionOptions(const pgbson *options,
+								  MongoCollection *collection);
+static void UpdateCollectionOptions(MongoCollection *collection, const
+									pgbson *updateSpec);
+static void RemoveCollectionOptions(MongoCollection *collection, const
+									pgbson *removeSpec);
+
 
 /*
  * CollectionCacheIsValid determines whether the collections hashes are
@@ -990,6 +999,18 @@ GetMongoCollectionFromCatalogById(uint64 collectionId, Oid relationId,
 					strcmp(validationActionText, "warn") == 0 ? ValidationAction_Warn :
 					strcmp(validationActionText, "error") == 0 ? ValidationAction_Error :
 					ValidationAction_Invalid;
+			}
+		}
+
+		/* 10 is collection options */
+		if (tupleDescriptor->natts >= 10)
+		{
+			/* options stored as pgbson */
+			Datum optionsDatum = heap_getattr(tuple, 10, tupleDescriptor, &isNull);
+			if (!isNull)
+			{
+				pgbson *options = DatumGetPgBson(optionsDatum);
+				CopyCollectionOptions(options, collection);
 			}
 		}
 
@@ -2045,4 +2066,250 @@ CheckRelNameValidity(const char *relName, uint64_t *collectionId, bool validateS
 	}
 
 	return false;
+}
+
+
+bool
+ParseChangeStreamPreAndPostImageOption(const bson_value_t *optionValue,
+									   const char *commandPrefix)
+{
+	bson_iter_t csIter;
+	BsonValueInitIterator(optionValue, &csIter);
+	bool foundEnabled = false;
+	bool enabled = false;
+	while (bson_iter_next(&csIter))
+	{
+		const char *csKey = bson_iter_key(&csIter);
+		if (strcmp(csKey, "enabled") == 0)
+		{
+			EnsureTopLevelFieldIsBooleanLike(
+				psprintf("%s.enabled", commandPrefix), &csIter);
+			enabled = BsonValueAsBool(bson_iter_value(&csIter));
+			foundEnabled = true;
+		}
+		else
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_UNKNOWNBSONFIELD),
+							errmsg("The BSON field '%s.%s'"
+								   " is not recognized.",
+								   commandPrefix, csKey)));
+		}
+	}
+	if (!foundEnabled)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
+						errmsg(
+							"The 'enabled' field is required"
+							" in changeStreamPreAndPostImages")));
+	}
+
+	return enabled;
+}
+
+
+/*
+ * UpdateChangeStreamPreAndPostImages checks the data table's current replica
+ * identity from pg_class syscache and ALTERs it to FULL (when enabled) or
+ * DEFAULT (when disabled) only if the current state differs. REPLICA IDENTITY
+ * FULL causes PostgreSQL to include the full old row in WAL for UPDATE/DELETE,
+ * which is needed for generating pre-images in change streams.
+ */
+void
+UpdateChangeStreamPreAndPostImages(MongoCollection *collection,
+								   bool enabled)
+{
+	if (collection == NULL)
+	{
+		return;
+	}
+
+	/* Resolve the data table's OID from schema + table name */
+	Oid nspOid = get_namespace_oid(ApiDataSchemaName, false);
+	Oid relOid = get_relname_relid(collection->tableName, nspOid);
+	if (!OidIsValid(relOid))
+	{
+		return;
+	}
+
+	/* Look up the current replica identity from pg_class syscache */
+	HeapTuple classTuple = SearchSysCache1(RELOID, ObjectIdGetDatum(relOid));
+	if (!HeapTupleIsValid(classTuple))
+	{
+		return;
+	}
+
+	Form_pg_class classForm = (Form_pg_class) GETSTRUCT(classTuple);
+	char currentReplIdent = classForm->relreplident;
+	ReleaseSysCache(classTuple);
+
+	bool isCurrentlyFull = (currentReplIdent == REPLICA_IDENTITY_FULL);
+
+	/* Only ALTER if the desired state differs from the current state */
+	if (enabled == isCurrentlyFull)
+	{
+		return;
+	}
+
+	StringInfo command = makeStringInfo();
+	appendStringInfo(command,
+					 "ALTER TABLE %s.%s REPLICA IDENTITY %s",
+					 ApiDataSchemaName,
+					 collection->tableName,
+					 enabled ? "FULL" : "DEFAULT");
+
+	bool readOnly = false;
+	bool resultIsNull = false;
+	ExtensionExecuteQueryViaSPI(command->data, readOnly,
+								SPI_OK_UTILITY, &resultIsNull);
+
+	pfree(command->data);
+
+	pgbson_writer changeStreamOptions;
+	PgbsonWriterInit(&changeStreamOptions);
+	if (enabled)
+	{
+		PgbsonWriterAppendBool(&changeStreamOptions,
+							   "changeStreamPreAndPostImages.enabled",
+							   strlen("changeStreamPreAndPostImages.enabled"),
+							   enabled);
+	}
+	else
+	{
+		/* Create the bson_dollar_unset spec to remove the option. */
+		PgbsonWriterAppendUtf8(&changeStreamOptions,
+							   "", 0, "changeStreamPreAndPostImages");
+	}
+	pgbson *changeStreamOptionsBson = PgbsonWriterGetPgbson(&changeStreamOptions);
+
+	if (enabled)
+	{
+		UpdateCollectionOptions(collection, changeStreamOptionsBson);
+	}
+	else
+	{
+		RemoveCollectionOptions(collection, changeStreamOptionsBson);
+	}
+}
+
+
+static void
+UpdateCollectionOptions(MongoCollection *collection, const pgbson *updateSpec)
+{
+	bool isNull = false;
+	bool readOnly = false;
+	int numArgs = 2;
+	char isNulls[2] = { ' ', ' ' };
+	Datum datum[2];
+	datum[0] = PointerGetDatum(updateSpec);
+	datum[1] = PointerGetDatum(PgbsonInitEmpty());
+
+	Oid argOid[2] = { BsonTypeId(), BsonTypeId() };
+
+	StringInfo updateOptionQuery = makeStringInfo();
+
+	/*
+	 * We use CTE to perform bson_dollar_set only once and then check if
+	 * the resulting bson is empty (length = 5) to decide whether to set options
+	 * to NULL or the updated bson with the specified field unset.
+	 */
+	appendStringInfo(updateOptionQuery,
+					 "WITH updated AS ( "
+					 "  SELECT %s.bson_dollar_set( "
+					 "    COALESCE(options, $2::%s.bson), "
+					 "    $1::%s.bson) AS val "
+					 "  FROM %s.collections "
+					 "  WHERE collection_id = " UINT64_FORMAT
+					 " ) UPDATE %s.collections SET options = "
+					 "  CASE WHEN updated.val OPERATOR(%s.=) $2::%s.bson "
+					 "    THEN NULL ELSE updated.val END "
+					 " FROM updated "
+					 " WHERE collection_id = "
+					 UINT64_FORMAT,
+					 ApiCatalogSchemaName, CoreSchemaName,
+					 CoreSchemaName,
+					 ApiCatalogSchemaName, collection->collectionId,
+					 ApiCatalogSchemaName, ApiCatalogSchemaName,
+					 CoreSchemaName, collection->collectionId);
+
+	ExtensionExecuteQueryWithArgsViaSPI(updateOptionQuery->data, numArgs,
+										argOid, datum, isNulls, readOnly,
+										SPI_OK_UPDATE, &isNull);
+}
+
+
+/*
+ * Utility function to remove a single or multiple options from collection options based on the path
+ * provided in removeArraySpec.
+ * `removeArraySpec` can accept valid specification as array of paths or a single path.
+ */
+static void
+RemoveCollectionOptions(MongoCollection *collection, const pgbson *removeArraySpec)
+{
+	bool isNull = false;
+	bool readOnly = false;
+	int numArgs = 2;
+	char isNulls[2] = { ' ', ' ' };
+	Datum datum[2];
+	datum[0] = PointerGetDatum(removeArraySpec);
+	datum[1] = PointerGetDatum(PgbsonInitEmpty());
+
+	Oid argOid[2] = { BsonTypeId(), BsonTypeId() };
+
+	StringInfo updateOptionQuery = makeStringInfo();
+
+	/*
+	 * We use CTE to perform bson_dollar_unset only once and then check if
+	 * the resulting bson is empty (length = 5) to decide whether to set options
+	 * to NULL or the updated bson with the specified field unset.
+	 */
+	appendStringInfo(updateOptionQuery,
+					 "WITH updated AS ( "
+					 "  SELECT %s.bson_dollar_unset( "
+					 "    COALESCE(options, $2::%s.bson), "
+					 "    $1::%s.bson) AS val "
+					 "  FROM %s.collections "
+					 "  WHERE collection_id = " UINT64_FORMAT
+					 " ) UPDATE %s.collections SET options = "
+					 "  CASE WHEN updated.val OPERATOR(%s.=) $2::%s.bson "
+					 "    THEN NULL ELSE updated.val END "
+					 " FROM updated "
+					 " WHERE collection_id = "
+					 UINT64_FORMAT,
+					 ApiCatalogSchemaName, CoreSchemaName,
+					 CoreSchemaName,
+					 ApiCatalogSchemaName, collection->collectionId,
+					 ApiCatalogSchemaName, ApiCatalogSchemaName,
+					 CoreSchemaName, collection->collectionId);
+
+	ExtensionExecuteQueryWithArgsViaSPI(updateOptionQuery->data, numArgs,
+										argOid, datum, isNulls, readOnly,
+										SPI_OK_UPDATE, &isNull);
+}
+
+
+/*
+ * Copies all the required options from collection to in memory MongoCollection struct.
+ */
+static void
+CopyCollectionOptions(const pgbson *options, MongoCollection *collection)
+{
+	if (options == NULL)
+	{
+		return;
+	}
+
+	bson_iter_t optionsIter;
+	PgbsonInitIterator(options, &optionsIter);
+	while (bson_iter_next(&optionsIter))
+	{
+		const char *key = bson_iter_key(&optionsIter);
+		if (strcmp(key, "changeStreamPreAndPostImages") == 0)
+		{
+			/*
+			 * top level field is only present when the option is enabled,
+			 * so we can infer that pre and post images are enabled.
+			 */
+			collection->options.changeStreamPreAndPostImagesEnabled = true;
+		}
+	}
 }
