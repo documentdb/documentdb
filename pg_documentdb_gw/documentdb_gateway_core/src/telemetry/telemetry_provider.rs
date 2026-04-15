@@ -8,7 +8,6 @@
 
 use std::fmt::Debug;
 
-use async_trait::async_trait;
 use dyn_clone::{clone_trait_object, DynClone};
 use either::Either;
 
@@ -22,12 +21,11 @@ use crate::{
 /// `TelemetryProvider` takes care of emitting events and metrics for tracking the gateway.
 #[expect(
     clippy::too_many_arguments,
-    reason = "telemetry requires many parameters"
+    reason = "Telemetry requires many parameters"
 )]
-#[async_trait]
 pub trait TelemetryProvider: Send + Sync + DynClone + Debug {
     /// Emits an event for every CRUD request dispatched to backend.
-    async fn emit_request_event(
+    fn emit_request_event(
         &self,
         _: &ConnectionContext,
         _: &Header,

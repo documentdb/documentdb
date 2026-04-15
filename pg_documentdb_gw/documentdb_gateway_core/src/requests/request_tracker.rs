@@ -6,8 +6,11 @@
  *-------------------------------------------------------------------------
  */
 
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use tokio::time::Instant;
+
+use crate::telemetry::utils;
 
 #[derive(Debug)]
 pub enum RequestIntervalKind {
@@ -49,7 +52,7 @@ pub enum RequestIntervalKind {
 
 #[derive(Debug)]
 pub struct RequestTracker {
-    pub request_interval_metrics_array: [AtomicI64; RequestIntervalKind::MaxUnused as usize],
+    pub request_interval_metrics_array: [AtomicU64; RequestIntervalKind::MaxUnused as usize],
 }
 
 impl Default for RequestTracker {
@@ -62,22 +65,22 @@ impl RequestTracker {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            request_interval_metrics_array: std::array::from_fn(|_| AtomicI64::new(0)),
+            request_interval_metrics_array: std::array::from_fn(|_| AtomicU64::new(0)),
         }
     }
 
-    #[expect(clippy::cast_possible_truncation, reason = "nanoseconds fit in i64")]
+    #[expect(clippy::cast_possible_truncation, reason = "nanoseconds fit in u64")]
     pub fn record_duration(&self, interval: RequestIntervalKind, start_time: Instant) {
         let elapsed = start_time.elapsed();
         self.request_interval_metrics_array[interval as usize]
-            .fetch_add(elapsed.as_nanos() as i64, Ordering::Relaxed);
+            .fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
     }
 
-    pub fn get_interval_elapsed_time(&self, interval: RequestIntervalKind) -> i64 {
+    pub fn get_interval_elapsed_time(&self, interval: RequestIntervalKind) -> u64 {
         self.request_interval_metrics_array[interval as usize].load(Ordering::Relaxed)
     }
 
-    pub fn get_interval_elapsed_time_ms(&self, interval: RequestIntervalKind) -> i64 {
-        self.get_interval_elapsed_time(interval) / 1_000_000
+    pub fn get_interval_elapsed_time_ms(&self, interval: RequestIntervalKind) -> u64 {
+        utils::ns_to_ms(self.get_interval_elapsed_time(interval))
     }
 }

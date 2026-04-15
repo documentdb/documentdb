@@ -8,6 +8,14 @@
 
 use crate::{error::ErrorCode, requests::Request, responses::CommandError};
 
+pub const NANOS_PER_MILLISECOND: u64 = 1_000_000;
+
+#[must_use]
+#[inline]
+pub const fn ns_to_ms(ns: u64) -> u64 {
+    ns / NANOS_PER_MILLISECOND
+}
+
 // In case of no error (success), error_code passed here should be None and status code returned is 200
 #[must_use]
 const fn error_code_to_status_code(error_code: Option<&ErrorCode>) -> u16 {

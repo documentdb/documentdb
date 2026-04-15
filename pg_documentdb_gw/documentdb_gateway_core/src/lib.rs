@@ -25,29 +25,24 @@ pub mod telemetry;
 #[cfg(test)]
 pub(crate) mod testing;
 
-use std::{net::IpAddr, pin::Pin, sync::Arc};
+use std::{net::IpAddr, pin::Pin};
 
-use either::Either::{Left, Right};
 use openssl::ssl::Ssl;
 use socket2::TcpKeepalive;
 use tokio::{
-    io::{AsyncRead, AsyncWrite, BufStream},
+    io::BufStream,
     net::{unix::SocketAddr as UnixSocketAddr, TcpStream, UnixListener, UnixStream},
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio_openssl::SslStream;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    context::{ConnectionContext, RequestContext, ServiceContext},
-    error::{DocumentDBError, ErrorCode, Result},
+    context::{ConnectionContext, ServiceContext},
+    error::{DocumentDBError, Result},
     postgres::PgDataClient,
-    protocol::header::Header,
-    requests::{request_tracker::RequestTracker, validation, Request, RequestIntervalKind},
-    responses::{CommandError, Response},
-    service::create_tcp_listeners,
-    telemetry::{client_info::parse_client_info, record_gateway_metrics, TelemetryProvider},
+    telemetry::TelemetryProvider,
 };
 // TCP keepalive configuration constants
 const TCP_KEEPALIVE_TIME_SECS: u64 = 180;
@@ -152,7 +147,7 @@ pub async fn run_gateway<T>(
 where
     T: PgDataClient,
 {
-    let (ipv4_listener, ipv6_listener) = create_tcp_listeners(
+    let (ipv4_listener, ipv6_listener) = service::create_tcp_listeners(
         service_context.setup_configuration().use_local_host(),
         service_context.setup_configuration().gateway_listen_port(),
     )
@@ -427,7 +422,7 @@ where
             "TLS TCP connection established - Connection Id {connection_id}, client IP {ip_address}"
         );
 
-        handle_stream::<T, _>(buffered_stream, conn_ctx).await;
+        service::handle_stream::<T, _>(buffered_stream, conn_ctx).await;
     } else {
         // Non-TLS path
         let conn_ctx = ConnectionContext::new(
@@ -452,7 +447,7 @@ where
             "Non-TLS TCP connection established - Connection Id {connection_id}, client IP {ip_address}"
         );
 
-        handle_stream::<T, _>(buffered_stream, conn_ctx).await;
+        service::handle_stream::<T, _>(buffered_stream, conn_ctx).await;
     }
 
     Ok(())
@@ -513,326 +508,6 @@ where
         "Unix socket connection established - Connection Id {connection_id}"
     );
 
-    handle_stream::<T, _>(buffered_stream, connection_context).await;
-    Ok(())
-}
-
-async fn handle_stream<T, S>(mut stream: S, mut connection_context: ConnectionContext)
-where
-    T: PgDataClient,
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    let connection_activity_id = connection_context.connection_id.to_string();
-    let connection_activity_id_as_str = connection_activity_id.as_str();
-
-    loop {
-        match protocol::reader::read_header(&mut stream).await {
-            Ok(Some(header)) => {
-                let request_activity_id =
-                    connection_context.generate_request_activity_id(header.request_id);
-
-                if let Err(e) = handle_message::<T, S>(
-                    &mut connection_context,
-                    &header,
-                    &mut stream,
-                    &request_activity_id,
-                )
-                .await
-                {
-                    if let Err(e) = log_and_write_error::<S>(
-                        &connection_context,
-                        &header,
-                        &e,
-                        None,
-                        &mut stream,
-                        None,
-                        &RequestTracker::new(),
-                        &request_activity_id,
-                        None,
-                    )
-                    .await
-                    {
-                        tracing::error!(
-                            activity_id = request_activity_id.as_str(),
-                            "Couldn't reply with error {e:?}."
-                        );
-                        break;
-                    }
-                }
-            }
-
-            Ok(None) => {
-                tracing::info!(
-                    activity_id = connection_activity_id_as_str,
-                    "Connection closed."
-                );
-                break;
-            }
-
-            Err(e) => {
-                if let Err(e) = responses::writer::write_error_without_header(
-                    &connection_context,
-                    e,
-                    &mut stream,
-                    connection_activity_id_as_str,
-                )
-                .await
-                {
-                    tracing::warn!(
-                        activity_id = connection_activity_id_as_str,
-                        "Couldn't reply with error {e:?}."
-                    );
-                    break;
-                }
-            }
-        }
-    }
-}
-
-async fn get_response<T>(
-    request_context: &RequestContext<'_>,
-    connection_context: &mut ConnectionContext,
-) -> Result<Response>
-where
-    T: PgDataClient,
-{
-    if request_context.payload.request_type().handle_with_auth() {
-        let response = auth::process::<T>(connection_context, request_context).await?;
-        return Ok(response);
-    }
-
-    if !connection_context.auth_state.is_authorized() {
-        if connection_context.auth_state.auth_kind() == Some(&auth::AuthKind::ExternalIdentity) {
-            return Err(DocumentDBError::reauthentication_required(
-                "External identity token has expired.".to_owned(),
-            ));
-        }
-        let response = auth::process::<T>(connection_context, request_context).await?;
-        return Ok(response);
-    }
-
-    let service_context = Arc::clone(&connection_context.service_context);
-    let data_client = T::new_authorized(&service_context, &connection_context.auth_state)?;
-
-    // Process the actual request
-    let response =
-        processor::process_request(request_context, connection_context, &data_client).await?;
-
-    Ok(response)
-}
-
-async fn handle_message<T, S>(
-    connection_context: &mut ConnectionContext,
-    header: &Header,
-    stream: &mut S,
-    activity_id: &str,
-) -> Result<()>
-where
-    T: PgDataClient,
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    let request_tracker = RequestTracker::new();
-
-    // Read the request message off the stream
-    let read_request_start = Instant::now();
-    let message = protocol::reader::read_request(header, stream).await?;
-    request_tracker.record_duration(RequestIntervalKind::ReadRequest, read_request_start);
-
-    // HandleMessage captures the overall duration needed by the server to handle/process
-    // a user operation message/request. Client-to-Gateway networking latency should be
-    // excluded from HandleMessage; therefore, ReadRequest is closed before this starts,
-    // and WriteResponse starts measuring only after HandleMessage is closed.
-    let handle_message_start = Instant::now();
-    if connection_context
-        .dynamic_configuration()
-        .send_shutdown_responses()
-    {
-        return Err(DocumentDBError::documentdb_error(
-            ErrorCode::ShutdownInProgress,
-            "Graceful shutdown requested".to_owned(),
-        ));
-    }
-
-    let format_request_start = Instant::now();
-    let request =
-        protocol::reader::parse_request(&message, &mut connection_context.requires_response)?;
-    request_tracker.record_duration(RequestIntervalKind::FormatRequest, format_request_start);
-
-    let request_info = request.extract_common()?;
-    validation::validate_request(connection_context, &request_info, &request)?;
-
-    let request_context = RequestContext {
-        activity_id,
-        payload: &request,
-        info: &request_info,
-        tracker: &request_tracker,
-    };
-
-    let request_result = handle_request::<T, S>(
-        connection_context,
-        header,
-        &request_context,
-        stream,
-        handle_message_start,
-    )
-    .await;
-
-    // Errors in request handling are handled explicitly so that telemetry can have access to the request
-    // Returns Ok afterwards so that higher level error telemetry is not invoked.
-    if let Err(e) = request_result {
-        let collection = request_context.info.collection().unwrap_or("").to_owned();
-        match log_and_write_error::<S>(
-            connection_context,
-            header,
-            &e,
-            Some(request_context.payload),
-            stream,
-            Some(collection),
-            request_context.tracker,
-            activity_id,
-            Some(handle_message_start),
-        )
-        .await
-        {
-            Ok(()) => {}
-            Err(write_err) => {
-                tracing::error!(
-                    activity_id = activity_id,
-                    "Couldn't reply with error {write_err:?}."
-                );
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn handle_request<T, S>(
-    connection_context: &mut ConnectionContext,
-    header: &Header,
-    request_context: &RequestContext<'_>,
-    stream: &mut S,
-    handle_message_start: tokio::time::Instant,
-) -> Result<()>
-where
-    T: PgDataClient,
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    // Process the request
-    let handle_request_start = Instant::now();
-    let response_result = get_response::<T>(request_context, connection_context).await;
-    request_context
-        .tracker
-        .record_duration(RequestIntervalKind::HandleRequest, handle_request_start);
-
-    let response = match response_result {
-        Ok(response) => response,
-        // For the error case, the error handling code will close HandleMessage.
-        Err(e) => {
-            return Err(e);
-        }
-    };
-
-    // Write the response back to the stream
-    request_context
-        .tracker
-        .record_duration(RequestIntervalKind::HandleMessage, handle_message_start);
-
-    if connection_context.requires_response {
-        let write_response_start = Instant::now();
-        responses::writer::write(header, &response, stream).await?;
-        request_context
-            .tracker
-            .record_duration(RequestIntervalKind::WriteResponse, write_response_start);
-    }
-
-    if connection_context.request_metrics_enabled() {
-        record_gateway_metrics(
-            header,
-            Some(request_context.payload),
-            Left(&response),
-            request_context.info.collection().unwrap_or(""),
-            request_context.tracker,
-        );
-    }
-
-    if let Some(telemetry) = connection_context.telemetry_provider.as_ref() {
-        let collection = request_context.info.collection().unwrap_or("").to_owned();
-        telemetry
-            .emit_request_event(
-                connection_context,
-                header,
-                Some(request_context.payload),
-                Left(&response),
-                collection,
-                request_context.tracker,
-                request_context.activity_id,
-                &parse_client_info(connection_context.client_information.as_ref()),
-            )
-            .await;
-    }
-
-    Ok(())
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "error handling function needs all these parameters"
-)]
-async fn log_and_write_error<S>(
-    connection_context: &ConnectionContext,
-    header: &Header,
-    error: &DocumentDBError,
-    request: Option<&Request<'_>>,
-    stream: &mut S,
-    collection: Option<String>,
-    request_tracker: &RequestTracker,
-    activity_id: &str,
-    handle_message_start: Option<Instant>,
-) -> Result<()>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    let command_error = CommandError::from_error(connection_context, error, activity_id);
-    let response = command_error.to_raw_document_buf();
-
-    if let Some(start) = handle_message_start {
-        request_tracker.record_duration(RequestIntervalKind::HandleMessage, start);
-    }
-
-    let write_response_start = Instant::now();
-    responses::writer::write_and_flush(header, &response, stream).await?;
-    request_tracker.record_duration(RequestIntervalKind::WriteResponse, write_response_start);
-
-    // telemetry can block so do it after write and flush.
-    telemetry::log_request_failure(error, connection_context, activity_id, request);
-
-    let collection = collection.unwrap_or_default();
-
-    if connection_context.request_metrics_enabled() {
-        record_gateway_metrics(
-            header,
-            request,
-            Right((&command_error, response.as_bytes().len())),
-            &collection,
-            request_tracker,
-        );
-    }
-
-    if let Some(telemetry) = connection_context.telemetry_provider.as_ref() {
-        telemetry
-            .emit_request_event(
-                connection_context,
-                header,
-                request,
-                Right((&command_error, response.as_bytes().len())),
-                collection,
-                request_tracker,
-                activity_id,
-                &parse_client_info(connection_context.client_information.as_ref()),
-            )
-            .await;
-    }
-
+    service::handle_stream::<T, _>(buffered_stream, connection_context).await;
     Ok(())
 }

@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
- * src/testing/env_guard.rs
+ * documentdb_gateway_core/src/testing/env_guard.rs
  *
  * Shared testing helpers for managing environment variables in tests.
  *

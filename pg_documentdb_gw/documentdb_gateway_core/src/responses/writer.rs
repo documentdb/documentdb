@@ -10,7 +10,7 @@ use crate::{
     context::ConnectionContext,
     error::{DocumentDBError, Result},
     protocol::{header::Header, opcode::OpCode},
-    CommandError, Response,
+    responses::{CommandError, Response},
 };
 use bson::RawDocument;
 use tokio::io::{AsyncWrite, AsyncWriteExt};

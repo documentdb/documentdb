@@ -255,8 +255,7 @@ pub fn record_gateway_metrics(
 
     let db_name = request.and_then(|r| r.db().ok()).unwrap_or("unknown");
 
-    let duration_to_secs =
-        |ns: i64| -> f64 { Duration::from_nanos(ns.max(0).cast_unsigned()).as_secs_f64() };
+    let duration_to_secs = |ns: u64| -> f64 { Duration::from_nanos(ns).as_secs_f64() };
 
     let duration_ns = request_tracker.get_interval_elapsed_time(RequestIntervalKind::HandleRequest);
 
@@ -300,7 +299,7 @@ pub fn record_gateway_metrics(
     // Record PostgreSQL phase breakdown (duration totals).
     let mut phase_attrs = Vec::with_capacity(base_attrs.len() + 1);
 
-    let mut record_phase = |phase: &'static str, ns: i64| {
+    let mut record_phase = |phase: &'static str, ns: u64| {
         if ns > 0 {
             phase_attrs.clear();
             phase_attrs.extend_from_slice(&base_attrs);

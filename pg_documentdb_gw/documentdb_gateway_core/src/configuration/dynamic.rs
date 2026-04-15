@@ -136,8 +136,8 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         )
     }
 
-    fn slow_query_log_interval_ms(&self) -> i32 {
-        self.get_i32("slowQueryLogIntervalInMilliseconds", -1)
+    fn slow_query_log_interval_ms(&self) -> u64 {
+        self.get_u64("slowQueryLogIntervalInMilliseconds", 0)
     }
 
     /// # Errors

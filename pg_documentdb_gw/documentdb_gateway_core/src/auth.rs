@@ -558,14 +558,13 @@ async fn handle_sasl_continue(
         let mechanism_result = request.document().get_str("mechanism");
 
         // Only validate mechanism if it's present - it's optional in SaslContinue
+        // (per auth spec, mechanism is only in saslStart, not saslContinue)
         if let Ok(mechanism) = mechanism_result {
             if mechanism == "MONGODB-OIDC" {
                 return Err(DocumentDBError::authentication_failed(
                     "Auth mechanism MONGODB-OIDC is not supported in SaslContinue".to_owned(),
                 ));
             }
-        } else {
-            tracing::warn!("Auth mechanism not provided in SaslContinue");
         }
 
         // Username is not always provided by saslcontinue
