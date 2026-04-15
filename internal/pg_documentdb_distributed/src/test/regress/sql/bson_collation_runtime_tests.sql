@@ -1,7 +1,7 @@
 SET search_path to documentdb_core,documentdb_api,documentdb_api_catalog,pg_catalog;
-SET citus.next_shard_id TO 7990000;
-SET documentdb.next_collection_id TO 7990;
-SET documentdb.next_collection_index_id TO 7990;
+SET citus.next_shard_id TO 8000000;
+SET documentdb.next_collection_id TO 8000;
+SET documentdb.next_collection_index_id TO 8000;
 
 -- (1) insert some docs
 SELECT documentdb_api.insert_one('db', 'ci_search', '{ "_id": 1, "a": "Cat" }');

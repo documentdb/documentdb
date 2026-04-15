@@ -1,8 +1,8 @@
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 
-SET citus.next_shard_id TO 7850000;
-SET documentdb.next_collection_id TO 7850;
-SET documentdb.next_collection_index_id TO 7850;
+SET citus.next_shard_id TO 9700000;
+SET documentdb.next_collection_id TO 9700;
+SET documentdb.next_collection_index_id TO 9700;
 
 --Test without Enabling feature flag of $merge
 SELECT documentdb_api.insert_one('sourceDB','withoutFlag',' { "_id" :  1, "country" : "India", "state" : "Rajasthan", "Code" : "RJ03" }', NULL);

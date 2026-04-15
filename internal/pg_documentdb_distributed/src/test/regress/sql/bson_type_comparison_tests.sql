@@ -1,8 +1,8 @@
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 
-SET citus.next_shard_id TO 66100;
-SET documentdb.next_collection_id TO 6610;
-SET documentdb.next_collection_index_id TO 6610;
+SET citus.next_shard_id TO 66000;
+SET documentdb.next_collection_id TO 6600;
+SET documentdb.next_collection_index_id TO 6600;
 
 -- insert double
 SELECT documentdb_api.insert_one('db','bsontypetests', '{ "a" : 3.0 }', NULL);

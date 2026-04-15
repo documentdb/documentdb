@@ -1,7 +1,7 @@
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
-SET citus.next_shard_id TO 659000;
-SET documentdb.next_collection_id TO 6590;
-SET documentdb.next_collection_index_id TO 6590;
+SET citus.next_shard_id TO 790000;
+SET documentdb.next_collection_id TO 7900;
+SET documentdb.next_collection_index_id TO 7900;
 -- exercise invalid insert syntax errors
 select documentdb_api.insert('db', NULL);
 ERROR:  insert document cannot be NULL
