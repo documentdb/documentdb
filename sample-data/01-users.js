@@ -98,12 +98,15 @@ db.users.insertMany([
     }
 ]);
 
-print("Created " + db.users.countDocuments() + " users in the users collection");
-
 // Create indexes for better query performance
-db.users.createIndex({ "email": 1 }, { unique: true });
-db.users.createIndex({ "username": 1 }, { unique: true });
-db.users.createIndex({ "city": 1 });
-db.users.createIndex({ "tags": 1 });
+db.runCommand({
+    createIndexes: "users",
+    indexes: [
+        { key: { "email": 1 }, name: "email_1", unique: true },
+        { key: { "username": 1 }, name: "username_1", unique: true },
+        { key: { "city": 1 }, name: "city_1" },
+        { key: { "tags": 1 }, name: "tags_1" }
+    ]
+});
 
 print("Created indexes on users collection");

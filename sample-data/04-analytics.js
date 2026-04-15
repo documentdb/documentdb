@@ -57,32 +57,14 @@ db.analytics.insertMany([
     }
 ]);
 
-print("Created " + db.analytics.countDocuments() + " analytics records");
-
 // Create indexes for analytics queries
-db.analytics.createIndex({ "period": 1 });
-db.analytics.createIndex({ "type": 1 });
-db.analytics.createIndex({ "date": 1 });
+db.runCommand({
+    createIndexes: "analytics",
+    indexes: [
+        { key: { "period": 1 }, name: "period_1" },
+        { key: { "type": 1 }, name: "type_1" },
+        { key: { "date": 1 }, name: "date_1" }
+    ]
+});
 
 print("Created indexes on analytics collection");
-
-// Create some aggregation views for common queries
-print("Setting up sample aggregation examples...");
-
-// Example aggregation: User order summary
-print("Sample aggregation - User order summary:");
-db.orders.aggregate([
-    {
-        $group: {
-            _id: "$userId",
-            totalOrders: { $sum: 1 },
-            totalSpent: { $sum: "$orderSummary.total" },
-            averageOrderValue: { $avg: "$orderSummary.total" }
-        }
-    },
-    {
-        $sort: { totalSpent: -1 }
-    }
-]).forEach(printjson);
-
-print("Sample data initialization completed!");
