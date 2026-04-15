@@ -1,171 +1,25 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
- * documentdb_gateway_core/src/context/transaction.rs
+ * documentdb_gateway_core/src/context/transaction/transaction_store.rs
  *
  *-------------------------------------------------------------------------
  */
 
-use std::fmt;
-use std::sync::Arc;
-
 use dashmap::DashMap;
+use std::sync::Arc;
 use tokio::{
     task::JoinHandle,
     time::{Duration, Instant},
 };
 use tokio_postgres::IsolationLevel;
 
+use crate::context::transaction::{GatewayTransaction, RequestTransactionInfo, TransactionNumber};
 use crate::{
-    configuration::DynamicConfiguration,
-    context::{ConnectionContext, CursorStore, SessionId},
+    context::{ConnectionContext, SessionId},
     error::{DocumentDBError, ErrorCode, Result},
-    postgres::{self, conn_mgmt::Connection, PgDataClient},
+    postgres::{conn_mgmt::Connection, PgDataClient},
 };
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct TransactionNumber(i64);
-
-impl TransactionNumber {
-    #[must_use]
-    pub const fn new(transaction_number: i64) -> Self {
-        Self(transaction_number)
-    }
-}
-
-impl From<i64> for TransactionNumber {
-    fn from(value: i64) -> Self {
-        Self(value)
-    }
-}
-
-impl From<&i64> for TransactionNumber {
-    fn from(value: &i64) -> Self {
-        Self(*value)
-    }
-}
-
-impl From<TransactionNumber> for i64 {
-    fn from(transaction_number: TransactionNumber) -> Self {
-        transaction_number.0
-    }
-}
-
-impl fmt::Display for TransactionNumber {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl fmt::Debug for TransactionNumber {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "TransactionNumber({self})")
-    }
-}
-
-#[derive(Debug)]
-pub struct RequestTransactionInfo {
-    pub transaction_number: TransactionNumber,
-    pub auto_commit: bool,
-    pub start_transaction: bool,
-    pub is_request_within_transaction: bool,
-    pub isolation_level: Option<IsolationLevel>,
-}
-
-#[derive(Debug)]
-pub struct GatewayTransaction {
-    pub session_id: SessionId,
-    pub transaction_number: TransactionNumber,
-    pub cursors: CursorStore,
-    pg_transaction: Option<postgres::Transaction>,
-}
-
-impl GatewayTransaction {
-    /// # Errors
-    ///
-    /// Returns an error if the operation fails.
-    pub async fn start(
-        config: Arc<dyn DynamicConfiguration>,
-        request: &RequestTransactionInfo,
-        conn: Arc<Connection>,
-        isolation_level: IsolationLevel,
-        session_id: SessionId,
-    ) -> Result<Self> {
-        Ok(Self {
-            session_id,
-            transaction_number: request.transaction_number,
-            pg_transaction: Some(postgres::Transaction::start(conn, isolation_level).await?),
-            cursors: CursorStore::new(config, false),
-        })
-    }
-
-    #[must_use]
-    pub fn get_connection(&self) -> Option<Arc<Connection>> {
-        self.pg_transaction
-            .as_ref()
-            .map(postgres::Transaction::get_connection)
-    }
-
-    #[must_use]
-    pub const fn get_session_id(&self) -> &SessionId {
-        &self.session_id
-    }
-
-    /// # Errors
-    ///
-    /// Returns an error if the operation fails.
-    pub async fn commit(&mut self) -> Result<()> {
-        self.pg_transaction
-            .as_mut()
-            .ok_or_else(|| {
-                DocumentDBError::documentdb_error(
-                    ErrorCode::NoSuchTransaction,
-                    "No transaction found to commit".to_owned(),
-                )
-            })?
-            .commit()
-            .await
-    }
-
-    /// # Errors
-    ///
-    /// Returns an error if the operation fails.
-    pub async fn abort(&mut self) -> Result<()> {
-        self.pg_transaction
-            .as_mut()
-            .ok_or_else(|| {
-                DocumentDBError::documentdb_error(
-                    ErrorCode::NoSuchTransaction,
-                    "No transaction found to abort".to_owned(),
-                )
-            })?
-            .abort()
-            .await
-    }
-
-    #[must_use]
-    pub const fn transaction_number(&self) -> TransactionNumber {
-        self.transaction_number
-    }
-}
-
-impl Drop for GatewayTransaction {
-    fn drop(&mut self) {
-        if let Some(inner) = &self.pg_transaction {
-            if !inner.committed {
-                let mut this = None;
-                std::mem::swap(&mut this, &mut self.pg_transaction);
-                tokio::spawn(async move {
-                    if let Some(mut t) = this {
-                        if let Err(e) = t.abort().await {
-                            tracing::error!("Failed to drop a transaction: {e}");
-                        }
-                    }
-                });
-            }
-        }
-    }
-}
 
 #[derive(Debug, PartialEq)]
 enum TransactionState {

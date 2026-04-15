@@ -1,86 +1,17 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
- * documentdb_gateway_core/src/context/cursor.rs
+ * documentdb_gateway_core/src/context/cursor/cursor_store.rs
  *
  *-------------------------------------------------------------------------
  */
 
-use std::sync::Arc;
-
-use bson::RawDocumentBuf;
 use dashmap::DashMap;
-use tokio::{
-    task::JoinHandle,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
+use tokio::{task::JoinHandle, time::Duration};
 
-use crate::{
-    configuration::DynamicConfiguration, context::SessionId, postgres::conn_mgmt::Connection,
-};
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CursorId(i64);
-
-impl CursorId {
-    #[must_use]
-    pub const fn new(cursor_id: i64) -> Self {
-        Self(cursor_id)
-    }
-}
-
-impl From<i64> for CursorId {
-    fn from(value: i64) -> Self {
-        Self(value)
-    }
-}
-
-impl From<&i64> for CursorId {
-    fn from(value: &i64) -> Self {
-        Self(*value)
-    }
-}
-
-impl From<CursorId> for i64 {
-    fn from(cursor_id: CursorId) -> Self {
-        cursor_id.0
-    }
-}
-
-impl std::fmt::Display for CursorId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::fmt::Debug for CursorId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "CursorId({self})")
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CursorKey {
-    pub cursor_id: CursorId,
-    pub username: String,
-}
-
-#[derive(Debug)]
-pub struct Cursor {
-    pub continuation: RawDocumentBuf,
-    pub cursor_id: CursorId,
-}
-
-#[derive(Debug)]
-pub struct CursorStoreEntry {
-    pub conn: Option<Arc<Connection>>,
-    pub cursor: Cursor,
-    pub db: String,
-    pub collection: String,
-    pub timestamp: Instant,
-    pub cursor_timeout: Duration,
-    pub session_id: Option<SessionId>,
-}
+use crate::context::cursor::{CursorId, CursorKey, CursorStoreEntry};
+use crate::{configuration::DynamicConfiguration, context::SessionId};
 
 // Maps CursorKey -> Connection, Cursor
 #[derive(Debug)]
@@ -172,123 +103,10 @@ impl CursorStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use bson::RawDocumentBuf;
+    use tokio::time::Instant;
 
-    // ── CursorId tests ──
-
-    #[test]
-    fn cursor_id_new_and_from() {
-        let id = CursorId::new(42);
-        assert_eq!(i64::from(id), 42);
-
-        let id2 = CursorId::from(42_i64);
-        assert_eq!(id, id2);
-
-        let id3 = CursorId::from(&42_i64);
-        assert_eq!(id, id3);
-    }
-
-    #[test]
-    fn cursor_id_display_and_debug() {
-        let id = CursorId::new(99);
-        assert_eq!(format!("{id}"), "99");
-        assert_eq!(format!("{id:?}"), "CursorId(99)");
-    }
-
-    #[test]
-    fn cursor_id_equality() {
-        assert_eq!(CursorId::new(1), CursorId::new(1));
-        assert_ne!(CursorId::new(1), CursorId::new(2));
-    }
-
-    #[test]
-    fn cursor_id_copy_semantics() {
-        let id = CursorId::new(7);
-        let id2 = id; // Copy, not move
-        assert_eq!(id, id2);
-    }
-
-    // ── CursorKey tests ──
-
-    #[test]
-    fn cursor_key_equal_when_both_fields_match() {
-        let k1 = CursorKey {
-            cursor_id: CursorId::new(1),
-            username: "alice".to_owned(),
-        };
-        let k2 = CursorKey {
-            cursor_id: CursorId::new(1),
-            username: "alice".to_owned(),
-        };
-        assert_eq!(k1, k2);
-    }
-
-    #[test]
-    fn cursor_key_different_user_same_cursor_id() {
-        let k1 = CursorKey {
-            cursor_id: CursorId::new(1),
-            username: "alice".to_owned(),
-        };
-        let k2 = CursorKey {
-            cursor_id: CursorId::new(1),
-            username: "bob".to_owned(),
-        };
-        assert_ne!(k1, k2, "different users must not share cursor keys");
-    }
-
-    #[test]
-    fn cursor_key_same_user_different_cursor_id() {
-        let k1 = CursorKey {
-            cursor_id: CursorId::new(1),
-            username: "alice".to_owned(),
-        };
-        let k2 = CursorKey {
-            cursor_id: CursorId::new(2),
-            username: "alice".to_owned(),
-        };
-        assert_ne!(k1, k2);
-    }
-
-    #[test]
-    fn cursor_key_hash_consistent_with_equality() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let k1 = CursorKey {
-            cursor_id: CursorId::new(5),
-            username: "charlie".to_owned(),
-        };
-        let k2 = CursorKey {
-            cursor_id: CursorId::new(5),
-            username: "charlie".to_owned(),
-        };
-        let hash = |k: &CursorKey| {
-            let mut h = DefaultHasher::new();
-            k.hash(&mut h);
-            h.finish()
-        };
-        assert_eq!(hash(&k1), hash(&k2));
-    }
-
-    #[test]
-    fn cursor_key_works_as_hash_map_key() {
-        let mut map = HashMap::new();
-        let k = CursorKey {
-            cursor_id: CursorId::new(10),
-            username: "alice".to_owned(),
-        };
-        map.insert(k.clone(), "value");
-        assert_eq!(map.get(&k), Some(&"value"));
-
-        // Same cursor_id, different user → miss
-        let k2 = CursorKey {
-            cursor_id: CursorId::new(10),
-            username: "bob".to_owned(),
-        };
-        assert_eq!(map.get(&k2), None);
-    }
-
-    // ── CursorStore tests (no reaper, no tokio runtime needed for basic ops) ──
+    use super::super::Cursor;
 
     fn make_store() -> CursorStore {
         CursorStore {
