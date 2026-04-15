@@ -1388,7 +1388,9 @@ ValidateIndexEntry(RumScanOpaque so, Datum idatum,
 	}
 
 	/* Validate recheckOrderBy if there are orderby items */
-	if (so->norderbys > 0)
+	if (so->norderbys > 0 ||
+		!so->rumstate.rumConfig[so->orderByScanData->orderByEntry->attnum -
+								1].compareFunctionHasRecheck)
 	{
 		cmp = DatumGetInt32(FunctionCall4Coll(
 								&so->rumstate.comparePartialFn[
@@ -3557,7 +3559,6 @@ preConsistentCheck(RumScanOpaque so)
 											PointerGetDatum(&recheck),
 											PointerGetDatum(key->queryValues),
 											PointerGetDatum(key->queryCategories)
-
 											)))
 		{
 			return false;
