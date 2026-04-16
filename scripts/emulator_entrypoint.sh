@@ -104,6 +104,8 @@ Optional arguments:
   --init-data-path [PATH]
                         Specify a directory containing JavaScript files for database initialization.
                         Files will be executed in alphabetical order using mongosh.
+                        When used without --init-data, built-in sample data is disabled.
+                        Pass --init-data true explicitly to load both custom and built-in data.
                         Defaults to /init_doc_db.d
                         Overrides INIT_DATA_PATH environment variable.
   --skip-init-data      Skip initialization with built-in sample data.
@@ -201,12 +203,18 @@ do
 
     --init-data)
         shift
+        if [ -z "$1" ] || [ "${1#-}" != "$1" ]; then
+            echo "Missing value for --init-data, must be true or false"
+            exit 1
+        fi
         export INIT_DATA=$1
+        INIT_DATA_EXPLICIT=true
         shift;;
 
     --init-data-path)
         shift
         export INIT_DATA_PATH=$1
+        INIT_DATA_PATH_CLI=true
         shift;;
 
     --skip-init-data)
@@ -314,6 +322,19 @@ if [ -n "$SKIP_INIT_DATA" ] && \
    [ "$SKIP_INIT_DATA" != "false" ]; then
     echo "Invalid skip-init-data value $SKIP_INIT_DATA, must be true or false"
     exit 1
+fi
+
+if [ -n "$INIT_DATA" ] && [ -n "$SKIP_INIT_DATA" ]; then
+    if { [ "$INIT_DATA" = "true" ] && [ "$SKIP_INIT_DATA" = "true" ]; } || \
+       { [ "$INIT_DATA" = "false" ] && [ "$SKIP_INIT_DATA" = "false" ]; }; then
+        echo "Warning: INIT_DATA=$INIT_DATA and SKIP_INIT_DATA=$SKIP_INIT_DATA conflict; INIT_DATA takes precedence."
+    fi
+fi
+
+# When --init-data-path is used via CLI without explicit --init-data,
+# preserve old behavior: built-in sample data is disabled.
+if [ "$INIT_DATA_PATH_CLI" = "true" ] && [ "$INIT_DATA_EXPLICIT" != "true" ]; then
+    export INIT_DATA=false
 fi
 
 if [ -z "$INIT_DATA" ]; then

@@ -29,7 +29,7 @@ If no option is supplied, the emulator starts without built-in sample data.
 ```bash
 docker run -p 10260:10260 -p 9712:9712 \
   --password mypassword \
-  documentdb/local
+  ghcr.io/documentdb/documentdb/documentdb-local
 ```
 
 ### Start with built-in sample data
@@ -37,7 +37,7 @@ docker run -p 10260:10260 -p 9712:9712 \
 docker run -p 10260:10260 -p 9712:9712 \
   --init-data true \
   --password mypassword \
-  documentdb/local
+  ghcr.io/documentdb/documentdb/documentdb-local
 ```
 
 ### Use custom initialization scripts
@@ -46,7 +46,7 @@ docker run -p 10260:10260 -p 9712:9712 \
   -v /path/to/your/init/scripts:/init_doc_db.d \
   --init-data-path /init_doc_db.d \
   --password mypassword \
-  documentdb/local
+  ghcr.io/documentdb/documentdb/documentdb-local
 ```
 
 ### Configure via environment variables
@@ -56,7 +56,7 @@ docker run -p 10260:10260 -p 9712:9712 \
   -e INIT_DATA=false \
   -e PASSWORD=mypassword \
   -v /path/to/your/init/scripts:/custom/init/path \
-  documentdb/local
+  ghcr.io/documentdb/documentdb/documentdb-local
 ```
 
 ## Built-in Sample Data
