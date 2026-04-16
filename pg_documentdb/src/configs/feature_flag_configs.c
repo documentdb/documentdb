@@ -102,7 +102,7 @@ bool EnableVectorCalculateDefaultSearchParameter =
 #define DEFAULT_USE_NEW_COMPOSITE_INDEX_OPCLASS true
 bool DefaultUseCompositeOpClass = DEFAULT_USE_NEW_COMPOSITE_INDEX_OPCLASS;
 
-/* Added in v109, Pending stabilization */
+/* Added in v109, Pending stabilization, enable in v120 */
 #define DEFAULT_ENABLE_COMPOSITE_INDEX_PLANNER false
 bool EnableCompositeIndexPlanner = DEFAULT_ENABLE_COMPOSITE_INDEX_PLANNER;
 
@@ -123,13 +123,9 @@ bool EnableIndexOnlyScanOnCostFunction = DEFAULT_ENABLE_INDEX_ONLY_SCAN_ON_COST;
 #define DEFAULT_ENABLE_ID_INDEX_CUSTOM_COST_FUNCTION true
 bool EnableIdIndexCustomCostFunction = DEFAULT_ENABLE_ID_INDEX_CUSTOM_COST_FUNCTION;
 
-/* Added in v109, Pending stabilization */
+/* Added in v109, Pending stabilization, enable in v125 */
 #define DEFAULT_ENABLE_ORDER_BY_ID_ON_COST false
 bool EnableOrderByIdOnCostFunction = DEFAULT_ENABLE_ORDER_BY_ID_ON_COST;
-
-/* Added in v109, Pending stabilization */
-#define DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN false
-bool EnableCompositeParallelIndexScan = DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN;
 
 /* Note: this is a long term feature flag since we need to validate compatiblity
  * in mixed mode for older indexes - once this is
@@ -159,11 +155,13 @@ bool EnableCompositeWildcardIndex = DEFAULT_ENABLE_COMPOSITE_WILDCARD_INDEX;
 #define DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE true
 bool CreateTTLIndexAsCompositeByDefault = DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE;
 
-/* Added in v109, Pending stabilization */
+/* Added in v109, Pending stabilization, enable in v120 */
+/* Remove if EnableCompositeReducedCorrelatedTermsOnCommonSubPath becomes stabilized */
 #define DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS false
 bool EnableCompositeReducedCorrelatedTerms = DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS;
 
-/* Added in v109, Pending stabilization */
+/* Added in v109, Pending stabilization, enable in v120 */
+/* Remove if EnableCompositeReducedCorrelatedTermsOnCommonSubPath becomes stabilized */
 #define DEFAULT_ENABLE_UNIQUE_REDUCED_CORRELATED_TERMS false
 bool EnableUniqueCompositeReducedCorrelatedTerms =
 	DEFAULT_ENABLE_UNIQUE_REDUCED_CORRELATED_TERMS;
@@ -183,7 +181,7 @@ bool EnableCompositeShardDocumentTerms = DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT
 bool EnableCompositeWildcardSkipEmptyEntries =
 	DEFAULT_ENABLE_COMPOSITE_WILDCARD_SKIP_EMPTY_ENTRIES;
 
-/* Added in v111, Pending stabilization */
+/* Added in v111, Pending stabilization, enable in v115 */
 #define DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS false
 bool EnablePerCollectionPlannerStatistics =
 	DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS;
@@ -200,11 +198,11 @@ bool EnableRegexPrefixIndexBounds = DEFAULT_ENABLE_REGEX_PREFIX_INDEX_BOUNDS;
 #define DEFAULT_ENABLE_EXTENDED_INDEXES false
 bool EnableExtendedIndexes = DEFAULT_ENABLE_EXTENDED_INDEXES;
 
-/* Added in v111, Pending stabilization */
+/* Added in v111, Pending stabilization, enable in v116 */
 #define DEFAULT_ENABLE_COMPARABLE_TERMS false
 bool EnableComparableTerms = DEFAULT_ENABLE_COMPARABLE_TERMS;
 
-/* Added in v111, Pending stabilization */
+/* Added in v111, Pending stabilization, enable in v115 */
 #define DEFAULT_ENABLE_ORDER_BY_INDEX_TERM false
 bool EnableOrderByIndexTerm = DEFAULT_ENABLE_ORDER_BY_INDEX_TERM;
 
@@ -246,11 +244,11 @@ bool EnableExplainScanIndexCosts = DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS;
 #define DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME true
 bool EnableExplainScanNamespaceName = DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME;
 
-/* Added in v110, Pending stabilization. Superseded by EnableNewWithExprAccumulators in v111 */
+/* Added in v110, Pending stabilization. Superseded by EnableNewWithExprAccumulators in v111, enable in v113 */
 #define DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS false
 bool EnableNewMinMaxAccumulators = DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS;
 
-/* Added in v111, Pending stabilization */
+/* Added in v111, Pending stabilization, enable in v113 */
 #define DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS false
 bool EnableNewWithExprAccumulators = DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS;
 
@@ -263,19 +261,19 @@ bool EnableCursorPlanBeforeRestrictionPathUpdate =
  * SECTION: Aggregation & Query feature flags
  */
 
-/* Added in v109, Pending stabilization */
+/* Added in v109, Pending stabilization, enable in v114 */
 #define DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN false
 bool EnablePrimaryKeyCursorScan = DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN;
 
-/* Added in v110, Pending stabilization */
+/* Added in v110, Pending stabilization, enable in v114 */
 #define DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP false
 bool EnableContinuationFastBitmapLookup = DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP;
 
-/* Added in v108, Pending stabilization */
+/* Added in v108, Pending stabilization, enable in v121 */
 #define DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS false
 bool UseFileBasedPersistedCursors = DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS;
 
-/* Added in v111, Pending stabilization */
+/* Added in v111, Pending stabilization, enable in v115 */
 #define DEFAULT_FAIL_ON_GROUP_ID_DUPLICATE false
 bool FailOnGroupIdDuplicate =
 	DEFAULT_FAIL_ON_GROUP_ID_DUPLICATE;
@@ -335,7 +333,7 @@ bool MultiplePositionalNotAllowed = DEFAULT_MULTIPLE_POSITONAL_OPERATORS_NOT_ALL
 #define DEFAULT_ENABLE_GROUP_SUBQUERY_ELIMINATION true
 bool EnableGroupSubqueryElimination = DEFAULT_ENABLE_GROUP_SUBQUERY_ELIMINATION;
 
-/* Added in v111, Pending stabilization */
+/* Added in v111, Pending stabilization, enable in v114 */
 #define DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG false
 bool FailOnNonEmptyGroupCountArg = DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG;
 
@@ -347,7 +345,7 @@ bool EnableSortGroupStage = DEFAULT_ENABLE_SORT_GROUP_STAGE;
  * SECTION: Let support feature flags
  */
 
-/* Added in v109, Pending stabilization */
+/* Added in v109, Pending stabilization, enable on v113 */
 #define DEFAULT_ENABLE_OPERATOR_VARIABLES_IN_LOOKUP false
 bool EnableOperatorVariablesInLookup =
 	DEFAULT_ENABLE_OPERATOR_VARIABLES_IN_LOOKUP;
@@ -356,25 +354,24 @@ bool EnableOperatorVariablesInLookup =
  * SECTION: Collation feature flags
  */
 
-/* Added in v108, Pending stabilization */
+/* Added in v108, Pending stabilization, enable in v115 */
 #define DEFAULT_SKIP_FAIL_ON_COLLATION false
 bool SkipFailOnCollation = DEFAULT_SKIP_FAIL_ON_COLLATION;
 
-/* Added in v109, Pending stabilization */
+/* Added in v109, Pending stabilization, enable in v115 */
 #define DEFAULT_ENABLE_LOOKUP_ID_JOIN_OPTIMIZATION_ON_COLLATION false
 bool EnableLookupIdJoinOptimizationOnCollation =
 	DEFAULT_ENABLE_LOOKUP_ID_JOIN_OPTIMIZATION_ON_COLLATION;
 
-/* Added in v110, Pending stabilization */
+/* Added in v110, Pending stabilization, enable in v115 */
 #define DEFAULT_ENABLE_COLLATION_WITH_NON_UNIQUE_ORDERED_INDEXES false
 bool EnableCollationWithNonUniqueOrderedIndexes =
 	DEFAULT_ENABLE_COLLATION_WITH_NON_UNIQUE_ORDERED_INDEXES;
 
-/* Added in v110, Pending stabilization */
+/* Added in v110, Pending stabilization, enable in v115 */
 #define DEFAULT_ENABLE_COLLATION_WITH_NEW_GROUP_ACCUMULATORS false
 bool EnableCollationWithNewGroupAccumulators =
 	DEFAULT_ENABLE_COLLATION_WITH_NEW_GROUP_ACCUMULATORS;
-
 
 /*
  * SECTION: DML & Write path feature flags
@@ -389,10 +386,6 @@ bool EnableUpdateBsonDocument = DEFAULT_ENABLE_UPDATE_BSON_DOCUMENT;
  * SECTION: Cluster administration & DDL feature flags
  */
 
-/* Added in v108, Pending stabilization */
-#define DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING false
-bool RecreateRetryTableOnSharding = DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING;
-
 /* Added in v108, enabled in v108, unknown retirement schedule */
 #define DEFAULT_ENABLE_SCHEMA_ENFORCEMENT_FOR_CSFLE true
 bool EnableSchemaEnforcementForCSFLE = DEFAULT_ENABLE_SCHEMA_ENFORCEMENT_FOR_CSFLE;
@@ -401,11 +394,11 @@ bool EnableSchemaEnforcementForCSFLE = DEFAULT_ENABLE_SCHEMA_ENFORCEMENT_FOR_CSF
 #define DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT true
 bool UsePgStatsLiveTuplesForCount = DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT;
 
-/* Added in v109, Pending stabilization */
+/* Added in v109, Pending stabilization, enable in v114 */
 #define DEFAULT_ENABLE_PREPARE_UNIQUE false
 bool EnablePrepareUnique = DEFAULT_ENABLE_PREPARE_UNIQUE;
 
-/* Added in v109, Pending stabilization */
+/* Added in v109, Pending stabilization, enable in v114 */
 #define DEFAULT_ENABLE_COLLMOD_UNIQUE false
 bool EnableCollModUnique = DEFAULT_ENABLE_COLLMOD_UNIQUE;
 
@@ -427,7 +420,7 @@ bool EnableStreamingCursorDrainViaDestReceiver =
  * SECTION: Changestream feature flags
  */
 
-/* Added in v111, Pending stabilization */
+/* Added in v111, Pending stabilization, enable in v120 */
 #define DEFAULT_ENABLE_PREIMAGES false
 bool EnablePreImages = DEFAULT_ENABLE_PREIMAGES;
 
@@ -435,7 +428,7 @@ bool EnablePreImages = DEFAULT_ENABLE_PREIMAGES;
  * SECTION: Schedule jobs via background worker.
  */
 
-/* Added in v109, Pending stabilization */
+/* Added in v109, Pending stabilization, enable in v120 */
 #define DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER false
 bool IndexBuildsScheduledOnBgWorker = DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER;
 
@@ -515,13 +508,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.recreate_retry_table_on_shard", prefix),
-		gettext_noop(
-			"Gets whether or not to recreate a retry table to match the main table"),
-		NULL, &RecreateRetryTableOnSharding, DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING,
-		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.skipFailOnCollation", newGucPrefix),
@@ -768,14 +754,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Whether to enable index terms that are value only."),
 		NULL, &EnableOrderByIdOnCostFunction, DEFAULT_ENABLE_ORDER_BY_ID_ON_COST,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableCompositeParallelIndexScan", newGucPrefix),
-		gettext_noop(
-			"Whether to enable parallel index scans for composite indexes."),
-		NULL, &EnableCompositeParallelIndexScan,
-		DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

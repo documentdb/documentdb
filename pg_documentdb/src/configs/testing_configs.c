@@ -115,6 +115,13 @@ bool ForceBitmapScanForLookup = DEFAULT_FORCE_BITMAP_SCAN_FOR_LOOKUP;
 #define DEFAULT_FORCE_GROUP_SUBQUERY_ELIMINATION false
 bool ForceGroupSubqueryElimination = DEFAULT_FORCE_GROUP_SUBQUERY_ELIMINATION;
 
+#define DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING false
+bool RecreateRetryTableOnSharding = DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING;
+
+/* Added in v109, Pending stabilization */
+#define DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN false
+bool EnableCompositeParallelIndexScan = DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN;
+
 void
 InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 {
@@ -178,6 +185,21 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.recreate_retry_table_on_shard", prefix),
+		gettext_noop(
+			"Gets whether or not to recreate a retry table to match the main table"),
+		NULL, &RecreateRetryTableOnSharding, DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCompositeParallelIndexScan", newGucPrefix),
+		gettext_noop(
+			"Whether to enable parallel index scans for composite indexes."),
+		NULL, &EnableCompositeParallelIndexScan,
+		DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableGenerateNonExistsTerm", newGucPrefix),
