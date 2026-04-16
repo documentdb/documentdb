@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 
 use openssl::{
     error::ErrorStack,
-    ssl::{SslAcceptor, SslAcceptorBuilder, SslMethod, SslVersion},
+    ssl::{SslAcceptor, SslAcceptorBuilder, SslMethod, SslMode, SslSessionCacheMode, SslVersion},
 };
 
 use crate::{
@@ -183,6 +183,23 @@ pub fn create_tls_acceptor(
     // SSL server settings
     ssl_acceptor.set_min_proto_version(Some(SslVersion::TLS1_2))?;
     ssl_acceptor.set_max_proto_version(Some(SslVersion::TLS1_3))?;
+
+    // Release OpenSSL read/write buffers when idle to reduce per-connection
+    // memory footprint (~34KB per connection). ACCEPT_MOVING_WRITE_BUFFER allows
+    // the write buffer pointer to change between SSL_write retries, which is
+    // necessary for correctness with tokio's async poll_write.
+    ssl_acceptor.set_mode(SslMode::RELEASE_BUFFERS | SslMode::ACCEPT_MOVING_WRITE_BUFFER);
+
+    // Disable the internal server-side session cache. Session tickets are intentionally
+    // left enabled (NO_TICKET is NOT set) so that TLS 1.3 resumption works statelessly —
+    // the session state is encrypted into the ticket sent to the client. Turning the
+    // server-side cache off eliminates the SSL_CTX session-cache mutex, which would
+    // otherwise serialize TLS handshakes under concurrent load.
+    ssl_acceptor.set_session_cache_mode(SslSessionCacheMode::OFF);
+
+    // Send only 1 TLS 1.3 NewSessionTicket (default is 2). One ticket is sufficient
+    // for session resumption and halves the post-handshake overhead per new connection.
+    ssl_acceptor.set_num_tickets(1)?;
 
     Ok(ssl_acceptor)
 }
