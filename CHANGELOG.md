@@ -29,6 +29,7 @@
 * Add support for ordering by index term order (matching the ordering spec more closely) for both index and runtime. This also makes index and runtime orders match *[Bugfix]*
 * Support collation with non-unique ordered indexes with $eq, $gt, $gte. Requires `EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
 * Enable collated index pushdown for collation-insensitive operators; avoid pushdown for unsupported operator strategies. *[Feature]*
+* Change the default `documentdb-local` gateway behavior to accept both plain and TLS connections, and add `--enable-tls-enforcement` to require TLS on the gateway endpoint *[Feature]*
 
 
 ### documentdb v0.110-0 (Unreleased) ###
