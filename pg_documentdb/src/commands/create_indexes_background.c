@@ -169,6 +169,7 @@ static bool PruneSkippableIndexes(MemoryContext mcxt);
 static BackgroundIndexRunStatus build_index_concurrently_from_indexqueue_core(
 	MemoryContext stableContext);
 static Datum build_index_background_core(PG_FUNCTION_ARGS);
+static bool HasActiveIndexBuildCronTasks(void);
 
 
 /*
@@ -190,7 +191,19 @@ command_build_index_concurrently(PG_FUNCTION_ARGS)
 Datum
 command_build_index_background(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_VOID();
+	if (!EnableBackgroundWorker || !EnableBackgroundWorkerJobs)
+	{
+		PG_RETURN_VOID();
+	}
+
+	if (HasActiveIndexBuildCronTasks())
+	{
+		ereport(DEBUG1, (errmsg(
+							 "Skipping as there are active index build tasks running via pg_cron.")));
+		PG_RETURN_VOID();
+	}
+
+	return build_index_background_core(fcinfo);
 }
 
 
@@ -1634,6 +1647,54 @@ CheckForIndexCmdToFinish(const List *indexIdList, char cmdType)
 
 	/* Some or all are in progress and no errors. */
 	return result;
+}
+
+
+/*
+ * Check if there are any active index build tasks registered on pg_cron.
+ */
+static bool
+HasActiveIndexBuildCronTasks(void)
+{
+	/* Reading cron jobs requires, for the __API_BG_WORKER_ROLE__ the following
+	 *   a) USAGE permission on the `cron` schema
+	 *   b) SELECT permission on the `cron.job` table
+	 *   c) Bypassing RLS for the __API_BG_WORKER_ROLE__
+	 * All of these are only available in V112.0 and later.
+	 */
+	if (!IsClusterVersionAtleast(DocDB_V0, 112, 0))
+	{
+		return true;
+	}
+
+	const char *activeIndexBuildCronTasksQuery =
+		"SELECT 1 FROM cron.job WHERE jobname LIKE '%%_index_build_task%%' AND active = true LIMIT 1;";
+	volatile bool hasActiveIndexBuildCronTasks = false;
+
+	PG_TRY();
+	{
+		bool readonly = true;
+		bool isNull = false;
+		ExtensionExecuteQueryViaSPI(
+			activeIndexBuildCronTasksQuery, readonly, SPI_OK_SELECT, &isNull);
+		hasActiveIndexBuildCronTasks = !isNull;
+	}
+	PG_CATCH();
+	{
+		/*
+		 * SPI failed so return true to skip scheduling index builds via
+		 * background worker. Abort the failed transaction and start a fresh
+		 * one so the caller can proceed cleanly.
+		 */
+		hasActiveIndexBuildCronTasks = true;
+		FlushErrorState();
+		PopAllActiveSnapshots();
+		AbortCurrentTransaction();
+		StartTransactionCommand();
+	}
+	PG_END_TRY();
+
+	return hasActiveIndexBuildCronTasks;
 }
 
 

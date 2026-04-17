@@ -1,23 +1,4 @@
-CREATE SCHEMA change_index_jobs_schema;
-CREATE OR REPLACE FUNCTION change_index_jobs_schema.change_index_jobs_status(active_status boolean)
-RETURNS void
-AS $$
-DECLARE
-    job_id integer;
-    index_row_stored text;
-BEGIN
-    FOR job_id IN (SELECT jobid FROM cron.job WHERE jobname LIKE 'documentdb_index_%' order by jobid)
-    LOOP
-        UPDATE cron.job SET active = active_status WHERE jobid = job_id;
-        SELECT row_to_json(ROW(jobid,schedule,command,active,jobname))::text into index_row_stored FROM cron.job WHERE jobid = job_id;
-        RAISE INFO 'Processing job_id: % state: %', job_id, index_row_stored;
-    END LOOP;
-END;
-$$
-LANGUAGE plpgsql;
-
-SET search_path to documentdb_core,documentdb_api,documentdb_api_catalog,change_index_jobs_schema;
-SELECT change_index_jobs_schema.change_index_jobs_status(true);
+SET search_path to documentdb_core,documentdb_api,documentdb_api_catalog;
 
 -- Delete all old create index requests from other tests
 DELETE from documentdb_api_catalog.documentdb_index_queue;

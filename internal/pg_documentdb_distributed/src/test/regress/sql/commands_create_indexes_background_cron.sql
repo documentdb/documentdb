@@ -21,8 +21,7 @@ SELECT documentdb_api.drop_collection('db', 'backgroundcoll2') IS NOT NULL;
 \o
 \set ECHO :prevEcho
 
-ALTER SYSTEM SET documentdb.indexBuildsScheduledOnBgWorker = off;
-SELECT pg_reload_conf();
+SELECT documentdb_distributed_test_helpers.change_index_jobs_status(true);
 
 \i sql/create_indexes_background_core.sql
 
@@ -47,5 +46,4 @@ ROLLBACK;
 SELECT schedule, jobname FROM cron.job WHERE jobname LIKE 'documentdb_index_build_task_%' ORDER BY jobId;
 
 -- Reset -- so that other tests do not get impacted
-SELECT change_index_jobs_schema.change_index_jobs_status(false);
-DROP SCHEMA change_index_jobs_schema CASCADE;
+SELECT documentdb_distributed_test_helpers.change_index_jobs_status(false);

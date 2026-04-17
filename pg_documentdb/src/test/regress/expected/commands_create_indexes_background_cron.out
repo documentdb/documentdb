@@ -4,43 +4,21 @@ SET documentdb.next_collection_index_id TO 32000;
 -- This ensures test stability and prevents conflicts with existing collections.
 \set prevEcho :ECHO
 \set ECHO none
-ALTER SYSTEM SET documentdb.indexBuildsScheduledOnBgWorker = off;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-\i sql/create_indexes_background_core.sql
-CREATE SCHEMA change_index_jobs_schema;
-CREATE OR REPLACE FUNCTION change_index_jobs_schema.change_index_jobs_status(active_status boolean)
-RETURNS void
-AS $$
-DECLARE
-    job_id integer;
-BEGIN
-    FOR job_id IN (SELECT jobid FROM cron.job WHERE jobname LIKE 'documentdb_index_%' order by jobid)
-    LOOP
-        UPDATE cron.job SET active = active_status WHERE jobid = job_id;
-        RAISE NOTICE 'Processing job_id: %', job_id;
-    END LOOP;
-END;
-$$
-LANGUAGE plpgsql;
-SET search_path to documentdb_core,documentdb_api,documentdb_api_catalog,change_index_jobs_schema;
-SELECT change_index_jobs_schema.change_index_jobs_status(true);
-psql:sql/create_indexes_background_core.sql:18: NOTICE:  Processing job_id: 2
-psql:sql/create_indexes_background_core.sql:18: NOTICE:  Processing job_id: 3
+SELECT documentdb_test_helpers.change_index_jobs_status(true);
+NOTICE:  Processing job_id: 2
+NOTICE:  Processing job_id: 3
  change_index_jobs_status 
 --------------------------
  
 (1 row)
 
+\i sql/create_indexes_background_core.sql
+SET search_path to documentdb_core,documentdb_api,documentdb_api_catalog;
 -- Delete all old create index requests from other tests
 DELETE from documentdb_api_catalog.documentdb_index_queue;
 ---- createIndexes - top level - parse error ----
 SELECT * FROM documentdb_api.create_indexes_background('db', NULL);
-psql:sql/create_indexes_background_core.sql:24: ERROR:  Argument value must not be NULL
+psql:sql/create_indexes_background_core.sql:7: ERROR:  Argument value must not be NULL
 SELECT * FROM documentdb_api.create_indexes_background(NULL, '{}');
                                                                                    retval                                                                                   | ok | requests 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----+----------
@@ -205,7 +183,7 @@ SELECT index_cmd, cmd_type, index_id, index_cmd_status, collection_id, attempt, 
 
 -- note that those are valid ..
 SELECT * FROM documentdb_api.create_indexes_background('db', '{"createIndexes": "collection_6", "indexes": [{"key": {"a$**foo": 1}, "name": "my_idx_1"}]}');
-psql:sql/create_indexes_background_core.sql:56: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:39: NOTICE:  creating collection
                                                                                                                retval                                                                                                                | ok | requests 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----+----------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } } | t  | { }
@@ -402,10 +380,10 @@ SELECT * FROM documentdb_api.create_indexes_background(
       {"key": {"x.y": 1}, "name": "valid_index_2"}
     ]
   }');
-psql:sql/create_indexes_background_core.sql:117: DEBUG:  executing "SELECT documentdb_api_internal.create_indexes_background_internal('db','BSONHEXcb00000002637265617465496e6465786573000d000000636f6c6c656374696f6e5f360004696e6465786573009d00000003300032000000036b6579001000000010782e792e7a000100000000026e616d65000e00000076616c69645f696e6465785f3100000331002d000000036b6579001000000010632e642e65000100000000026e616d6500090000006d795f6964785f35000003320030000000036b6579000e00000010782e79000100000000026e616d65000e00000076616c69645f696e6465785f3200000000')" via SPI
-psql:sql/create_indexes_background_core.sql:117: DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND (index_spec).index_name = $2 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
-psql:sql/create_indexes_background_core.sql:117: DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id)FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND documentdb_api_internal.index_spec_options_are_equivalent(index_spec, $2) AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
-psql:sql/create_indexes_background_core.sql:117: DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND (index_spec).index_name = $2 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+psql:sql/create_indexes_background_core.sql:100: DEBUG:  executing "SELECT documentdb_api_internal.create_indexes_background_internal('db','BSONHEXcb00000002637265617465496e6465786573000d000000636f6c6c656374696f6e5f360004696e6465786573009d00000003300032000000036b6579001000000010782e792e7a000100000000026e616d65000e00000076616c69645f696e6465785f3100000331002d000000036b6579001000000010632e642e65000100000000026e616d6500090000006d795f6964785f35000003320030000000036b6579000e00000010782e79000100000000026e616d65000e00000076616c69645f696e6465785f3200000000')" via SPI
+psql:sql/create_indexes_background_core.sql:100: DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND (index_spec).index_name = $2 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+psql:sql/create_indexes_background_core.sql:100: DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id)FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND documentdb_api_internal.index_spec_options_are_equivalent(index_spec, $2) AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+psql:sql/create_indexes_background_core.sql:100: DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND (index_spec).index_name = $2 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
                                                                                                                                                                                                                                                                                      retval                                                                                                                                                                                                                                                                                      | ok | requests 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----+----------
  { "raw" : { "defaultShard" : { "ok" : { "$numberInt" : "0" }, "errmsg" : "An existing index has the same name as the requested index. When index names are not specified, they are auto generated and can cause conflicts. Please refer to our documentation. Requested index: { \"v\" : 2, \"key\" : { \"c.d.e\" : 1 }, \"name\" : \"my_idx_5\", \"enableOrderedIndex\" : 1 }, existing index: { \"v\" : 2, \"key\" : { \"d.a$**\" : 1 }, \"name\" : \"my_idx_5\", \"enableOrderedIndex\" : 1 }", "code" : { "$numberInt" : "587202589" } } }, "ok" : { "$numberInt" : "0" } } | f  | { }
@@ -549,7 +527,7 @@ CALL documentdb_test_helpers.create_indexes_background(
      ]
    }'
 );
-psql:sql/create_indexes_background_core.sql:161: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:144: NOTICE:  creating collection
                                                                                                                retval                                                                                                                | ok 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } } | t
@@ -642,7 +620,7 @@ SELECT documentdb_api_internal.create_indexes_background_internal(
      ]
    }'
 );
-psql:sql/create_indexes_background_core.sql:216: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:199: NOTICE:  creating collection
                                                                                                  create_indexes_background_internal                                                                                                  
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -657,7 +635,7 @@ SELECT pg_sleep(2);
 
 ------ check the end-to-end success flow
 SELECT documentdb_api.insert_one('db','mycol', '{"_id": 1, "a" : 80, "b" : 10 }', NULL);
-psql:sql/create_indexes_background_core.sql:220: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:203: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -693,7 +671,7 @@ SELECT * FROM documentdb_test_helpers.count_collection_indexes('db', 'mycol') OR
 
 -- Test constraint violation for unique index, insert duplicate docs
 SELECT documentdb_api.insert_one('db','constraint', '{"_id": 1, "a" : 80 }', NULL);
-psql:sql/create_indexes_background_core.sql:236: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:219: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -755,7 +733,7 @@ CALL documentdb_test_helpers.create_indexes_background(
 -- CALL documentdb_test_helpers.create_indexes_background('db', '{ "createIndexes": "ValidateVectorSearchAsync", "indexes": [ { "name": "largeVectorIndex", "key": { "largevector": "cosmosSearch"}, "cosmosSearchOptions": { "kind": "vector-hnsw", "similarity": "COS", "dimensions": 2001 } } ] }');
 -- test another skippable error
 SELECT documentdb_api.insert_one('db','LargeKeySize', '{"_id": 1, "a" : [ "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" ] }');
-psql:sql/create_indexes_background_core.sql:275: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:258: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -768,7 +746,7 @@ CALL documentdb_test_helpers.create_indexes_background('db', '{ "createIndexes":
 (1 row)
 
 CALL documentdb_test_helpers.create_indexes_background('db', '{ "createIndexes": "UnsupportedLanguage", "indexes": [ { "key": { "$**": "text" }, "name": "idx1", "default_language": "ok" } ] }');
-psql:sql/create_indexes_background_core.sql:277: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:260: NOTICE:  creating collection
                                                                                                      retval                                                                                                     | ok 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----
  { "raw" : { "defaultShard" : { "ok" : { "$numberInt" : "0" }, "errmsg" : "unsupported language: \"ok\" for text index version 3", "code" : { "$numberInt" : "503316509" } } }, "ok" : { "$numberInt" : "0" } } | f
@@ -837,9 +815,9 @@ SELECT * FROM documentdb_api_internal.check_build_index_status('{"indexRequest" 
 -- test multiple scheduled builds drain together.
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
 -- Disable cron jobs to prevent them from racing with manual build calls below.
-SELECT change_index_jobs_schema.change_index_jobs_status(false);
-psql:sql/create_indexes_background_core.sql:323: NOTICE:  Processing job_id: 2
-psql:sql/create_indexes_background_core.sql:323: NOTICE:  Processing job_id: 3
+SELECT documentdb_test_helpers.change_index_jobs_status(false);
+psql:sql/create_indexes_background_core.sql:306: NOTICE:  Processing job_id: 2
+psql:sql/create_indexes_background_core.sql:306: NOTICE:  Processing job_id: 3
  change_index_jobs_status 
 --------------------------
  
@@ -847,7 +825,7 @@ psql:sql/create_indexes_background_core.sql:323: NOTICE:  Processing job_id: 3
 
 -- insert multiple index requests across multiple collections.
 SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backgroundcoll1", "indexes": [ { "key" : { "a": 1 }, "name": "a_1"}] }');
-psql:sql/create_indexes_background_core.sql:326: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:309: NOTICE:  creating collection
                                                                                                                            create_indexes_background                                                                                                                           
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""raw"" : { ""defaultShard"" : { ""numIndexesBefore"" : { ""$numberInt"" : ""1"" }, ""numIndexesAfter"" : { ""$numberInt"" : ""2"" }, ""createdCollectionAutomatically"" : true, ""ok"" : { ""$numberInt"" : ""1"" } } }, ""ok"" : { ""$numberInt"" : ""1"" } }",t,"{ }")
@@ -866,7 +844,7 @@ SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backg
 (1 row)
 
 SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backgroundcoll2", "indexes": [ { "key" : { "a": 1 }, "name": "a_1"}] }');
-psql:sql/create_indexes_background_core.sql:330: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:313: NOTICE:  creating collection
                                                                                                                            create_indexes_background                                                                                                                           
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""raw"" : { ""defaultShard"" : { ""numIndexesBefore"" : { ""$numberInt"" : ""1"" }, ""numIndexesAfter"" : { ""$numberInt"" : ""2"" }, ""createdCollectionAutomatically"" : true, ""ok"" : { ""$numberInt"" : ""1"" } } }, ""ok"" : { ""$numberInt"" : ""1"" } }",t,"{ }")
@@ -907,6 +885,15 @@ SELECT * FROM documentdb_test_helpers.count_collection_indexes('db', 'background
  f                     |                1
  t                     |                1
 (2 rows)
+
+-- Disable cron jobs to prevent them from racing with manual build calls below.
+SELECT documentdb_test_helpers.change_index_jobs_status(false);
+psql:sql/create_indexes_background_core.sql:323: NOTICE:  Processing job_id: 2
+psql:sql/create_indexes_background_core.sql:323: NOTICE:  Processing job_id: 3
+ change_index_jobs_status 
+--------------------------
+ 
+(1 row)
 
 -- call index stats: in progress builds should show as building.
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
@@ -977,7 +964,7 @@ SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
 -- Test collMod reindex option
 -- Create a collection with an index
 SELECT documentdb_api.insert_one('db', 'collmod_reindex_coll', '{ "_id": 1, "x": 1 }');
-psql:sql/create_indexes_background_core.sql:373: NOTICE:  creating collection
+psql:sql/create_indexes_background_core.sql:359: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -991,13 +978,13 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
 
 -- Error: reindex must be true
 SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "x_1", "reindex": false } }');
-psql:sql/create_indexes_background_core.sql:377: ERROR:  collMod.reindex can only be set to true
+psql:sql/create_indexes_background_core.sql:363: ERROR:  collMod.reindex can only be set to true
 -- Error: index not found
 SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "nonexistent_idx", "reindex": true } }');
-psql:sql/create_indexes_background_core.sql:380: ERROR:  cannot find index nonexistent_idx for ns db.collmod_reindex_coll
+psql:sql/create_indexes_background_core.sql:366: ERROR:  cannot find index nonexistent_idx for ns db.collmod_reindex_coll
 -- Error: reindex cannot be combined with other options
 SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "x_1", "reindex": true, "hidden": true } }');
-psql:sql/create_indexes_background_core.sql:383: ERROR:  reindex cannot be combined with other index options
+psql:sql/create_indexes_background_core.sql:369: ERROR:  reindex cannot be combined with other index options
 -- Queue reindex via collMod
 SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "x_1", "reindex": true } }');
                                     coll_mod                                    
@@ -1042,9 +1029,9 @@ SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
 (0 rows)
 
 -- Re-enable cron jobs for the schedule_background_index_build_jobs test below.
-SELECT change_index_jobs_schema.change_index_jobs_status(true);
-psql:sql/create_indexes_background_core.sql:406: NOTICE:  Processing job_id: 2
-psql:sql/create_indexes_background_core.sql:406: NOTICE:  Processing job_id: 3
+SELECT documentdb_test_helpers.change_index_jobs_status(true);
+psql:sql/create_indexes_background_core.sql:392: NOTICE:  Processing job_id: 2
+psql:sql/create_indexes_background_core.sql:392: NOTICE:  Processing job_id: 3
  change_index_jobs_status 
 --------------------------
  
@@ -1097,7 +1084,7 @@ SELECT schedule, jobname FROM cron.job WHERE jobname LIKE 'documentdb_index_buil
 (2 rows)
 
 -- Reset -- so that other tests do not get impacted
-SELECT change_index_jobs_schema.change_index_jobs_status(false);
+SELECT documentdb_test_helpers.change_index_jobs_status(false);
 NOTICE:  Processing job_id: 2
 NOTICE:  Processing job_id: 3
  change_index_jobs_status 
@@ -1105,5 +1092,3 @@ NOTICE:  Processing job_id: 3
  
 (1 row)
 
-DROP SCHEMA change_index_jobs_schema CASCADE;
-NOTICE:  drop cascades to function change_index_jobs_schema.change_index_jobs_status(boolean)

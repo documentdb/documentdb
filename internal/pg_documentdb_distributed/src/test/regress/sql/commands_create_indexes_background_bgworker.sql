@@ -21,14 +21,14 @@ SELECT documentdb_api.drop_collection('db', 'backgroundcoll2') IS NOT NULL;
 \o
 \set ECHO :prevEcho
 
-ALTER SYSTEM SET documentdb.indexBuildsScheduledOnBgWorker = on;
-SELECT pg_reload_conf();
+-- Reset the status so that cron build jobs are stopped.
+-- Wait for background worker to be ready rather than a fixed sleep.
+-- Shaves a few seconds off the test execution time by avoiding an
+-- unnecessarily long sleep while still ensuring stability.
+SELECT documentdb_distributed_test_helpers.change_index_jobs_status(false);
+CALL documentdb_distributed_test_helpers.wait_for_background_worker_ready();
 
 \i sql/create_indexes_background_core.sql
 
-ALTER SYSTEM RESET documentdb.indexBuildsScheduledOnBgWorker;
-SELECT pg_reload_conf();
-
 -- Reset -- so that other tests do not get impacted
-SELECT change_index_jobs_schema.change_index_jobs_status(false);
-DROP SCHEMA change_index_jobs_schema CASCADE;
+SELECT documentdb_distributed_test_helpers.change_index_jobs_status(false);

@@ -33,3 +33,4 @@ GRANT EXECUTE ON FUNCTION documentdb_api_v2.validate(text, documentdb_core.bson)
 
 #include "udfs/index_mgmt/drop_indexes--0.112-0.sql"
 #include "udfs/commands_diagnostic/index_stats--0.112-0.sql"
+#include "schema/setup_background_worker_role--0.112-0.sql"
