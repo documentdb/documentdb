@@ -2,6 +2,7 @@
 
 /.pipelines/ @safern @visridha @shuaitian-git @lichoil @xgerman @tsharp
 /.github/workflows/ @safern @visridha @shuaitian-git @lichoil @xgerman @tsharp
+/.devcontainer/ @safern @visridha @xgerman @tsharp @documentdb/documentdb-maintainers
 /packaging/ @safern @visridha @shuaitian-git @lichoil @fatmelon @xgerman
 
 *.csv @documentdb/documentdb-maintainers
@@ -11,10 +12,10 @@ Make* @documentdb/documentdb-maintainers
 /pg_documentdb/ @documentdb/documentdb-maintainers
 /pg_documentdb_core/ @documentdb/documentdb-maintainers
 
+/rfcs/ @documentdb/documentdb-maintainers @documentdb/gateway-owners
+
 /rust-toolchain.toml @documentdb/gateway-owners
 /pg_documentdb_gw_host/ @documentdb/gateway-owners
 /pg_documentdb_gw/ @documentdb/gateway-owners
-/rfcs/ @documentdb/gateway-owners
-/.devcontainer/ @documentdb/gateway-owners
 /documentdb_errors.csv @documentdb/gateway-owners
 /error_mappings.csv @documentdb/gateway-owners
