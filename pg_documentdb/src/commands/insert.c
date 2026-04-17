@@ -41,6 +41,7 @@
 #include "utils/feature_counter.h"
 #include "metadata/metadata_cache.h"
 #include "utils/error_utils.h"
+#include "utils/guc_utils.h"
 #include "utils/version_utils.h"
 #include "utils/documentdb_errors.h"
 #include "api_hooks.h"
@@ -159,6 +160,7 @@ extern bool UseLocalExecutionShardQueries;
 extern bool EnableBypassDocumentValidation;
 extern bool EnableSchemaValidation;
 extern bool EnableUpdateBsonDocument;
+extern int BatchUpdateLockTimeoutMs;
 
 /*
  * command_insert handles the insert command invocation through a PostgreSQL function.
@@ -579,7 +581,8 @@ static bool
 DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts, Oid
 								  shardOid,
 								  BatchInsertionResult *batchResult, int insertIndex,
-								  int *insertCountResult, ExprEvalState *evalState)
+								  int *insertCountResult, ExprEvalState *evalState,
+								  WriteMode writeMode)
 {
 	/* declared volatile because of the longjmp in PG_CATCH */
 	volatile int insertInnerIndex = insertIndex;
@@ -592,6 +595,14 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts, Oi
 
 	PG_TRY();
 	{
+		if (writeMode == WriteMode_Bulk_Proc)
+		{
+			/* Set lock timeout inside the subtransaction so it is
+			 * automatically reverted on rollback. */
+			char *batchLockTimeoutStr = psprintf("%d", BatchUpdateLockTimeoutMs);
+			SetGUCLocally("lock_timeout", batchLockTimeoutStr);
+		}
+
 		List *valuesList = NIL;
 		ListCell *insertCell;
 
@@ -925,7 +936,8 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 																		  batchResult,
 																		  insertIndex,
 																		  &incrementCount,
-																		  evalState);
+																		  evalState,
+																		  writeMode);
 
 			Assert(!performedBatchInsert || incrementCount > 0);
 			if (!performedBatchInsert)

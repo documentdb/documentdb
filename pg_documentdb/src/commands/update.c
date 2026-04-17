@@ -95,6 +95,7 @@
 #include "utils/query_utils.h"
 #include "utils/version_utils.h"
 #include "utils/index_utils.h"
+#include "utils/guc_utils.h"
 #include "schema_validation/schema_validation.h"
 
 #include "api_hooks.h"
@@ -107,6 +108,7 @@
 	 (collection->schemaValidator.validationLevel == ValidationLevel_Moderate))
 
 extern int NumBsonDocumentsUpdated;
+extern int BatchUpdateLockTimeoutMs;
 
 /* This guc is temporary and is used to handle whether the parameter “bypassDocumentValidation” could be set in the request command.*/
 extern bool EnableBypassDocumentValidation;
@@ -1134,7 +1136,8 @@ static bool
 DoMultiUpdate(MongoCollection *collection, List *updates, text *transactionId,
 			  BatchUpdateResult *batchResult, int updateIndex,
 			  bool forceInlineWrites, int *recordsUpdated,
-			  ExprEvalState *stateForSchemaValidation)
+			  ExprEvalState *stateForSchemaValidation,
+			  WriteMode writeMode)
 {
 	/*
 	 * Execute the query inside a sub-transaction, so we can restore order
@@ -1154,6 +1157,13 @@ DoMultiUpdate(MongoCollection *collection, List *updates, text *transactionId,
 
 	PG_TRY();
 	{
+		if (writeMode == WriteMode_Bulk_Proc)
+		{
+			/* Set lock timeout inside the subtransaction so it is
+			 * automatically reverted on rollback. */
+			char *batchLockTimeoutStr = psprintf("%d", BatchUpdateLockTimeoutMs);
+			SetGUCLocally("lock_timeout", batchLockTimeoutStr);
+		}
 		ListCell *updateCell;
 		while (updateInnerIndex < list_length(updates) &&
 			   updateCount < BatchWriteSubTransactionCount)
@@ -1558,7 +1568,8 @@ ProcessBatchUpdateCore(MongoCollection *collection, List *updates, text *transac
 			/* Optimistically try to do multiple updates together, if it fails, try again one by one to figure out which one failed */
 			isSuccess = DoMultiUpdate(collection, updates, subTransactionId,
 									  batchResult, updateIndex, forceInlineWrites,
-									  &incrementCount, stateForSchemaValidation);
+									  &incrementCount, stateForSchemaValidation,
+									  writeMode);
 
 			if (!isSuccess || incrementCount == 0)
 			{
@@ -1573,7 +1584,6 @@ ProcessBatchUpdateCore(MongoCollection *collection, List *updates, text *transac
 
 			continue;
 		}
-
 		updateCell = list_nth_cell(updates, updateIndex);
 		UpdateSpec *updateSpec = lfirst(updateCell);
 		isSuccess = DoSingleUpdateWithSubTxn(collection, updateSpec, subTransactionId,

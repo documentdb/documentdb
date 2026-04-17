@@ -54,6 +54,9 @@ int MaxWriteBatchSize = DEFAULT_MAX_WRITE_BATCH_SIZE;
 #define DEFAULT_BATCH_WRITE_SUB_TRANSACTION_COUNT 512
 int BatchWriteSubTransactionCount = DEFAULT_BATCH_WRITE_SUB_TRANSACTION_COUNT;
 
+#define DEFAULT_BATCH_UPDATE_LOCK_TIMEOUT_MS 20
+int BatchUpdateLockTimeoutMs = DEFAULT_BATCH_UPDATE_LOCK_TIMEOUT_MS;
+
 /*
  * GUC for "Count Policy" change Threshold for collStats DB command
  * If the document count from stats is more than this threshold, the count policy remains "get count from stats".
@@ -248,6 +251,14 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 		gettext_noop("The size of each sub-transaction within any write command."),
 		NULL, &BatchWriteSubTransactionCount,
 		DEFAULT_BATCH_WRITE_SUB_TRANSACTION_COUNT, 1, INT_MAX,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.batchUpdateLockTimeoutMs", newGucPrefix),
+		gettext_noop(
+			"The lock timeout in milliseconds for each batch of updates within bulk procedural write path."),
+		NULL, &BatchUpdateLockTimeoutMs,
+		DEFAULT_BATCH_UPDATE_LOCK_TIMEOUT_MS, 0, INT_MAX,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

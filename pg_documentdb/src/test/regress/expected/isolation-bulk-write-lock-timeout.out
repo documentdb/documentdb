@@ -1,0 +1,327 @@
+Parsed test spec with 3 sessions
+
+starting permutation: s1-begin s1-lock-row1-update s2-func-update s3-read-update-rows s1-commit s3-read-update-rows
+create_collection
+-----------------
+t                
+(1 row)
+
+step s1-begin: 
+    BEGIN;
+
+step s1-lock-row1-update: 
+    -- Hold a row lock on _id=1 by updating it without committing.
+    SELECT documentdb_api.update('isolation',
+        documentdb_core.bson_build_document(
+            'update', 'bulkWriteTest'::text,
+            'updates', ARRAY[
+                documentdb_core.bson_build_document(
+                    'q', documentdb_core.bson_build_document('_id', 1),
+                    'u', documentdb_core.bson_build_document('$set',
+                        documentdb_core.bson_build_document('locked', true)),
+                    'multi', false
+                )
+            ]
+        ));
+
+update                                                                                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+step s2-func-update: 
+    -- Update _id=2 then _id=1 via the function path (single statement).
+    -- Blocks on _id=1 since s1 holds the lock. Nothing is visible until
+    -- the entire statement completes.
+    SELECT documentdb_api.update('isolation',
+        documentdb_core.bson_build_document(
+            'update', 'bulkWriteTest'::text,
+            'updates', ARRAY[
+                documentdb_core.bson_build_document(
+                    'q', documentdb_core.bson_build_document('_id', 2),
+                    'u', documentdb_core.bson_build_document('$set',
+                        documentdb_core.bson_build_document('b', 20)),
+                    'multi', false
+                ),
+                documentdb_core.bson_build_document(
+                    'q', documentdb_core.bson_build_document('_id', 1),
+                    'u', documentdb_core.bson_build_document('$set',
+                        documentdb_core.bson_build_document('b', 10)),
+                    'multi', false
+                )
+            ],
+            'ordered', false
+        ));
+ <waiting ...>
+step s3-read-update-rows: 
+    -- Read both rows from the update test collection.
+    SELECT document FROM documentdb_api.collection('isolation', 'bulkWriteTest')
+        ORDER BY document;
+
+document                                                        
+----------------------------------------------------------------
+{ "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" } }
+{ "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "2" } }
+(2 rows)
+
+step s1-commit: 
+    COMMIT;
+
+step s2-func-update: <... completed>
+update                                                                                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""2"" }, ""n"" : { ""$numberInt"" : ""2"" } }",t)
+(1 row)
+
+step s3-read-update-rows: 
+    -- Read both rows from the update test collection.
+    SELECT document FROM documentdb_api.collection('isolation', 'bulkWriteTest')
+        ORDER BY document;
+
+document                                                                                                        
+----------------------------------------------------------------------------------------------------------------
+{ "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" }, "locked" : true, "b" : { "$numberInt" : "10" } }
+{ "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "20" } }                 
+(2 rows)
+
+drop_collection
+---------------
+t              
+(1 row)
+
+
+starting permutation: s1-begin s1-lock-row1-update s2-disable-batch s2-bulk-update s3-read-update-rows s1-commit s3-read-update-rows
+create_collection
+-----------------
+t                
+(1 row)
+
+step s1-begin: 
+    BEGIN;
+
+step s1-lock-row1-update: 
+    -- Hold a row lock on _id=1 by updating it without committing.
+    SELECT documentdb_api.update('isolation',
+        documentdb_core.bson_build_document(
+            'update', 'bulkWriteTest'::text,
+            'updates', ARRAY[
+                documentdb_core.bson_build_document(
+                    'q', documentdb_core.bson_build_document('_id', 1),
+                    'u', documentdb_core.bson_build_document('$set',
+                        documentdb_core.bson_build_document('locked', true)),
+                    'multi', false
+                )
+            ]
+        ));
+
+update                                                                                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+step s2-disable-batch: 
+    -- Set lock_timeout to 1ms so the batch subtransaction fails almost
+    -- immediately on _id=1, then the single-doc fallback commits _id=2
+    -- before blocking on _id=1 with the default (infinite) lock_timeout.
+    SET documentdb.batchUpdateLockTimeoutMs TO 1;
+
+step s2-bulk-update: 
+    -- Update _id=2 then _id=1 via the bulk procedure path.
+    -- _id=2 succeeds and is committed immediately. _id=1 blocks on s1.
+    -- While blocked, s3 can see _id=2's update.
+    CALL documentdb_api.update_bulk('isolation',
+        documentdb_core.bson_build_document(
+            'update', 'bulkWriteTest'::text,
+            'updates', ARRAY[
+                documentdb_core.bson_build_document(
+                    'q', documentdb_core.bson_build_document('_id', 2),
+                    'u', documentdb_core.bson_build_document('$set',
+                        documentdb_core.bson_build_document('b', 20)),
+                    'multi', false
+                ),
+                documentdb_core.bson_build_document(
+                    'q', documentdb_core.bson_build_document('_id', 1),
+                    'u', documentdb_core.bson_build_document('$set',
+                        documentdb_core.bson_build_document('b', 10)),
+                    'multi', false
+                )
+            ],
+            'ordered', false
+        ));
+ <waiting ...>
+step s3-read-update-rows: 
+    -- Read both rows from the update test collection.
+    SELECT document FROM documentdb_api.collection('isolation', 'bulkWriteTest')
+        ORDER BY document;
+
+document                                                                                       
+-----------------------------------------------------------------------------------------------
+{ "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" } }                               
+{ "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "20" } }
+(2 rows)
+
+step s1-commit: 
+    COMMIT;
+
+step s2-bulk-update: <... completed>
+p_result                                                                                                  |p_success
+----------------------------------------------------------------------------------------------------------+---------
+{ "ok" : { "$numberDouble" : "1.0" }, "nModified" : { "$numberInt" : "2" }, "n" : { "$numberInt" : "2" } }|t        
+(1 row)
+
+step s3-read-update-rows: 
+    -- Read both rows from the update test collection.
+    SELECT document FROM documentdb_api.collection('isolation', 'bulkWriteTest')
+        ORDER BY document;
+
+document                                                                                                        
+----------------------------------------------------------------------------------------------------------------
+{ "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" }, "locked" : true, "b" : { "$numberInt" : "10" } }
+{ "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "20" } }                 
+(2 rows)
+
+drop_collection
+---------------
+t              
+(1 row)
+
+
+starting permutation: s1-begin s1-insert-hold-lock-row1 s2-func-insert s3-read-insert-rows s1-rollback s3-read-insert-rows
+create_collection
+-----------------
+t                
+(1 row)
+
+step s1-begin: 
+    BEGIN;
+
+step s1-insert-hold-lock-row1: 
+    -- Insert _id=1 without committing; holds the unique-index lock.
+    SELECT 1 FROM documentdb_api.insert_one('isolation','bulkInsertTest',
+        documentdb_core.bson_build_document('_id', 1, 'a', 99));
+
+?column?
+--------
+       1
+(1 row)
+
+step s2-func-insert: 
+    -- Insert _id=2 then _id=1 via the function path (single statement).
+    -- Blocks on _id=1 since s1 holds the unique-index lock.
+    SELECT documentdb_api.insert('isolation',
+        documentdb_core.bson_build_document(
+            'insert', 'bulkInsertTest'::text,
+            'documents', ARRAY[
+                documentdb_core.bson_build_document('_id', 2, 'a', 20),
+                documentdb_core.bson_build_document('_id', 1, 'a', 10)
+            ]
+        ));
+ <waiting ...>
+step s3-read-insert-rows: 
+    -- Read all rows from the insert test collection.
+    SELECT document FROM documentdb_api.collection('isolation', 'bulkInsertTest')
+        ORDER BY document;
+
+document
+--------
+(0 rows)
+
+step s1-rollback: 
+    ROLLBACK;
+
+step s2-func-insert: <... completed>
+insert                                                                                
+--------------------------------------------------------------------------------------
+("{ ""n"" : { ""$numberInt"" : ""2"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+step s3-read-insert-rows: 
+    -- Read all rows from the insert test collection.
+    SELECT document FROM documentdb_api.collection('isolation', 'bulkInsertTest')
+        ORDER BY document;
+
+document                                                         
+-----------------------------------------------------------------
+{ "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "10" } }
+{ "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "20" } }
+(2 rows)
+
+drop_collection
+---------------
+t              
+(1 row)
+
+
+starting permutation: s1-begin s1-insert-hold-lock-row1 s2-disable-batch s2-bulk-insert s3-read-insert-rows s1-rollback s3-read-insert-rows
+create_collection
+-----------------
+t                
+(1 row)
+
+step s1-begin: 
+    BEGIN;
+
+step s1-insert-hold-lock-row1: 
+    -- Insert _id=1 without committing; holds the unique-index lock.
+    SELECT 1 FROM documentdb_api.insert_one('isolation','bulkInsertTest',
+        documentdb_core.bson_build_document('_id', 1, 'a', 99));
+
+?column?
+--------
+       1
+(1 row)
+
+step s2-disable-batch: 
+    -- Set lock_timeout to 1ms so the batch subtransaction fails almost
+    -- immediately on _id=1, then the single-doc fallback commits _id=2
+    -- before blocking on _id=1 with the default (infinite) lock_timeout.
+    SET documentdb.batchUpdateLockTimeoutMs TO 1;
+
+step s2-bulk-insert: 
+    -- Insert _id=2 then _id=1 via the bulk procedure path.
+    -- _id=2 succeeds and is committed independently. _id=1 blocks on s1.
+    -- While blocked, s3 can see _id=2's insert.
+    CALL documentdb_api.insert_bulk('isolation',
+        documentdb_core.bson_build_document(
+            'insert', 'bulkInsertTest'::text,
+            'documents', ARRAY[
+                documentdb_core.bson_build_document('_id', 2, 'a', 20),
+                documentdb_core.bson_build_document('_id', 1, 'a', 10)
+            ]
+        ));
+ <waiting ...>
+step s3-read-insert-rows: 
+    -- Read all rows from the insert test collection.
+    SELECT document FROM documentdb_api.collection('isolation', 'bulkInsertTest')
+        ORDER BY document;
+
+document                                                         
+-----------------------------------------------------------------
+{ "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "20" } }
+(1 row)
+
+step s1-rollback: 
+    ROLLBACK;
+
+step s2-bulk-insert: <... completed>
+p_result                                                            |p_success
+--------------------------------------------------------------------+---------
+{ "n" : { "$numberInt" : "2" }, "ok" : { "$numberDouble" : "1.0" } }|t        
+(1 row)
+
+step s3-read-insert-rows: 
+    -- Read all rows from the insert test collection.
+    SELECT document FROM documentdb_api.collection('isolation', 'bulkInsertTest')
+        ORDER BY document;
+
+document                                                         
+-----------------------------------------------------------------
+{ "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "10" } }
+{ "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "20" } }
+(2 rows)
+
+drop_collection
+---------------
+t              
+(1 row)
+
