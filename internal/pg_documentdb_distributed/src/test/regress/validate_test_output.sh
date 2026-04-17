@@ -258,5 +258,13 @@ for sqlFile in $(ls $scriptDir/sql/*.sql); do
     fi
 done
 
+# Validate group compound id correctness test output equivalence.
+for validationFileName in $(ls ./expected/bson_group_compound_id_correctness_pushdown.out ./expected/bson_group_compound_id_correctness_inline.out ./expected/bson_group_compound_id_correctness_pushdown_inline.out 2>/dev/null); do
+    baseFileName=./expected/bson_group_compound_id_correctness.out;
+    $diff -s -I '^-- Test: enableGroupByCompoundIdIndexPushdown=' -I 'SET citus.next_shard_id' -I 'SET documentdb.next_collection_id' -I 'SET documentdb.next_collection_index_id' -I 'SET documentdb.enableGroupByCompoundIdIndexPushdown' -I 'SET documentdb.enableGroupSubqueryElimination' \
+        $baseFileName $validationFileName;
+    if [ $? -ne 0 ]; then echo "Validation failed on '${baseFileName}' against '${validationFileName}' error code $?"; exit 1; fi;
+done
+
 echo "Skipped duplicate checks on $skippedDuplicateCheckFile"
 echo "Validation checks done."

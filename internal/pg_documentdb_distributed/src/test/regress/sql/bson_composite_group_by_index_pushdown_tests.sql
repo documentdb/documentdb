@@ -8,6 +8,8 @@ SET documentdb.next_collection_index_id TO 8600;
 SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extended_rum', false), extname FROM pg_extension WHERE extname = 'documentdb_extended_rum';
 
 set documentdb.defaultUseCompositeOpClass to on;
+set documentdb.enableGroupByCompoundIdIndexPushdown to on;
+set documentdb_core.enableWriteDocumentsInRepath to on;
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'group_idx_db', '{ "createIndexes": "group_push", "indexes": [ { "name": "a_1", "key": { "a": 1 } }, { "name": "b_c_1", "key": { "b": 1, "c": 1 } } ] }', TRUE);
@@ -38,16 +40,43 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "a": "$a" }, "count": { "$sum": 1 } } } ] }');
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b" }, "count": { "$sum": 1 } } } ] }');
 
--- multi-field document _id: these scenarios don't work yet (even though they should).
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "count": { "$sum": 1 } } } ] }');
+-- multi-field document _id pushdown
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "count": { "$sum": 1 } } } ] }');
+
+-- multi-field with non-indexed field in _id
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "d": "$d" }, "total": { "$sum": "$a" } } } ] }');
 
 -- same with filters
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$match": { "c": { "$exists": true } } }, { "$group": { "_id": { "b": "$b", "c": "$c" }, "count": { "$sum": 1 } } } ] }');
+
+-- multi-field with nested document path
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "total": { "$sum": "$a" } } } ] }');
+
+-- multi-field with multiple accumulators
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "count": { "$sum": 1 }, "maxA": { "$max": "$a" } } } ] }');
+
+-----------------------------------------------------------------------------------------------------
+-- EDGE CASE: no accumulators at all
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" } } } ] }');
+
+-- EDGE CASE: many accumulators
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "cnt": { "$sum": 1 }, "mx": { "$max": "$a" }, "mn": { "$min": "$a" }, "av": { "$avg": "$a" } } } ] }');
+
+-- EDGE CASE: accumulator references grouped field (was the original bug)
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "max_b": { "$max": "$b" }, "sum_c": { "$sum": "$c" } } } ] }');
+
+-- EDGE CASE: GUC off - should NOT decompose
+SET documentdb.enableGroupByCompoundIdIndexPushdown TO off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "count": { "$sum": 1 } } } ] }');
+SET documentdb.enableGroupByCompoundIdIndexPushdown TO on;
 
 -----------------------------------------------------------------------------------------------------
 -- these don't work:
 -- does not work with inequality prefix
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$match": { "b": { "$exists": true } } }, { "$group": { "_id": "$c", "count": { "$sum": 1 } } } ] }');
+
+-- $$variable expression in _id field should not decompose.
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "offset": "$$myVar" }, "count": { "$sum": 1 } } } ], "let": { "myVar": 42 } }');
 
 -- insert an array breaks pushdown
 SELECT documentdb_api.insert_one('group_idx_db', 'group_push', '{ "_id": 1001, "a": [ 1, 2, 3 ], "b": [ 1, 2, 3 ], "c": 1 }' );
@@ -78,5 +107,23 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
 
 -- equality with group suffix works.
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$match": { "b": 10 } }, { "$group": { "_id": "$c", "count": { "$sum": 1 } } } ] }');
+
+---------------------------------------------------------------------------------------------------
+-- single-field document _id pushdown (sharded)
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "a": "$a" }, "count": { "$sum": 1 } } } ] }');
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b" }, "count": { "$sum": 1 } } } ] }');
+
+-- multi-field document _id pushdown (sharded)
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "count": { "$sum": 1 } } } ] }');
+
+---------------------------------------------------------------------------------------------------
+-- dotted path: _id fields use dotted paths.
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "x": "$b.nested", "y": "$c.nested" }, "count": { "$sum": 1 } } } ] }');
+
+-- expression in _id field: not a simple $path, should NOT decompose
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": { "$add": ["$b", 1] }, "c": "$c" }, "count": { "$sum": 1 } } } ] }');
+
+-- mixed: one field is $path, one is constant expression, should NOT decompose
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "constant" }, "count": { "$sum": 1 } } } ] }');
 
 ROLLBACK;

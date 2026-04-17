@@ -1,6 +1,7 @@
 ### documentdb v0.112-0 (Unreleased) ###
 * Eliminate subquery migration in $group for unsharded and sharded with constant _id aggregation queries. Guarded with `EnableGroupSubqueryElimination` *[Perf]*
 * Support collation with non-unique ordered indexes with $lt, $lte. Requires `EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
+* Support index pushdown for `$group` stage when `_id` is a multi-field document expression *[Perf]*
 * Support collation with non-unique ordered indexes with $ne. Requires `EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
 * Support collation with non-unique ordered indexes with `$not` combined with `$gt`, `$gte`, `$lt`, `$lte`. Requires `EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
 * Fix crash in `BsonOrderFinal` and `BsonOrderFinalOnSorted` when `BSONFIRSTN`/`BSONLASTN` aggregates run on empty sharded collections, caused by a NULL datum not being detected before detoasting. Also fix similar crash in `bson_maxminn_combine` for `BSONMAXN`/`BSONMINN` *[Bugfix]* (#531)

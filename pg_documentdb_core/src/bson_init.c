@@ -29,6 +29,9 @@ bool EnableCollation = DEFAULT_ENABLE_COLLATION;
 #define DEFAULT_SKIP_BSON_ARRAY_TRAVERSE_OPTIMIZATION false
 bool SkipBsonArrayTraverseOptimization = DEFAULT_SKIP_BSON_ARRAY_TRAVERSE_OPTIMIZATION;
 
+#define DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH false
+bool EnableWriteDocumentsInRepath = DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH;
+
 /*
  * Initializes core configurations pertaining to documentdb core.
  */
@@ -56,5 +59,13 @@ InitDocumentDBCoreConfigurations(const char *prefix)
 			"Determines whether to skip the optimization for traversing arrays in bson documents."),
 		NULL, &SkipBsonArrayTraverseOptimization,
 		DEFAULT_SKIP_BSON_ARRAY_TRAVERSE_OPTIMIZATION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableWriteDocumentsInRepath", prefix),
+		gettext_noop(
+			"Whether to enable writing documents during bson repath and build."),
+		NULL, &EnableWriteDocumentsInRepath,
+		DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }

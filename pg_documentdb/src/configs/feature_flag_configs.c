@@ -206,6 +206,11 @@ bool EnableComparableTerms = DEFAULT_ENABLE_COMPARABLE_TERMS;
 #define DEFAULT_ENABLE_ORDER_BY_INDEX_TERM false
 bool EnableOrderByIndexTerm = DEFAULT_ENABLE_ORDER_BY_INDEX_TERM;
 
+/* Added in v112, Pending stabilization, enable in v116 */
+#define DEFAULT_ENABLE_GROUP_BY_COMPOUND_ID_INDEX_PUSHDOWN false
+bool EnableGroupByCompoundIdIndexPushdown =
+	DEFAULT_ENABLE_GROUP_BY_COMPOUND_ID_INDEX_PUSHDOWN;
+
 /* Added in v112, enabled in v112, remove after v116 */
 #define DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK true
 bool EnablePartialMatchHasRecheck = DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK;
@@ -934,6 +939,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable order by index term feature."),
 		NULL, &EnableOrderByIndexTerm,
 		DEFAULT_ENABLE_ORDER_BY_INDEX_TERM,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableGroupByCompoundIdIndexPushdown", newGucPrefix),
+		gettext_noop(
+			"Whether to enable compound document _id group-by decomposition for index pushdown."),
+		NULL, &EnableGroupByCompoundIdIndexPushdown,
+		DEFAULT_ENABLE_GROUP_BY_COMPOUND_ID_INDEX_PUSHDOWN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

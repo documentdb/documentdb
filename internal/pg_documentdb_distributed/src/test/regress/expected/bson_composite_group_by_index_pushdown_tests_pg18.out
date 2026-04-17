@@ -1,3 +1,4 @@
+\i sql/bson_composite_group_by_index_pushdown_tests.sql
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 SET citus.next_shard_id TO 860000;
 SET documentdb.next_collection_id TO 8600;
@@ -14,7 +15,7 @@ set documentdb.enableGroupByCompoundIdIndexPushdown to on;
 set documentdb_core.enableWriteDocumentsInRepath to on;
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'group_idx_db', '{ "createIndexes": "group_push", "indexes": [ { "name": "a_1", "key": { "a": 1 } }, { "name": "b_c_1", "key": { "b": 1, "c": 1 } } ] }', TRUE);
-NOTICE:  creating collection
+psql:sql/bson_composite_group_by_index_pushdown_tests.sql:15: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 ---------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -511,7 +512,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ---------------------------------------------------------------------
 -- dotted path: _id fields use dotted paths.
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "x": "$b.nested", "y": "$c.nested" }, "count": { "$sum": 1 } } } ] }');
-                                                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                                                       
+                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                   
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    ->  Distributed Subplan 59_1
@@ -522,21 +523,20 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
                      Tasks Shown: One of 8
                      ->  Task
                            Node: host=localhost port=58070 dbname=regression
-                           ->  GroupAggregate
-                                 Group Key: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$b.nested" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$c.nested" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                                 ->  Sort
-                                       Sort Key: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$b.nested" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$c.nested" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                                       ->  Seq Scan on documents_8601_860004 collection
+                           ->  HashAggregate
+                                 Group Key: documentdb_api_internal.bson_expression_get(document, '{ "" : "$b.nested" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), documentdb_api_internal.bson_expression_get(document, '{ "" : "$c.nested" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                                 ->  Seq Scan on documents_8601_860004 collection
+                                       Disabled: true
    Task Count: 1
    Tasks Shown: All
    ->  Task
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on read_intermediate_result intermediate_result
-(19 rows)
+(18 rows)
 
 -- expression in _id field: not a simple $path, should NOT decompose
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": { "$add": ["$b", 1] }, "c": "$c" }, "count": { "$sum": 1 } } } ] }');
-                                                                                                                                                 QUERY PLAN                                                                                                                                                 
+                                                                                                                                             QUERY PLAN                                                                                                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    ->  Distributed Subplan 61_1
@@ -547,21 +547,20 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
                      Tasks Shown: One of 8
                      ->  Task
                            Node: host=localhost port=58070 dbname=regression
-                           ->  GroupAggregate
-                                 Group Key: (documentdb_api_internal.bson_expression_get(document, '{ "" : { "b" : { "$add" : [ "$b", { "$numberInt" : "1" } ] }, "c" : "$c" } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                                 ->  Sort
-                                       Sort Key: (documentdb_api_internal.bson_expression_get(document, '{ "" : { "b" : { "$add" : [ "$b", { "$numberInt" : "1" } ] }, "c" : "$c" } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                                       ->  Seq Scan on documents_8601_860004 collection
+                           ->  HashAggregate
+                                 Group Key: documentdb_api_internal.bson_expression_get(document, '{ "" : { "b" : { "$add" : [ "$b", { "$numberInt" : "1" } ] }, "c" : "$c" } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                                 ->  Seq Scan on documents_8601_860004 collection
+                                       Disabled: true
    Task Count: 1
    Tasks Shown: All
    ->  Task
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on read_intermediate_result intermediate_result
-(19 rows)
+(18 rows)
 
 -- mixed: one field is $path, one is constant expression, should NOT decompose
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "constant" }, "count": { "$sum": 1 } } } ] }');
-                                                                                                                               QUERY PLAN                                                                                                                                
+                                                                                                                            QUERY PLAN                                                                                                                            
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    ->  Distributed Subplan 63_1
@@ -572,16 +571,15 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
                      Tasks Shown: One of 8
                      ->  Task
                            Node: host=localhost port=58070 dbname=regression
-                           ->  GroupAggregate
-                                 Group Key: (documentdb_api_internal.bson_expression_get(document, '{ "" : { "b" : "$b", "c" : "constant" } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                                 ->  Sort
-                                       Sort Key: (documentdb_api_internal.bson_expression_get(document, '{ "" : { "b" : "$b", "c" : "constant" } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                                       ->  Seq Scan on documents_8601_860004 collection
+                           ->  HashAggregate
+                                 Group Key: documentdb_api_internal.bson_expression_get(document, '{ "" : { "b" : "$b", "c" : "constant" } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                                 ->  Seq Scan on documents_8601_860004 collection
+                                       Disabled: true
    Task Count: 1
    Tasks Shown: All
    ->  Task
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on read_intermediate_result intermediate_result
-(19 rows)
+(18 rows)
 
 ROLLBACK;

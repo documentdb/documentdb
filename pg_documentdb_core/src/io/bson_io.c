@@ -32,6 +32,7 @@
 
 
 extern bool BsonTextUseJsonRepresentation;
+extern bool EnableWriteDocumentsInRepath;
 
 
 /* --------------------------------------------------------- */
@@ -533,14 +534,29 @@ BsonRepathAndBuildCore(PG_FUNCTION_ARGS, bool isBuildDocument)
 					continue;
 				}
 
-				if (TryGetSinglePgbsonElementFromPgbson(pbson, &elem))
+				if (EnableWriteDocumentsInRepath)
 				{
-					PgbsonWriterAppendValue(&writer, path, len, &elem.bsonValue);
+					if (TryGetSinglePgbsonElementFromPgbson(pbson, &elem) &&
+						elem.pathLength == 0)
+					{
+						PgbsonWriterAppendValue(&writer, path, len, &elem.bsonValue);
+					}
+					else
+					{
+						PgbsonWriterAppendDocument(&writer, path, len, pbson);
+					}
 				}
 				else
 				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-									(errmsg("Expecting only one element value"))));
+					if (TryGetSinglePgbsonElementFromPgbson(pbson, &elem))
+					{
+						PgbsonWriterAppendValue(&writer, path, len, &elem.bsonValue);
+					}
+					else
+					{
+						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+										(errmsg("Expecting only one element value"))));
+					}
 				}
 			}
 		}

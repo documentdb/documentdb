@@ -89,6 +89,7 @@ extern bool EnableUseLookupNewProjectInlineMethod;
 extern bool InlineChangeStreamMatchStage;
 extern bool RemoveMatchNamespaceFilters;
 extern bool EnableOrderByIndexTerm;
+extern bool EnableGroupByCompoundIdIndexPushdown;
 extern bool EnableSortGroupStage;
 
 /* GUC to config tdigest compression */
@@ -5558,10 +5559,10 @@ AddSumGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 					   List *repathArgs, Const *accumulatorText,
 					   ParseState *parseState, char *identifiers,
 					   Expr *documentExpr, Expr *variableSpec, const
-					   char *collationString, Expr *groupIdExpr)
+					   char *collationString, bool isGroupIdConst)
 {
 	bool canUseBsonCountAggregate = EnableNewCountAggregates &&
-									IsA(groupIdExpr, Const);
+									isGroupIdConst;
 
 	bool useNewCountAggregate = false;
 	if (canUseBsonCountAggregate &&
@@ -6179,11 +6180,12 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 	}
 
 	/* Group by is valid for pushdown iff it's a string expression of a path that's not a variable
-	 * or a document with one field.
+	 * or a document whose fields are all $path expressions.
 	 */
 	bool isGroupByValidForIndexPushdown = false;
-	const char *groupByFieldPath = NULL;
-	uint32_t groupByFieldPathLen = 0;
+	const char *groupByFieldPaths[INDEX_MAX_KEYS] = { 0 };
+	uint32_t groupByFieldPathLens[INDEX_MAX_KEYS] = { 0 };
+	int numGroupByFields = 0;
 	if (CanPushSortFilterToIndex(query, context))
 	{
 		if (idValue.value_type == BSON_TYPE_UTF8 &&
@@ -6191,28 +6193,52 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 			idValue.value.v_utf8.str[0] == '$' &&
 			idValue.value.v_utf8.str[1] != '$')
 		{
-			groupByFieldPath = idValue.value.v_utf8.str + 1;
-			groupByFieldPathLen = idValue.value.v_utf8.len - 1;
+			groupByFieldPaths[0] = idValue.value.v_utf8.str + 1;
+			groupByFieldPathLens[0] = idValue.value.v_utf8.len - 1;
+			numGroupByFields = 1;
 			isGroupByValidForIndexPushdown = true;
 		}
 		else if (idValue.value_type == BSON_TYPE_DOCUMENT)
 		{
-			/*
-			 * For now, we only support the simple case where the document has one field and that field is a path expression that's not a variable.
-			 * If there are multiple fields or if the single field is not a path expression or is a variable,
-			 * then we don't consider it valid for index pushdown.
-			 */
-			pgbsonelement docElement;
-			if (TryGetSingleFieldPathFromBsonValue(&idValue, &docElement))
+			bson_iter_t docIter;
+			BsonValueInitIterator(&idValue, &docIter);
+			bool allFieldsValid = true;
+			int fieldCount = 0;
+
+			while (bson_iter_next(&docIter))
 			{
-				groupByFieldPath = docElement.bsonValue.value.v_utf8.str + 1;
-				groupByFieldPathLen = docElement.bsonValue.value.v_utf8.len - 1;
+				/* TODO: Consider removing this limit -
+				 * in the case where there are more than INDEX_MAX_KEYS fields, we can still do partial index pushdown
+				 * on the first INDEX_MAX_KEYS fields.
+				 */
+				if (fieldCount >= INDEX_MAX_KEYS)
+				{
+					allFieldsValid = false;
+					break;
+				}
+
+				const bson_value_t *fieldVal = bson_iter_value(&docIter);
+				if (fieldVal->value_type != BSON_TYPE_UTF8 ||
+					fieldVal->value.v_utf8.len <= 1 ||
+					fieldVal->value.v_utf8.str[0] != '$' ||
+					fieldVal->value.v_utf8.str[1] == '$')
+				{
+					allFieldsValid = false;
+					break;
+				}
+
+				groupByFieldPaths[fieldCount] = fieldVal->value.v_utf8.str + 1;
+				groupByFieldPathLens[fieldCount] = fieldVal->value.v_utf8.len - 1;
+				fieldCount++;
+			}
+
+			if (allFieldsValid && fieldCount > 0)
+			{
+				numGroupByFields = fieldCount;
 				isGroupByValidForIndexPushdown = true;
 			}
 		}
 	}
-
-	pgbson *groupValue = BsonValueToDocumentPgbson(&idValue);
 
 	ParseState *parseState = make_parsestate(NULL);
 	parseState->p_next_resno = 1;
@@ -6220,59 +6246,152 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 
 	List *groupArgs;
 	Oid bsonExpressionGetFunction;
-	Expr *groupIdDocumentExpr = GetDocumentExprForGroupAccumulatorValue(&idValue,
-																		origEntry->expr);
 
-	FuncExpr *groupFunc;
-	if (context->variableSpec != NULL)
-	{
-		bsonExpressionGetFunction = BsonExpressionGetWithLetFunctionOid();
-		groupArgs = list_make4(groupIdDocumentExpr, MakeBsonConst(groupValue),
-							   MakeBoolValueConst(true), context->variableSpec);
-		groupFunc = makeFuncExpr(
-			bsonExpressionGetFunction, BsonTypeId(), groupArgs, InvalidOid,
-			InvalidOid, COERCE_EXPLICIT_CALL);
-		if (isGroupByValidForIndexPushdown && context->mongoCollection != NULL &&
-			context->mongoCollection->shardKey != NULL &&
-			BsonTypeId() != DocumentDBCoreBsonTypeId())
-		{
-			groupFunc = makeFuncExpr(
-				DocumentDBCoreBsonToBsonFunctionOId(), BsonTypeId(), list_make1(
-					groupFunc),
-				InvalidOid,
-				InvalidOid, COERCE_EXPLICIT_CALL);
-		}
-	}
-	else
-	{
-		bsonExpressionGetFunction = BsonExpressionGetFunctionOid();
-		groupArgs = list_make3(groupIdDocumentExpr, MakeBsonConst(groupValue),
-							   MakeBoolValueConst(true));
-		groupFunc = makeFuncExpr(
-			bsonExpressionGetFunction, BsonTypeId(), groupArgs, InvalidOid,
-			InvalidOid, COERCE_EXPLICIT_CALL);
-	}
+	Expr *transformedGroupExpr = GetDocumentExprForGroupAccumulatorValue(&idValue,
+																		 origEntry->expr);
+	bool isGroupConstant = IsA(transformedGroupExpr, Const);
 
 	/* Now do the projector / accumulators
 	 * We do this in 2 stages to handle citus query generation.
 	 * In the first phase we just project out the group and accumulators
-	 * Identifiers are basically 'c' + some number.
+	 * Identifiers are basically 'c' + some number or '?junk?' + some number.
 	 * We set aside characters to "tostring" the number such that
 	 * (c + <number> + \0). Note this is a temporary buffer - we
 	 * pstrdup it after creating it.
 	 */
-	char identifiers[UINT32_MAX_STR_LEN + 2];
+	char identifiers[UINT32_MAX_STR_LEN + 128];
+
+	/*
+	 * For multi-field document _id with index pushdown, decompose into
+	 * individual per-field GROUP BY expressions.
+	 */
+	bool useDecomposedGroupBy = isGroupByValidForIndexPushdown &&
+								idValue.value_type == BSON_TYPE_DOCUMENT &&
+								numGroupByFields > 1 &&
+								!isGroupConstant &&
+								EnableGroupByCompoundIdIndexPushdown;
 
 	Const *idFieldText = MakeTextConst("_id", 3);
 
 	List *repathArgs = NIL;
-	TargetEntry *groupEntry;
+	List *groupEntries = NIL;
 	repathArgs = lappend(repathArgs, AddGroupExpression((Expr *) idFieldText, parseState,
 														identifiers, query, TEXTOID,
 														NULL));
-	repathArgs = lappend(repathArgs, AddGroupExpression((Expr *) groupFunc, parseState,
-														identifiers, query, BsonTypeId(),
-														&groupEntry));
+
+	/* Assign the _id clause as what we're grouping on. */
+	if (useDecomposedGroupBy)
+	{
+		query->groupClause = NIL;
+		List *buildDocumentArgs = NIL;
+
+		bson_iter_t fieldIter;
+		BsonValueInitIterator(&idValue, &fieldIter);
+		int groupFieldNum = 0;
+		while (bson_iter_next(&fieldIter))
+		{
+			const char *fieldName = bson_iter_key(&fieldIter);
+			uint32_t fieldNameLen = bson_iter_key_len(&fieldIter);
+			const bson_value_t *fieldVal = bson_iter_value(&fieldIter);
+			pgbson *fieldGroupValue = BsonValueToDocumentPgbson(fieldVal);
+			Expr *fieldDocExpr = GetDocumentExprForGroupAccumulatorValue(
+				fieldVal, origEntry->expr);
+
+			FuncExpr *fieldGroupFunc;
+			if (context->variableSpec != NULL)
+			{
+				List *fieldArgs = list_make4(fieldDocExpr,
+											 MakeBsonConst(fieldGroupValue),
+											 MakeBoolValueConst(true),
+											 context->variableSpec);
+				fieldGroupFunc = makeFuncExpr(
+					BsonExpressionGetWithLetFunctionOid(), BsonTypeId(),
+					fieldArgs, InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+				if (context->mongoCollection != NULL &&
+					context->mongoCollection->shardKey != NULL &&
+					BsonTypeId() != DocumentDBCoreBsonTypeId())
+				{
+					fieldGroupFunc = makeFuncExpr(
+						DocumentDBCoreBsonToBsonFunctionOId(), BsonTypeId(), list_make1(
+							fieldGroupFunc),
+						InvalidOid,
+						InvalidOid, COERCE_EXPLICIT_CALL);
+				}
+			}
+			else
+			{
+				List *fieldArgs = list_make3(fieldDocExpr,
+											 MakeBsonConst(fieldGroupValue),
+											 MakeBoolValueConst(true));
+				fieldGroupFunc = makeFuncExpr(
+					BsonExpressionGetFunctionOid(), BsonTypeId(),
+					fieldArgs, InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+			}
+
+			pg_sprintf(identifiers, "?junk?%d", groupFieldNum++);
+			TargetEntry *fieldEntry = makeTargetEntry((Expr *) fieldGroupFunc, 0, pstrdup(
+														  identifiers), true);
+			groupEntries = lappend(groupEntries, fieldEntry);
+
+			Const *fieldNameConst = MakeTextConst(fieldName, fieldNameLen);
+
+			buildDocumentArgs = lappend(buildDocumentArgs, fieldNameConst);
+			buildDocumentArgs = lappend(buildDocumentArgs, fieldGroupFunc);
+		}
+
+		FuncExpr *buildDocumentFunc = makeFuncExpr(
+			BsonRepathAndBuildFunctionOid(), BsonTypeId(), buildDocumentArgs, InvalidOid,
+			InvalidOid, COERCE_EXPLICIT_CALL);
+
+		TargetEntry *groupEntry;
+		repathArgs = lappend(repathArgs, AddGroupExpression((Expr *) buildDocumentFunc,
+															parseState,
+															identifiers, query,
+															BsonTypeId(),
+															&groupEntry));
+	}
+	else
+	{
+		pgbson *groupValue = BsonValueToDocumentPgbson(&idValue);
+		FuncExpr *groupFunc;
+		if (context->variableSpec != NULL)
+		{
+			bsonExpressionGetFunction = BsonExpressionGetWithLetFunctionOid();
+			groupArgs = list_make4(transformedGroupExpr, MakeBsonConst(groupValue),
+								   MakeBoolValueConst(true), context->variableSpec);
+			groupFunc = makeFuncExpr(
+				bsonExpressionGetFunction, BsonTypeId(), groupArgs, InvalidOid,
+				InvalidOid, COERCE_EXPLICIT_CALL);
+			if (isGroupByValidForIndexPushdown && context->mongoCollection != NULL &&
+				context->mongoCollection->shardKey != NULL &&
+				BsonTypeId() != DocumentDBCoreBsonTypeId())
+			{
+				groupFunc = makeFuncExpr(
+					DocumentDBCoreBsonToBsonFunctionOId(), BsonTypeId(), list_make1(
+						groupFunc),
+					InvalidOid,
+					InvalidOid, COERCE_EXPLICIT_CALL);
+			}
+		}
+		else
+		{
+			bsonExpressionGetFunction = BsonExpressionGetFunctionOid();
+			groupArgs = list_make3(transformedGroupExpr, MakeBsonConst(groupValue),
+								   MakeBoolValueConst(true));
+			groupFunc = makeFuncExpr(
+				bsonExpressionGetFunction, BsonTypeId(), groupArgs, InvalidOid,
+				InvalidOid, COERCE_EXPLICIT_CALL);
+		}
+
+		TargetEntry *groupEntry;
+		repathArgs = lappend(repathArgs, AddGroupExpression((Expr *) groupFunc,
+															parseState,
+															identifiers, query,
+															BsonTypeId(),
+															&groupEntry));
+
+		groupEntries = list_make1(groupEntry);
+	}
 
 	/* Now add accumulators */
 	parseState->p_expr_kind = EXPR_KIND_SELECT_TARGET;
@@ -6356,7 +6475,7 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 												origEntry->expr,
 												context->variableSpec,
 												context->collationString,
-												groupIdDocumentExpr);
+												isGroupConstant);
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$max"))
 		{
@@ -6864,35 +6983,31 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 		}
 	}
 
-	/* Assign the _id clause as what we're grouping on */
-	SortGroupClause *grpcl = makeNode(SortGroupClause);
-	grpcl->tleSortGroupRef = assignSortGroupRef(groupEntry, query->targetList);
-	grpcl->eqop = BsonEqualOperatorId();
-	grpcl->sortop = BsonLessThanOperatorId();
-	grpcl->nulls_first = false; /* OK with or without sortop */
-	grpcl->hashable = true;
-	query->groupClause = list_make1(grpcl);
-
 	/*
 	 * If there's an orderby pushdown to the index, add a full scan clause iff
 	 * the query has no filters yet.
 	 */
-	if (isGroupByValidForIndexPushdown)
+	if (isGroupByValidForIndexPushdown && (useDecomposedGroupBy || numGroupByFields == 1))
 	{
-		pgbsonelement sortElement = { 0 };
-		sortElement.path = groupByFieldPath;
-		sortElement.pathLength = groupByFieldPathLen;
-		sortElement.bsonValue.value_type = BSON_TYPE_INT32;
-		sortElement.bsonValue.value.v_int32 = 1;
-		pgbson *sortSpec = PgbsonElementToPgbson(&sortElement);
-		Const *sortConst = MakeBsonConst(sortSpec);
-		List *rangeArgs = list_make2(origEntry->expr, sortConst);
-		Expr *fullScanExpr = (Expr *) makeFuncExpr(
-			BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
-			InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
 		List *currentQuals = make_ands_implicit(
 			(Expr *) query->jointree->quals);
-		currentQuals = lappend(currentQuals, fullScanExpr);
+
+		for (int i = 0; i < numGroupByFields; i++)
+		{
+			pgbsonelement sortElement = { 0 };
+			sortElement.path = groupByFieldPaths[i];
+			sortElement.pathLength = groupByFieldPathLens[i];
+			sortElement.bsonValue.value_type = BSON_TYPE_INT32;
+			sortElement.bsonValue.value.v_int32 = 1;
+			pgbson *sortSpec = PgbsonElementToPgbson(&sortElement);
+			Const *sortConst = MakeBsonConst(sortSpec);
+			List *rangeArgs = list_make2(origEntry->expr, sortConst);
+			Expr *fullScanExpr = (Expr *) makeFuncExpr(
+				BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
+				InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+			currentQuals = lappend(currentQuals, fullScanExpr);
+		}
+
 		query->jointree->quals = (Node *) make_ands_explicit(
 			currentQuals);
 	}
@@ -6908,11 +7023,10 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 	 */
 	bool isSharded = (context->mongoCollection != NULL &&
 					  context->mongoCollection->shardKey != NULL);
-	bool isGroupIdConstant = IsA(groupIdDocumentExpr, Const);
 
 	bool canEliminateSubquery = ForceGroupSubqueryElimination ||
 								(EnableGroupSubqueryElimination &&
-								 (!isSharded || isGroupIdConstant));
+								 (!isSharded || isGroupConstant));
 
 	if (canEliminateSubquery)
 	{
@@ -6922,6 +7036,11 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 		foreach(cell, query->targetList)
 		{
 			TargetEntry *entry = lfirst(cell);
+			if (entry->resjunk)
+			{
+				continue;
+			}
+
 			inlineRepathArgs = lappend(inlineRepathArgs, entry->expr);
 		}
 
@@ -6931,19 +7050,58 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 			inlineRepathArgs, overrideArrayInProjection);
 
 		/*
-		 * Build new target list: repath as the output + resjunk copy of group key for GROUP BY
-		 * Copy groupEntry since we're replacing the targetList; don't mutate the original
+		 * Add each GROUP BY entries as resjunk and add a corresponding
+		 * SortGroupClause for them.
 		 */
 		TargetEntry *repathEntry = makeTargetEntry(repathExpression, 1,
 												   origEntry->resname, false);
-		TargetEntry *groupResjunk = copyObject(groupEntry);
-		groupResjunk->resno = 2;
-		groupResjunk->resjunk = true;
+		query->targetList = list_make1(repathEntry);
+		ListCell *groupEntryCell;
+		int nextResNo = 2;
+		foreach(groupEntryCell, groupEntries)
+		{
+			TargetEntry *groupEntry = lfirst(groupEntryCell);
+			if (!groupEntry->resjunk)
+			{
+				groupEntry->resjunk = true;
+			}
 
-		query->targetList = list_make2(repathEntry, groupResjunk);
+			groupEntry->resno = nextResNo++;
+			query->targetList = lappend(query->targetList, groupEntry);
+
+			/* Assign the _id clause as what we're grouping on */
+			SortGroupClause *grpcl = makeNode(SortGroupClause);
+			grpcl->tleSortGroupRef = assignSortGroupRef(groupEntry, query->targetList);
+			grpcl->eqop = BsonEqualOperatorId();
+			grpcl->sortop = BsonLessThanOperatorId();
+			grpcl->nulls_first = false; /* OK with or without sortop */
+			grpcl->hashable = true;
+			query->groupClause = lappend(query->groupClause, grpcl);
+		}
 	}
 	else
 	{
+		ListCell *groupEntryCell;
+		foreach(groupEntryCell, groupEntries)
+		{
+			TargetEntry *groupEntry = lfirst(groupEntryCell);
+
+			if (groupEntry->resjunk)
+			{
+				groupEntry->resno = parseState->p_next_resno++;
+				query->targetList = lappend(query->targetList, groupEntry);
+			}
+
+			/* Assign the _id clause as what we're grouping on */
+			SortGroupClause *grpcl = makeNode(SortGroupClause);
+			grpcl->tleSortGroupRef = assignSortGroupRef(groupEntry, query->targetList);
+			grpcl->eqop = BsonEqualOperatorId();
+			grpcl->sortop = BsonLessThanOperatorId();
+			grpcl->nulls_first = false; /* OK with or without sortop */
+			grpcl->hashable = true;
+			query->groupClause = lappend(query->groupClause, grpcl);
+		}
+
 		/* Legacy path: push to a subquery, then apply repath on the outer query */
 		context->expandTargetList = true;
 		query = MigrateQueryToSubQuery(query, context);
@@ -6953,8 +7111,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 
 		/* $group doesn't allow dotted path so no need to override */
 		bool overrideArrayInProjection = false;
-		Expr *repathExpression = GenerateMultiExpressionRepathExpression(repathArgs,
-																		 overrideArrayInProjection);
+		Expr *repathExpression = GenerateMultiExpressionRepathExpression(
+			repathArgs, overrideArrayInProjection);
 
 		entry->expr = repathExpression;
 		entry->resname = origEntry->resname;
