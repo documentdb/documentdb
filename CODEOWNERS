@@ -14,8 +14,6 @@ Make* @documentdb/documentdb-maintainers
 
 /rfcs/ @documentdb/documentdb-maintainers @documentdb/gateway-owners
 
-/rust-toolchain.toml @documentdb/gateway-owners
-/pg_documentdb_gw_host/ @documentdb/gateway-owners
+/rust-toolchain.toml @documentdb/documentdb-maintainers @documentdb/gateway-owners
+/pg_documentdb_gw_host/ @documentdb/documentdb-maintainers @documentdb/gateway-owners
 /pg_documentdb_gw/ @documentdb/gateway-owners
-/documentdb_errors.csv @documentdb/gateway-owners
-/error_mappings.csv @documentdb/gateway-owners
