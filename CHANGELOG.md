@@ -1,3 +1,5 @@
+### documentdb v0.113-0 (Unreleased) ###
+
 ### documentdb v0.112-0 (Unreleased) ###
 * Eliminate subquery migration in $group for unsharded and sharded with constant _id aggregation queries. Guarded with `EnableGroupSubqueryElimination` *[Perf]*
 * Support collation with non-unique ordered indexes with $lt, $lte. Requires `EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
