@@ -90,7 +90,7 @@ RUN sudo mkdir -p /var/run/postgresql && \
 COPY pg_documentdb_gw/SetupConfiguration.json /home/documentdb/gateway/pg_documentdb_gw/SetupConfiguration.json
 COPY scripts/start_oss_server.sh /home/documentdb/gateway/scripts/start_oss_server.sh
 COPY scripts/build_and_start_gateway.sh /home/documentdb/gateway/scripts/build_and_start_gateway.sh
-COPY scripts/emulator_entrypoint.sh /home/documentdb/gateway/scripts/emulator_entrypoint.sh
+COPY documentdb-local/scripts/emulator_entrypoint.sh /home/documentdb/gateway/scripts/emulator_entrypoint.sh
 COPY scripts/utils.sh /home/documentdb/gateway/scripts/utils.sh
 COPY scripts/setup_psqlrc.sh /home/documentdb/gateway/scripts/setup_psqlrc.sh
 COPY packaging/test_packages/test_gateway.py /home/documentdb/gateway/scripts/test_gateway.py

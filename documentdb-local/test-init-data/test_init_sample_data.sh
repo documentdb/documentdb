@@ -9,7 +9,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 CONTAINER_NAME="documentdb-init-data-test"
 IMAGE_NAME="documentdb-init-data-test"
-DOCKERFILE_PATH="$PROJECT_ROOT/.github/containers/Build-Ubuntu/Dockerfile_gateway"
+DOCKERFILE_PATH="$PROJECT_ROOT/packaging/gateway/docker/Dockerfile_documentdb_local"
 DOCUMENTDB_PORT="10261"  # Use different port to avoid conflicts
 PASSWORD="TestPassword123"
 
@@ -44,14 +44,14 @@ build_image() {
     fi
     
     # Check if sample data directory exists in the project
-    if [ ! -d "$PROJECT_ROOT/sample-data" ]; then
-        echo "❌ Error: Sample data directory not found at $PROJECT_ROOT/sample-data"
+    if [ ! -d "$PROJECT_ROOT/documentdb-local/sample-data" ]; then
+        echo "❌ Error: Sample data directory not found at $PROJECT_ROOT/documentdb-local/sample-data"
         echo "Please ensure the sample-data directory exists with the required JavaScript files."
         exit 1
     fi
     
     echo "Sample data files found:"
-    ls -la "$PROJECT_ROOT/sample-data"/*.js
+    ls -la "$PROJECT_ROOT/documentdb-local/sample-data"/*.js
     echo
     
     echo "Building image $IMAGE_NAME from $DOCKERFILE_PATH..."

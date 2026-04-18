@@ -69,7 +69,7 @@ To build gateway packages, use the `build_gateway_packages.sh` script. This scri
 For example, to build a gateway package for Debian 12 and PostgreSQL 16, run:
 
 ```sh
-./packaging/build_gateway_packages.sh --os deb12 --pg 16
+./packaging/gateway/build_gateway_packages.sh --os deb12 --pg 16
 ```
 
 Supported DEB/Ubuntu distributions:

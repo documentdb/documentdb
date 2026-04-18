@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-# set script_dir to the parent directory of the script
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# set script_dir to the root of the repository (3 levels up from packaging/gateway/)
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # Function to display help message
 function show_help {
@@ -103,28 +103,28 @@ if [[ "$PACKAGE_TYPE" == "deb" ]]; then
         deb11)
             DOCKER_IMAGE="rust:slim-bullseye"
             TEST_DOCKER_IMAGE="debian:bullseye-slim"
-            DOCKERFILE="${script_dir}/packaging/deb/Dockerfile_gateway_deb"
+            DOCKERFILE="${script_dir}/packaging/gateway/deb/Dockerfile_gateway_deb"
             ;;
         deb12)
             DOCKER_IMAGE="rust:slim-bookworm"
             TEST_DOCKER_IMAGE="debian:bookworm-slim"
-            DOCKERFILE="${script_dir}/packaging/deb/Dockerfile_gateway_deb"
+            DOCKERFILE="${script_dir}/packaging/gateway/deb/Dockerfile_gateway_deb"
             ;;
         deb13)
             DOCKER_IMAGE="rust:slim-trixie"
             TEST_DOCKER_IMAGE="debian:trixie-slim"
-            DOCKERFILE="${script_dir}/packaging/deb/Dockerfile_gateway_deb"
+            DOCKERFILE="${script_dir}/packaging/gateway/deb/Dockerfile_gateway_deb"
             ;;
         # Ubuntu images need to install rust manually
         ubuntu22.04)
             DOCKER_IMAGE="ubuntu:22.04"
             TEST_DOCKER_IMAGE="ubuntu:22.04"
-            DOCKERFILE="${script_dir}/packaging/deb/Dockerfile_gateway_ubuntu"
+            DOCKERFILE="${script_dir}/packaging/gateway/deb/Dockerfile_gateway_ubuntu"
             ;;
         ubuntu24.04)
             DOCKER_IMAGE="ubuntu:24.04"
             TEST_DOCKER_IMAGE="ubuntu:24.04"
-            DOCKERFILE="${script_dir}/packaging/deb/Dockerfile_gateway_ubuntu"
+            DOCKERFILE="${script_dir}/packaging/gateway/deb/Dockerfile_gateway_ubuntu"
             ;;
     esac
 elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
@@ -170,7 +170,7 @@ if [[ $TEST_CLEAN_INSTALL == true ]]; then
         echo "Debian package path passed into Docker build: $deb_package_rel_path"
 
         # Build the Docker image while showing the output to the console
-        docker build -t documentdb-test-gateway-packages:latest -f "${script_dir}/packaging/test_packages/deb/Dockerfile_deb_gateway_test" \
+        docker build -t documentdb-test-gateway-packages:latest -f "${script_dir}/packaging/gateway/test/Dockerfile_deb_gateway_test" \
             --build-arg BASE_IMAGE="$TEST_DOCKER_IMAGE" \
             --build-arg DEB_PACKAGE_REL_PATH="$deb_package_rel_path" \
             --build-arg GATEWAY_PACKAGE_PATH="$gateway_package_rel_path" "$script_dir"
