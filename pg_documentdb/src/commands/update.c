@@ -349,6 +349,9 @@ static bool SelectUpdateCandidate(MongoCollection *collection, int64
 								  shardKeyHash, UpdateOneParams *updateOneParams,
 								  UpdateCandidate *updateCandidate,
 								  bool getOriginalDocument, bool *hasOnlyObjectIdFilter);
+static void ExtractUpdateCandidateFromSPI(UpdateOneParams *updateOneParams,
+										  UpdateCandidate *updateCandidate,
+										  bool getOriginalDocument);
 static bool UpdateDocumentByTID(uint64 collectionId, const char *shardTableName, int64
 								shardKeyHash,
 								ItemPointer tid, pgbson *updatedDocument);
@@ -2387,12 +2390,7 @@ CallUpdateWorkerForUpdateOne(MongoCollection *collection,
 							 UpdateOneResult *result)
 {
 	/* initialize result */
-	result->isRowUpdated = false;
-	result->updateSkipped = false;
-	result->isRetry = false;
-	result->reinsertDocument = NULL;
-	result->resultDocument = NULL;
-	result->upsertedObjectId = NULL;
+	memset(result, 0, sizeof(UpdateOneResult));
 
 	pgbson *workerParams = SerializeUpdateOneParams(updateOneParams,
 													collection->shardKey);
@@ -2717,6 +2715,8 @@ SerializeUpdateBatchParams(int *updateIndex, List *updates,
 	while (*updateIndex < list_length(updates) &&
 		   updateCount < BatchWriteSubTransactionCount)
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		updateCell = list_nth_cell(updates, *updateIndex);
 		UpdateSpec *updateSpec = lfirst(updateCell);
 		pgbson_writer specWriter;
@@ -3048,14 +3048,6 @@ DeserializeUpdateOneResult(pgbson *resultBson, UpdateOneResult *result)
 		{
 			result->updateSkipped = bson_iter_bool(&updateIter);
 		}
-		else if (strcmp(key, "isRowUpdated") == 0)
-		{
-			result->isRowUpdated = bson_iter_bool(&updateIter);
-		}
-		else if (strcmp(key, "updateSkipped") == 0)
-		{
-			result->updateSkipped = bson_iter_bool(&updateIter);
-		}
 		else if (strcmp(key, "isRetry") == 0)
 		{
 			result->isRetry = bson_iter_bool(&updateIter);
@@ -3245,12 +3237,7 @@ UpdateOneInternal(MongoCollection *collection, UpdateOneParams *updateOneParams,
 				  ExprEvalState *stateForSchemaValidation)
 {
 	/* initialize result */
-	result->isRowUpdated = false;
-	result->updateSkipped = false;
-	result->isRetry = false;
-	result->reinsertDocument = NULL;
-	result->resultDocument = NULL;
-	result->upsertedObjectId = NULL;
+	memset(result, 0, sizeof(UpdateOneResult));
 
 	UpdateCandidate updateCandidate = { 0 };
 
@@ -3648,81 +3635,98 @@ SelectUpdateCandidate(MongoCollection *collection, int64 shardKeyHash,
 	foundDocument = SPI_processed > 0;
 	if (foundDocument && updateCandidate != NULL)
 	{
-		int rowIndex = 0;
-
-		bool typeByValue = false;
-		bool isNull = false;
-
-		int columnNumber = 1;
-		Datum tidDatum = SPI_getbinval(SPI_tuptable->vals[rowIndex],
-									   SPI_tuptable->tupdesc,
-									   columnNumber, &isNull);
-		Assert(!isNull);
-
-		int typeLength = sizeof(ItemPointerData);
-		tidDatum = SPI_datumTransfer(tidDatum, typeByValue, typeLength);
-
-		updateCandidate->tid = DatumGetItemPointer(tidDatum);
-
-		columnNumber = 2;
-		Datum objectIdDatum = SPI_getbinval(SPI_tuptable->vals[rowIndex],
-											SPI_tuptable->tupdesc,
-											columnNumber, &isNull);
-		Assert(!isNull);
-
-		typeLength = -1;
-		objectIdDatum = SPI_datumTransfer(objectIdDatum, typeByValue, typeLength);
-
-		updateCandidate->objectId = objectIdDatum;
-
-		columnNumber = 3;
-		Datum originalDocumentDatum = SPI_getbinval(SPI_tuptable->vals[rowIndex],
-													SPI_tuptable->tupdesc,
-													columnNumber, &isNull);
-		Assert(!isNull);
-
-		columnNumber = 4;
-		Datum tableOidDatum = SPI_getbinval(SPI_tuptable->vals[rowIndex],
-											SPI_tuptable->tupdesc,
-											columnNumber, &isNull);
-		Assert(!isNull);
-		updateCandidate->tableOid = DatumGetObjectId(tableOidDatum);
-
-		/* Do this inside the SPI context so that the memory gets cleaned up once we close the SPI session. */
-		pgbson *originalDoc = DatumGetPgBson(originalDocumentDatum);
-		pgbson *updatedDocument =
-			BsonUpdateDocumentWithSource(originalDoc, updateOneParams->update,
-										 updateOneParams->query,
-										 updateOneParams->arrayFilters,
-										 updateOneParams->variableSpec,
-										 updateCandidate->tid, updateCandidate->tableOid);
-
-		if (updatedDocument != NULL)
-		{
-			Datum updatedDatum = PointerGetDatum(updatedDocument);
-			updateCandidate->updatedDocument = SPI_datumTransfer(updatedDatum,
-																 typeByValue, typeLength);
-		}
-		else
-		{
-			updateCandidate->updatedDocument = (Datum) 0;
-		}
-
-		if (getOriginalDocument)
-		{
-			typeLength = -1;
-			originalDocumentDatum = SPI_datumTransfer(originalDocumentDatum,
-													  typeByValue, typeLength);
-			updateCandidate->originalDocument = originalDocumentDatum;
-		}
-		else
-		{
-			updateCandidate->originalDocument = (Datum) 0;
-		}
+		ExtractUpdateCandidateFromSPI(updateOneParams, updateCandidate,
+									  getOriginalDocument);
 	}
 
 	SPI_finish();
 	return foundDocument;
+}
+
+
+/*
+ * ExtractUpdateCandidateFromSPI extracts the update candidate fields from
+ * the current SPI result set. Must be called while SPI context is still
+ * active (before SPI_finish) so that SPI_datumTransfer can copy data out.
+ *
+ * Expects columns: ctid, object_id, document, tableoid.
+ */
+static void
+ExtractUpdateCandidateFromSPI(UpdateOneParams *updateOneParams,
+							  UpdateCandidate *updateCandidate,
+							  bool getOriginalDocument)
+{
+	int rowIndex = 0;
+
+	bool typeByValue = false;
+	bool isNull = false;
+
+	int columnNumber = 1;
+	Datum tidDatum = SPI_getbinval(SPI_tuptable->vals[rowIndex],
+								   SPI_tuptable->tupdesc,
+								   columnNumber, &isNull);
+	Assert(!isNull);
+
+	int typeLength = sizeof(ItemPointerData);
+	tidDatum = SPI_datumTransfer(tidDatum, typeByValue, typeLength);
+
+	updateCandidate->tid = DatumGetItemPointer(tidDatum);
+
+	columnNumber = 2;
+	Datum objectIdDatum = SPI_getbinval(SPI_tuptable->vals[rowIndex],
+										SPI_tuptable->tupdesc,
+										columnNumber, &isNull);
+	Assert(!isNull);
+
+	typeLength = -1;
+	objectIdDatum = SPI_datumTransfer(objectIdDatum, typeByValue, typeLength);
+
+	updateCandidate->objectId = objectIdDatum;
+
+	columnNumber = 3;
+	Datum originalDocumentDatum = SPI_getbinval(SPI_tuptable->vals[rowIndex],
+												SPI_tuptable->tupdesc,
+												columnNumber, &isNull);
+	Assert(!isNull);
+
+	columnNumber = 4;
+	Datum tableOidDatum = SPI_getbinval(SPI_tuptable->vals[rowIndex],
+										SPI_tuptable->tupdesc,
+										columnNumber, &isNull);
+	Assert(!isNull);
+	updateCandidate->tableOid = DatumGetObjectId(tableOidDatum);
+
+	/* Do this inside the SPI context so that the memory gets cleaned up once we close the SPI session. */
+	pgbson *originalDoc = DatumGetPgBson(originalDocumentDatum);
+	pgbson *updatedDocument =
+		BsonUpdateDocumentWithSource(originalDoc, updateOneParams->update,
+									 updateOneParams->query,
+									 updateOneParams->arrayFilters,
+									 updateOneParams->variableSpec,
+									 updateCandidate->tid, updateCandidate->tableOid);
+
+	if (updatedDocument != NULL)
+	{
+		Datum updatedDatum = PointerGetDatum(updatedDocument);
+		updateCandidate->updatedDocument = SPI_datumTransfer(updatedDatum,
+															 typeByValue, typeLength);
+	}
+	else
+	{
+		updateCandidate->updatedDocument = (Datum) 0;
+	}
+
+	if (getOriginalDocument)
+	{
+		typeLength = -1;
+		originalDocumentDatum = SPI_datumTransfer(originalDocumentDatum,
+												  typeByValue, typeLength);
+		updateCandidate->originalDocument = originalDocumentDatum;
+	}
+	else
+	{
+		updateCandidate->originalDocument = (Datum) 0;
+	}
 }
 
 
@@ -3852,12 +3856,7 @@ UpdateOneObjectId(MongoCollection *collection, UpdateOneParams *updateOneParams,
 				  UpdateOneResult *result, ExprEvalState *stateForSchemaValidation)
 {
 	/* initialize result */
-	result->isRowUpdated = false;
-	result->updateSkipped = false;
-	result->isRetry = false;
-	result->reinsertDocument = NULL;
-	result->resultDocument = NULL;
-	result->upsertedObjectId = NULL;
+	memset(result, 0, sizeof(UpdateOneResult));
 
 	const int maxTries = 5;
 
