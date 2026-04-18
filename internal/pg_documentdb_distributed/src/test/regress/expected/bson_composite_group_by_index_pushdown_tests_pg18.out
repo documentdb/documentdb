@@ -239,6 +239,65 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
          Index Cond: (shard_key_value = '8601'::bigint)
 (4 rows)
 
+BEGIN;
+set citus.enable_local_execution to off;
+set local documentdb.enableGroupByCompoundIdIndexPushdown to on;
+set local enable_seqscan to off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "offset": "$$myVar" }, "count": { "$sum": 1 } } } ], "let": { "myVar": 42 } }');
+                                                                                                                                                     QUERY PLAN                                                                                                                                                     
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  HashAggregate
+               Group Key: documentdb_api_internal.bson_expression_get(document, '{ "" : { "b" : "$b", "offset" : "$$myVar" } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "myVar" : { "$literal" : { "$numberInt" : "42" } } } }'::documentdb_core.bson)
+               ->  Bitmap Heap Scan on documents_8601_860002 collection
+                     Recheck Cond: (shard_key_value = '8601'::bigint)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (shard_key_value = '8601'::bigint)
+(11 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "max_b": { "$max": "$b" }, "sum_c": { "$sum": "$c" } } } ] }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_core.bson_repath_and_build('b'::text, documentdb_api_internal.bson_expression_get(document, '{ "" : "$b" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'c'::text, documentdb_api_internal.bson_expression_get(document, '{ "" : "$c" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'max_b'::text, documentdb_api_catalog.bsonmax(documentdb_api_internal.bson_expression_get(document, '{ "" : "$b" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'sum_c'::text, documentdb_api_catalog.bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$c" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) AS document FROM documentdb_data.documents_8601_860002 collection WHERE ((shard_key_value OPERATOR(pg_catalog.=) '8601'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "b" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "c" : { "$numberInt" : "1" } }'::documentdb_core.bson)) GROUP BY (documentdb_api_internal.bson_expression_get(document, '{ "" : "$b" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$c" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+         Node: host=localhost port=58070 dbname=regression
+         ->  GroupAggregate
+               Output: documentdb_core.bson_repath_and_build('_id'::text, documentdb_core.bson_repath_and_build('b'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$b" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'c'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$c" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))), 'max_b'::text, documentdb_api_catalog.bsonmax((documentdb_api_internal.bson_expression_get(document, '{ "" : "$b" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))), 'sum_c'::text, documentdb_api_catalog.bsonsum((documentdb_api_internal.bson_expression_get(document, '{ "" : "$c" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$b" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$c" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$b" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$c" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+               ->  Index Scan using b_c_1 on documentdb_data.documents_8601_860002 collection
+                     Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$b" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), documentdb_api_internal.bson_expression_get(document, '{ "" : "$c" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), document
+                     Index Cond: ((collection.document OPERATOR(documentdb_api_catalog.@<>) '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@<>) '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::documentdb_core.bson))
+                     Order By: ((collection.document OPERATOR(documentdb_api_catalog.|-<>) '{ "b" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.|-<>) '{ "c" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+(14 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$b", "max_b": { "$max": "$b" }, "sum_c": { "$sum": "$c" } } } ] }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_api_internal.bson_expression_get(document, '{ "" : "$b" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'max_b'::text, documentdb_api_catalog.bsonmax(documentdb_api_internal.bson_expression_get(document, '{ "" : "$b" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'sum_c'::text, documentdb_api_catalog.bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$c" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) AS document FROM documentdb_data.documents_8601_860002 collection WHERE ((shard_key_value OPERATOR(pg_catalog.=) '8601'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "b" : { "$numberInt" : "1" } }'::documentdb_core.bson)) GROUP BY (documentdb_api_internal.bson_expression_get(document, '{ "" : "$b" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+         Node: host=localhost port=58070 dbname=regression
+         ->  GroupAggregate
+               Output: documentdb_core.bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$b" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'max_b'::text, documentdb_api_catalog.bsonmax((documentdb_api_internal.bson_expression_get(document, '{ "" : "$b" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))), 'sum_c'::text, documentdb_api_catalog.bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$c" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$b" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$b" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+               ->  Index Scan using b_c_1 on documentdb_data.documents_8601_860002 collection
+                     Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$b" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), document
+                     Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@<>) '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
+                     Order By: (collection.document OPERATOR(documentdb_api_catalog.|-<>) '{ "b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+(14 rows)
+
+ROLLBACK;
 -- insert an array breaks pushdown
 SELECT documentdb_api.insert_one('group_idx_db', 'group_push', '{ "_id": 1001, "a": [ 1, 2, 3 ], "b": [ 1, 2, 3 ], "c": 1 }' );
                               insert_one                              
@@ -284,11 +343,12 @@ SELECT documentdb_api.shard_collection('{ "shardCollection": "group_idx_db.group
 BEGIN;
 set local enable_seqscan to off;
 set enable_bitmapscan to off;
+set citus.enable_local_execution to off;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$a", "count": { "$sum": 1 } } } ] }');
                                                                                                               QUERY PLAN                                                                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 43_1
+   ->  Distributed Subplan 46_1
          ->  HashAggregate
                Group Key: remote_scan.c2
                ->  Custom Scan (Citus Adaptive)
@@ -312,7 +372,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
                                                                                                               QUERY PLAN                                                                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 45_1
+   ->  Distributed Subplan 48_1
          ->  HashAggregate
                Group Key: remote_scan.c2
                ->  Custom Scan (Citus Adaptive)
@@ -337,7 +397,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
                                                                                                               QUERY PLAN                                                                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 47_1
+   ->  Distributed Subplan 50_1
          ->  HashAggregate
                Group Key: remote_scan.c2
                ->  Custom Scan (Citus Adaptive)
@@ -362,7 +422,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
                                                                                                                                         QUERY PLAN                                                                                                                                        
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 49_1
+   ->  Distributed Subplan 52_1
          ->  HashAggregate
                Group Key: remote_scan.c2
                ->  Custom Scan (Citus Adaptive)
@@ -387,7 +447,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
                                                                                                               QUERY PLAN                                                                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 51_1
+   ->  Distributed Subplan 54_1
          ->  HashAggregate
                Group Key: remote_scan.c2
                ->  Custom Scan (Citus Adaptive)
@@ -414,7 +474,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 53_1
+   ->  Distributed Subplan 56_1
          ->  HashAggregate
                Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson)
                Group Key: remote_scan.c2
@@ -435,11 +495,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('53_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('56_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4)
-               Function Call: read_intermediate_result('53_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('56_1'::text, 'binary'::citus_copy_format)
 (28 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b" }, "count": { "$sum": 1 } } } ] }');
@@ -447,7 +507,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 55_1
+   ->  Distributed Subplan 58_1
          ->  HashAggregate
                Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson)
                Group Key: remote_scan.c2
@@ -468,11 +528,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('55_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('58_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4)
-               Function Call: read_intermediate_result('55_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('58_1'::text, 'binary'::citus_copy_format)
 (28 rows)
 
 -- multi-field document _id pushdown (sharded)
@@ -481,7 +541,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 57_1
+   ->  Distributed Subplan 60_1
          ->  HashAggregate
                Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson), remote_scan."?junk?0", remote_scan."?junk?1"
                Group Key: remote_scan."?junk?0", remote_scan."?junk?1"
@@ -502,11 +562,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('57_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('60_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4)
-               Function Call: read_intermediate_result('57_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('60_1'::text, 'binary'::citus_copy_format)
 (28 rows)
 
 ---------------------------------------------------------------------
@@ -515,7 +575,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                   
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 59_1
+   ->  Distributed Subplan 62_1
          ->  HashAggregate
                Group Key: remote_scan."?junk?0", remote_scan."?junk?1"
                ->  Custom Scan (Citus Adaptive)
@@ -539,7 +599,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
                                                                                                                                              QUERY PLAN                                                                                                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 61_1
+   ->  Distributed Subplan 64_1
          ->  HashAggregate
                Group Key: remote_scan.c2
                ->  Custom Scan (Citus Adaptive)
@@ -563,7 +623,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
                                                                                                                             QUERY PLAN                                                                                                                            
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 63_1
+   ->  Distributed Subplan 66_1
          ->  HashAggregate
                Group Key: remote_scan.c2
                ->  Custom Scan (Citus Adaptive)

@@ -78,6 +78,16 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
 -- $$variable expression in _id field should not decompose.
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "offset": "$$myVar" }, "count": { "$sum": 1 } } } ], "let": { "myVar": 42 } }');
 
+BEGIN;
+set citus.enable_local_execution to off;
+set local documentdb.enableGroupByCompoundIdIndexPushdown to on;
+set local enable_seqscan to off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "offset": "$$myVar" }, "count": { "$sum": 1 } } } ], "let": { "myVar": 42 } }');
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "max_b": { "$max": "$b" }, "sum_c": { "$sum": "$c" } } } ] }');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$b", "max_b": { "$max": "$b" }, "sum_c": { "$sum": "$c" } } } ] }');
+ROLLBACK;
+
 -- insert an array breaks pushdown
 SELECT documentdb_api.insert_one('group_idx_db', 'group_push', '{ "_id": 1001, "a": [ 1, 2, 3 ], "b": [ 1, 2, 3 ], "c": 1 }' );
 
@@ -96,6 +106,7 @@ SELECT documentdb_api.shard_collection('{ "shardCollection": "group_idx_db.group
 BEGIN;
 set local enable_seqscan to off;
 set enable_bitmapscan to off;
+set citus.enable_local_execution to off;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$a", "count": { "$sum": 1 } } } ] }');
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$b", "count": { "$sum": 1 } } } ] }');
 

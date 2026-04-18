@@ -6308,7 +6308,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 					BsonExpressionGetWithLetFunctionOid(), BsonTypeId(),
 					fieldArgs, InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
 				if (context->mongoCollection != NULL &&
-					context->mongoCollection->shardKey != NULL &&
+					(context->mongoCollection->shardKey != NULL ||
+					 !context->allowShardBaseTable) &&
 					BsonTypeId() != DocumentDBCoreBsonTypeId())
 				{
 					fieldGroupFunc = makeFuncExpr(
@@ -6363,7 +6364,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 				bsonExpressionGetFunction, BsonTypeId(), groupArgs, InvalidOid,
 				InvalidOid, COERCE_EXPLICIT_CALL);
 			if (isGroupByValidForIndexPushdown && context->mongoCollection != NULL &&
-				context->mongoCollection->shardKey != NULL &&
+				(context->mongoCollection->shardKey != NULL ||
+				 !context->allowShardBaseTable) &&
 				BsonTypeId() != DocumentDBCoreBsonTypeId())
 			{
 				groupFunc = makeFuncExpr(
