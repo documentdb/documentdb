@@ -21,14 +21,14 @@ SELECT documentdb_api.drop_collection('db', 'collmod_reindex_coll') IS NOT NULL;
 \o
 \set ECHO :prevEcho
 
--- Reset the status so that cron build jobs are stopped.
--- Wait for background worker to be ready rather than a fixed sleep.
--- Shaves a few seconds off the test execution time by avoiding an
--- unnecessarily long sleep while still ensuring stability.
-SELECT documentdb_test_helpers.change_index_jobs_status(false);
-CALL documentdb_test_helpers.wait_for_background_worker_ready();
+ALTER SYSTEM SET documentdb.indexBuildsScheduledOnBgWorker = on;
+SELECT pg_reload_conf();
 
 \i sql/create_indexes_background_core.sql
 
+ALTER SYSTEM SET documentdb.indexBuildsScheduledOnBgWorker = off;
+SELECT pg_reload_conf();
+
 -- Reset -- so that other tests do not get impacted
-SELECT documentdb_test_helpers.change_index_jobs_status(false);
+SELECT change_index_jobs_schema.change_index_jobs_status(false);
+DROP SCHEMA change_index_jobs_schema CASCADE;

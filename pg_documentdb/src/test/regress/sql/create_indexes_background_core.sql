@@ -1,4 +1,21 @@
-SET search_path to documentdb_core,documentdb_api,documentdb_api_catalog;
+CREATE SCHEMA change_index_jobs_schema;
+CREATE OR REPLACE FUNCTION change_index_jobs_schema.change_index_jobs_status(active_status boolean)
+RETURNS void
+AS $$
+DECLARE
+    job_id integer;
+BEGIN
+    FOR job_id IN (SELECT jobid FROM cron.job WHERE jobname LIKE 'documentdb_index_%' order by jobid)
+    LOOP
+        UPDATE cron.job SET active = active_status WHERE jobid = job_id;
+        RAISE NOTICE 'Processing job_id: %', job_id;
+    END LOOP;
+END;
+$$
+LANGUAGE plpgsql;
+
+SET search_path to documentdb_core,documentdb_api,documentdb_api_catalog,change_index_jobs_schema;
+SELECT change_index_jobs_schema.change_index_jobs_status(true);
 
 -- Delete all old create index requests from other tests
 DELETE from documentdb_api_catalog.documentdb_index_queue;
@@ -303,7 +320,7 @@ SELECT * FROM documentdb_api_internal.check_build_index_status('{"indexRequest" 
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
 
 -- Disable cron jobs to prevent them from racing with manual build calls below.
-SELECT documentdb_test_helpers.change_index_jobs_status(false);
+SELECT change_index_jobs_schema.change_index_jobs_status(false);
 
 -- insert multiple index requests across multiple collections.
 SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backgroundcoll1", "indexes": [ { "key" : { "a": 1 }, "name": "a_1"}] }');
@@ -318,9 +335,6 @@ SELECT documentdb_api.create_indexes_background('db', '{ "createIndexes": "backg
 SELECT index_cmd, cmd_type, index_id, index_cmd_status, collection_id FROM documentdb_api_catalog.documentdb_index_queue order by index_id;
 SELECT * FROM documentdb_test_helpers.count_collection_indexes('db', 'backgroundcoll1');
 SELECT * FROM documentdb_test_helpers.count_collection_indexes('db', 'backgroundcoll2');
-
--- Disable cron jobs to prevent them from racing with manual build calls below.
-SELECT documentdb_test_helpers.change_index_jobs_status(false);
 
 -- call index stats: in progress builds should show as building.
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
@@ -389,4 +403,4 @@ CALL documentdb_api_internal.build_index_background(1);
 SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
 
 -- Re-enable cron jobs for the schedule_background_index_build_jobs test below.
-SELECT documentdb_test_helpers.change_index_jobs_status(true);
+SELECT change_index_jobs_schema.change_index_jobs_status(true);

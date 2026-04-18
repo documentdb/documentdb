@@ -18,6 +18,7 @@ extern bool EnableBackgroundWorker;
 extern bool EnableBackgroundWorkerJobs;
 extern bool EnableBackgroundWorkerInitJobs;
 extern bool EnableBgWorkerMetricsEmission;
+extern bool IndexBuildsScheduledOnBgWorker;
 
 /* index build tasks */
 void UnscheduleIndexBuildTasks(char *extensionPrefix);

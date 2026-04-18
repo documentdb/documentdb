@@ -157,6 +157,7 @@ function SetupPostgresConfigurations()
   echo cron.database_name = \'postgres\' | tee -a $installdir/postgresql.conf
   echo documentdb.enableBackgroundWorker = 'true' | tee -a $installdir/postgresql.conf
   echo documentdb.enableBackgroundWorkerJobs = 'true' | tee -a $installdir/postgresql.conf
+  echo documentdb.indexBuildsScheduledOnBgWorker = 'false' | tee -a $installdir/postgresql.conf
   echo ssl = off | tee -a $installdir/postgresql.conf
 }
 
