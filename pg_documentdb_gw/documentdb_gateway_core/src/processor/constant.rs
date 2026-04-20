@@ -160,7 +160,7 @@ struct CommandInfo {
     secondary_override_ok: Option<bool>,
 }
 
-static SUPPORTED_COMMANDS : [CommandInfo; 62] = [
+static SUPPORTED_COMMANDS : [CommandInfo; 63] = [
 	CommandInfo {
 		command_name: "abortTransaction",
 		admin_only: true,
@@ -493,6 +493,14 @@ static SUPPORTED_COMMANDS : [CommandInfo; 62] = [
 		command_name: "killOp",
 		admin_only: true,
 		help: "Stop a running operation.",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
+		command_name: "killAllSessions",
+		admin_only: true,
+		help: "Kill all sessions.",
 		secondary_ok: false,
 		requires_auth: true,
 		secondary_override_ok: None,

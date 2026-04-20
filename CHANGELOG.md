@@ -6,6 +6,7 @@
 * Migrate `DrainStreamingQuery` from SPI cursor-based execution to direct executor invocation via `DestReceiver`, eliminating Portal/SPI overhead for streaming queries *[Perf]*
 
 ### documentdb v0.111-0 (Unreleased) ###
+* Add support for `killAllSessions` command *[Feature]* (#526)
 * Support index pushdown for `$group` stage when `_id` is a single-field document expression (e.g., `{ _id: { "field": "$path" } }`) *[Perf]*
 * Add init background job infrastructure for running one time C callback initialization tasks before the periodic job loop. Guarded by `enableBackgroundWorkerInitJobs` feature flag *[Feature]*
 * Add feature flag `enableCollationWithIndexes` to `enableCollationWithNonUniqueOrderedIndexes` to gate collation support specifically for non-unique ordered/composite indexes. Collation is rejected for other index types/options *[Feature]*

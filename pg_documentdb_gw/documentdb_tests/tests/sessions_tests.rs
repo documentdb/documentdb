@@ -8,7 +8,10 @@
 
 use documentdb_tests::{
     commands::session,
-    test_setup::{clients, initialize},
+    test_setup::{
+        clients::{self, TEST_USERNAME},
+        initialize,
+    },
 };
 use mongodb::error::Error;
 
@@ -24,6 +27,24 @@ async fn validate_end_empty_sessions() -> Result<(), Error> {
     let client = initialize::initialize().await?;
 
     session::validate_processing(&client, "endSessions").await
+}
+
+#[tokio::test]
+async fn validate_kill_all_sessions_empty() -> Result<(), Error> {
+    let client = initialize::initialize().await?;
+
+    session::validate_kill_all_sessions(&client, vec![]).await
+}
+
+#[tokio::test]
+async fn validate_kill_all_sessions_with_users() -> Result<(), Error> {
+    let client = initialize::initialize().await?;
+
+    session::validate_kill_all_sessions(
+        &client,
+        vec![bson::doc! { "user": TEST_USERNAME, "db": "admin" }],
+    )
+    .await
 }
 
 #[tokio::test]

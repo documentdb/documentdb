@@ -97,7 +97,6 @@ const UNSUPPORTED_COMMANDS: &[&str] = &[
     "group",
     "handshake",
     "invalidateUserCache",
-    "killAllSessions",
     "killAllSessionsByPattern",
     "lockInfo",
     "logRotate",

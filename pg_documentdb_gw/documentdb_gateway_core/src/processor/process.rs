@@ -250,6 +250,9 @@ pub async fn process_request(
         RequestType::EndSessions | RequestType::KillSessions => {
             session::end_or_kill_sessions(request_context, connection_context, pg_data_client).await
         }
+        RequestType::KillAllSessions => {
+            session::kill_all_sessions(request_context, connection_context, pg_data_client).await
+        }
         RequestType::ReshardCollection => {
             data_description::process_shard_collection(
                 request_context,

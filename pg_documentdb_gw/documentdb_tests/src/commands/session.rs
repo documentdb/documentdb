@@ -35,6 +35,20 @@ use mongodb::{
 };
 use tokio::time::{sleep, Duration};
 
+pub async fn validate_kill_all_sessions(
+    client: &Client,
+    users: Vec<bson::Document>,
+) -> Result<(), Error> {
+    let response = client
+        .database("admin")
+        .run_command(doc! { "killAllSessions": users })
+        .await?;
+
+    assert_eq!(response.get_f64("ok").unwrap(), 1.0);
+
+    Ok(())
+}
+
 pub async fn validate_processing(client: &Client, command_name: &str) -> Result<(), Error> {
     let session = client.start_session().await?;
 

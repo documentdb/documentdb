@@ -6,6 +6,7 @@
  *-------------------------------------------------------------------------
  */
 
+use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
 
@@ -76,6 +77,8 @@ pub struct RequestTransactionInfo {
 pub struct GatewayTransaction {
     pub session_id: SessionId,
     pub transaction_number: TransactionNumber,
+    username: String,
+    auth_db: String,
     pub cursors: CursorStore,
     pg_transaction: Option<postgres::Transaction>,
 }
@@ -90,10 +93,14 @@ impl GatewayTransaction {
         conn: Arc<Connection>,
         isolation_level: IsolationLevel,
         session_id: SessionId,
+        username: String,
+        auth_db: String,
     ) -> Result<Self> {
         Ok(Self {
             session_id,
             transaction_number: request.transaction_number,
+            username,
+            auth_db,
             pg_transaction: Some(postgres::Transaction::start(conn, isolation_level).await?),
             cursors: CursorStore::new(config, false),
         })
@@ -146,6 +153,16 @@ impl GatewayTransaction {
     #[must_use]
     pub const fn transaction_number(&self) -> TransactionNumber {
         self.transaction_number
+    }
+
+    #[must_use]
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+
+    #[must_use]
+    pub fn auth_db(&self) -> &str {
+        &self.auth_db
     }
 }
 
@@ -289,6 +306,8 @@ impl TransactionStore {
                     .isolation_level
                     .unwrap_or(IsolationLevel::ReadCommitted),
                 session_id.clone(),
+                connection_context.auth_state.username()?.to_owned(),
+                "admin".to_owned(),
             )
             .await?;
 
@@ -375,6 +394,58 @@ impl TransactionStore {
             })?;
 
         Ok(Some((deleted_sessions_id, transaction_entry)))
+    }
+
+    /// Aborts and removes all active transactions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if aborting any removed transaction fails.
+    pub async fn remove_all_transactions(&self) -> Result<Vec<(SessionId, TransactionEntry)>> {
+        let session_ids = self
+            .transactions
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect::<Vec<_>>();
+
+        self.remove_transactions_by_session_ids(&session_ids).await
+    }
+
+    /// Aborts and removes active transactions for the provided user/db patterns.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if aborting any removed transaction fails.
+    pub async fn remove_transactions_by_users(
+        &self,
+        users: &HashSet<(String, String)>,
+    ) -> Result<Vec<(SessionId, TransactionEntry)>> {
+        let session_ids = self
+            .transactions
+            .iter()
+            .filter_map(|entry| {
+                let (_, transaction) = entry.value();
+                users.contains(&(transaction.username().to_owned(), transaction.auth_db().to_owned()))
+                    .then(|| entry.key().clone())
+            })
+            .collect::<Vec<_>>();
+
+        self.remove_transactions_by_session_ids(&session_ids).await
+    }
+
+    async fn remove_transactions_by_session_ids(
+        &self,
+        session_ids: &[SessionId],
+    ) -> Result<Vec<(SessionId, TransactionEntry)>> {
+        let mut removed_transactions = Vec::new();
+
+        for session_id in session_ids {
+            if let Some(transaction) = self.remove_transaction_by_session(session_id).await? {
+                removed_transactions.push(transaction);
+            }
+        }
+
+        Ok(removed_transactions)
     }
 
     /// Aborts and removes the active transaction for `session_id`.
