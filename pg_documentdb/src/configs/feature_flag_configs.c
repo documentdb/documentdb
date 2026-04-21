@@ -346,6 +346,11 @@ bool FailOnNonEmptyGroupCountArg = DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG;
 #define DEFAULT_ENABLE_SORT_GROUP_STAGE true
 bool EnableSortGroupStage = DEFAULT_ENABLE_SORT_GROUP_STAGE;
 
+/* Added in v112, enabled in v112, remove after v114 */
+#define DEFAULT_ENABLE_DUPLICATE_FIELD_FIX true
+bool EnableDuplicateFieldFix = DEFAULT_ENABLE_DUPLICATE_FIELD_FIX;
+
+
 /*
  * SECTION: Let support feature flags
  */
@@ -1100,5 +1105,13 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to use direct executor DestReceiver for streaming cursor drainage instead of SPI."),
 		NULL, &EnableStreamingCursorDrainViaDestReceiver,
 		DEFAULT_ENABLE_STREAMING_CURSOR_DRAIN_VIA_DESTRECEIVER,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableDuplicateFieldFix", newGucPrefix),
+		gettext_noop(
+			"Whether to enable fix for duplicate fields in addToSet."),
+		NULL, &EnableDuplicateFieldFix,
+		DEFAULT_ENABLE_DUPLICATE_FIELD_FIX,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }
