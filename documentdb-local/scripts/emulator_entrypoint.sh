@@ -54,13 +54,13 @@ Launches DocumentDB
 
 Optional arguments:
   -h, --help            Display information on available configuration
-  --cert-path [PATH]    Specify a path to a certificate for securing traffic. You need to mount this file into the 
-                        container (e.g. if CERT_PATH=/mycert.pfx, you'd add an option like the following to your 
-                        docker run: --mount type=bind,source=./mycert.pfx,target=/mycert.pfx)
-                        Can set CERT_SECRET to the password for the certificate.
+  --cert-path [PATH]    Specify a path to a PEM certificate for securing traffic. You need to mount this file into
+                        the container (e.g. if CERT_PATH=/mycert.pem, you'd add an option like the following to your
+                        docker run: --mount type=bind,source=./mycert.pem,target=/mycert.pem)
+                        PEM certificates must be provided together with --key-file.
                         Overrides CERT_PATH environment variable.
-  --key-file [PATH]     Override default key with key in key file. You need to mount this file into the 
-                        container (e.g. if KEY_FILE=/mykey.key, you'd add an option like the following to your 
+  --key-file [PATH]     Specify the PEM private key that matches --cert-path. You need to mount this file into the
+                        container (e.g. if KEY_FILE=/mykey.key, you'd add an option like the following to your
                         docker run: --mount type=bind,source=./mykey.key,target=/mykey.key)
                         Overrides KEY_FILE environment variable.
   --data-path [PATH]    Specify a directory for data. Frequently used with docker run --mount option 
@@ -110,7 +110,11 @@ Optional arguments:
                         Disable the use of extended_rum for indexes.
                         By default, extended rum is enabled.
                         Overrides DISABLE_EXTENDED_RUM environment variable.
-                        
+  --tlsMode [MODE]      Set the TLS mode for client connections.
+                        Supported modes: disabled, allowTLS, requireTLS.
+                        By default, the gateway accepts both plain and TLS connections (allowTLS).
+                        When set to requireTLS, plain (non-TLS) connections are rejected.
+                        Overrides TLS_MODE environment variable.
 EOF
 }
 
@@ -210,6 +214,10 @@ do
         export DISABLE_EXTENDED_RUM=true
         shift;;
 
+    --tlsMode)
+        export TLS_MODE="$2"
+        shift; shift;;
+
     -*)
         echo "Unknown option $1"
         exit 1;; 
@@ -228,25 +236,31 @@ export START_POSTGRESQL=${START_POSTGRESQL:-true}
 export INIT_DATA_PATH=${INIT_DATA_PATH:-/init_doc_db.d}
 export SKIP_INIT_DATA=${SKIP_INIT_DATA:-false}
 export DISABLE_EXTENDED_RUM=${DISABLE_EXTENDED_RUM:-false}
+export TLS_MODE=${TLS_MODE:-allowTLS}
+export GATEWAY_HOME=${GATEWAY_HOME:-/home/documentdb/gateway}
+export DOCUMENTDB_LOG_DIR=${DOCUMENTDB_LOG_DIR:-/var/log/documentdb}
+export SYSTEM_POSTGRES_LOG=${SYSTEM_POSTGRES_LOG:-/var/log/postgresql/postgresql-17-main.log}
+export DOCUMENTDB_RUNTIME_USER=${DOCUMENTDB_RUNTIME_USER:-documentdb}
+export DOCUMENTDB_RUNTIME_GROUP=${DOCUMENTDB_RUNTIME_GROUP:-$DOCUMENTDB_RUNTIME_USER}
 
 # Setup centralized log directory structure
-echo "Setting up centralized log directory at /var/log/documentdb..."
-sudo mkdir -p /var/log/documentdb/postgres
-sudo chown -R documentdb:documentdb /var/log/documentdb
-sudo chmod -R 755 /var/log/documentdb
+echo "Setting up centralized log directory at $DOCUMENTDB_LOG_DIR..."
+sudo mkdir -p "$DOCUMENTDB_LOG_DIR/postgres"
+sudo chown -R "${DOCUMENTDB_RUNTIME_USER}:${DOCUMENTDB_RUNTIME_GROUP}" "$DOCUMENTDB_LOG_DIR"
+sudo chmod -R 755 "$DOCUMENTDB_LOG_DIR"
 
 # Define centralized log file paths
-export ENTRYPOINT_LOG="/var/log/documentdb/gateway_entrypoint.log"
-export GATEWAY_LOG="/var/log/documentdb/gateway.log"
-export OSS_SERVER_LOG="/var/log/documentdb/oss_server.log"
+export ENTRYPOINT_LOG="$DOCUMENTDB_LOG_DIR/gateway_entrypoint.log"
+export GATEWAY_LOG="$DOCUMENTDB_LOG_DIR/gateway.log"
+export OSS_SERVER_LOG="$DOCUMENTDB_LOG_DIR/oss_server.log"
 # Note: PostgreSQL log will be symlinked after PostgreSQL starts
-export PG_LOG_FILE="/var/log/documentdb/postgres/pglog.log"
+export PG_LOG_FILE="$DOCUMENTDB_LOG_DIR/postgres/pglog.log"
 
 echo "Centralized log directory created with the following structure:"
-echo "  /var/log/documentdb/gateway_entrypoint.log"
-echo "  /var/log/documentdb/gateway.log"
-echo "  /var/log/documentdb/oss_server.log"
-echo "  /var/log/documentdb/postgres/pglog.log (will be symlinked)"
+echo "  $DOCUMENTDB_LOG_DIR/gateway_entrypoint.log"
+echo "  $DOCUMENTDB_LOG_DIR/gateway.log"
+echo "  $DOCUMENTDB_LOG_DIR/oss_server.log"
+echo "  $DOCUMENTDB_LOG_DIR/postgres/pglog.log (will be symlinked)"
 
 # Validate required parameters
 if [ -z "${PASSWORD:-}" ]; then
@@ -300,6 +314,13 @@ if [ -n "$SKIP_INIT_DATA" ] && \
     exit 1
 fi
 
+case "$TLS_MODE" in
+    disabled|allowTLS|requireTLS) ;;
+    *)
+        echo "Invalid tlsMode value '$TLS_MODE', must be one of: disabled, allowTLS, requireTLS"
+        exit 1;;
+esac
+
 if [ "$START_POSTGRESQL" = "true" ]; then
     echo "Starting PostgreSQL server on port $POSTGRESQL_PORT..."
     exec > >(tee -a "$ENTRYPOINT_LOG") 2> >(tee -a "$ENTRYPOINT_LOG" >&2)
@@ -311,9 +332,9 @@ if [ "$START_POSTGRESQL" = "true" ]; then
         sudo mkdir -p "$DATA_PATH"
     fi
     
-    # Change ownership to documentdb user to ensure we can write/delete files
-    echo "Setting ownership of $DATA_PATH to documentdb user"
-    sudo chown -R documentdb:documentdb "$DATA_PATH"
+    # Change ownership to the runtime user to ensure we can write/delete files
+    echo "Setting ownership of $DATA_PATH to ${DOCUMENTDB_RUNTIME_USER}:${DOCUMENTDB_RUNTIME_GROUP}"
+    sudo chown -R "${DOCUMENTDB_RUNTIME_USER}:${DOCUMENTDB_RUNTIME_GROUP}" "$DATA_PATH"
     
     # Ensure we have full permissions on the directory
     echo "Setting permissions on $DATA_PATH"
@@ -343,7 +364,7 @@ if [ "$START_POSTGRESQL" = "true" ]; then
     fi
     start_oss_server_args+=(-d "$DATA_PATH" -p "$POSTGRESQL_PORT")
 
-    /home/documentdb/gateway/scripts/start_oss_server.sh "${start_oss_server_args[@]}" | tee -a "$OSS_SERVER_LOG"
+    $GATEWAY_HOME/scripts/start_oss_server.sh "${start_oss_server_args[@]}" | tee -a "$OSS_SERVER_LOG"
 
     echo "OSS server started."
     echo "[ENTRYPOINT] Setting up PostgreSQL log streaming..."
@@ -377,7 +398,7 @@ if [ "$START_POSTGRESQL" = "true" ]; then
     start_log_streaming "$PG_LOG_FILE" "POSTGRES" "PG_LOG_TAIL_PID"
     
     # Also stream system PostgreSQL logs if they exist
-    SYSTEM_PG_LOG="/var/log/postgresql/postgresql-17-main.log"
+    SYSTEM_PG_LOG="$SYSTEM_POSTGRES_LOG"
     start_log_streaming "$SYSTEM_PG_LOG" "POSTGRES-SYSTEM" "SYSTEM_PG_LOG_TAIL_PID"
     
     # Stream OSS server logs
@@ -385,7 +406,7 @@ if [ "$START_POSTGRESQL" = "true" ]; then
     
     # NOTE: We do NOT stream entrypoint logs to prevent infinite recursion!
     # The entrypoint messages are already going to stdout/stderr and appear in docker logs
-    # ENTRYPOINT_LOG="/home/documentdb/gateway_entrypoint.log"
+    # ENTRYPOINT_LOG="$GATEWAY_HOME/entrypoint.log"
     # start_log_streaming "$ENTRYPOINT_LOG" "ENTRYPOINT" "ENTRYPOINT_LOG_TAIL_PID"
 
     echo "Checking if PostgreSQL is running..."
@@ -405,37 +426,41 @@ else
 fi
 
 # Setting up the configuration file
-mkdir -p /home/documentdb/gateway/pg_documentdb_gw/target
-configFile="/home/documentdb/gateway/pg_documentdb_gw/target/SetupConfiguration_temp.json"
-cp /home/documentdb/gateway/pg_documentdb_gw/SetupConfiguration.json $configFile
-sudo chmod 755 $configFile
+mkdir -p "$GATEWAY_HOME/pg_documentdb_gw/target"
+configFile="$GATEWAY_HOME/pg_documentdb_gw/target/SetupConfiguration_temp.json"
+cp "$GATEWAY_HOME/pg_documentdb_gw/SetupConfiguration.json" "$configFile"
+sudo chmod 755 "$configFile"
 
 if [ -n "${DOCUMENTDB_PORT:-}" ]; then
     echo "Updating GatewayListenPort in the configuration file..."
-    jq ".GatewayListenPort = $DOCUMENTDB_PORT" $configFile > $configFile.tmp && \
-    mv $configFile.tmp $configFile
+    jq ".GatewayListenPort = $DOCUMENTDB_PORT" "$configFile" > "$configFile.tmp" && \
+    mv "$configFile.tmp" "$configFile"
 fi
 
 if [ -n "${POSTGRESQL_PORT:-}" ]; then
     echo "Updating PostgresPort in the configuration file..."
-    jq ".PostgresPort = $POSTGRESQL_PORT" $configFile > $configFile.tmp && \
-    mv $configFile.tmp $configFile
+    jq ".PostgresPort = $POSTGRESQL_PORT" "$configFile" > "$configFile.tmp" && \
+    mv "$configFile.tmp" "$configFile"
 fi
 
 if [ -n "${CERT_PATH:-}" ] && [ -n "${KEY_FILE:-}" ]; then
     echo "Adding CertificateOptions to the configuration file..."
     jq --arg certPath "$CERT_PATH" --arg keyFilePath "$KEY_FILE" \
        '.CertificateOptions = { "CertType": "PemFile", "FilePath": $certPath, "KeyFilePath": $keyFilePath }' \
-       $configFile > $configFile.tmp && \
-    mv $configFile.tmp $configFile
+       "$configFile" > "$configFile.tmp" && \
+    mv "$configFile.tmp" "$configFile"
 fi
+
+echo "Setting TLS mode to '$TLS_MODE'..."
+jq --arg tlsMode "$TLS_MODE" '.TlsMode = $tlsMode' "$configFile" > "$configFile.tmp" && \
+mv "$configFile.tmp" "$configFile"
 
 echo "Starting gateway in the background..."
 if [ "$CREATE_USER" = "false" ]; then
     echo "Skipping user creation and starting the gateway..."
-    /home/documentdb/gateway/scripts/build_and_start_gateway.sh -s -d $configFile -P $POSTGRESQL_PORT -o $OWNER | tee -a "$GATEWAY_LOG" &
+    $GATEWAY_HOME/scripts/build_and_start_gateway.sh -s -d $configFile -P $POSTGRESQL_PORT -o $OWNER | tee -a "$GATEWAY_LOG" &
 else
-    /home/documentdb/gateway/scripts/build_and_start_gateway.sh -u $USERNAME -p $PASSWORD -d $configFile -P $POSTGRESQL_PORT -o $OWNER | tee -a "$GATEWAY_LOG" &
+    $GATEWAY_HOME/scripts/build_and_start_gateway.sh -u $USERNAME -p $PASSWORD -d $configFile -P $POSTGRESQL_PORT -o $OWNER | tee -a "$GATEWAY_LOG" &
 fi
 
 gateway_pid=$! # Capture the PID of the gateway process
@@ -465,7 +490,7 @@ if [ -d "$INIT_DATA_PATH" ] && [ "$(ls -A "$INIT_DATA_PATH"/*.js 2>/dev/null)" ]
     echo "Initializing database with custom data from: $INIT_DATA_PATH"
     
     # Use the dedicated initialization script
-    init_script="/home/documentdb/gateway/scripts/init_documentdb_data.sh"
+    init_script="$GATEWAY_HOME/scripts/init_documentdb_data.sh"
     if [ -f "$init_script" ]; then
         echo "Using custom initialization data from: $INIT_DATA_PATH"
         if "$init_script" -H localhost -P "$DOCUMENTDB_PORT" -u "$USERNAME" -p "$PASSWORD" -d "$INIT_DATA_PATH" -v; then
@@ -485,8 +510,8 @@ if [ "$SKIP_INIT_DATA" != "true" ]; then
     echo "Initializing database with built-in sample data..."
     
     # Use the sample data directory
-    sample_data_path="/home/documentdb/gateway/sample-data"
-    init_script="/home/documentdb/gateway/scripts/init_documentdb_data.sh"
+    sample_data_path="$GATEWAY_HOME/sample-data"
+    init_script="$GATEWAY_HOME/scripts/init_documentdb_data.sh"
     
     if [ -f "$init_script" ] && [ -d "$sample_data_path" ]; then
         echo "Loading sample data from: $sample_data_path"
@@ -541,7 +566,7 @@ echo "  [GATEWAY] - Gateway application logs (live output via tee)"
 echo "  [GATEWAY-FILE] - Gateway log file content ($GATEWAY_LOG)"
 echo ""
 echo "Centralized log directory structure:"
-echo "  /var/log/documentdb/"
+echo "  $DOCUMENTDB_LOG_DIR/"
 echo "  ├── gateway_entrypoint.log"
 echo "  ├── gateway.log"
 echo "  ├── oss_server.log"
