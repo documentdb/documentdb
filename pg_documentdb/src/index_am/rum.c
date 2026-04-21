@@ -1079,6 +1079,14 @@ extension_rumendscan_core(IndexScanDesc scan, IndexAmRoutine *coreRoutine)
 	{
 		DocumentDBRumIndexState *outerScanState =
 			(DocumentDBRumIndexState *) scan->opaque;
+
+		if (outerScanState->indexArrayState != NULL && IndexArrayStateFuncs != NULL)
+		{
+			/* free the state */
+			IndexArrayStateFuncs->freeState(outerScanState->indexArrayState);
+			outerScanState->indexArrayState = NULL;
+		}
+
 		if (outerScanState->innerScan)
 		{
 			coreRoutine->amendscan(outerScanState->innerScan);
