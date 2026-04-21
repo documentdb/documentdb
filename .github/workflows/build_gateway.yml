@@ -79,6 +79,57 @@ jobs:
           --build-arg DEB_PACKAGE_REL_PATH=downloaded-artifacts/$(ls downloaded-artifacts | grep -v 'dbgsym')  \
           -t ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:$TAG \
           -f packaging/gateway/docker/Dockerfile_documentdb_local .
+    - name: Smoke test ${{ matrix.arch }} Image
+      run: |
+        set -euo pipefail
+        TAG=${{ env.IMAGE_TAG }}-pg${{ matrix.pg_version }}-${{ matrix.arch }}
+        IMAGE=ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:$TAG
+        CONTAINER_NAME=documentdb-local-smoke-pg${{ matrix.pg_version }}-${{ matrix.arch }}
+        SMOKE_DIR=$(mktemp -d)
+        dump_logs=true
+        cleanup() {
+          if [ "$dump_logs" = "true" ]; then
+            docker logs "$CONTAINER_NAME" || true
+          fi
+          docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+          rm -rf "$SMOKE_DIR"
+        }
+        wait_for_log() {
+          local pattern="$1"
+          local timeout_seconds="$2"
+          local waited=0
+
+          while ! docker logs "$CONTAINER_NAME" 2>&1 | grep -Fq "$pattern"; do
+            running=$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null || echo false)
+            if [ "$running" != "true" ]; then
+              echo "Container exited before log pattern appeared: $pattern" >&2
+              return 1
+            fi
+
+            sleep 2
+            waited=$((waited + 2))
+            if [ "$waited" -ge "$timeout_seconds" ]; then
+              echo "Timed out waiting for log pattern: $pattern" >&2
+              return 1
+            fi
+          done
+        }
+        trap cleanup EXIT
+
+        cat > "$SMOKE_DIR/001-gateway-smoke-init.js" <<'EOF'
+        const smokeDb = db.getSiblingDB('gateway_smoke');
+        smokeDb.image_smoke.deleteMany({});
+        smokeDb.image_smoke.insertOne({ name: 'documentdb-local-smoke', ok: true });
+        EOF
+
+        docker run -d --name "$CONTAINER_NAME" --mount "type=bind,source=$SMOKE_DIR,target=/init_doc_db.d,readonly" "$IMAGE" --username docdb_admin --password 123456 --init-data-path /init_doc_db.d
+
+        wait_for_log "=== DocumentDB is ready ===" 240
+        wait_for_log "Custom data initialization completed." 180
+
+        docker exec "$CONTAINER_NAME" mongosh "localhost:10260" -u docdb_admin -p 123456 --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --quiet --eval 'const count = db.getSiblingDB("gateway_smoke").image_smoke.countDocuments({ name: "documentdb-local-smoke", ok: true }); if (count !== 1) { print(`expected 1 document, found ${count}`); quit(1); }'
+
+        dump_logs=false
     - name: Push ${{ matrix.arch }} Image
       if: github.event.inputs.push_images == 'true' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
       run: |

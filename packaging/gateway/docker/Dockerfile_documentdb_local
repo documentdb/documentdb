@@ -36,13 +36,18 @@ RUN install -d -m 0755 /etc/apt/keyrings; \
     echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main ${POSTGRES_VERSION}" \
         > /etc/apt/sources.list.d/pgdg.list; \
     apt-get update; \
+    RUM_PKG=""; \
+    if [ "${POSTGRES_VERSION}" -lt 18 ]; then \
+        RUM_PKG="postgresql-${POSTGRES_VERSION}-rum"; \
+    fi; \
     apt-get install -y --no-install-recommends \
         postgresql-${POSTGRES_VERSION} \
         postgresql-${POSTGRES_VERSION}-cron \
         postgresql-${POSTGRES_VERSION}-pgvector \
         postgresql-${POSTGRES_VERSION}-postgis-3 \
-        postgresql-${POSTGRES_VERSION}-rum \
+        $RUM_PKG \
     ; \
+    rm -rf /usr/lib/postgresql/${POSTGRES_VERSION}/lib/bitcode; \
     rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /tmp/install_setup
@@ -88,23 +93,65 @@ WORKDIR /home/documentdb/code/pg_documentdb_gw
 
 RUN CARGO_MANIFEST_DIR=/home/documentdb/code/pg_documentdb_gw cargo build --profile=release-with-symbols
 
+# Install mongosh in a throwaway stage so the final image only copies the runtime files.
+FROM prebuild AS mongosh
+
+RUN wget -qO- https://www.mongodb.org/static/pgp/server-8.0.asc | tee /etc/apt/trusted.gpg.d/server-8.0.asc >/dev/null && \
+    echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/debian bookworm/mongodb-org/8.0 main" > /etc/apt/sources.list.d/mongodb-org-8.0.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends binutils mongodb-mongosh && \
+    strip --strip-debug /usr/bin/mongosh && \
+    rm -rf /var/lib/apt/lists/*
+
+# ----------- Runtime Base Stage -----------
+FROM ${BASE_IMAGE} AS runtime-base
+ARG DEBIAN_FRONTEND
+ARG POSTGRES_VERSION
+ARG DEB_PACKAGE_REL_PATH
+
+RUN [ -n "${DEB_PACKAGE_REL_PATH}" ] || (echo "ERROR: DEB_PACKAGE_REL_PATH build-arg is required. Example: --build-arg DEB_PACKAGE_REL_PATH=packaging/packages/ubuntu22.04-postgresql-16-documentdb_1.0.0_amd64.deb" >&2; exit 1)
+
+COPY ${DEB_PACKAGE_REL_PATH} /tmp/install_setup/
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ca-certificates locales sudo wget gnupg2 lsb-release jq openssl lsof netcat-openbsd && \
+    echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
+    locale-gen && \
+    install -d -m 0755 /etc/apt/keyrings && \
+    wget -qO /etc/apt/keyrings/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc && \
+    echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main ${POSTGRES_VERSION}" \
+        > /etc/apt/sources.list.d/pgdg.list && \
+    apt-get update && \
+    RUM_PKG="" && \
+    if [ "${POSTGRES_VERSION}" -lt 18 ]; then RUM_PKG="postgresql-${POSTGRES_VERSION}-rum"; fi && \
+    apt-get install -y --no-install-recommends \
+    postgresql-${POSTGRES_VERSION} \
+    postgresql-${POSTGRES_VERSION}-cron \
+    postgresql-${POSTGRES_VERSION}-pgvector \
+    postgresql-${POSTGRES_VERSION}-postgis-3 \
+    $RUM_PKG && \
+    groupmod -g 103 postgres && usermod -u 105 -g 103 postgres && \
+    dpkg -i /tmp/install_setup/$(basename "$DEB_PACKAGE_REL_PATH") && \
+    useradd -ms /bin/bash documentdb -G sudo && \
+    echo "%sudo ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/no-pass-ask && \
+    apt-get purge -y wget gnupg2 lsb-release && \
+    apt-get autoremove -y && \
+    rm -rf \
+    /etc/apt/keyrings/pgdg.asc \
+    /etc/apt/sources.list.d/pgdg.list \
+    /tmp/install_setup \
+    /usr/lib/postgresql/${POSTGRES_VERSION}/lib/bitcode \
+    /usr/share/doc/* \
+    /usr/share/man/* \
+    /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+
 # ----------- Final Gateway Image -----------
-FROM prebuild AS final
+FROM runtime-base AS final
 ARG POSTGRES_VERSION
 
-RUN sudo groupmod -g 103 postgres && sudo usermod -u 105 -g 103 postgres
-RUN sudo apt-get update && \
-    sudo apt-get install -y --no-install-recommends \
-    jq openssl lsof wget gnupg netcat-openbsd && \
-    sudo apt-get upgrade -y && \
-    sudo rm -rf /var/lib/apt/lists/*
-
-RUN wget -qO- https://www.mongodb.org/static/pgp/server-8.0.asc | sudo tee /etc/apt/trusted.gpg.d/server-8.0.asc && \
-    echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/debian bookworm/mongodb-org/8.0 main" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list && \
-    sudo apt-get update && \
-    sudo apt-get install -y mongodb-mongosh && \
-    sudo apt-get clean && \
-    sudo rm -rf /var/lib/apt/lists/*
 
 ENV LANGUAGE=en_US.UTF-8 \
     TERM=xterm-256color
@@ -136,6 +183,7 @@ RUN sudo mkdir -p /var/run/postgresql && \
     
 COPY --from=stage /home/documentdb/code/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway \
                   /home/documentdb/gateway/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway
+COPY --from=mongosh /usr/bin/mongosh /usr/bin/mongosh
 COPY --from=stage /home/documentdb/code/pg_documentdb_gw/SetupConfiguration.json /home/documentdb/gateway/pg_documentdb_gw/SetupConfiguration.json
 COPY --from=stage /home/documentdb/code/scripts/start_oss_server.sh /home/documentdb/gateway/scripts/start_oss_server.sh
 COPY --from=stage /home/documentdb/code/scripts/build_and_start_gateway.sh /home/documentdb/gateway/scripts/build_and_start_gateway.sh
