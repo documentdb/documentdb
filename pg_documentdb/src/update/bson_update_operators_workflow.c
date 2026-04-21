@@ -240,6 +240,7 @@ RemoveLastMatchedIndex_HookType remove_last_matched_index_hook = NULL;
 EndPositionalUpdate_HookType end_positional_update_hook = NULL;
 
 extern bool MultiplePositionalNotAllowed;
+extern bool EnableDuplicateFieldFix;
 
 
 /* --------------------------------------------------------- */
@@ -612,7 +613,7 @@ WriteCurrentNode(const BsonUpdateLeafNode *leaf, const bson_value_t *currentValu
 	/* If the update operator did not modify the document
 	 * and there is a value to be written,
 	 * write out the original value.
-	 * Exclude MODIFY_TYPE_ORIGINAL_REWRITE since that means the existing
+	 * Exclude MODIFY_TYPE_OPERATOR_WRITTEN since that means the existing
 	 * value is already written on the new document.
 	 */
 	if (updateWriter.modifyType == MODIFY_TYPE_NOCHANGE &&
@@ -916,6 +917,13 @@ UpdateWriterGetArrayWriter(UpdateOperatorWriter *writer)
 		PgbsonElementWriterStartArray(writer->writer, &writer->updateArrayWriter.writer);
 		writer->updateArrayWriter.isValid = true;
 		writer->updateArrayWriter.modifyType = MODIFY_TYPE_NOCHANGE;
+		if (EnableDuplicateFieldFix)
+		{
+			/* Set the modify type to MODIFY_TYPE_OPERATOR_WRITTEN since we've already
+			 * opened the array writer. This prevents the field from being rewritten.
+			 * The handler can subsequently update this to MODIFY_TYPE_CHANGED if modifications occur. */
+			writer->updateArrayWriter.modifyType = MODIFY_TYPE_OPERATOR_WRITTEN;
+		}
 	}
 
 	return &writer->updateArrayWriter;

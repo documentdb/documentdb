@@ -1283,7 +1283,7 @@ AddToSetWriteFinalArray(UpdateOperatorWriter *writer,
 						&found);
 
 			UpdateArrayWriterWriteValueWithModifyType(arrayWriter, value,
-													  MODIFY_TYPE_ORIGINAL_REWRITE);
+													  MODIFY_TYPE_OPERATOR_WRITTEN);
 		}
 	}
 

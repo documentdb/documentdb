@@ -548,6 +548,22 @@ SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_upd
 
 SELECT documentdb_api_internal.bson_update_document('{"_id": 1, "a": [[1],[2],3]}', '{ "": { "$addToSet" : {"a.2.5": 7 } } }', '{}');
 ERROR:  Failed to create the field '2' within the element specified by {2 : 3}
+-- $addToSet with empty $each and $set - test duplicate field fix
+SET documentdb.enableDuplicateFieldFix TO off;
+SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "arr": [], "x": 0}', '{ "": {"$addToSet":{"arr":{"$each":[]}}, "$set":{"x":1}} }', '{}');
+                                     bson_update_document                                     
+----------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "arr" : [  ], "arr" : [  ], "x" : { "$numberInt" : "1" } }
+(1 row)
+
+SET documentdb.enableDuplicateFieldFix TO on;
+SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "arr": [], "x": 0}', '{ "": {"$addToSet":{"arr":{"$each":[]}}, "$set":{"x":1}} }', '{}');
+                              bson_update_document                              
+--------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "arr" : [  ], "x" : { "$numberInt" : "1" } }
+(1 row)
+
+RESET documentdb.enableDuplicateFieldFix;
 -- update scenario negative tests: $inc
 SELECT documentdb_api_internal.bson_update_document('{"_id": 5, "a": [1,2] }', '{ "": { "$inc": { "a": 30 } } }', '{}');
 ERROR:  Operation $inc cannot be performed because the target value is not numeric. Document { _id: 5 } contains the field 'a' which is of non-numeric type array.

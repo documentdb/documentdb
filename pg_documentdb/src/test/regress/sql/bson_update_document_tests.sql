@@ -147,6 +147,14 @@ SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_upd
 SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "a": [[1],[2],[3]]}', '{ "": { "$addToSet" : {"a.0.5": 7 } } }', '{}');
 SELECT documentdb_api_internal.bson_update_document('{"_id": 1, "a": [[1],[2],3]}', '{ "": { "$addToSet" : {"a.2.5": 7 } } }', '{}');
 
+-- $addToSet with empty $each and $set - test duplicate field fix
+SET documentdb.enableDuplicateFieldFix TO off;
+SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "arr": [], "x": 0}', '{ "": {"$addToSet":{"arr":{"$each":[]}}, "$set":{"x":1}} }', '{}');
+
+SET documentdb.enableDuplicateFieldFix TO on;
+SELECT newDocument as bson_update_document FROM documentdb_api_internal.bson_update_document('{"_id": 1, "arr": [], "x": 0}', '{ "": {"$addToSet":{"arr":{"$each":[]}}, "$set":{"x":1}} }', '{}');
+RESET documentdb.enableDuplicateFieldFix;
+
 -- update scenario negative tests: $inc
 SELECT documentdb_api_internal.bson_update_document('{"_id": 5, "a": [1,2] }', '{ "": { "$inc": { "a": 30 } } }', '{}');
 SELECT documentdb_api_internal.bson_update_document('{"_id": 5, "a": {"x":1} }', '{ "": { "$inc": { "a": 30 } } }', '{}');
