@@ -1,0 +1,28 @@
+name: DocumentDB local tests
+run-name: ${{ github.event.pull_request.title || '' }}
+concurrency:
+  group: documentdb-local-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "main"
+    paths-ignore:
+      - "**/*.md"
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths-ignore:
+      - "**/*.md"
+
+jobs:
+  documentdb-local-unit-tests:
+    runs-on: ubuntu-22.04
+    name: documentdb-local unit tests
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Run documentdb-local Python unit tests
+        run: python3 -m unittest discover -s documentdb-local/scripts/documentdb_local_tests -p 'test_emulator_entrypoint.py'
