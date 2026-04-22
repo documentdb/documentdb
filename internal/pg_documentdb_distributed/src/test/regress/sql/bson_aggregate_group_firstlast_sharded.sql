@@ -150,4 +150,50 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
 
 SELECT documentdb_api.drop_collection('db', 'wfl_dist_test');
 
+-- =============================================================================
+-- Test 4: Sharded $sort + $group with only $first and enableSortGroupStage.
+-- When enableSortGroupStage is on, the Sort node should disappear and
+-- $first should use aggregate-internal ORDER BY instead.
+-- =============================================================================
+
+SELECT documentdb_api.insert_one('db', 'fl_sortgroup_dist', '{ "_id": 1, "g": "X", "seq": 30, "val": "third" }');
+SELECT documentdb_api.insert_one('db', 'fl_sortgroup_dist', '{ "_id": 2, "g": "X", "seq": 10, "val": "first" }');
+SELECT documentdb_api.insert_one('db', 'fl_sortgroup_dist', '{ "_id": 3, "g": "X", "seq": 20, "val": "second" }');
+SELECT documentdb_api.insert_one('db', 'fl_sortgroup_dist', '{ "_id": 4, "g": "Y", "seq": 50, "val": "later" }');
+SELECT documentdb_api.insert_one('db', 'fl_sortgroup_dist', '{ "_id": 5, "g": "Y", "seq": 5, "val": "earliest" }');
+SELECT documentdb_api.insert_one('db', 'fl_sortgroup_dist', '{ "_id": 6, "g": "Z", "seq": 40, "val": "high" }');
+SELECT documentdb_api.insert_one('db', 'fl_sortgroup_dist', '{ "_id": 7, "g": "Z", "seq": 15, "val": "low" }');
+SELECT documentdb_api.insert_one('db', 'fl_sortgroup_dist', '{ "_id": 8, "g": "Z", "seq": 25, "val": "mid" }');
+SELECT documentdb_api.insert_one('db', 'fl_sortgroup_dist', '{ "_id": 9, "g": "W", "seq": 100, "val": "only-high" }');
+SELECT documentdb_api.insert_one('db', 'fl_sortgroup_dist', '{ "_id": 10, "g": "W", "seq": 1, "val": "only-low" }');
+
+SELECT documentdb_api.shard_collection('db', 'fl_sortgroup_dist', '{ "_id": "hashed" }', false);
+
+-- 4a. sortGroup OFF: Sort node should be present, data correctness
+SET documentdb.enableSortGroupStage TO off;
+
+set citus.propagate_set_commands to 'local';
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_dist", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
+
+ROLLBACK;
+
+-- 4b. sortGroup ON: Sort node should disappear, orderby pushed to aggregate
+SET documentdb.enableSortGroupStage TO on;
+
+set citus.propagate_set_commands to 'local';
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_dist", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
+
+ROLLBACK;
+
+RESET documentdb.enableSortGroupStage;
+SELECT documentdb_api.drop_collection('db', 'fl_sortgroup_dist');
+
 SET documentdb.enableNewWithExprAccumulators TO off;

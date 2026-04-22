@@ -1,4 +1,5 @@
 ### documentdb v0.113-0 (Unreleased) ###
+* Add `EnableSortPushToAccumulator` GUC to control pushing sort order into accumulator in `$sortGroup` stage *[Perf]*
 
 ### documentdb v0.112-0 (Unreleased) ###
 * Eliminate subquery migration in $group for unsharded and sharded with constant _id aggregation queries. Guarded with `EnableGroupSubqueryElimination` *[Perf]*

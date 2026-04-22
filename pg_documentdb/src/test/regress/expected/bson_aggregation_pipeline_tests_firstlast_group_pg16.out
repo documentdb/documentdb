@@ -1,9 +1,10 @@
+\i sql/bson_aggregation_pipeline_tests_firstlast_group.sql
 SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_core;
 SET documentdb.next_collection_id TO 25701000;
 SET documentdb.next_collection_index_id TO 25701000;
 -- 1. Setup test data
 SELECT documentdb_api.insert_one('db', 'fl_grp_test', '{ "_id": 1, "g": "A", "v": 10, "name": "alpha" }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:7: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -83,7 +84,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_tes
 -- 4. Empty collection - $first
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT documentdb_api.create_collection('db', 'fl_empty');
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:29: NOTICE:  creating collection
  create_collection 
 -------------------
  t
@@ -102,7 +103,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_empty');
 
 -- 5. Nested/embedded documents as accumulator input
 SELECT documentdb_api.insert_one('db', 'fl_nested', '{ "_id": 1, "g": "X", "info": { "city": "SEA", "zip": 98101 } }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:34: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -151,7 +152,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_nested');
 
 -- 6. Different BSON types: date, ObjectId, boolean, double
 SELECT documentdb_api.insert_one('db', 'fl_types', '{ "_id": 1, "g": "T", "d": { "$date": "2024-01-15T00:00:00Z" }, "oid": { "$oid": "aaaaaaaaaaaaaaaaaaaaaaaa" }, "b": true, "f": 3.14 }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:48: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -192,7 +193,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_types');
 
 -- 7. Type-agnostic first/last: mixed types within the same group
 SELECT documentdb_api.insert_one('db', 'fl_mixed', '{ "_id": 1, "g": "M", "v": 42 }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:59: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -271,7 +272,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_tes
 -- =============================================================================
 -- 10. Setup collation test data
 SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 1, "g": "A", "name": "cherry" }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:84: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -401,7 +402,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
 -- 15. Collation with mixed types (string, number, null)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_collation_mixed', '{ "_id": 1, "g": "G", "val": "banana" }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:138: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -450,7 +451,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_collation_mixed');
 -- With numericOrdering: "item10" > "item2" (numeric), without: "item10" < "item2" (lexical)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_numeric_order', '{ "_id": 1, "g": "N", "val": "item10" }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:156: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -501,7 +502,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_numeric_order');
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:177: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 -- =============================================================================
@@ -533,7 +534,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_collation_test');
 --     nested field, even though a later document has the field defined.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_first_missing', '{ "_id": 1, "category": "electronics" }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:202: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -564,7 +565,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_first_missing');
 --     (Flipped version of test 19.)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_last_missing', '{ "_id": 1, "category": "electronics", "profile": { "email": "bob@test.com" } }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:215: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -878,7 +879,7 @@ RESET documentdb.enableSortGroupStage;
 -- =============================================================================
 -- Insert test data: 10 rows across 4 groups
 SELECT documentdb_api.insert_one('db','fl_sortgroup_test','{ "_id": 1, "g": "X", "seq": 30, "val": "third" }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:304: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -988,10 +989,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "g" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "g" : { "$numberInt" : "1" } }'::bson)), (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "g" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "g" : { "$numberInt" : "1" } }'::bson), bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
                Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '25701010'::bigint)
@@ -1068,10 +1069,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST), 'total'::text, documentdb_api_internal.bsonsumwithexpr(document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
                Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '25701010'::bigint)
@@ -1098,10 +1099,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)) USING OPERATOR(documentdb_api_internal.>>>) NULLS LAST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson))
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
          ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)
                Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '25701010'::bigint)
@@ -1134,10 +1135,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "g" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)) USING OPERATOR(documentdb_api_internal.>>>) NULLS LAST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "g" : { "$numberInt" : "1" } }'::bson)), (bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson))
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "g" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
          ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "g" : { "$numberInt" : "1" } }'::bson), bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)
                Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '25701010'::bigint)
@@ -1163,10 +1164,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST), 'firstSeq'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
                Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '25701010'::bigint)
@@ -1210,10 +1211,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(collection.document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
                Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
                ->  Sort
-                     Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-                     Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+                     Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
                      ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-                           Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
                            Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
                            ->  Bitmap Index Scan on _id_
                                  Index Cond: (collection.shard_key_value = '25701010'::bigint)
@@ -1239,10 +1240,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST), 'total'::text, documentdb_api_internal.bsonsumwithexpr(document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'average'::text, documentdb_api_internal.bsonaveragewithexpr(document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'minSeq'::text, documentdb_api_internal.bsonminwithexpr(document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'maxSeq'::text, documentdb_api_internal.bsonmaxwithexpr(document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
                Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '25701010'::bigint)
@@ -1417,10 +1418,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, bsonfirstonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson) ORDER BY (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
                Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '25701010'::bigint)
@@ -1469,10 +1470,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (documentdb_api_internal.bson_orderby_index(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (documentdb_api_internal.bson_orderby_index(document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, documentdb_api_internal.bson_orderby_index(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
                Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '25701010'::bigint)
@@ -1488,10 +1489,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (documentdb_api_internal.bson_orderby_index_reverse(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) DESC NULLS LAST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (documentdb_api_internal.bson_orderby_index_reverse(document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) DESC NULLS LAST
          ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, documentdb_api_internal.bson_orderby_index_reverse(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
                Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '25701010'::bigint)
@@ -1527,7 +1528,7 @@ RESET documentdb.enableOrderByIndexTerm;
 -- 40. Nested field paths in sort spec
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','fl_nested_sort','{ "_id": 1, "g": "A", "info": { "priority": 3 }, "val": "low-pri" }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:466: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1566,10 +1567,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Bitmap Heap Scan on documentdb_data.documents_25701011 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson)
                Recheck Cond: (collection.shard_key_value = '25701011'::bigint)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '25701011'::bigint)
@@ -1587,7 +1588,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_nested_sort');
 --     while case-insensitive collation (strength=1) sorts alphabetically ("apple" < "Banana").
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','fl_collation_sortpush','{ "_id": 1, "g": "A", "name": "cherry", "seq": 2 }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:482: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1637,10 +1638,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstName'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text ORDER BY (documentdb_api_internal.bson_orderby(document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING OPERATOR(documentdb_api_internal.<<<) NULLS FIRST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (documentdb_api_internal.bson_orderby(document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
          ->  Bitmap Heap Scan on documentdb_data.documents_25701012 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, documentdb_api_internal.bson_orderby(document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
                Recheck Cond: (collection.shard_key_value = '25701012'::bigint)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '25701012'::bigint)
@@ -1670,10 +1671,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstName'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text ORDER BY (documentdb_api_internal.bson_orderby(document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING OPERATOR(documentdb_api_internal.>>>) NULLS LAST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (documentdb_api_internal.bson_orderby(document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text))
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST
          ->  Bitmap Heap Scan on documentdb_data.documents_25701012 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, documentdb_api_internal.bson_orderby(document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)
                Recheck Cond: (collection.shard_key_value = '25701012'::bigint)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '25701012'::bigint)

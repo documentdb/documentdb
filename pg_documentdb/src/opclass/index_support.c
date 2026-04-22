@@ -2163,7 +2163,7 @@ GetSortDetails(PlannerInfo *root, Index rti,
 		{
 			if (*hasGroupby)
 			{
-				return NIL;
+				break;
 			}
 
 			*hasOrderBy = true;
@@ -2175,7 +2175,7 @@ GetSortDetails(PlannerInfo *root, Index rti,
 			/* TODO: Collation index pushdown support. */
 			if (*hasGroupby)
 			{
-				return NIL;
+				break;
 			}
 
 			*hasOrderBy = true;

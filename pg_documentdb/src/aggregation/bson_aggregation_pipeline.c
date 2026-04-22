@@ -91,6 +91,7 @@ extern bool RemoveMatchNamespaceFilters;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableGroupByCompoundIdIndexPushdown;
 extern bool EnableSortGroupStage;
+extern bool EnableSortPushToAccumulator;
 
 /* GUC to config tdigest compression */
 extern int TdigestCompressionAccuracy;
@@ -162,6 +163,21 @@ typedef struct AggregationStageDefinition
 	Stage stageEnum;
 } AggregationStageDefinition;
 
+/*
+ * Result of analyzing $sort + $group accumulators to decide
+ * whether the explicit $sort can be eliminated or pushed into
+ * the accumulator's ORDER BY clause.
+ */
+typedef struct SortGroupAnalysisResult
+{
+	/* All accumulators are order-insensitive ($sum, $avg, etc.), so the sort is unnecessary */
+	bool canDropSort;
+
+	/* Every accumulator is either $first or order-insensitive, with at least
+	 * one $first present, so the sort can be pushed into aggorder. This condition will be
+	 * expanded in future. */
+	bool canPushSortToAccumulator;
+} SortGroupAnalysisResult;
 
 static void AddCursorFunctionsToQuery(Query *query, Query *baseQuery,
 									  QueryData *queryData,
@@ -226,6 +242,9 @@ static Query * HandleMatchAggregationStage(const bson_value_t *existingValue,
 										   AggregationPipelineBuildContext *context);
 static Query * HandleSortGroup(const bson_value_t *existingValue, Query *query,
 							   AggregationPipelineBuildContext *context);
+static Query * HandleGroupCore(const bson_value_t *existingValue, Query *query,
+							   AggregationPipelineBuildContext *context,
+							   bool sortSpecIsForAccumulatorOperator);
 
 static bool RequiresPersistentCursorFalse(const bson_value_t *pipelineValue,
 										  bool *isSingleRowResult);
@@ -273,6 +292,9 @@ static bool IsPipelineStageFollowedByOtherStage(Stage firstStage, Stage secondSt
 static bool TryInlineChangeStreamNamespaceFilters(AggregationStage *changeStreamStage,
 												  AggregationStage *matchStage,
 												  bool *inlinedCompletely);
+static void SetAccumulatorSortOrder(TargetEntry *accumulatorTle, Expr *documentExpr,
+									const bson_value_t *sortSpec,
+									const char *collationString);
 
 #define COMPATIBLE_CHANGE_STREAM_STAGES_COUNT 8
 const char *CompatibleChangeStreamPipelineStages[COMPATIBLE_CHANGE_STREAM_STAGES_COUNT] =
@@ -5225,16 +5247,58 @@ HandleSortByCount(const bson_value_t *existingValue, Query *query,
 }
 
 
-/* Returns true if the $sort stage can be dropped before the $group stage. This is
- * possible if all the accumulators in the $group stage are order-insensitive,
- * such as $sum, $avg, $max, $min, and $count. Order-sensitive accumulators like
- * $first and $last require the $sort stage to be preserved.
+/*
+ * Checks whether a $sort specification can be pushed to an accumulator operator.
+ * Cases with $natural or $meta cannot be pushed.
  */
 static bool
-CanDropSortBeforeGroup(const bson_value_t *groupValue)
+IsSortSpecCompatibleForPushToAccumulatorOperator(const bson_value_t *sortValue)
 {
+	if (sortValue->value_type != BSON_TYPE_DOCUMENT)
+	{
+		return false;
+	}
+
+	bson_iter_t sortIter;
+	BsonValueInitIterator(sortValue, &sortIter);
+
+	while (bson_iter_next(&sortIter))
+	{
+		pgbsonelement element;
+		BsonIterToPgbsonElement(&sortIter, &element);
+
+		/* $natural sort uses ctid ordering which aggorder cannot express */
+		if (strcmp(element.path, "$natural") == 0)
+		{
+			return false;
+		}
+
+		/* Only numeric sort directions (1/-1) can be pushed to accumulator;
+		 * non-numeric types like $meta are not supported. */
+		if (!BsonValueIsNumber(&element.bsonValue))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+
+/* Checks whether a $sort preceding $group can be dropped or pushed into accumulator aggorder. */
+static SortGroupAnalysisResult
+AnalyzeSortGroupAccumulators(const bson_value_t *groupValue,
+							 const bson_value_t *sortValue)
+{
+	SortGroupAnalysisResult result = {
+		.canDropSort = false,
+		.canPushSortToAccumulator = false
+	};
+
 	bson_iter_t groupIter;
 	BsonValueInitIterator(groupValue, &groupIter);
+
+	bool hasFirstAccumulator = false;
 
 	while (bson_iter_next(&groupIter))
 	{
@@ -5249,7 +5313,7 @@ CanDropSortBeforeGroup(const bson_value_t *groupValue)
 			!bson_iter_recurse(&groupIter, &accumulatorIterator))
 		{
 			/* HandleGroup will report this error */
-			return false;
+			return result;
 		}
 
 		pgbsonelement accumulatorElement;
@@ -5257,30 +5321,41 @@ CanDropSortBeforeGroup(const bson_value_t *groupValue)
 													   &accumulatorElement))
 		{
 			/* HandleGroup will report this error */
-			return false;
+			return result;
 		}
 
 		StringView accumulatorName = {
 			.length = accumulatorElement.pathLength, .string = accumulatorElement.path
 		};
 
-		/*
-		 * For now, only drop the outer `$sort` for accumulators that
-		 * are order-insensitive. These depend only on the grouped
-		 * values, not on encounter order like $first/$last.
-		 * TODO(4/10/2026): Add support for other order-insensitive accumulators in the future.
-		 */
-		if (!(StringViewEqualsCString(&accumulatorName, "$avg") ||
-			  StringViewEqualsCString(&accumulatorName, "$sum") ||
-			  StringViewEqualsCString(&accumulatorName, "$max") ||
-			  StringViewEqualsCString(&accumulatorName, "$min") ||
-			  StringViewEqualsCString(&accumulatorName, "$count")))
+		if (StringViewEqualsCString(&accumulatorName, "$first"))
 		{
-			return false;
+			hasFirstAccumulator = true;
+			continue;
 		}
+
+		/* Order-insensitive accumulators - sort can be safely dropped or pushed */
+		if (StringViewEqualsCString(&accumulatorName, "$avg") ||
+			StringViewEqualsCString(&accumulatorName, "$sum") ||
+			StringViewEqualsCString(&accumulatorName, "$max") ||
+			StringViewEqualsCString(&accumulatorName, "$min") ||
+			StringViewEqualsCString(&accumulatorName, "$count"))
+		{
+			continue;
+		}
+
+		/* Accumulator like $last, $push, $percentile etc. that needs a full $sort stage */
+		return result;
 	}
 
-	return true;
+	/* After the loop every remaining accumulator is either $first or
+	* order-insensitive.  The sort is unnecessary only when none of
+	* the accumulators were order-sensitive (i.e. no $first seen). */
+	result.canDropSort = !hasFirstAccumulator;
+	result.canPushSortToAccumulator = hasFirstAccumulator &&
+									  IsSortSpecCompatibleForPushToAccumulatorOperator(
+		sortValue);
+	return result;
 }
 
 
@@ -5348,6 +5423,138 @@ ValidateSortSpec(const bson_value_t *sortValue)
 }
 
 
+static void
+SetAccumulatorSortOrder(TargetEntry *accumulatorTle, Expr *documentExpr,
+						const bson_value_t *sortSpec,
+						const char *collationString)
+{
+	Assert(IsA(accumulatorTle->expr, Aggref));
+	Aggref *aggref = (Aggref *) accumulatorTle->expr;
+
+	bson_iter_t sortIter;
+	BsonValueInitIterator(sortSpec, &sortIter);
+
+	ParseState *sortParseState = make_parsestate(NULL);
+	sortParseState->p_expr_kind = EXPR_KIND_ORDER_BY;
+
+	/* Continue resno numbering from where the existing args left off. */
+	TargetEntry *lastArg = llast(aggref->args);
+	if (lastArg == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Unexpected error in SetAccumulatorSortOrder: AggRef has no arguments")));
+	}
+
+	sortParseState->p_next_resno = lastArg->resno + 1;
+
+	bool hasCollation = IsCollationApplicable(collationString);
+
+	List *aggorderList = NIL;
+
+	while (bson_iter_next(&sortIter))
+	{
+		pgbsonelement element;
+		BsonIterToPgbsonElement(&sortIter, &element);
+
+		pgbson *sortDoc = PgbsonElementToPgbson(&element);
+		bool isAscending = ValidateOrderbyExpressionAndGetIsAscending(sortDoc);
+
+		bool isOrderByIndexTerm = EnableOrderByIndexTerm &&
+								  IsClusterVersionAtleast(DocDB_V0, 111, 0);
+
+		Oid funcOid = BsonOrderByFunctionOid();
+		Oid funcReturnType = BsonTypeId();
+		Const *sortOrderConst = MakeBsonConst(sortDoc);
+
+		if (isOrderByIndexTerm)
+		{
+			funcOid = isAscending ? BsonOrderByIndexFunctionOid() :
+					  BsonOrderByIndexReverseFunctionOid();
+			funcReturnType = BsonIndexTermTypeId();
+
+			pgbsonelement updatedSortElement = element;
+			updatedSortElement.bsonValue.value_type = BSON_TYPE_INT32;
+			updatedSortElement.bsonValue.value.v_int32 = 1;
+			sortOrderConst = MakeBsonConst(PgbsonElementToPgbson(&updatedSortElement));
+		}
+
+		List *sortFuncArgs;
+
+		if (hasCollation)
+		{
+			if (isOrderByIndexTerm)
+			{
+				funcOid = isAscending ?
+						  BsonOrderByIndexWithCollationFunctionOid() :
+						  BsonOrderByIndexWithCollationReverseFunctionOid();
+			}
+			else
+			{
+				funcOid = BsonOrderByWithCollationFunctionOid();
+			}
+			Const *collationConst = MakeTextConst(collationString,
+												  strlen(collationString));
+			sortFuncArgs = list_make3(copyObject(documentExpr), sortOrderConst,
+									  collationConst);
+		}
+		else
+		{
+			sortFuncArgs = list_make2(copyObject(documentExpr), sortOrderConst);
+		}
+
+		Expr *sortExpr = (Expr *) makeFuncExpr(
+			funcOid, funcReturnType, sortFuncArgs,
+			InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+
+		SortBy *sortBy = makeNode(SortBy);
+		sortBy->location = -1;
+		sortBy->sortby_nulls = isAscending ? SORTBY_NULLS_FIRST : SORTBY_NULLS_LAST;
+		sortBy->node = (Node *) sortExpr;
+
+		if (hasCollation && !isOrderByIndexTerm)
+		{
+			sortBy->sortby_dir = SORTBY_USING;
+			sortBy->useOp = isAscending ?
+							list_make2(makeString(ApiInternalSchemaNameV2),
+									   makeString("<<<")) :
+							list_make2(makeString(ApiInternalSchemaNameV2),
+									   makeString(">>>"));
+		}
+		else if (isAscending)
+		{
+			sortBy->sortby_dir = SORTBY_ASC;
+		}
+		else if (isOrderByIndexTerm)
+		{
+			/* bsonindexterm already encodes direction via the function variant
+			 * (bson_orderby_index_reverse), so standard DESC suffices. The
+			 * custom >>> operator is only defined for the bson type. */
+			sortBy->sortby_dir = SORTBY_DESC;
+		}
+		else
+		{
+			/* Use custom >>> operator for descending, matching HandleSort */
+			sortBy->sortby_dir = SORTBY_USING;
+			sortBy->useOp = list_make2(makeString(ApiInternalSchemaNameV2),
+									   makeString(">>>"));
+		}
+
+		bool resjunk = true;
+		TargetEntry *sortTle = makeTargetEntry(
+			sortExpr,
+			(AttrNumber) sortParseState->p_next_resno++,
+			NULL, resjunk);
+
+		aggref->args = lappend(aggref->args, sortTle);
+
+		aggorderList = addTargetToSortList(sortParseState, sortTle,
+										   aggorderList, aggref->args, sortBy);
+	}
+
+	aggref->aggorder = aggorderList;
+}
+
+
 static Query *
 HandleSortGroup(const bson_value_t *existingValue, Query *query,
 				AggregationPipelineBuildContext *context)
@@ -5382,7 +5589,16 @@ HandleSortGroup(const bson_value_t *existingValue, Query *query,
 							"Invalid specification for $sortGroup. Both 'sort' and 'group' fields are required.")));
 	}
 
-	if (!CanDropSortBeforeGroup(&groupValue))
+	SortGroupAnalysisResult analysisResult = AnalyzeSortGroupAccumulators(&groupValue,
+																		  &sortValue);
+	bool canPushSort = EnableSortPushToAccumulator &&
+					   analysisResult.canPushSortToAccumulator;
+	if (canPushSort)
+	{
+		ValidateSortSpec(&sortValue);
+		context->sortSpec = sortValue;
+	}
+	else if (!analysisResult.canDropSort)
 	{
 		query = HandleSort(&sortValue, query, context);
 		if (context->requiresSubQuery || context->requiresSubQueryAfterProject)
@@ -5400,7 +5616,8 @@ HandleSortGroup(const bson_value_t *existingValue, Query *query,
 		ValidateSortSpec(&sortValue);
 	}
 
-	return HandleGroup(&groupValue, query, context);
+	return HandleGroupCore(&groupValue, query, context,
+						   canPushSort);
 }
 
 
@@ -5468,7 +5685,8 @@ AddSimpleGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 						  List *repathArgs, Const *accumulatorText,
 						  ParseState *parseState, char *identifiers,
 						  Expr *documentExpr, Oid aggregateFunctionOid,
-						  Expr *variableSpec)
+						  Expr *variableSpec,
+						  TargetEntry **createdAccumulatorEntry)
 {
 	Expr *constValue = (Expr *) MakeBsonConst(BsonValueToDocumentPgbson(
 												  accumulatorValue));
@@ -5511,7 +5729,7 @@ AddSimpleGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 	repathArgs = lappend(repathArgs, AddGroupExpression((Expr *) aggref,
 														parseState, identifiers,
 														query, BsonTypeId(),
-														NULL));
+														createdAccumulatorEntry));
 	return repathArgs;
 }
 
@@ -5521,7 +5739,8 @@ AddSimpleGroupAccumulatorWithExpr(Query *query, const bson_value_t *accumulatorV
 								  List *repathArgs, Const *accumulatorText,
 								  ParseState *parseState, char *identifiers,
 								  Expr *documentExpr, Oid aggregateFunctionOid,
-								  Expr *variableSpec, const char *collationString)
+								  Expr *variableSpec, const char *collationString,
+								  TargetEntry **createdAccumulatorEntry)
 {
 	Expr *exprConst = (Expr *) MakeBsonConst(BsonValueToDocumentPgbson(accumulatorValue));
 
@@ -5549,7 +5768,7 @@ AddSimpleGroupAccumulatorWithExpr(Query *query, const bson_value_t *accumulatorV
 	repathArgs = lappend(repathArgs, AddGroupExpression((Expr *) aggref,
 														parseState, identifiers,
 														query, BsonTypeId(),
-														NULL));
+														createdAccumulatorEntry));
 	return repathArgs;
 }
 
@@ -5583,7 +5802,8 @@ AddSumGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 													 documentExpr,
 													 BsonSumWithExprAggregateFunctionOid(),
 													 variableSpec,
-													 collationString);
+													 collationString,
+													 NULL);
 		}
 		else
 		{
@@ -5591,7 +5811,8 @@ AddSumGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 											 accumulatorText, parseState,
 											 identifiers, documentExpr,
 											 BsonSumAggregateFunctionOid(),
-											 variableSpec);
+											 variableSpec,
+											 NULL);
 		}
 	}
 
@@ -5999,7 +6220,7 @@ AddMaxMinNGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 
 	return AddSimpleGroupAccumulator(query, accumulatorValue, repathArgs, accumulatorText,
 									 parseState, identifiers, documentExpr,
-									 aggregateFunctionOid, variableSpec);
+									 aggregateFunctionOid, variableSpec, NULL);
 }
 
 
@@ -6102,9 +6323,10 @@ AddPercentileMedianGroupAccumulator(Query *query, const bson_value_t *accumulato
  *
  * TODO: Support n(elementsToFetch) as an expression for firstN, lastN, topN, bottomN
  */
-Query *
-HandleGroup(const bson_value_t *existingValue, Query *query,
-			AggregationPipelineBuildContext *context)
+static Query *
+HandleGroupCore(const bson_value_t *existingValue, Query *query,
+				AggregationPipelineBuildContext *context,
+				bool sortSpecIsForAccumulatorOperator)
 {
 	/*
 	 * Collation is only supported with the new WithExpr accumulators, not for
@@ -6453,7 +6675,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 					identifiers, origEntry->expr,
 					BsonAvgWithExprAggregateFunctionOid(),
 					context->variableSpec,
-					context->collationString);
+					context->collationString,
+					NULL);
 			}
 			else
 			{
@@ -6464,7 +6687,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 													   identifiers,
 													   origEntry->expr,
 													   BsonAvgAggregateFunctionOid(),
-													   context->variableSpec);
+													   context->variableSpec,
+													   NULL);
 			}
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$sum"))
@@ -6492,7 +6716,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 					identifiers, origEntry->expr,
 					BsonMaxWithExprAggregateFunctionOid(),
 					context->variableSpec,
-					context->collationString);
+					context->collationString,
+					NULL);
 			}
 			else
 			{
@@ -6503,7 +6728,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 													   identifiers,
 													   origEntry->expr,
 													   BsonMaxAggregateFunctionOid(),
-													   context->variableSpec);
+													   context->variableSpec,
+													   NULL);
 			}
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$min"))
@@ -6519,7 +6745,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 					identifiers, origEntry->expr,
 					BsonMinWithExprAggregateFunctionOid(),
 					context->variableSpec,
-					context->collationString);
+					context->collationString,
+					NULL);
 			}
 			else
 			{
@@ -6530,7 +6757,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 													   identifiers,
 													   origEntry->expr,
 													   BsonMinAggregateFunctionOid(),
-													   context->variableSpec);
+													   context->variableSpec,
+													   NULL);
 			}
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$count"))
@@ -6581,14 +6809,17 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 													   identifiers,
 													   origEntry->expr,
 													   BsonSumAggregateFunctionOid(),
-													   context->variableSpec);
+													   context->variableSpec,
+													   NULL);
 			}
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$first"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_FIRST);
-			if (context->sortSpec.value_type == BSON_TYPE_EOD)
+			if (context->sortSpec.value_type == BSON_TYPE_EOD ||
+				sortSpecIsForAccumulatorOperator)
 			{
+				TargetEntry *accumulatorTle = NULL;
 				if (CanUseWithExprAggregates())
 				{
 					repathArgs = AddSimpleGroupAccumulatorWithExpr(
@@ -6598,7 +6829,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 						identifiers, origEntry->expr,
 						BsonFirstWithExprAggregateFunctionOid(),
 						context->variableSpec,
-						context->collationString);
+						context->collationString,
+						&accumulatorTle);
 				}
 				else
 				{
@@ -6609,7 +6841,15 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 														   identifiers,
 														   origEntry->expr,
 														   BsonFirstOnSortedAggregateFunctionOid(),
-														   context->variableSpec);
+														   context->variableSpec,
+														   &accumulatorTle);
+				}
+
+				if (sortSpecIsForAccumulatorOperator)
+				{
+					SetAccumulatorSortOrder(accumulatorTle, origEntry->expr,
+											&context->sortSpec,
+											context->collationString);
 				}
 			}
 			else
@@ -6639,7 +6879,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 						identifiers, origEntry->expr,
 						BsonLastWithExprAggregateFunctionOid(),
 						context->variableSpec,
-						context->collationString);
+						context->collationString,
+						NULL);
 				}
 				else
 				{
@@ -6650,7 +6891,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 														   identifiers,
 														   origEntry->expr,
 														   BsonLastOnSortedAggregateFunctionOid(),
-														   context->variableSpec);
+														   context->variableSpec,
+														   NULL);
 				}
 			}
 			else
@@ -6772,7 +7014,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 												   identifiers,
 												   origEntry->expr,
 												   BsonAddToSetAggregateFunctionOid(),
-												   context->variableSpec);
+												   context->variableSpec,
+												   NULL);
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$mergeObjects"))
 		{
@@ -6786,7 +7029,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 													   identifiers,
 													   origEntry->expr,
 													   BsonMergeObjectsOnSortedFunctionOid(),
-													   context->variableSpec);
+													   context->variableSpec,
+													   NULL);
 			}
 			else
 			{
@@ -6838,7 +7082,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 												   identifiers,
 												   origEntry->expr,
 												   BsonStdDevSampAggregateFunctionOid(),
-												   context->variableSpec);
+												   context->variableSpec,
+												   NULL);
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$stdDevPop"))
 		{
@@ -6860,7 +7105,8 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 												   identifiers,
 												   origEntry->expr,
 												   BsonStdDevPopAggregateFunctionOid(),
-												   context->variableSpec);
+												   context->variableSpec,
+												   NULL);
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$top"))
 		{
@@ -7123,6 +7369,20 @@ HandleGroup(const bson_value_t *existingValue, Query *query,
 	/* Mark new stages to push a new subquery */
 	context->requiresSubQuery = true;
 	return query;
+}
+
+
+/*
+ * Main entry point for handling $group stage. This function will rewrite the
+ * given query to perform the aggregation specified by the $group stage.
+ */
+Query *
+HandleGroup(const bson_value_t *existingValue, Query *query,
+			AggregationPipelineBuildContext *context)
+{
+	bool sortSpecIsForAccumulatorOperator = false;
+	return HandleGroupCore(existingValue, query, context,
+						   sortSpecIsForAccumulatorOperator);
 }
 
 
