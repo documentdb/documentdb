@@ -221,7 +221,7 @@ char * TryGetCancelIndexBuildQuery(int32_t indexId, char cmdType);
 
 bool ShouldScheduleIndexBuildJobs(void);
 
-List * GetShardIndexOids(uint64_t collectionId, int indexId, bool ignoreMissing);
+List * GetShardIndexOids(uint64_t collectionId, Oid indexOid, bool ignoreMissing);
 
 void UpdatePostgresIndexWithOverride(uint64_t collectionId, int indexId, int operation,
 									 bool value,

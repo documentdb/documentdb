@@ -421,6 +421,11 @@ bool EnablePrepareUnique = DEFAULT_ENABLE_PREPARE_UNIQUE;
 #define DEFAULT_ENABLE_COLLMOD_UNIQUE false
 bool EnableCollModUnique = DEFAULT_ENABLE_COLLMOD_UNIQUE;
 
+/* Added in v113, Pending stabilization, enable in v116 */
+#define DEFAULT_ENABLE_UNIQUE_REINDEX false
+bool EnableUniqueReindex = DEFAULT_ENABLE_UNIQUE_REINDEX;
+
+
 /* Added in v110, enabled in v110, remove after v113 */
 #define DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY true
 bool EnableDropInvalidIndexesOnReadOnly = DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY;
@@ -794,6 +799,13 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Whether to enable unique for coll mod."),
 		NULL, &EnableCollModUnique, DEFAULT_ENABLE_COLLMOD_UNIQUE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableUniqueReindex", newGucPrefix),
+		gettext_noop(
+			"Whether to enable unique reindex."),
+		NULL, &EnableUniqueReindex, DEFAULT_ENABLE_UNIQUE_REINDEX,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

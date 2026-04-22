@@ -118,9 +118,15 @@ bool ForceGroupSubqueryElimination = DEFAULT_FORCE_GROUP_SUBQUERY_ELIMINATION;
 #define DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING false
 bool RecreateRetryTableOnSharding = DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING;
 
-/* Added in v109, Pending stabilization */
 #define DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN false
 bool EnableCompositeParallelIndexScan = DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN;
+
+#define DEFAULT_SKIP_INDEX_CLEANUP_ON_FAILURE false
+bool SkipIndexCleanupOnFailure = DEFAULT_SKIP_INDEX_CLEANUP_ON_FAILURE;
+
+
+#define DEFAULT_SKIP_INDEX_CLEANUP_ON_REINDEX false
+bool SkipIndexCleanupOnReindex = DEFAULT_SKIP_INDEX_CLEANUP_ON_REINDEX;
 
 void
 InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
@@ -416,5 +422,21 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 			"Forces subquery elimination in $group even for sharded collections with non-constant _id. For testing only."),
 		NULL, &ForceGroupSubqueryElimination,
 		DEFAULT_FORCE_GROUP_SUBQUERY_ELIMINATION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.skipIndexCleanupOnFailure", newGucPrefix),
+		gettext_noop(
+			"Whether or not to skip index cleanup on failure."),
+		NULL, &SkipIndexCleanupOnFailure,
+		DEFAULT_SKIP_INDEX_CLEANUP_ON_FAILURE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.skipIndexCleanupOnReindex", newGucPrefix),
+		gettext_noop(
+			"Whether or not to skip index cleanup on reindex."),
+		NULL, &SkipIndexCleanupOnReindex,
+		DEFAULT_SKIP_INDEX_CLEANUP_ON_REINDEX,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }
