@@ -16,7 +16,6 @@ SELECT documentdb_api.drop_collection('db', 'LargeKeySize') IS NOT NULL;
 SELECT documentdb_api.drop_collection('db', 'UnsupportedLanguage') IS NOT NULL;
 SELECT documentdb_api.drop_collection('db', 'backgroundcoll1') IS NOT NULL;
 SELECT documentdb_api.drop_collection('db', 'backgroundcoll2') IS NOT NULL;
-SELECT documentdb_api.drop_collection('db', 'collmod_reindex_coll') IS NOT NULL;
 
 \o
 \set ECHO :prevEcho

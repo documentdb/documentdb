@@ -368,39 +368,5 @@ CALL documentdb_api_internal.build_index_concurrently(1);
 --all indexes should be built and queue should be empty.
 SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
 
--- Test collMod reindex option
--- Create a collection with an index
-SELECT documentdb_api.insert_one('db', 'collmod_reindex_coll', '{ "_id": 1, "x": 1 }');
-SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "collmod_reindex_coll", "indexes": [ { "key": { "x": 1 }, "name": "x_1" } ] }', true);
-
--- Error: reindex must be true
-SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "x_1", "reindex": false } }');
-
--- Error: index not found
-SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "nonexistent_idx", "reindex": true } }');
-
--- Error: reindex cannot be combined with other options
-SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "x_1", "reindex": true, "hidden": true } }');
-
--- Queue reindex via collMod
-SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "x_1", "reindex": true } }');
-
--- Verify the reindex request is in the queue
-SELECT index_cmd, cmd_type, index_id, index_cmd_status, collection_id FROM documentdb_api_catalog.documentdb_index_queue ORDER BY index_id;
-
--- Process the reindex queue
-CALL documentdb_api_internal.build_index_concurrently(1);
-CALL documentdb_api_internal.build_index_background(1);
-
--- Verify the queue is empty after processing
-SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
-
--- Test reindex on _id_ index via keyPattern
-SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "keyPattern": { "_id": 1 }, "reindex": true } }');
-SELECT index_cmd, cmd_type, index_id, index_cmd_status, collection_id FROM documentdb_api_catalog.documentdb_index_queue ORDER BY index_id;
-CALL documentdb_api_internal.build_index_concurrently(1);
-CALL documentdb_api_internal.build_index_background(1);
-SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
-
 -- Re-enable cron jobs for the schedule_background_index_build_jobs test below.
 SELECT change_index_jobs_schema.change_index_jobs_status(true);

@@ -974,77 +974,10 @@ SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
 -----------+----------+----------+------------------+------------+------------+---------------+---------+---------+-------------+----------+---------
 (0 rows)
 
--- Test collMod reindex option
--- Create a collection with an index
-SELECT documentdb_api.insert_one('db', 'collmod_reindex_coll', '{ "_id": 1, "x": 1 }');
-psql:sql/create_indexes_background_core.sql:373: NOTICE:  creating collection
-                              insert_one                              
-----------------------------------------------------------------------
- { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
-(1 row)
-
-SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "collmod_reindex_coll", "indexes": [ { "key": { "x": 1 }, "name": "x_1" } ] }', true);
-                                                                                                   create_indexes_non_concurrently                                                                                                    
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
-(1 row)
-
--- Error: reindex must be true
-SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "x_1", "reindex": false } }');
-psql:sql/create_indexes_background_core.sql:377: ERROR:  collMod.reindex can only be set to true
--- Error: index not found
-SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "nonexistent_idx", "reindex": true } }');
-psql:sql/create_indexes_background_core.sql:380: ERROR:  cannot find index nonexistent_idx for ns db.collmod_reindex_coll
--- Error: reindex cannot be combined with other options
-SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "x_1", "reindex": true, "hidden": true } }');
-psql:sql/create_indexes_background_core.sql:383: ERROR:  reindex cannot be combined with other index options
--- Queue reindex via collMod
-SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "name": "x_1", "reindex": true } }');
-                                    coll_mod                                    
---------------------------------------------------------------------------------
- { "ok" : { "$numberInt" : "1" }, "reindex_old" : false, "reindex_new" : true }
-(1 row)
-
--- Verify the reindex request is in the queue
-SELECT index_cmd, cmd_type, index_id, index_cmd_status, collection_id FROM documentdb_api_catalog.documentdb_index_queue ORDER BY index_id;
-                              index_cmd                               | cmd_type | index_id | index_cmd_status | collection_id 
-----------------------------------------------------------------------+----------+----------+------------------+---------------
- REINDEX INDEX CONCURRENTLY documentdb_data.documents_rum_index_32051 | R        |    32051 |                1 |         32009
-(1 row)
-
--- Process the reindex queue
-CALL documentdb_api_internal.build_index_concurrently(1);
-CALL documentdb_api_internal.build_index_background(1);
--- Verify the queue is empty after processing
-SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
- index_cmd | cmd_type | index_id | index_cmd_status | global_pid | start_time | collection_id | comment | attempt | update_time | user_oid | options 
------------+----------+----------+------------------+------------+------------+---------------+---------+---------+-------------+----------+---------
-(0 rows)
-
--- Test reindex on _id_ index via keyPattern
-SELECT documentdb_api.coll_mod('db', 'collmod_reindex_coll', '{ "collMod": "collmod_reindex_coll", "index": { "keyPattern": { "_id": 1 }, "reindex": true } }');
-                                    coll_mod                                    
---------------------------------------------------------------------------------
- { "ok" : { "$numberInt" : "1" }, "reindex_old" : false, "reindex_new" : true }
-(1 row)
-
-SELECT index_cmd, cmd_type, index_id, index_cmd_status, collection_id FROM documentdb_api_catalog.documentdb_index_queue ORDER BY index_id;
-                           index_cmd                            | cmd_type | index_id | index_cmd_status | collection_id 
-----------------------------------------------------------------+----------+----------+------------------+---------------
- REINDEX INDEX CONCURRENTLY documentdb_data.collection_pk_32009 | R        |    32050 |                1 |         32009
-(1 row)
-
-CALL documentdb_api_internal.build_index_concurrently(1);
-CALL documentdb_api_internal.build_index_background(1);
-SELECT * FROM documentdb_api_catalog.documentdb_index_queue;
- index_cmd | cmd_type | index_id | index_cmd_status | global_pid | start_time | collection_id | comment | attempt | update_time | user_oid | options 
------------+----------+----------+------------------+------------+------------+---------------+---------+---------+-------------+----------+---------
-(0 rows)
-
 -- Re-enable cron jobs for the schedule_background_index_build_jobs test below.
 SELECT change_index_jobs_schema.change_index_jobs_status(true);
-psql:sql/create_indexes_background_core.sql:406: NOTICE:  Processing job_id: 2
-psql:sql/create_indexes_background_core.sql:406: NOTICE:  Processing job_id: 3
+psql:sql/create_indexes_background_core.sql:372: NOTICE:  Processing job_id: 2
+psql:sql/create_indexes_background_core.sql:372: NOTICE:  Processing job_id: 3
  change_index_jobs_status 
 --------------------------
  

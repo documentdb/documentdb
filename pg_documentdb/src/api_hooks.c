@@ -69,7 +69,7 @@ TryGetCancelIndexBuildQuery_HookType try_get_cancel_index_build_query_hook =
 	NULL;
 ShouldScheduleIndexBuilds_HookType should_schedule_index_builds_hook = NULL;
 
-GettShardIndexOids_HookType get_shard_index_oids_hook = NULL;
+GetShardIndexOids_HookType get_shard_index_oids_hook = NULL;
 UpdatePostgresIndex_HookType update_postgres_index_hook = NULL;
 GetOperationCancellationQuery_HookType get_operation_cancellation_query_hook = NULL;
 
@@ -587,11 +587,11 @@ ShouldScheduleIndexBuildJobs(void)
 
 
 List *
-GetShardIndexOids(uint64_t collectionId, int indexId, bool ignoreMissing)
+GetShardIndexOids(uint64_t collectionId, Oid indexOid, bool ignoreMissing)
 {
 	if (get_shard_index_oids_hook != NULL)
 	{
-		return get_shard_index_oids_hook(collectionId, indexId, ignoreMissing);
+		return get_shard_index_oids_hook(collectionId, indexOid, ignoreMissing);
 	}
 
 	return NIL;
