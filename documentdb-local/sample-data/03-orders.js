@@ -165,13 +165,16 @@ db.orders.insertMany([
     }
 ]);
 
-print("Created " + db.orders.countDocuments() + " orders in the orders collection");
-
 // Create indexes for better query performance
-db.orders.createIndex({ "userId": 1 });
-db.orders.createIndex({ "orderNumber": 1 }, { unique: true });
-db.orders.createIndex({ "status": 1 });
-db.orders.createIndex({ "orderDate": 1 });
-db.orders.createIndex({ "customerInfo.email": 1 });
+db.runCommand({
+    createIndexes: "orders",
+    indexes: [
+        { key: { "userId": 1 }, name: "userId_1" },
+        { key: { "orderNumber": 1 }, name: "orderNumber_1", unique: true },
+        { key: { "status": 1 }, name: "status_1" },
+        { key: { "orderDate": 1 }, name: "orderDate_1" },
+        { key: { "customerInfo.email": 1 }, name: "customerInfo.email_1" }
+    ]
+});
 
 print("Created indexes on orders collection");

@@ -85,7 +85,7 @@ wait_for_sample_data() {
 
 echo "=== Test: Default mode (TLS not enforced) ==="
 
-docker run -d --name "$DEFAULT_CONTAINER" "$IMAGE_NAME" --password mypassword
+docker run -d --name "$DEFAULT_CONTAINER" "$IMAGE_NAME" --password mypassword --init-data true
 wait_for_ping "$DEFAULT_CONTAINER" false
 wait_for_sample_data "$DEFAULT_CONTAINER" true
 
@@ -137,7 +137,7 @@ echo ""
 echo "=== Test: --tlsMode requireTLS ==="
 
 docker run -d --name "$ENFORCE_CONTAINER" "$IMAGE_NAME" \
-    --password mypassword --tlsMode requireTLS
+    --password mypassword --tlsMode requireTLS --init-data true
 wait_for_ping "$ENFORCE_CONTAINER" true
 wait_for_sample_data "$ENFORCE_CONTAINER" true
 
