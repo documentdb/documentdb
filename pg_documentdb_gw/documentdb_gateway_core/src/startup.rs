@@ -43,9 +43,7 @@ pub fn get_service_context(
 
 /// # Panics
 ///
-/// Panics if an internal invariant is violated.
-/// # Panics
-/// Panics if postgres object creation fails after max retries.
+/// Panics if `create_func` keeps failing after the configured startup wait window.
 pub async fn create_postgres_object<T, F, Fut>(
     create_func: F,
     setup_configuration: &dyn SetupConfiguration,
@@ -54,18 +52,100 @@ where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<T>>,
 {
+    create_postgres_object_with_retry_interval(
+        create_func,
+        setup_configuration,
+        Duration::from_secs(10),
+    )
+    .await
+}
+
+async fn create_postgres_object_with_retry_interval<T, F, Fut>(
+    create_func: F,
+    setup_configuration: &dyn SetupConfiguration,
+    wait_time: Duration,
+) -> T
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
     let max_time = Duration::from_secs(setup_configuration.postgres_startup_wait_time_seconds());
-    let wait_time = Duration::from_secs(10);
     let start = Instant::now();
 
-    match create_func().await {
-        Ok(result) => result,
-        Err(e) => {
-            if start.elapsed() < max_time {
-                tracing::warn!("Exception when creating postgres object {e:?}");
+    loop {
+        match create_func().await {
+            Ok(result) => return result,
+            Err(error) if start.elapsed() < max_time => {
+                tracing::warn!(
+                    "Exception when creating postgres object {error:?}. Retrying in \
+                     {wait_time:?}."
+                );
                 tokio::time::sleep(wait_time).await;
             }
-            panic!("Failed to create postgres object after {max_time:?}: {e}");
+            Err(error) => {
+                panic!("Failed to create postgres object after {max_time:?}: {error}");
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::{configuration::DocumentDBSetupConfiguration, error::DocumentDBError};
+
+    #[tokio::test]
+    async fn create_postgres_object_retries_until_success() {
+        let setup_configuration = DocumentDBSetupConfiguration {
+            postgres_startup_wait_time_seconds: Some(1),
+            ..Default::default()
+        };
+        let attempts = Arc::new(AtomicUsize::new(0));
+
+        let result = create_postgres_object_with_retry_interval(
+            || {
+                let attempts = Arc::clone(&attempts);
+                async move {
+                    let attempt = attempts.fetch_add(1, Ordering::Relaxed);
+
+                    if attempt < 2 {
+                        Err(DocumentDBError::internal_error(
+                            "temporary startup failure".to_owned(),
+                        ))
+                    } else {
+                        Ok(42)
+                    }
+                }
+            },
+            &setup_configuration,
+            Duration::from_millis(1),
+        )
+        .await;
+
+        assert_eq!(42, result);
+        assert_eq!(3, attempts.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "Failed to create postgres object after 0ns")]
+    async fn create_postgres_object_panics_after_timeout() {
+        let setup_configuration = DocumentDBSetupConfiguration {
+            postgres_startup_wait_time_seconds: Some(0),
+            ..Default::default()
+        };
+
+        create_postgres_object_with_retry_interval(
+            || async {
+                Err::<(), _>(DocumentDBError::internal_error(
+                    "permanent startup failure".to_owned(),
+                ))
+            },
+            &setup_configuration,
+            Duration::from_millis(1),
+        )
+        .await;
     }
 }

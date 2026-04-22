@@ -11,9 +11,7 @@ use std::{sync::Arc, time::Duration};
 
 use documentdb_gateway_core::{
     configuration::{DocumentDBSetupConfiguration, PgConfiguration, SetupConfiguration},
-    postgres::{
-        conn_mgmt::create_connection_pool_manager, create_query_catalog, DocumentDBDataClient,
-    },
+    postgres::{conn_mgmt, create_query_catalog, DocumentDBDataClient},
     run_gateway,
     service::TlsProvider,
     shutdown_controller::SHUTDOWN_CONTROLLER,
@@ -110,9 +108,15 @@ async fn run_docdb_gateway(setup_configuration_file: &str) {
     .await
     .expect("Failed to create TLS provider.");
 
-    let connection_pool_manager = create_connection_pool_manager(
-        create_query_catalog(),
-        Box::new(setup_configuration.clone()),
+    let connection_pool_manager = create_postgres_object(
+        || async {
+            conn_mgmt::create_connection_pool_manager(
+                create_query_catalog(),
+                Box::new(setup_configuration.clone()),
+            )
+            .await
+        },
+        &setup_configuration,
     )
     .await;
 
