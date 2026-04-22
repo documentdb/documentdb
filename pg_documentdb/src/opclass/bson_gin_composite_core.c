@@ -46,6 +46,7 @@
  #include "utils/utf8_utils.h"
 
 extern bool EnableRegexPrefixIndexBounds;
+extern bool EnableCompositeReducedCorrelatedPrefixTrim;
 
 /* --------------------------------------------------------- */
 /* Data-types */
@@ -672,22 +673,154 @@ MergeSingleVariableBounds(List *boundsList, const char **wildcardPath,
 }
 
 
+/*
+ * For composite indexes with reduced correlated terms, trims secondary variable
+ * bounds within each dotted-prefix group. Paths sharing the same top-level prefix
+ * (e.g. "b.c" and "b.d" both have prefix "b") are grouped together, and only the
+ * one with the lowest indexAttribute among the *filtered* paths keeps its bounds.
+ * The rest are widened to (MinKey, MaxKey) and deferred to runtime recheck.
+ *
+ * Non-dotted paths are never trimmed. If the query only filters on one path within
+ * a prefix group, that path retains its bounds regardless of index key position.
+ */
 void
 TrimSecondaryVariableBounds(VariableIndexBounds *variableBounds,
-							CompositeQueryRunData *runData)
+							CompositeQueryRunData *runData,
+							const char *indexPaths[INDEX_MAX_KEYS])
 {
+	int32_t numPaths = runData->metaInfo->numIndexPaths;
+
+	/*
+	 * If prefix-group-aware trimming is disabled, fall back to the legacy
+	 * behavior: trim all variable bounds whose indexAttribute > 0.
+	 */
+	if (!EnableCompositeReducedCorrelatedPrefixTrim)
+	{
+		ListCell *cell;
+		foreach(cell, variableBounds->variableBoundsList)
+		{
+			CompositeIndexBoundsSet *set = (CompositeIndexBoundsSet *) lfirst(cell);
+			if (set->indexAttribute > 0)
+			{
+				runData->metaInfo->requiresRuntimeRecheck = true;
+				variableBounds->variableBoundsList = foreach_delete_current(
+					variableBounds->variableBoundsList, cell);
+				continue;
+			}
+		}
+		return;
+	}
+
+	/*
+	 * Build an htab mapping each dotted prefix to the lowest index attribute
+	 * among the bounds that are actually present in the query filter.
+	 * Only paths in the variable bounds list participate, so if b.d is
+	 * filtered but b.c is not, "b" maps to b.d's attribute (the keeper).
+	 */
+	HTAB *prefixMap = CreatePgbsonElementHashSet();
+
 	ListCell *cell;
 	foreach(cell, variableBounds->variableBoundsList)
 	{
+		/*
+		 * TODO: when we start tracking per index column multi-key status we can just apply this for multi-key columns.
+		 * e.g: if there is an index { foo.a: 1, foo.b: 1, bar.a: 1, bar.b: 1 }, where only foo is multi-key, we should be able to push all filters for bar to the index.
+		 */
 		CompositeIndexBoundsSet *set = (CompositeIndexBoundsSet *) lfirst(cell);
-		if (set->indexAttribute > 0)
+		int32_t attr = set->indexAttribute;
+
+		if (attr < 0 || attr >= numPaths)
+		{
+			continue;
+		}
+
+		const char *path = indexPaths[attr];
+		const char *dot = strchr(path, '.');
+		if (dot == NULL)
+		{
+			continue;
+		}
+
+		int32_t prefixLen = (int32_t) (dot - path);
+		if (prefixLen <= 0)
+		{
+			continue;
+		}
+
+		pgbsonelement keyElement = { 0 };
+		keyElement.path = path;
+		keyElement.pathLength = prefixLen;
+
+		bool found = false;
+		pgbsonelement *entry = hash_search(prefixMap, &keyElement,
+										   HASH_ENTER, &found);
+		if (!found)
+		{
+			entry->bsonValue.value_type = BSON_TYPE_INT32;
+			entry->bsonValue.value.v_int32 = attr;
+		}
+		else if (attr < entry->bsonValue.value.v_int32)
+		{
+			entry->bsonValue.value.v_int32 = attr;
+		}
+	}
+
+	/* If no dotted paths were found in the filter, nothing to trim. */
+	if (hash_get_num_entries(prefixMap) == 0)
+	{
+		hash_destroy(prefixMap);
+		return;
+	}
+
+	/*
+	 * Trim variable bounds for dotted paths whose attribute is not the
+	 * group leader for its prefix. Non-dotted paths are never trimmed.
+	 */
+	foreach(cell, variableBounds->variableBoundsList)
+	{
+		CompositeIndexBoundsSet *set = (CompositeIndexBoundsSet *) lfirst(cell);
+		int32_t attr = set->indexAttribute;
+
+		/* We skip the first attribute of the index (0) because we always can push the first attribute's bounds to the index. */
+		if (attr <= 0 || attr >= numPaths)
+		{
+			continue;
+		}
+
+		const char *path = indexPaths[attr];
+
+		const char *dot = strchr(path, '.');
+		if (dot == NULL)
+		{
+			/* Non-dotted path — never trim */
+			continue;
+		}
+
+		int32_t prefixLen = (int32_t) (dot - path);
+		if (prefixLen <= 0)
+		{
+			continue;
+		}
+
+		pgbsonelement keyElement = { 0 };
+		keyElement.path = path;
+		keyElement.pathLength = prefixLen;
+
+		bool found = false;
+		pgbsonelement *entry = hash_search(prefixMap, &keyElement,
+										   HASH_FIND, &found);
+		if (found && attr != entry->bsonValue.value.v_int32)
 		{
 			runData->metaInfo->requiresRuntimeRecheck = true;
 			variableBounds->variableBoundsList = foreach_delete_current(
 				variableBounds->variableBoundsList, cell);
+
+			/* continue as we deleted a cell and we must not use the cell pointer after deletion. */
 			continue;
 		}
 	}
+
+	hash_destroy(prefixMap);
 }
 
 
