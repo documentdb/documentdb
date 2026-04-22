@@ -28,7 +28,7 @@ use proc_macro::TokenStream;
 pub fn documentdb_int_error_mapping(_item: TokenStream) -> TokenStream {
     let mut result = String::new();
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../pg_documentdb_core/include/utils/all_error_mappings_oss_generated.csv");
+        .join("../../pg_documentdb_gw/include/all_error_mappings_oss_generated.csv");
     let csv = std::fs::File::open(path).unwrap();
     let reader = std::io::BufReader::new(csv);
 
@@ -70,7 +70,7 @@ pub fn documentdb_int_error_mapping(_item: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn documentdb_error_code_enum(_item: TokenStream) -> TokenStream {
     let external_error_mapping_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../pg_documentdb_core/include/utils/all_error_mappings_oss_generated.csv");
+        .join("../../pg_documentdb_gw/include/all_error_mappings_oss_generated.csv");
 
     let csv = std::fs::read_to_string(&external_error_mapping_path)
         .expect("Could not read external_error_mapping.csv");
