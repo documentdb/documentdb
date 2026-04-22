@@ -170,7 +170,7 @@ ENV CERT_PATH="" \
     PG_VERSION_USED="${POSTGRES_VERSION}" \
     ALLOW_EXTERNAL_CONNECTIONS="false" \
     TLS_MODE="allowTLS" \
-    INIT_DATA="true" \
+    INIT_DATA="" \
     INIT_DATA_PATH="/init_doc_db.d" \
     PATH=/usr/lib/postgresql/${POSTGRES_VERSION}/bin:$PATH
 

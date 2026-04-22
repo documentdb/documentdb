@@ -97,14 +97,17 @@ Optional arguments:
                         Allow external connections to PostgreSQL.
                         Defaults to false.
                         Overrides ALLOW_EXTERNAL_CONNECTIONS environment variable.
+  --init-data [true|false]
+                        Enable initialization with built-in sample data.
+                        Defaults to false.
+                        Overrides INIT_DATA environment variable.
   --init-data-path [PATH]
                         Specify a directory containing JavaScript files for database initialization.
                         Files will be executed in alphabetical order using mongosh.
-                        When this option is used, built-in sample data is automatically disabled.
                         Defaults to /init_doc_db.d
                         Overrides INIT_DATA_PATH environment variable.
   --skip-init-data      Skip initialization with built-in sample data.
-                        By default, sample collections (users, products, orders, analytics) in 'sampledb' database will be created.
+                        Legacy alias for --init-data false.
                         Overrides SKIP_INIT_DATA environment variable.
   --disable-extended-rum
                         Disable the use of extended_rum for indexes.
@@ -200,13 +203,18 @@ do
         export ALLOW_EXTERNAL_CONNECTIONS=$1
         shift;;
 
+    --init-data)
+        shift
+        export INIT_DATA=$1
+        shift;;
+
     --init-data-path)
         shift
         export INIT_DATA_PATH=$1
-        export SKIP_INIT_DATA=true  # Disable built-in sample data when custom path is provided
         shift;;
 
     --skip-init-data)
+        export INIT_DATA=false
         export SKIP_INIT_DATA=true
         shift;;
 
@@ -233,8 +241,9 @@ export USERNAME=${USERNAME:-default_user}
 export PASSWORD=${PASSWORD:-Admin100}
 export CREATE_USER=${CREATE_USER:-true}
 export START_POSTGRESQL=${START_POSTGRESQL:-true}
+export INIT_DATA=${INIT_DATA:-}
 export INIT_DATA_PATH=${INIT_DATA_PATH:-/init_doc_db.d}
-export SKIP_INIT_DATA=${SKIP_INIT_DATA:-false}
+export SKIP_INIT_DATA=${SKIP_INIT_DATA:-}
 export DISABLE_EXTENDED_RUM=${DISABLE_EXTENDED_RUM:-false}
 export TLS_MODE=${TLS_MODE:-allowTLS}
 export GATEWAY_HOME=${GATEWAY_HOME:-/home/documentdb/gateway}
@@ -307,11 +316,32 @@ if [ -n "$LOG_LEVEL" ] && \
     exit 1
 fi
 
+if [ -n "$INIT_DATA" ] && \
+   [ "$INIT_DATA" != "true" ] && \
+   [ "$INIT_DATA" != "false" ]; then
+    echo "Invalid init-data value $INIT_DATA, must be true or false"
+    exit 1
+fi
+
 if [ -n "$SKIP_INIT_DATA" ] && \
    [ "$SKIP_INIT_DATA" != "true" ] && \
    [ "$SKIP_INIT_DATA" != "false" ]; then
     echo "Invalid skip-init-data value $SKIP_INIT_DATA, must be true or false"
     exit 1
+fi
+
+if [ -z "$INIT_DATA" ]; then
+    if [ "$SKIP_INIT_DATA" = "false" ]; then
+        export INIT_DATA=true
+    else
+        export INIT_DATA=false
+    fi
+fi
+
+if [ "$INIT_DATA" = "true" ]; then
+    export SKIP_INIT_DATA=false
+else
+    export SKIP_INIT_DATA=true
 fi
 
 case "$TLS_MODE" in
@@ -505,8 +535,8 @@ if [ -d "$INIT_DATA_PATH" ] && [ "$(ls -A "$INIT_DATA_PATH"/*.js 2>/dev/null)" ]
     fi
 fi
 
-# Initialize database with sample data if enabled (default behavior unless --skip-init-data is specified)
-if [ "$SKIP_INIT_DATA" != "true" ]; then
+# Initialize database with sample data if explicitly enabled
+if [ "$INIT_DATA" = "true" ]; then
     echo "Initializing database with built-in sample data..."
     
     # Use the sample data directory
@@ -540,9 +570,9 @@ if [ "$SKIP_INIT_DATA" != "true" ]; then
     fi
 fi
 
-if [ "$custom_data_initialized" = "false" ] && [ "$SKIP_INIT_DATA" = "true" ]; then
-    echo "No initialization data loaded (--skip-init-data was specified)."
-    echo "To load data: use --init-data-path [PATH] for custom data, or remove --skip-init-data for built-in sample data."
+if [ "$custom_data_initialized" = "false" ] && [ "$INIT_DATA" != "true" ]; then
+    echo "No initialization data loaded."
+    echo "To load data: use --init-data true for built-in sample data, or --init-data-path [PATH] for custom data."
 fi
 # Also stream existing gateway logs (for historical logs that might already exist)
 if [ -f "$GATEWAY_LOG" ]; then

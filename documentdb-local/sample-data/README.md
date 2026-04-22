@@ -31,7 +31,7 @@ Contains sample analytics and reporting data:
 - Monthly summary metrics
 - Daily user activity logs
 - Product performance data
-- Sample aggregation examples
+- Fields that can be queried with aggregation pipelines after startup
 
 ## Database Structure
 
@@ -39,7 +39,7 @@ All sample data is inserted into the `sampledb` database to keep it separate fro
 
 ## Usage
 
-These files are automatically executed when the DocumentDB container starts (unless `--skip-init-data` or `SKIP_INIT_DATA=true` is supplied). They can also be run manually using mongosh:
+These files are executed when the DocumentDB container starts only if built-in sample data is explicitly enabled with `--init-data true` or `INIT_DATA=true`. They can also be run manually using mongosh:
 
 ```bash
 mongosh localhost:10260 -u username -p mypassword --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --file 01-users.js

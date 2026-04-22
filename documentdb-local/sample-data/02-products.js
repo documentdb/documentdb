@@ -135,13 +135,16 @@ db.products.insertMany([
     }
 ]);
 
-print("Created " + db.products.countDocuments() + " products in the products collection");
-
 // Create indexes for better query performance
-db.products.createIndex({ "category": 1 });
-db.products.createIndex({ "brand": 1 });
-db.products.createIndex({ "price": 1 });
-db.products.createIndex({ "tags": 1 });
-db.products.createIndex({ "sku": 1 }, { unique: true });
+db.runCommand({
+    createIndexes: "products",
+    indexes: [
+        { key: { "category": 1 }, name: "category_1" },
+        { key: { "brand": 1 }, name: "brand_1" },
+        { key: { "price": 1 }, name: "price_1" },
+        { key: { "tags": 1 }, name: "tags_1" },
+        { key: { "sku": 1 }, name: "sku_1", unique: true }
+    ]
+});
 
 print("Created indexes on products collection");
