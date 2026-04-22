@@ -171,6 +171,11 @@ bool EnableUniqueCompositeReducedCorrelatedTerms =
 bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath =
 	DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS_ON_COMMON_SUBPATH;
 
+/* Added in v113, enabled in v113, remove after v116 */
+#define DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_PREFIX_TRIM true
+bool EnableCompositeReducedCorrelatedPrefixTrim =
+	DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_PREFIX_TRIM;
+
 /* Longer term feature flag to track older cluster data: Move to testing_configs when convenient */
 /* Added in v109, enabled in v109, remove after v999 */
 #define DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS true
@@ -897,6 +902,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable reduced term generation for correlated composite paths on common sub-paths."),
 		NULL, &EnableCompositeReducedCorrelatedTermsOnCommonSubPath,
 		DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS_ON_COMMON_SUBPATH,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCompositeReducedCorrelatedPrefixTrim", newGucPrefix),
+		gettext_noop(
+			"Whether to enable prefix-group-aware trimming of secondary variable bounds for reduced correlated composite indexes."),
+		NULL, &EnableCompositeReducedCorrelatedPrefixTrim,
+		DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_PREFIX_TRIM,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

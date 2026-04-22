@@ -179,7 +179,8 @@ static void OptimizeVariableBoundsForQuery(CompositeQueryRunData *runData,
 										   VariableIndexBounds *variableBounds,
 										   bool hasArrayPaths, bool isOrderedScan,
 										   bool isCorrelatedReducedScan,
-										   BsonGinCompositePathOptions *options);
+										   BsonGinCompositePathOptions *options,
+										   const char *indexPaths[INDEX_MAX_KEYS]);
 static void OptimizeVariableBoundsForOrderedScans(CompositeQueryRunData *runData,
 												  VariableIndexBounds *variableBounds,
 												  bool hasArrayPaths);
@@ -437,7 +438,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	 */
 	OptimizeVariableBoundsForQuery(runData, &variableBounds, hasArrayPaths,
 								   metaInfo->isOrderedScan,
-								   isCorrelatedReducedScan, options);
+								   isCorrelatedReducedScan, options, indexPaths);
 
 	/* Tally up the total variable bound counts - this is the permutation of all variable terms
 	 * e.g. if we have { "a": { "$in": [ 1, 2, 3 ]}} && { "b": { "$in": [ 4, 5 ] } }
@@ -849,7 +850,8 @@ OptimizeVariableBoundsForQuery(CompositeQueryRunData *runData,
 							   VariableIndexBounds *variableBounds,
 							   bool hasArrayPaths, bool isOrderedScan,
 							   bool isCorrelatedReducedScan,
-							   BsonGinCompositePathOptions *options)
+							   BsonGinCompositePathOptions *options,
+							   const char *indexPaths[INDEX_MAX_KEYS])
 {
 	if (runData->metaInfo->wildcardPathIndex >= 0)
 	{
@@ -866,7 +868,7 @@ OptimizeVariableBoundsForQuery(CompositeQueryRunData *runData,
 		if (isCorrelatedReducedScan && options->enableCompositeReducedCorrelatedTerms)
 		{
 			/* In a reduced scan, we can't filter on any paths that's not the first path */
-			TrimSecondaryVariableBounds(variableBounds, runData);
+			TrimSecondaryVariableBounds(variableBounds, runData, indexPaths);
 		}
 
 		if (!hasArrayPaths)

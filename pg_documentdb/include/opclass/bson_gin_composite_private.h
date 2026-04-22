@@ -220,7 +220,8 @@ List * MergeSingleVariableBounds(List *variableBounds, const char **wildcardPath
 List * MergeWildCardSingleVariableBounds(List *variableBounds);
 
 void TrimSecondaryVariableBounds(VariableIndexBounds *variableBounds,
-								 CompositeQueryRunData *runData);
+								 CompositeQueryRunData *runData,
+								 const char *indexPaths[INDEX_MAX_KEYS]);
 void PickVariableBoundsForOrderedScan(VariableIndexBounds *variableBounds,
 									  CompositeQueryRunData *runData);
 void PopulateTermMetadataForTruncation(IndexTermCreateMetadata *metadata, const
