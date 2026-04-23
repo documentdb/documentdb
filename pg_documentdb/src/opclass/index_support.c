@@ -346,7 +346,6 @@ static const ForceIndexSupportFuncs ForceIndexOperatorSupport[] =
 extern bool EnableVectorForceIndexPushdown;
 extern bool EnableGeonearForceIndexPushdown;
 extern bool EnableCompositeIndexPlanner;
-extern bool LowSelectivityForLookup;
 extern bool EnableExprLookupIndexPushdown;
 extern bool EnableUnifyPfeOnIndexInfo;
 extern bool EnableIdIndexPushdown;
@@ -475,8 +474,7 @@ bson_dollar_lookup_filter_support(PG_FUNCTION_ARGS)
 {
 	Node *supportRequest = (Node *) PG_GETARG_POINTER(0);
 
-	if (LowSelectivityForLookup &&
-		IsA(supportRequest, SupportRequestSelectivity))
+	if (IsA(supportRequest, SupportRequestSelectivity))
 	{
 		SupportRequestSelectivity *req = (SupportRequestSelectivity *) supportRequest;
 
