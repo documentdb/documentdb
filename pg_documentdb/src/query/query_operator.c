@@ -141,7 +141,6 @@ typedef struct MatchNamespaceFiltersContext
 } MatchNamespaceFiltersContext;
 
 extern bool EnableCollation;
-extern bool EnableIdIndexPushdown;
 extern bool EnableDollarInToScalarArrayOpExprConversion;
 extern bool EnableIdIndexPushdownForQueryOp;
 
@@ -4034,13 +4033,10 @@ CheckAndAddIdFilter(List *opArgs, IdFilterWalkerContext *context,
 				context->idQuals = lappend(context->idQuals, documentIdFilter);
 
 				/* Since btree doesn't do type bracketing - apply type bracketing here */
-				if (EnableIdIndexPushdown)
-				{
-					documentIdFilter =
-						MakeUpperBoundIdExpr(&qualElement.bsonValue,
-											 context->collectionVarno);
-					context->idQuals = lappend(context->idQuals, documentIdFilter);
-				}
+				documentIdFilter =
+					MakeUpperBoundIdExpr(&qualElement.bsonValue,
+										 context->collectionVarno);
+				context->idQuals = lappend(context->idQuals, documentIdFilter);
 
 				return;
 			}
@@ -4053,15 +4049,12 @@ CheckAndAddIdFilter(List *opArgs, IdFilterWalkerContext *context,
 				context->idQuals = lappend(context->idQuals, documentIdFilter);
 
 				/* Since btree doesn't do type bracketing - apply type bracketing here */
-				if (EnableIdIndexPushdown)
-				{
-					documentIdFilter = MakeLowerBoundIdExpr(&qualElement.bsonValue,
-															context->collectionVarno);
-					context->idQuals = lappend(context->idQuals, documentIdFilter);
-				}
+				documentIdFilter = MakeLowerBoundIdExpr(&qualElement.bsonValue,
+														context->collectionVarno);
+				context->idQuals = lappend(context->idQuals, documentIdFilter);
+
 				return;
 			}
-
 
 			case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
 			{
@@ -4071,13 +4064,10 @@ CheckAndAddIdFilter(List *opArgs, IdFilterWalkerContext *context,
 				context->idQuals = lappend(context->idQuals, documentIdFilter);
 
 				/* Since btree doesn't do type bracketing - apply type bracketing here */
-				if (EnableIdIndexPushdown)
-				{
-					documentIdFilter =
-						MakeUpperBoundIdExpr(&qualElement.bsonValue,
-											 context->collectionVarno);
-					context->idQuals = lappend(context->idQuals, documentIdFilter);
-				}
+				documentIdFilter =
+					MakeUpperBoundIdExpr(&qualElement.bsonValue,
+										 context->collectionVarno);
+				context->idQuals = lappend(context->idQuals, documentIdFilter);
 
 				return;
 			}
@@ -4090,12 +4080,9 @@ CheckAndAddIdFilter(List *opArgs, IdFilterWalkerContext *context,
 				context->idQuals = lappend(context->idQuals, documentIdFilter);
 
 				/* Since btree doesn't do type bracketing - apply type bracketing here */
-				if (EnableIdIndexPushdown)
-				{
-					documentIdFilter = MakeLowerBoundIdExpr(&qualElement.bsonValue,
-															context->collectionVarno);
-					context->idQuals = lappend(context->idQuals, documentIdFilter);
-				}
+				documentIdFilter = MakeLowerBoundIdExpr(&qualElement.bsonValue,
+														context->collectionVarno);
+				context->idQuals = lappend(context->idQuals, documentIdFilter);
 
 				return;
 			}
