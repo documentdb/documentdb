@@ -35,7 +35,7 @@
 * Enable collated index pushdown for collation-insensitive operators; avoid pushdown for unsupported operator strategies. *[Feature]*
 
 
-### documentdb v0.110-0 (Unreleased) ###
+### documentdb v0.110-0 (April 22, 2026) ###
 * Add support for keyword `description` in `$jsonSchema` *[Feature]*
 * Integrate cargo tools to identify dependencies for pg_documentdb_gw *[Feature]* (#263)
 * Add support for killSessions command *[Feature]* (#402)
