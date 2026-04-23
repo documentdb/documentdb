@@ -6487,10 +6487,16 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 	 * For multi-field document _id with index pushdown, decompose into
 	 * individual per-field GROUP BY expressions.
 	 */
-	bool useDecomposedGroupBy = isGroupByValidForIndexPushdown &&
-								idValue.value_type == BSON_TYPE_DOCUMENT &&
-								numGroupByFields > 1 &&
-								!isGroupConstant &&
+	bool canUseDecomposedGroupBy = isGroupByValidForIndexPushdown &&
+								   idValue.value_type == BSON_TYPE_DOCUMENT &&
+								   numGroupByFields > 1 &&
+								   !isGroupConstant;
+	if (canUseDecomposedGroupBy)
+	{
+		ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_DECOMPOSED_GROUP_BY);
+	}
+
+	bool useDecomposedGroupBy = canUseDecomposedGroupBy &&
 								EnableGroupByCompoundIdIndexPushdown;
 
 	Const *idFieldText = MakeTextConst("_id", 3);
