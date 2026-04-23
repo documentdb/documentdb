@@ -224,10 +224,6 @@ bool EnablePartialMatchHasRecheck = DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK;
  * SECTION: Planner feature flags
  */
 
-/* Added in v108, enabled in v108, remove after v110 */
-#define DEFAULT_LOW_SELECTIVITY_FOR_LOOKUP true
-bool LowSelectivityForLookup = DEFAULT_LOW_SELECTIVITY_FOR_LOOKUP;
-
 /* Added in v109, enabled in v109, remove after v112 */
 #define DEFAULT_ENABLE_EXPR_LOOKUP_INDEX_PUSHDOWN true
 bool EnableExprLookupIndexPushdown = DEFAULT_ENABLE_EXPR_LOOKUP_INDEX_PUSHDOWN;
@@ -618,14 +614,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Determines whether native authentication is enabled."),
 		NULL, &IsNativeAuthEnabled,
 		DEFAULT_ENABLE_NATIVE_AUTHENTICATION,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.lowSelectivityForLookup", newGucPrefix),
-		gettext_noop(
-			"Whether or not to use low selectivity for lookup."),
-		NULL, &LowSelectivityForLookup,
-		DEFAULT_LOW_SELECTIVITY_FOR_LOOKUP,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

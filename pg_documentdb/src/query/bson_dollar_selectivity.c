@@ -27,7 +27,6 @@
 
 extern bool EnablePerCollectionPlannerStatistics;
 extern bool EnableCompositeIndexPlanner;
-extern bool LowSelectivityForLookup;
 
 static double GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double
 									   defaultExprSelectivity,
@@ -232,8 +231,7 @@ GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double defaultExprSe
 	Node *secondNode = lsecond(args);
 	if (!IsA(secondNode, Const))
 	{
-		if (LowSelectivityForLookup &&
-			IsLookupExtractFuncExpr(secondNode))
+		if (IsLookupExtractFuncExpr(secondNode))
 		{
 			/* This means a lookup modified index qual, consider low selectivity */
 			return LowSelectivity;
@@ -374,8 +372,7 @@ GetDisableStatisticSelectivity(List *args, double defaultExprSelectivity)
 	Node *secondNode = lsecond(args);
 	if (!IsA(secondNode, Const))
 	{
-		if (LowSelectivityForLookup &&
-			IsLookupExtractFuncExpr(secondNode))
+		if (IsLookupExtractFuncExpr(secondNode))
 		{
 			/* This means a lookup modified index qual, consider low selectivity */
 			return LowSelectivity;
