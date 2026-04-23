@@ -348,7 +348,6 @@ extern bool EnableGeonearForceIndexPushdown;
 extern bool EnableCompositeIndexPlanner;
 extern bool EnableExprLookupIndexPushdown;
 extern bool EnableUnifyPfeOnIndexInfo;
-extern bool EnableIdIndexPushdown;
 extern bool ForceIndexOnlyScanIfAvailable;
 extern bool EnableIdIndexCustomCostFunction;
 extern bool EnableIndexOnlyScan;
@@ -1894,8 +1893,7 @@ ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 			continue;
 		}
 
-		if (IsBtreePrimaryKeyIndex(indexPath->indexinfo) &&
-			EnableIdIndexPushdown)
+		if (IsBtreePrimaryKeyIndex(indexPath->indexinfo))
 		{
 			if (EnableIdIndexCustomCostFunction && !ForceIndexOnlyScanIfAvailable)
 			{
@@ -3944,9 +3942,7 @@ ReplaceFunctionOperatorsInPlanPath(PlannerInfo *root, RelOptInfo *rel, Path *pat
 		indexPath = OptimizeIndexPathForFilters(indexPath, context);
 
 		/* For btree indexscans ensure that we trim alternate quals */
-		if (isPrimaryKeyIndexPath &&
-			EnableIdIndexPushdown &&
-			indexPath->path.pathtype != T_IndexOnlyScan)
+		if (isPrimaryKeyIndexPath && indexPath->path.pathtype != T_IndexOnlyScan)
 		{
 			bool hasOtherQualsIgnore = false;
 			path = (Path *) TrimIndexRestrictInfoForBtreePath(root, indexPath,
