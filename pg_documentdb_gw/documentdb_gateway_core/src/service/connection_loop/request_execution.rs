@@ -321,7 +321,7 @@ mod tests {
         let (response_header, response_document) = decode_op_msg_response(&response_bytes);
         assert_header_matches(
             &response_header,
-            response_header.length,
+            response_header.message_length(),
             71,
             71,
             OpCode::Msg,

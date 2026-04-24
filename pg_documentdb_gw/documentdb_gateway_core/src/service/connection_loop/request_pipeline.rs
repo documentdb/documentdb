@@ -42,7 +42,8 @@ where
     let request_tracker = RequestTracker::new();
 
     let read_request_start = Instant::now();
-    let message = match protocol::reader::read_request(header, reader).await {
+    let authenticated = connection_context.auth_state.is_authorized();
+    let message = match protocol::reader::read_request(authenticated, header, reader).await {
         Ok(message) => message,
         Err(error) => {
             error_reply::reply_with_request_error::<W>(
@@ -251,13 +252,9 @@ mod tests {
         let logout_document = logout_document();
         let (_, full_body) = build_op_msg_parts(&logout_document, 61);
         let truncated_body = full_body[..full_body.len() - 2].to_vec();
-        let header = Header {
-            length: i32::try_from(Header::LENGTH + full_body.len())
-                .expect("message size should fit into i32"),
-            request_id: 61,
-            response_to: 0,
-            op_code: OpCode::Msg,
-        };
+        let length = i32::try_from(Header::LENGTH + full_body.len())
+            .expect("message size should fit into i32");
+        let header = Header::new(length, 61, 0, OpCode::Msg).expect("test header should be valid");
 
         let (response_bytes, next_header_result) = execute_handle_message::<DocumentDBDataClient>(
             &mut connection_context,
@@ -270,7 +267,7 @@ mod tests {
         let (response_header, response_document) = decode_op_msg_response(&response_bytes);
         assert_header_matches(
             &response_header,
-            response_header.length,
+            response_header.message_length(),
             61,
             61,
             OpCode::Msg,
@@ -306,7 +303,7 @@ mod tests {
         let (response_header, response_document) = decode_op_msg_response(&response_bytes);
         assert_header_matches(
             &response_header,
-            response_header.length,
+            response_header.message_length(),
             62,
             62,
             OpCode::Msg,
@@ -342,7 +339,7 @@ mod tests {
         let (response_header, response_document) = decode_op_msg_response(&response_bytes);
         assert_header_matches(
             &response_header,
-            response_header.length,
+            response_header.message_length(),
             63,
             63,
             OpCode::Msg,
@@ -375,7 +372,7 @@ mod tests {
         let (response_header, response_document) = decode_op_msg_response(&response_bytes);
         assert_header_matches(
             &response_header,
-            response_header.length,
+            response_header.message_length(),
             64,
             64,
             OpCode::Msg,
@@ -411,7 +408,7 @@ mod tests {
         let (response_header, response_document) = decode_op_msg_response(&response_bytes);
         assert_header_matches(
             &response_header,
-            response_header.length,
+            response_header.message_length(),
             65,
             65,
             OpCode::Msg,

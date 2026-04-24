@@ -274,9 +274,10 @@ pub fn record_gateway_metrics(
         .operation_duration_total
         .add(duration_to_secs(duration_ns), &base_attrs);
 
-    metrics
-        .request_size_total
-        .add(u64::from(header.length.max(0).cast_unsigned()), &base_attrs);
+    metrics.request_size_total.add(
+        u64::from(header.message_length().max(0).cast_unsigned()),
+        &base_attrs,
+    );
 
     let response_size_bytes = match &response {
         Either::Left(resp) => resp
