@@ -943,37 +943,12 @@ impl PgDataClient for DocumentDBDataClient {
 
     async fn execute_reindex(
         &self,
-        request_context: &RequestContext<'_>,
-        connection_context: &ConnectionContext,
+        _request_context: &RequestContext<'_>,
+        _connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let request_info = request_context.info();
-
-        let db = request_info.db()?;
-        let coll = request_info.collection()?;
-
-        let run_reindex = |conn: Arc<Connection>| async move {
-            let rows = conn
-                .query(
-                    self.service_context.query_catalog().re_index(),
-                    &[Type::TEXT, Type::TEXT],
-                    &[&db, &coll],
-                )
-                .await?;
-
-            Ok(Response::Pg(PgResponse::new(rows)))
-        };
-
-        self.run_query(
-            request_context,
-            connection_context,
-            PullConnection::PoolOrTransaction,
-            QueryOptions::builder()
-                .supports_backend_timeout(false)
-                .supports_transaction_timeout(false)
-                .build(),
-            run_reindex,
-        )
-        .await
+        Err(DocumentDBError::command_not_supported(
+            "Not supported operation. Use collMod: \"reindex\" instead.".to_owned(),
+        ))
     }
 
     async fn execute_current_op(

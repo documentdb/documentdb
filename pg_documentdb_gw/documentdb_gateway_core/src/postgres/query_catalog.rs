@@ -623,7 +623,6 @@ pub fn create_query_catalog() -> QueryCatalog {
             // indexing.rs
             create_indexes_background: "SELECT * FROM documentdb_api.create_indexes_background($1, $2)".to_owned(),
             check_build_index_status: "SELECT * FROM documentdb_api_internal.check_build_index_status($1)".to_owned(),
-            re_index: "CALL documentdb_api.re_index($1, $2)".to_owned(),
             drop_indexes: "CALL documentdb_api.drop_indexes($1, $2)".to_owned(),
             list_indexes_cursor_first_page: "SELECT cursorPage, continuation, persistConnection, cursorId FROM documentdb_api.list_indexes_cursor_first_page($1, $2)".to_owned(),
 

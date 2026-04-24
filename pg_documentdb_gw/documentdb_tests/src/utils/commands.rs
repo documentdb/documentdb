@@ -13,17 +13,15 @@ use mongodb::Database;
 ///
 /// Panics if the command succeeds instead of failing, or if the error code/message
 /// does not match the expected values.
-pub async fn execute_command_and_validate_error(
-    db: &Database,
-    command: Document,
+pub fn validate_error(
+    result: Result<Document, mongodb::error::Error>,
     expected_error_code: i32,
     expected_error_message: &str,
     expected_error_code_name: &str,
 ) {
-    let result = db.run_command(command).await;
     match result {
-        Err(e) => {
-            if let mongodb::error::ErrorKind::Command(ref cmd_err) = *e.kind {
+        Err(error) => {
+            if let mongodb::error::ErrorKind::Command(ref cmd_err) = *error.kind {
                 assert_eq!(
                     cmd_err.code, expected_error_code,
                     "Expected error code {expected_error_code}, but got {}",
@@ -42,9 +40,29 @@ pub async fn execute_command_and_validate_error(
                     cmd_err.code_name
                 );
             } else {
-                panic!("Expected CommandError but got different error type: {e:?}");
+                panic!("Expected CommandError but got different error type: {error:?}");
             }
         }
         Ok(_) => panic!("Expected error but command succeeded"),
     }
+}
+
+/// # Panics
+///
+/// Panics if the command succeeds instead of failing, or if the error code/message
+/// does not match the expected values.
+pub async fn execute_command_and_validate_error(
+    db: &Database,
+    command: Document,
+    expected_error_code: i32,
+    expected_error_message: &str,
+    expected_error_code_name: &str,
+) {
+    let result = db.run_command(command).await;
+    validate_error(
+        result,
+        expected_error_code,
+        expected_error_message,
+        expected_error_code_name,
+    );
 }

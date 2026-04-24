@@ -26,6 +26,7 @@ pub mod list_collections;
 pub mod list_databases;
 pub mod multi_connect;
 pub mod rbac_builtin_read_any_database_tests;
+pub mod reindex;
 pub mod rename_collection;
 pub mod session;
 pub mod text_search;
