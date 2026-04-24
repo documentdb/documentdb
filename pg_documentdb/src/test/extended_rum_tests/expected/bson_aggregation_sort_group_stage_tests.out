@@ -1,0 +1,130 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal,public;
+SET documentdb.next_collection_id TO 1800;
+SET documentdb.next_collection_index_id TO 1800;
+-- 1. Setup test data.
+set documentdb.defaultUseCompositeOpClass to on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "fl_grp_test", "indexes": [ { "key": { "g": 1 }, "name": "g_1" } ] }', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one('db', 'fl_grp_test', bson_build_document('_id', i, 'g', chr(65 + (i % 3)), 'v', i * 10, 'seq', i, 'name', concat('name_', i)))) FROM generate_series(1, 1000) AS i;
+ count 
+-------
+  1000
+(1 row)
+
+BEGIN;
+set LOCAL enable_seqscan to off;
+set LOCAL enable_bitmapscan to off;
+set LOCAL enable_hashagg to off;
+ANALYZE documentdb_data.documents_1800;
+-- 2. Without enableSortGroupStage
+SET LOCAL documentdb.enableSortGroupStage TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
+                                        document                                         
+-----------------------------------------------------------------------------------------
+ { "_id" : { "g" : "A" }, "firstVal" : "name_3", "total" : { "$numberInt" : "166833" } }
+ { "_id" : { "g" : "B" }, "firstVal" : "name_1", "total" : { "$numberInt" : "167167" } }
+ { "_id" : { "g" : "C" }, "firstVal" : "name_2", "total" : { "$numberInt" : "166500" } }
+(3 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
+                                                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, bson_expression_get(bsonfirst(agg_stage_1.document, '{"{ \"g\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'total'::text, bsonsum(bson_expression_get(agg_stage_1.document, '{ "" : "$seq" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
+         Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Subquery Scan on agg_stage_1
+               Output: bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+               ->  Index Scan using g_1 on documentdb_data.documents_1801 collection
+                     Output: collection.document, bson_orderby(collection.document, '{ "g" : { "$numberInt" : "1" } }'::bson)
+                     Index Cond: (collection.document @<> '{ "g" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                     Order By: (collection.document |-<> '{ "g" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
+
+-- 3. With enableSortGroupStage on
+SET LOCAL documentdb.enableSortGroupStage TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
+                                        document                                         
+-----------------------------------------------------------------------------------------
+ { "_id" : { "g" : "A" }, "firstVal" : "name_3", "total" : { "$numberInt" : "166833" } }
+ { "_id" : { "g" : "B" }, "firstVal" : "name_1", "total" : { "$numberInt" : "167167" } }
+ { "_id" : { "g" : "C" }, "firstVal" : "name_2", "total" : { "$numberInt" : "166500" } }
+(3 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
+                                                                                                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, bsonfirstonsorted(bson_expression_get(document, '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson) ORDER BY (bson_orderby(document, '{ "g" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST), 'total'::text, bsonsum(bson_expression_get(document, '{ "" : "$seq" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: bson_expression_get(collection.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Scan using g_1 on documentdb_data.documents_1801 collection
+         Output: bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Index Cond: (collection.document @<> '{ "g" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+         Order By: (collection.document |-<> '{ "g" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
+
+-- 4. Sort on v (different from group key g), without enableSortGroupStage
+SET LOCAL documentdb.enableSortGroupStage TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "v": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
+                                        document                                         
+-----------------------------------------------------------------------------------------
+ { "_id" : { "g" : "A" }, "firstVal" : "name_3", "total" : { "$numberInt" : "166833" } }
+ { "_id" : { "g" : "B" }, "firstVal" : "name_1", "total" : { "$numberInt" : "167167" } }
+ { "_id" : { "g" : "C" }, "firstVal" : "name_2", "total" : { "$numberInt" : "166500" } }
+(3 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "v": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
+                                                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, bson_expression_get(bsonfirst(agg_stage_1.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'total'::text, bsonsum(bson_expression_get(agg_stage_1.document, '{ "" : "$seq" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
+         Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Subquery Scan on agg_stage_1
+               Output: bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+               ->  Sort
+                     Output: collection.document, (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson))
+                     Sort Key: (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+                     ->  Index Scan using g_1 on documentdb_data.documents_1801 collection
+                           Output: collection.document, bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)
+                           Index Cond: (collection.document @<> '{ "g" : { "fullScan" : true } }'::bson)
+(14 rows)
+
+-- 5. Sort on v, with enableSortGroupStage on
+SET LOCAL documentdb.enableSortGroupStage TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "v": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
+                                        document                                         
+-----------------------------------------------------------------------------------------
+ { "_id" : { "g" : "A" }, "firstVal" : "name_3", "total" : { "$numberInt" : "166833" } }
+ { "_id" : { "g" : "B" }, "firstVal" : "name_1", "total" : { "$numberInt" : "167167" } }
+ { "_id" : { "g" : "C" }, "firstVal" : "name_2", "total" : { "$numberInt" : "166500" } }
+(3 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "v": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
+                                                                                                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, bsonfirstonsorted(bson_expression_get(document, '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson) ORDER BY (bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST), 'total'::text, bsonsum(bson_expression_get(document, '{ "" : "$seq" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: bson_expression_get(collection.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Scan using g_1 on documentdb_data.documents_1801 collection
+         Output: bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Index Cond: (collection.document @<> '{ "g" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+         Order By: (collection.document |-<> '{ "g" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
+
+ROLLBACK;
+SELECT documentdb_api.drop_collection('db', 'fl_grp_test');
+ drop_collection 
+-----------------
+ t
+(1 row)
+

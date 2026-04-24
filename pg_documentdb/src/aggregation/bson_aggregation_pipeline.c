@@ -91,7 +91,6 @@ extern bool RemoveMatchNamespaceFilters;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableGroupByCompoundIdIndexPushdown;
 extern bool EnableSortGroupStage;
-extern bool EnableSortPushToAccumulator;
 
 /* GUC to config tdigest compression */
 extern int TdigestCompressionAccuracy;
@@ -5437,13 +5436,15 @@ SetAccumulatorSortOrder(TargetEntry *accumulatorTle, Expr *documentExpr,
 	ParseState *sortParseState = make_parsestate(NULL);
 	sortParseState->p_expr_kind = EXPR_KIND_ORDER_BY;
 
-	/* Continue resno numbering from where the existing args left off. */
-	TargetEntry *lastArg = llast(aggref->args);
-	if (lastArg == NULL)
+	if (aggref->args == NIL || list_length(aggref->args) == 0)
 	{
-		ereport(ERROR, (errmsg(
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg(
 							"Unexpected error in SetAccumulatorSortOrder: AggRef has no arguments")));
 	}
+
+	/* Continue resno numbering from where the existing args left off. */
+	TargetEntry *lastArg = llast(aggref->args);
 
 	sortParseState->p_next_resno = lastArg->resno + 1;
 
@@ -5591,8 +5592,7 @@ HandleSortGroup(const bson_value_t *existingValue, Query *query,
 
 	SortGroupAnalysisResult analysisResult = AnalyzeSortGroupAccumulators(&groupValue,
 																		  &sortValue);
-	bool canPushSort = EnableSortPushToAccumulator &&
-					   analysisResult.canPushSortToAccumulator;
+	bool canPushSort = analysisResult.canPushSortToAccumulator;
 	if (canPushSort)
 	{
 		ValidateSortSpec(&sortValue);
