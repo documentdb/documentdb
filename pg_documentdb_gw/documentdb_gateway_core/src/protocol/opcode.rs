@@ -8,6 +8,7 @@
 
 /// Wire Protocol `OpCode`s
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(i32)]
 pub enum OpCode {
     Invalid = 0,
     #[deprecated(note = "OP_REPLY Deprecated")]

@@ -22,10 +22,10 @@ pub fn assert_header_matches(
     response_to: i32,
     op_code: OpCode,
 ) {
-    assert_eq!(header.length, length);
-    assert_eq!(header.request_id, request_id);
-    assert_eq!(header.response_to, response_to);
-    assert_eq!(header.op_code, op_code);
+    assert_eq!(header.message_length(), length);
+    assert_eq!(header.request_id(), request_id);
+    assert_eq!(header.response_to(), response_to);
+    assert_eq!(header.op_code(), op_code);
 }
 
 pub fn build_raw_document(document: &Document) -> RawDocumentBuf {
@@ -35,13 +35,10 @@ pub fn build_raw_document(document: &Document) -> RawDocumentBuf {
 
 pub fn build_op_msg_parts(document: &Document, request_id: i32) -> (Header, Vec<u8>) {
     let body = build_op_msg_body(document);
-    let header = Header {
-        length: i32::try_from(Header::LENGTH + body.len())
-            .expect("message size should fit into i32"),
-        request_id,
-        response_to: 0,
-        op_code: OpCode::Msg,
-    };
+    let length =
+        i32::try_from(Header::LENGTH + body.len()).expect("message size should fit into i32");
+    let header =
+        Header::new(length, request_id, 0, OpCode::Msg).expect("test header should be valid");
 
     (header, body)
 }
@@ -49,10 +46,10 @@ pub fn build_op_msg_parts(document: &Document, request_id: i32) -> (Header, Vec<
 pub fn build_op_msg_request(document: &Document, request_id: i32) -> Vec<u8> {
     let (header, body) = build_op_msg_parts(document, request_id);
     let mut bytes = encode_header(
-        header.length,
-        header.request_id,
-        header.response_to,
-        header.op_code,
+        header.message_length(),
+        header.request_id(),
+        header.response_to(),
+        header.op_code(),
     );
     bytes.extend_from_slice(&body);
     bytes
@@ -64,33 +61,33 @@ pub fn decode_op_msg_response(bytes: &[u8]) -> (Header, Document) {
         "response bytes should contain a full OP_MSG response"
     );
 
-    let header = Header {
-        length: i32::from_le_bytes(bytes[0..4].try_into().expect("length bytes should exist")),
-        request_id: i32::from_le_bytes(
-            bytes[4..8]
-                .try_into()
-                .expect("request_id bytes should exist"),
-        ),
-        response_to: i32::from_le_bytes(
-            bytes[8..12]
-                .try_into()
-                .expect("response_to bytes should exist"),
-        ),
-        op_code: OpCode::from_value(i32::from_le_bytes(
-            bytes[12..16]
-                .try_into()
-                .expect("op_code bytes should exist"),
-        )),
-    };
+    let length = i32::from_le_bytes(bytes[0..4].try_into().expect("length bytes should exist"));
+    let request_id = i32::from_le_bytes(
+        bytes[4..8]
+            .try_into()
+            .expect("request_id bytes should exist"),
+    );
+    let response_to = i32::from_le_bytes(
+        bytes[8..12]
+            .try_into()
+            .expect("response_to bytes should exist"),
+    );
+    let op_code = OpCode::from_value(i32::from_le_bytes(
+        bytes[12..16]
+            .try_into()
+            .expect("op_code bytes should exist"),
+    ));
+    let header = Header::new(length, request_id, response_to, op_code)
+        .expect("response header should be valid");
 
     let expected_len =
-        usize::try_from(header.length).expect("response length should fit into usize");
+        usize::try_from(header.message_length()).expect("response length should fit into usize");
     assert_eq!(
         bytes.len(),
         expected_len,
         "response slice should match encoded header length"
     );
-    assert_eq!(header.op_code, OpCode::Msg);
+    assert_eq!(header.op_code(), OpCode::Msg);
     assert_eq!(
         u32::from_le_bytes(
             bytes[16..20]

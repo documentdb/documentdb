@@ -30,7 +30,7 @@ where
         match next_header_result {
             Ok(Some(header)) => {
                 let request_activity_id =
-                    connection_context.generate_request_activity_id(header.request_id);
+                    connection_context.generate_request_activity_id(header.request_id());
 
                 next_header = request_pipeline::handle_message::<T, _, _>(
                     &mut connection_context,
@@ -214,8 +214,8 @@ mod tests {
             2,
             "two requests should yield two responses"
         );
-        assert_eq!(responses[0].0.response_to, 81);
-        assert_eq!(responses[1].0.response_to, 82);
+        assert_eq!(responses[0].0.response_to(), 81);
+        assert_eq!(responses[1].0.response_to(), 82);
         assert_success_response(&responses[0].1);
         assert_success_response(&responses[1].1);
     }

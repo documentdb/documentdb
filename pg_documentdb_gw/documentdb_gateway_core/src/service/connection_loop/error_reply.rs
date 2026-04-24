@@ -247,7 +247,7 @@ mod tests {
         let (response_header, response_document) = decode_op_msg_response(&response_bytes);
         assert_header_matches(
             &response_header,
-            response_header.length,
+            response_header.message_length(),
             52,
             52,
             OpCode::Msg,
@@ -296,7 +296,13 @@ mod tests {
             .await
             .expect("response reader should drain bytes");
         let (reply_header, response_document) = decode_op_msg_response(&response_bytes);
-        assert_header_matches(&reply_header, reply_header.length, 73, 73, OpCode::Msg);
+        assert_header_matches(
+            &reply_header,
+            reply_header.message_length(),
+            73,
+            73,
+            OpCode::Msg,
+        );
         assert_error_response(&response_document, ErrorCode::BadValue);
 
         let events = telemetry_provider.events();

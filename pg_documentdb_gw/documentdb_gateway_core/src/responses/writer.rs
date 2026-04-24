@@ -39,7 +39,7 @@ where
     S: AsyncWrite + Unpin,
 {
     // The format of the response will depend on the OP which the client sent
-    match header.op_code {
+    match header.op_code() {
         OpCode::Command => unimplemented!(),
 
         // Messages are always responded to with messages
@@ -52,13 +52,13 @@ where
         )]
         OpCode::Query => {
             // Write the header
-            let header = Header {
+            let header = Header::new(
                 // Total size of the response is the bytes + standard header + reply header
-                length: (response.as_bytes().len() + Header::LENGTH + 20) as i32,
-                request_id: header.request_id,
-                response_to: header.request_id,
-                op_code: OpCode::Reply,
-            };
+                (response.as_bytes().len() + Header::LENGTH + 20) as i32,
+                header.request_id(),
+                header.request_id(),
+                OpCode::Reply,
+            )?;
             header.write_to(stream).await?;
 
             stream.write_i32_le(0).await?; // Response flags
@@ -78,7 +78,7 @@ where
         OpCode::Insert => Ok(()),
         _ => Err(DocumentDBError::internal_error(format!(
             "Unexpected response opcode: {:?}",
-            header.op_code
+            header.op_code()
         ))),
     }?;
 
@@ -101,12 +101,12 @@ where
         + std::mem::size_of::<u8>()
         + response.as_bytes().len(); // Message payload + status code
 
-    let header = Header {
-        length: total_length as i32,
-        request_id: header.request_id,
-        response_to: header.request_id,
-        op_code: OpCode::Msg,
-    };
+    let header = Header::new(
+        total_length as i32,
+        header.request_id(),
+        header.request_id(),
+        OpCode::Msg,
+    )?;
     header.write_to(writer).await?;
 
     // Write Flags
@@ -136,12 +136,7 @@ where
     let response =
         CommandError::from_error(connection_context, &err, activity_id).to_raw_document_buf();
 
-    let header = Header {
-        length: (response.as_bytes().len() + 1) as i32,
-        request_id: 0,
-        response_to: 0,
-        op_code: OpCode::Msg,
-    };
+    let header = Header::new((response.as_bytes().len() + 1) as i32, 0, 0, OpCode::Msg)?;
 
     write_and_flush(&header, &response, stream).await?;
 
