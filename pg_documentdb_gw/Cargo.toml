@@ -1,7 +1,13 @@
 ## Workspace section
 
 [workspace]
-members = ["documentdb_gateway", "documentdb_tests", "documentdb_gateway_core", "documentdb_macros"]
+members = [
+    "documentdb_gateway",
+    "documentdb_gateway_core",
+    "documentdb_gateway_lib",
+    "documentdb_macros",
+    "documentdb_tests"
+]
 resolver = "2"
 
 [workspace.package]
@@ -44,6 +50,7 @@ opentelemetry-semantic-conventions = "0.30"
 opentelemetry_sdk = { version = "0.30", features = ["rt-tokio", "metrics"] }
 rand = "0.8.5"
 regex = "1.10.2"
+"scc" = { version = "3.7.0", features = ["equivalent", "serde"] }
 serde = { version = "1.0.125", features = ["derive", "rc"] }
 serde_json = { version = "1.0.107", features = ["arbitrary_precision"] }
 socket2 = "0.5.7"

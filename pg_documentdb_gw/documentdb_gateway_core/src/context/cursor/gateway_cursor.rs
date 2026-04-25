@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
- * documentdb_gateway_core/src/context/cursor/cursor.rs
+ * documentdb_gateway_core/src/context/cursor/gateway_cursor.rs
  *
  *-------------------------------------------------------------------------
  */

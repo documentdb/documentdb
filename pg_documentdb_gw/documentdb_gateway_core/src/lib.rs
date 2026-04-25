@@ -21,6 +21,9 @@ pub mod service;
 pub mod shutdown_controller;
 pub mod startup;
 pub mod telemetry;
+pub mod time;
+
+pub(crate) mod collections;
 
 #[cfg(test)]
 pub(crate) mod testing;
