@@ -17,7 +17,7 @@ pub use connection::ConnectionContext;
 pub use cursor::{Cursor, CursorId, CursorKey, CursorStore, CursorStoreEntry};
 pub use request::RequestContext;
 pub use service::ServiceContext;
-pub use session::SessionId;
+pub use session::{SessionId, SessionManager};
 pub use transaction::{
     GatewayTransaction, RequestTransactionInfo, TransactionNumber, TransactionStore,
 };

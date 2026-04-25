@@ -20,8 +20,22 @@ pub struct CursorStore {
     _reaper: Option<JoinHandle<()>>,
 }
 
+impl Default for CursorStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CursorStore {
-    pub fn new(config: Arc<dyn DynamicConfiguration>, use_reaper: bool) -> Self {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            cursors: Arc::new(DashMap::new()),
+            _reaper: None,
+        }
+    }
+
+    pub fn with_reaper(config: Arc<dyn DynamicConfiguration>, use_reaper: bool) -> Self {
         let cursors: Arc<DashMap<CursorKey, CursorStoreEntry>> = Arc::new(DashMap::new());
         let cursors_clone = Arc::clone(&cursors);
         let reaper = use_reaper.then(|| {

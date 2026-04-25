@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
- * documentdb_gateway_core/src/context/session.rs
+ * documentdb_gateway_core/src/context/session/session_id.rs
  *
  *-------------------------------------------------------------------------
  */

@@ -654,6 +654,7 @@ dependencies = [
  "opentelemetry_sdk",
  "rand 0.8.5",
  "regex",
+ "scc",
  "serde",
  "serde_json",
  "socket2 0.5.10",
@@ -667,6 +668,13 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "whoami 1.6.1",
+]
+
+[[package]]
+name = "documentdb_gateway_lib"
+version = "0.1.0"
+dependencies = [
+ "criterion",
 ]
 
 [[package]]
@@ -2278,6 +2286,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
+name = "saa"
+version = "5.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd8d438861332c3b1ac396c77bd9cac620ea1ff347efb63c05a83d8f0a593899"
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2287,10 +2301,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "scc"
+version = "3.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16c154cf1d115a1e901d7f4e3f279eb6eb455f0d670c1cf3c1aa74d50ad37fa9"
+dependencies = [
+ "equivalent",
+ "saa",
+ "sdd",
+ "serde",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "sdd"
+version = "4.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5f0e40a01b94e35d1dacbcfbe5bfd3d31e37d9590b2e6d86a82b0e87bd4f551"
+dependencies = [
+ "saa",
+]
 
 [[package]]
 name = "semver"

@@ -31,6 +31,7 @@ opentelemetry-semantic-conventions.workspace = true
 opentelemetry_sdk.workspace = true
 rand.workspace = true
 regex.workspace = true
+scc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 socket2.workspace = true
@@ -49,7 +50,7 @@ whoami.workspace = true
 criterion.workspace = true
 
 [[bench]]
-name = "insert_bench"
+name = "request_insert_bench"
 harness = false
 
 [lints]
