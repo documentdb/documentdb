@@ -13,6 +13,7 @@
 
 #include <access/amapi.h>
 #include <utils/memutils.h>
+#include <nodes/execnodes.h>
 
 #include "api_hooks_common.h"
 #include "metadata/collection.h"
@@ -270,5 +271,14 @@ void RecordTtlMetric(void *metricsContext,
  * Called after the TTL purge loop completes to aggregate, emit, and free resources.
  */
 void FinalizeTtlMetrics(void *metricsContext);
+
+
+/*
+ * Update statistics for a single extended index type.
+ * Passes already-available index metadata to avoid redundant catalog lookups.
+ * No-op if no hook is registered.
+ */
+void UpdateExtendedIndexStats(uint64 collectionId, int indexId,
+							  const char *pgIndexName, IndexInfo *indexInfo);
 
 #endif

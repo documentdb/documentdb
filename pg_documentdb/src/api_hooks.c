@@ -23,7 +23,7 @@
 #include "vector/vector_spec.h"
 
 extern bool DefaultUseCompositeOpClass;
-
+extern bool EnableExtendedIndexes;
 
 IsMetadataCoordinator_HookType is_metadata_coordinator_hook = NULL;
 RunCommandOnMetadataCoordinator_HookType run_command_on_metadata_coordinator_hook = NULL;
@@ -87,6 +87,9 @@ RecordTtlMetric_HookType
 	record_ttl_metric_hook = NULL;
 FinalizeTtlMetrics_HookType
 	finalize_ttl_metrics_hook = NULL;
+
+UpdateExtendedIndexStats_HookType
+	update_extended_index_stats_hook = NULL;
 
 /*
  * Single node scenario is always a metadata coordinator
@@ -696,5 +699,20 @@ FinalizeTtlMetrics(void *metricsContext)
 	if (finalize_ttl_metrics_hook != NULL && metricsContext != NULL)
 	{
 		finalize_ttl_metrics_hook(metricsContext);
+	}
+}
+
+
+/*
+ * Update statistics for a single extended index type.
+ * Delegates to the registered hook if set, otherwise no-op.
+ */
+void
+UpdateExtendedIndexStats(uint64 collectionId, int indexId,
+						 const char *pgIndexName, IndexInfo *indexInfo)
+{
+	if (EnableExtendedIndexes && update_extended_index_stats_hook != NULL)
+	{
+		update_extended_index_stats_hook(collectionId, indexId, pgIndexName, indexInfo);
 	}
 }

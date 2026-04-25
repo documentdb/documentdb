@@ -220,8 +220,8 @@ static void EnsureIndexDefDocFieldType(const bson_iter_t *indexDefDocIter,
 static void EnsureIndexDefDocFieldConvertibleToBool(bson_iter_t *indexDefDocIter);
 static bool IsSupportedIndexVersion(int indexVersion);
 static void ThrowIndexDefDocMissingFieldError(const char *fieldName);
-static void UpdateUniqueIndexStatsForPostgresIndex(uint64 collectionId,
-												   List *indexIdList);
+static void UpdateIndexStatsForPostgresIndexCore(uint64 collectionId,
+												 List *indexIdList);
 static IndexDefKey * ParseIndexDefKeyDocument(const bson_iter_t *indexDefDocIter);
 static CosmosSearchOptions * ParseCosmosSearchOptionsDoc(const bson_iter_t *optsIter);
 static BsonIntermediatePathNode * ParseIndexDefWildcardProjDoc(const bson_iter_t *
@@ -629,7 +629,7 @@ command_fix_unique_index_stats_for_collection(PG_FUNCTION_ARGS)
 
 	if (indexIdList != NIL)
 	{
-		UpdateUniqueIndexStatsForPostgresIndex(collectionId, indexIdList);
+		UpdateIndexStatsForPostgresIndexCore(collectionId, indexIdList);
 	}
 
 	PG_RETURN_VOID();
@@ -6974,9 +6974,10 @@ GenerateUniqueProjectionSpec(IndexDefKey *indexDefKey)
 
 
 static void
-UpdateUniqueIndexStatsForPostgresIndex(uint64 collectionId, List *indexIdList)
+UpdateIndexStatsForPostgresIndexCore(uint64 collectionId, List *indexIdList)
 {
 	StringInfo indexExprStringInfo = makeStringInfo();
+
 	ListCell *cell;
 	foreach(cell, indexIdList)
 	{
@@ -7007,6 +7008,13 @@ UpdateUniqueIndexStatsForPostgresIndex(uint64 collectionId, List *indexIdList)
 			/* Only do this for RUM style indexes. Vector and Geospatial indexes do need statistics. */
 			if (!IsBsonRegularIndexAm(indexInfo->ii_Am))
 			{
+				if (IsExtendedIndexAm(indexInfo->ii_Am) &&
+					EnableExtendedIndexes &&
+					IsClusterVersionAtleast(DocDB_V0, 113, 0))
+				{
+					UpdateExtendedIndexStats(collectionId, indexId, indexName,
+											 indexInfo);
+				}
 				continue;
 			}
 
@@ -7050,7 +7058,7 @@ UpdateUniqueIndexStatsForPostgresIndex(uint64 collectionId, List *indexIdList)
 void
 UpdateIndexStatsForPostgresIndex(uint64 collectionId, List *indexIdList)
 {
-	UpdateUniqueIndexStatsForPostgresIndex(collectionId, indexIdList);
+	UpdateIndexStatsForPostgresIndexCore(collectionId, indexIdList);
 
 	if (EnablePerCollectionPlannerStatistics &&
 		IsClusterVersionAtleast(DocDB_V0, 111, 0))
