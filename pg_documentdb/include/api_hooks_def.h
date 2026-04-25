@@ -15,6 +15,7 @@
 
 #include "api_hooks_common.h"
 #include <access/amapi.h>
+#include <nodes/execnodes.h>
 #include <nodes/parsenodes.h>
 #include <nodes/pathnodes.h>
 #include <utils/memutils.h>
@@ -284,5 +285,17 @@ extern RecordTtlMetric_HookType record_ttl_metric_hook;
  */
 typedef void (*FinalizeTtlMetrics_HookType)(void *metricsContext);
 extern FinalizeTtlMetrics_HookType finalize_ttl_metrics_hook;
+
+
+/*
+ * Hook called after index statistics are updated for a newly created
+ * extended index. Passes the already-opened index metadata so the
+ * hook does not need to re-open the relation.
+ */
+typedef void (*UpdateExtendedIndexStats_HookType)(uint64 collectionId,
+												  int indexId,
+												  const char *pgIndexName,
+												  IndexInfo *indexInfo);
+extern UpdateExtendedIndexStats_HookType update_extended_index_stats_hook;
 
 #endif
