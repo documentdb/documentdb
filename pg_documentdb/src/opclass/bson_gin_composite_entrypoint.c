@@ -2507,6 +2507,13 @@ gin_bson_composite_ordering_transform(PG_FUNCTION_ARGS)
 			{
 				InitializeBsonIndexTermIfNeeded(&compareTerms[i]);
 				BsonIndexTerm *term = &compareTerms[i].term;
+
+				if (IsTermPairValueUndefined(&compareTerms[i]))
+				{
+					/* Skip projecting fields that are undefined, instead of literally projecting "undefined". */
+					continue;
+				}
+
 				PgbsonHeapWriterAppendValue(writer, indexPaths[i], indexPathLengths[i],
 											&term->element.bsonValue);
 			}

@@ -1,1 +1,2 @@
 /^test: bson_aggregate_group_firstlast_explain_sharded$/d
+/^test: bson_composite_index_only_scan_explain_sharded$/d

@@ -200,9 +200,30 @@ typedef struct IndexElemmatchState
 	List *pathStates;
 } IndexElemmatchState;
 
+/* State tracking the query walking for projection variables and subqueries */
+typedef struct ProjectionVarQueryState
+{
+	bool hasNonDocumentVar;
+	bool hasDocumentVar;
+	bool hasQuery;
+	PlannerInfo *root;
+	Index scanRti;
+} ProjectionVarQueryState;
+
+/* State tracking field coverage for index-only scans */
+typedef struct FieldCoverageState
+{
+	PlannerInfo *root;
+	Index expectedRti;
+	IndexPath *indexPath;
+	bool hasUncoveredField;
+} FieldCoverageState;
+
 extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
+extern bool EnableIndexOnlyScanForCoveredAggregateTargets;
+extern bool EnableIndexOnlyScanForRangeMatch;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -1463,8 +1484,27 @@ ForceIndexForQueryOperators(PlannerInfo *root, RelOptInfo *rel,
 }
 
 
+/* Returns true if var is the document column of the relation this scan path is for. */
 static bool
-ProjectionReferencesDocumentVar(Expr *node, void *state)
+IsCurrentScanDocumentVar(Var *var, PlannerInfo *root, Index scanRti)
+{
+	/* Requires a local BSON Var from the same query source as the scan path,
+	 * then confirm that source is a real relation (not a CTE or subquery).
+	 */
+	if (var->varlevelsup != 0 ||
+		var->varno != (int) scanRti ||
+		var->varattno != DOCUMENT_DATA_TABLE_DOCUMENT_VAR_ATTR_NUMBER ||
+		(var->vartype != BsonTypeId() && var->vartype != DocumentDBCoreBsonTypeId()))
+	{
+		return false;
+	}
+
+	return planner_rt_fetch(var->varno, root)->rtekind == RTE_RELATION;
+}
+
+
+static bool
+ProjectionReferencesDocumentVarOrQuery(Expr *node, void *state)
 {
 	CHECK_FOR_INTERRUPTS();
 
@@ -1475,20 +1515,31 @@ ProjectionReferencesDocumentVar(Expr *node, void *state)
 
 	if (IsA(node, Var))
 	{
-		/* If we have any vars, just return true */
-		bool *isFound = (bool *) state;
-		*isFound = true;
-		return false;
+		Var *var = (Var *) node;
+		ProjectionVarQueryState *projectionState = (ProjectionVarQueryState *) state;
+		if (!IsCurrentScanDocumentVar(var, projectionState->root,
+									  projectionState->scanRti))
+		{
+			projectionState->hasNonDocumentVar = true;
+			return true;
+		}
+		else
+		{
+			projectionState->hasDocumentVar = true;
+
+			/* If we find a document var, we want to continue walking
+			 * the tree to see if there are any non-document vars or queries. */
+		}
 	}
 	else if (IsA(node, Query))
 	{
-		/* A projection with a subquery - don't apply indexonlyscan optimization */
-		bool *isFound = (bool *) state;
-		*isFound = true;
-		return false;
+		ProjectionVarQueryState *projectionState = (ProjectionVarQueryState *) state;
+		projectionState->hasQuery = true;
+		return true;
 	}
 
-	return expression_tree_walker((Node *) node, ProjectionReferencesDocumentVar, state);
+	return expression_tree_walker((Node *) node, ProjectionReferencesDocumentVarOrQuery,
+								  state);
 }
 
 
@@ -1631,6 +1682,26 @@ ExprIsValidForIndexOnlyScan(Expr *expr, bytea *indexOptions, bool *isShardKeyExp
 
 		if (operator->indexStrategy == BSON_INDEX_STRATEGY_INVALID)
 		{
+			/* @<> range match: valid for index only scans if the field path is covered by the index. */
+			if (IsA(expr, OpExpr) &&
+				((OpExpr *) expr)->opno == BsonRangeMatchOperatorOid())
+			{
+				if (!EnableIndexOnlyScanForRangeMatch)
+				{
+					return false;
+				}
+
+				Expr *secondArg = lsecond(args);
+				if (IsA(secondArg, Const))
+				{
+					return CheckOpArgIsValidForIndexOnlyScan(
+						(Const *) secondArg, indexOptions,
+						BSON_INDEX_STRATEGY_DOLLAR_RANGE);
+				}
+
+				return false;
+			}
+
 			bool isOpExprShardKeyResult = IsOpExprShardKey(expr, shardKeyValue);
 			if (isShardKeyExpr != NULL)
 			{
@@ -1792,8 +1863,288 @@ PlanHasAggregates(PlannerInfo *root)
 }
 
 
+/* Returns the field path from a constant BSON expression, or NULL if not applicable. */
+static const char *
+TryExtractFieldPathFromConst(Expr *expr)
+{
+	if (!IsA(expr, Const))
+	{
+		return NULL;
+	}
+
+	Const *constExpr = (Const *) expr;
+	if (!(constExpr->consttype == BsonTypeId() || constExpr->consttype ==
+		  DocumentDBCoreBsonTypeId()) || constExpr->constisnull)
+	{
+		return NULL;
+	}
+
+	pgbson *pathBson = DatumGetPgBson(constExpr->constvalue);
+	pgbsonelement pathElement;
+	PgbsonToSinglePgbsonElement(pathBson, &pathElement);
+	if (pathElement.bsonValue.value_type != BSON_TYPE_UTF8 ||
+		pathElement.bsonValue.value.v_utf8.len < 2 ||
+		pathElement.bsonValue.value.v_utf8.str[0] != '$' ||
+		pathElement.bsonValue.value.v_utf8.str[1] == '$')
+	{
+		/* must be "$fieldName"; reject non-field-path values and
+		 * "$$" system variables like $$NOW, $$CLUSTER_TIME, etc. */
+		return NULL;
+	}
+
+	/* Strip off the leading '$' to get the raw field path. */
+	return pathElement.bsonValue.value.v_utf8.str + 1;
+}
+
+
 static bool
-IsQueryValidForIndexOnlyScan(PlannerInfo *root)
+IsFieldPathCoveredByIndex(const char *fieldPath, IndexPath *indexPath)
+{
+	int8_t sortDirectionIgnored = 0;
+	int32_t colNum = GetCompositeOpClassColumnNumber(
+		fieldPath,
+		indexPath->indexinfo->opclassoptions[0], /*[0] because there's only one column indexed (Document)*/
+		&sortDirectionIgnored);
+
+	return colNum >= 0;
+}
+
+
+/* Strips any RelabelType nodes from the expression, returning the underlying expression. */
+static Expr *
+StripRelabels(Expr *expr)
+{
+	while (expr != NULL && IsA(expr, RelabelType))
+	{
+		expr = (Expr *) ((RelabelType *) expr)->arg;
+	}
+
+	return expr;
+}
+
+
+/* Returns the sort path from a constant BSON expression, or NULL if not applicable. */
+static const char *
+TryExtractSortPathFromConst(Expr *expr)
+{
+	if (!IsA(expr, Const))
+	{
+		return NULL;
+	}
+
+	Const *constExpr = (Const *) expr;
+	if (!(constExpr->consttype == BsonTypeId() || constExpr->consttype ==
+		  DocumentDBCoreBsonTypeId()) || constExpr->constisnull)
+	{
+		return NULL;
+	}
+
+	/* Unlike field paths, sort paths are not prefixed with a $.*/
+	pgbsonelement sortElement;
+	PgbsonToSinglePgbsonElement(DatumGetPgBson(constExpr->constvalue), &sortElement);
+	return sortElement.path;
+}
+
+
+static bool
+IsSortPathFunctionOid(Oid oid)
+{
+	if (oid == BsonOrderByFunctionOid() ||
+		oid == BsonOrderByWithCollationFunctionOid() ||
+		oid == BsonOrderByIndexFunctionOid() ||
+		oid == BsonOrderByIndexReverseFunctionOid())
+	{
+		return true;
+	}
+	if (IsClusterVersionAtleast(DocDB_V0, 110, 0) &&
+		oid == BsonOrderByIndexWithCollationFunctionOid())
+	{
+		return true;
+	}
+
+	if (IsClusterVersionAtleast(DocDB_V0, 111, 0) &&
+		oid == BsonOrderByIndexWithCollationReverseFunctionOid())
+	{
+		return true;
+	}
+
+	return false;
+}
+
+
+static bool
+IsExpressionPathFunctionOid(Oid oid)
+{
+	return oid == BsonExpressionGetFunctionOid() ||
+		   oid == BsonExpressionGetWithLetFunctionOid() ||
+		   oid == BsonExpressionGetWithLetAndCollationFunctionOid();
+}
+
+
+/* tree_walker_callback that recursively checks if all field paths in the tree are covered by the index.
+ * Returns true to exit early if any uncovered path is found. */
+static bool
+CheckFieldCoverage(Node *node, void *context)
+{
+	check_stack_depth();
+	CHECK_FOR_INTERRUPTS();
+
+	FieldCoverageState *state = (FieldCoverageState *) context;
+
+	if (node == NULL)
+	{
+		return false;
+	}
+
+	/* We need to check Aggrefs in addition to functions because they may have a field path directly under the Aggref, not inside a FuncExpr. */
+	if (IsA(node, Aggref))
+	{
+		/* There are two shapes of aggregates:
+		 *  1. The child node is a FuncExpr
+		 *  2. The field path is directly on the Aggref args
+		 *
+		 *  We try to find a direct Var(document) and a BSON const.
+		 *  If we can't find it, we are probably in case one, so we recurse to the FuncExpr.
+		 *  If we find it, we check if the field path is covered by the index. If not, we can mark the field coverage as uncovered and abort.
+		 */
+
+		const char *fieldPath = NULL;
+		bool sawDocumentVar = false;
+
+		Aggref *aggref = (Aggref *) node;
+		ListCell *aggArgCell;
+
+		foreach(aggArgCell, aggref->args)
+		{
+			Expr *argExpr = StripRelabels(((TargetEntry *) lfirst(aggArgCell))->expr);
+			if (IsA(argExpr, Var) &&
+				IsCurrentScanDocumentVar((Var *) argExpr, state->root,
+										 state->expectedRti))
+			{
+				sawDocumentVar = true;
+				continue;
+			}
+
+			/* Currently, we only handle aggregate functions with two arguments, and one field path. */
+			if (fieldPath == NULL)
+			{
+				fieldPath = TryExtractFieldPathFromConst(argExpr);
+			}
+		}
+
+		if (sawDocumentVar && fieldPath != NULL)
+		{
+			if (!IsFieldPathCoveredByIndex(fieldPath, state->indexPath))
+			{
+				/* Field path is not in this index so we can't do index-only. */
+				state->hasUncoveredField = true;
+				return true; /* abort the walk early */
+			}
+
+			return false; /* Type 2 agg handled; don't recurse */
+		}
+
+		return expression_tree_walker(node, CheckFieldCoverage, context); /* Type 1 agg; recurse to inner Func */
+	}
+
+	if (IsA(node, FuncExpr))
+	{
+		FuncExpr *funcExpr = (FuncExpr *) node;
+
+		if (funcExpr->funcid == DocumentDBCoreBsonToBsonFunctionOId())
+		{
+			/* This is a wrapper function. */
+			return expression_tree_walker(node, CheckFieldCoverage, context);
+		}
+
+		/* Check if the first argument is the document Var and the second argument is a constant path. */
+		if (list_length(funcExpr->args) >= 2)
+		{
+			Expr *firstArg = StripRelabels(linitial(funcExpr->args));
+			Expr *secondArg = StripRelabels(lsecond(funcExpr->args));
+			if (IsA(firstArg, Var) && IsCurrentScanDocumentVar((Var *) firstArg,
+															   state->root,
+															   state->expectedRti))
+			{
+				const char *fieldPath = NULL;
+
+				if (IsSortPathFunctionOid(funcExpr->funcid))
+				{
+					fieldPath = TryExtractSortPathFromConst(secondArg);
+				}
+				else if (IsExpressionPathFunctionOid(funcExpr->funcid))
+				{
+					fieldPath = TryExtractFieldPathFromConst(secondArg);
+				}
+				else
+				{
+					/* To be safe, err on the side of not using index-only scan when the function is not recognized. */
+					state->hasUncoveredField = true;
+					return true;
+				}
+
+				if (fieldPath == NULL || !IsFieldPathCoveredByIndex(fieldPath,
+																	state->indexPath))
+				{
+					/* Path is not in this index so we can't do index-only. */
+					state->hasUncoveredField = true;
+					return true; /* abort the walk early */
+				}
+
+				return false;
+			}
+		}
+	}
+
+	if (IsA(node, Var))
+	{
+		/* If there's a Var node, that means there's a reference to a field that's not covered by the index. */
+		state->hasUncoveredField = true;
+		return true; /* abort the walk early */
+	}
+
+	return expression_tree_walker(node, CheckFieldCoverage, context);
+}
+
+
+/*
+ * Returns true if all targets in the query are covered by the index.
+ *
+ * A target is considered covered by the index when every field it reference is either:
+ *   1. a constant-only expression (e.g., $count), or
+ *   2. a document field extraction of the form bson_expression_get(document, path) where 'path' is a
+ *      constant string that matches a field path in the index.
+ *
+ * If any target contains a field reference outside those covered shapes, the function returns false.
+ */
+static bool
+AreAllTargetsCoveredByIndex(PlannerInfo *root, IndexPath *indexPath)
+{
+	FieldCoverageState state = {
+		.hasUncoveredField = false,
+		.indexPath = indexPath,
+		.expectedRti = indexPath->path.parent->relid,
+		.root = root
+	};
+
+	ListCell *cell;
+	foreach(cell, root->processed_tlist) /* for each target in the query... */
+	{
+		TargetEntry *targetEntry = (TargetEntry *) lfirst(cell);
+		CheckFieldCoverage((Node *) targetEntry->expr, &state);
+
+		if (state.hasUncoveredField)
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+
+static bool
+IsQueryEligibleForIndexOnlyScan(PlannerInfo *root, Index scanRti, bool *hasDocumentVar)
 {
 	if (!PlanHasAggregates(root) ||
 		root->hasJoinRTEs)
@@ -1806,15 +2157,40 @@ IsQueryValidForIndexOnlyScan(PlannerInfo *root)
 		return false;
 	}
 
-	bool projectionHasVarOrQuery = false;
+	ProjectionVarQueryState projectionState = {
+		.hasDocumentVar = false,
+		.hasNonDocumentVar = false,
+		.hasQuery = false,
+		.root = root,
+		.scanRti = scanRti
+	};
 	expression_tree_walker((Node *) root->processed_tlist,
-						   ProjectionReferencesDocumentVar,
-						   &projectionHasVarOrQuery);
-	if (projectionHasVarOrQuery)
+						   ProjectionReferencesDocumentVarOrQuery,
+						   &projectionState);
+
+	if (projectionState.hasDocumentVar)
 	{
-		/* If the projection has a Var or a Query, we can't do index only scan
-		 * because we can't cover the projection.
-		 */
+		if (!EnableIndexOnlyScanForCoveredAggregateTargets)
+		{
+			return false;
+		}
+
+		if (hasDocumentVar != NULL)
+		{
+			*hasDocumentVar = true;
+		}
+	}
+
+	if (projectionState.hasQuery)
+	{
+		/* If there are subqueries in the projection,
+		 * we can't do index only scans because we can't cover the projection. */
+		return false;
+	}
+
+	if (projectionState.hasNonDocumentVar)
+	{
+		/* If there are non-document variables in the projection, we can't do index only scans. */
 		return false;
 	}
 
@@ -1842,7 +2218,8 @@ ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 		return;
 	}
 
-	if (!IsQueryValidForIndexOnlyScan(root))
+	bool hasDocumentVar = false;
+	if (!IsQueryEligibleForIndexOnlyScan(root, rti, &hasDocumentVar))
 	{
 		return;
 	}
@@ -1865,6 +2242,8 @@ ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 
 			if (IsA(bitmapPath->bitmapqual, IndexPath))
 			{
+				/* In this case, the bitmap path is based on an index path (e.g., BitmapHeapPath->IndexPath on index),
+				 * and we may be able to remove the BitmapHeapPath*/
 				path = (Path *) bitmapPath->bitmapqual;
 				isBitmapPath = true;
 			}
@@ -1895,7 +2274,8 @@ ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 
 		if (IsBtreePrimaryKeyIndex(indexPath->indexinfo))
 		{
-			if (EnableIdIndexCustomCostFunction && !ForceIndexOnlyScanIfAvailable)
+			if (hasDocumentVar || (EnableIdIndexCustomCostFunction &&
+								   !ForceIndexOnlyScanIfAvailable))
 			{
 				continue;
 			}
@@ -1941,6 +2321,11 @@ ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 			}
 
 			if (!IndexClausesSupportIndexOnlyScan(indexPath, rel, context))
+			{
+				continue;
+			}
+
+			if (!AreAllTargetsCoveredByIndex(root, indexPath))
 			{
 				continue;
 			}
@@ -2071,8 +2456,11 @@ documentdb_btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 		ConsiderBtreeOrderByPushdown(root, path);
 	}
 
+	bool hasDocumentVar = false;
 	if (EnableIdIndexCustomCostFunction && enable_indexonlyscan && EnableIndexOnlyScan &&
-		IsQueryValidForIndexOnlyScan(root))
+		IsQueryEligibleForIndexOnlyScan(root, path->path.parent->relid,
+										&hasDocumentVar) &&
+		!hasDocumentVar)
 	{
 		bool hasOtherQuals = false;
 		IndexPath *modified = TrimIndexRestrictInfoForBtreePath(root, path,
@@ -2982,8 +3370,11 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 								 enable_indexonlyscan &&
 								 EnableIndexOnlyScanOnCostFunction &&
 								 indexPath->path.pathtype != T_IndexOnlyScan &&
-								 IsQueryValidForIndexOnlyScan(root) &&
-								 CompositeIndexSupportsIndexOnlyScan(indexPath);
+								 IsQueryEligibleForIndexOnlyScan(root,
+																 indexPath->path.parent->
+																 relid, NULL) &&
+								 CompositeIndexSupportsIndexOnlyScan(indexPath) &&
+								 AreAllTargetsCoveredByIndex(root, indexPath);
 
 	bytea *indexOptions = indexPath->indexinfo->opclassoptions != NULL ?
 						  indexPath->indexinfo->opclassoptions[0] : NULL;
