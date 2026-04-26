@@ -57,6 +57,7 @@ typedef struct
  */
 typedef int (*get_schedule_interval_in_seconds_hook_type)(void);
 
+typedef bool (*is_job_enabled_hook_type)(void);
 
 /* Background worker job definition */
 typedef struct
@@ -89,6 +90,13 @@ typedef struct
 
 	/* Flag to decide whether to run the job on metadata coordinator only or on all nodes. */
 	bool toBeExecutedOnMetadataCoordinatorOnly;
+
+	/*
+	 * Hook to determine if the job is enabled.
+	 * This can be used to dynamically enable or disable the job.
+	 * If the hook is not set, the job is enabled by default.
+	 */
+	is_job_enabled_hook_type is_job_enabled_hook;
 } BackgroundWorkerJob;
 
 /*
