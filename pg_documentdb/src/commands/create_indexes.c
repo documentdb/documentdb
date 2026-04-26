@@ -6283,6 +6283,13 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 					break;
 				}
 
+				case MongoIndexKind_Extended:
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+									errmsg(
+										"Extended index kind is not supported for index creation")));
+				}
+
 				default:
 				{
 					ereport(ERROR, (errmsg("Unknown mongo index kind %d",

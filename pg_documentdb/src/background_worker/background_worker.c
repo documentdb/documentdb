@@ -153,6 +153,7 @@ static void FreeJobExecutions(List *jobExecutions);
 static bool CheckIfMetadataCoordinator(void);
 static bool CheckIfJobCommandIsAllowed(BackgroundWorkerJobCommand command);
 static bool CanExecuteJob(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTime);
+static bool IsJobEnabled(BackgroundWorkerJobExecution *jobExec);
 static bool CheckIfRoleExists(const char *roleName);
 static List * GenerateJobExecutions(void);
 static BackgroundWorkerJobExecution * CreateJobExecutionObj(BackgroundWorkerJob job);
@@ -165,7 +166,7 @@ static void WaitForInitJobsCompletion(void);
 /*
  * The allowed commands registry should not be exposed outside this c file to avoid unpredictable behavior.
  */
-#define MAX_BACKGROUND_WORKER_ALLOWED_COMMANDS 4
+#define MAX_BACKGROUND_WORKER_ALLOWED_COMMANDS 5
 static BackgroundWorkerJobCommand
 	AllowedCommandRegistry[MAX_BACKGROUND_WORKER_ALLOWED_COMMANDS];
 static int AllowedCommandEntries = 0;
@@ -439,6 +440,52 @@ ManageJobsLifeCycle(List *jobExecutions, char *userName, char *databaseName)
 }
 
 
+static bool
+IsJobEnabled(BackgroundWorkerJobExecution *jobExec)
+{
+	if (jobExec->job.is_job_enabled_hook == NULL)
+	{
+		/* If the hook is not set, the job is enabled by default. */
+		return true;
+	}
+
+	/*
+	 * Wrap the hook call in a transaction so that hooks can safely use
+	 * SPI, GUC nesting, or catalog lookups without having to manage
+	 * transaction state themselves.
+	 */
+	SetCurrentStatementStartTimestamp();
+	StartTransactionCommand();
+	PushActiveSnapshot(GetTransactionSnapshot());
+
+	PG_TRY();
+	{
+		bool enabled = jobExec->job.is_job_enabled_hook();
+
+		PopActiveSnapshot();
+		CommitTransactionCommand();
+		return enabled;
+	}
+	PG_CATCH();
+	{
+		FlushErrorState();
+
+		/*
+		 * Clean up any transaction state the callback left behind.
+		 */
+		PopAllActiveSnapshots();
+		AbortCurrentTransaction();
+
+		ereport(WARNING, (errmsg(
+							  "is_job_enabled_hook for background worker job %s with id %d threw an error. The job will be considered disabled.",
+							  jobExec->job.jobName, jobExec->job.jobId)));
+	}
+	PG_END_TRY();
+
+	return false;
+}
+
+
 /*
  * Checks if a given job is eligible to start.
  */
@@ -619,6 +666,17 @@ static void
 ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *databaseName,
 		   TimestampTz currentTime)
 {
+	if (!IsJobEnabled(jobExec))
+	{
+		/* Job is disabled through the hook, do not run the job.
+		 * We set the state to idle and update the last start time to current time to avoid busy looping.
+		 * This way, the hook will be re-evaluated in the next schedule interval
+		 */
+		jobExec->state = JOB_IDLE;
+		jobExec->lastStartTime = currentTime;
+		return;
+	}
+
 	PGconn *conn = NULL;
 	StringInfo localhostConnStr = makeStringInfo();
 
