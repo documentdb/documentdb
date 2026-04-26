@@ -127,14 +127,14 @@ for validationFile in $(ls $scriptDir/expected/*.out); do
         fi
     fi
 
-    for macro in "" "!PG16_OR_HIGHER!" "!PG17_OR_HIGHER!" "!PG18_OR_HIGHER!"; do
+    for macro in "" "!PG16_OR_HIGHER!" "!PG17_OR_HIGHER!" "!PG18_OR_HIGHER!" "!PG16_17_OR_HIGHER!"; do
         fileNameMod=$(echo "$fileNameBase" | sed -E "s/_tests/${macro}_tests/g")
         findResult=$(grep "$fileNameMod" basic_schedule_core || true)
         [ -n "$findResult" ] && break
     done
 
     if [ "$findResult" == "" ]; then
-        for macro in "" "!PG16_OR_HIGHER!" "!PG17_OR_HIGHER!" "!PG18_OR_HIGHER!"; do
+        for macro in "" "!PG16_OR_HIGHER!" "!PG17_OR_HIGHER!" "!PG18_OR_HIGHER!" "!PG16_17_OR_HIGHER!"; do
             fileNameMod=$(echo "$fileNameBase" | sed -E "s/_tests/_tests${macro}/g")
             findResult=$(grep "$fileNameMod" basic_schedule_core || true)
             [ -n "$findResult" ] && break

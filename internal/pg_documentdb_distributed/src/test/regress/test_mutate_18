@@ -18,7 +18,6 @@ s/ bson_aggregation_stage_inversematch_tests//
 s/ bson_selectivity_index_tests//
 s/ query_sharding_tests//
 s/ bson_composite_prefer_ordered_tests//
-s/ bson_composite_index_only_scan_pg16_tests//
 s/commands_delete //
 s/ bson_aggregation_stage_lookup_tests_pg17\\b//
 s/ commands_create_indexes_wp//

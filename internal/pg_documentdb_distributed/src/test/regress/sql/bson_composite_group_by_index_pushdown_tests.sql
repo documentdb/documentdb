@@ -36,6 +36,21 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
 
 
 ---------------------------------------------------------------------------------------------------
+-- accumulator coverage: $push and $addToSet
+-- covered field: the plan should use an Index Only Scan
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$a", "items": { "$push": "$a" } } } ] }');
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$a", "items": { "$addToSet": "$a" } } } ] }');
+
+-- uncovered accumulator field: $push/$addToSet reference $b which is not in a_1;
+-- the plan should fall back to a regular Index Scan.
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$a", "items": { "$push": "$b" } } } ] }');
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$a", "items": { "$addToSet": "$b" } } } ] }');
+
+---------------------------------------------------------------------------------------------------
+-- system-variable accumulator: $$ROOT references the full document, so the plan should not use IOS.
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$a", "r": { "$first": "$$ROOT" } } } ] }');
+
+---------------------------------------------------------------------------------------------------
 -- single-field document _id pushdown
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "a": "$a" }, "count": { "$sum": 1 } } } ] }');
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b" }, "count": { "$sum": 1 } } } ] }');
@@ -107,34 +122,46 @@ BEGIN;
 set local enable_seqscan to off;
 set enable_bitmapscan to off;
 set citus.enable_local_execution to off;
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$a", "count": { "$sum": 1 } } } ] }');
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$b", "count": { "$sum": 1 } } } ] }');
+set local enable_hashagg to off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$a", "count": { "$sum": 1 } } } ] }')$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$b", "count": { "$sum": 1 } } } ] }')$$);
 
 -- works with filters
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$match": { "a": { "$exists": true } } }, { "$group": { "_id": "$a", "count": { "$sum": 1 } } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$match": { "a": { "$exists": true } } }, { "$group": { "_id": "$a", "count": { "$sum": 1 } } } ] }')$$);
 
 -- works with suffix filters
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$match": { "c": { "$exists": true } } }, { "$group": { "_id": "$b", "count": { "$sum": 1 } } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$match": { "c": { "$exists": true } } }, { "$group": { "_id": "$b", "count": { "$sum": 1 } } } ] }')$$);
 
 -- equality with group suffix works.
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$match": { "b": 10 } }, { "$group": { "_id": "$c", "count": { "$sum": 1 } } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$match": { "b": 10 } }, { "$group": { "_id": "$c", "count": { "$sum": 1 } } } ] }')$$);
 
 ---------------------------------------------------------------------------------------------------
 -- single-field document _id pushdown (sharded)
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "a": "$a" }, "count": { "$sum": 1 } } } ] }');
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b" }, "count": { "$sum": 1 } } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "a": "$a" }, "count": { "$sum": 1 } } } ] }')$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b" }, "count": { "$sum": 1 } } } ] }')$$);
 
 -- multi-field document _id pushdown (sharded)
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "count": { "$sum": 1 } } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "count": { "$sum": 1 } } } ] }')$$);
 
 ---------------------------------------------------------------------------------------------------
 -- dotted path: _id fields use dotted paths.
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "x": "$b.nested", "y": "$c.nested" }, "count": { "$sum": 1 } } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "x": "$b.nested", "y": "$c.nested" }, "count": { "$sum": 1 } } } ] }')$$);
 
 -- expression in _id field: not a simple $path, should NOT decompose
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": { "$add": ["$b", 1] }, "c": "$c" }, "count": { "$sum": 1 } } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": { "$add": ["$b", 1] }, "c": "$c" }, "count": { "$sum": 1 } } } ] }')$$);
 
 -- mixed: one field is $path, one is constant expression, should NOT decompose
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "constant" }, "count": { "$sum": 1 } } } ] }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "constant" }, "count": { "$sum": 1 } } } ] }')$$);
 
 ROLLBACK;

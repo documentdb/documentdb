@@ -119,6 +119,16 @@ bool EnableIndexOnlyScan = DEFAULT_ENABLE_INDEX_ONLY_SCAN;
 #define DEFAULT_ENABLE_INDEX_ONLY_SCAN_ON_COST true
 bool EnableIndexOnlyScanOnCostFunction = DEFAULT_ENABLE_INDEX_ONLY_SCAN_ON_COST;
 
+/* Added in v113, enabled in v113, remove after v115 */
+#define DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_COVERED_AGGREGATE_TARGETS true
+bool EnableIndexOnlyScanForCoveredAggregateTargets =
+	DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_COVERED_AGGREGATE_TARGETS;
+
+/* Added in v113, enabled in v113, remove after v115 */
+#define DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_RANGE_MATCH true
+bool EnableIndexOnlyScanForRangeMatch =
+	DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_RANGE_MATCH;
+
 /* Added in v109, enabled in v109, remove after v111 */
 #define DEFAULT_ENABLE_ID_INDEX_CUSTOM_COST_FUNCTION true
 bool EnableIdIndexCustomCostFunction = DEFAULT_ENABLE_ID_INDEX_CUSTOM_COST_FUNCTION;
@@ -671,6 +681,25 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Whether to enable index only scan on cost function or planner."),
 		NULL, &EnableIndexOnlyScanOnCostFunction, DEFAULT_ENABLE_INDEX_ONLY_SCAN_ON_COST,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableIndexOnlyScanForCoveredAggregateTargets",
+				 newGucPrefix),
+		gettext_noop(
+			"Whether to enable index only scan for aggregate target-list"
+			" expressions that reference covered document paths."),
+		NULL, &EnableIndexOnlyScanForCoveredAggregateTargets,
+		DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_COVERED_AGGREGATE_TARGETS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableIndexOnlyScanForRangeMatch", newGucPrefix),
+		gettext_noop(
+			"Whether to enable index only scan for range-match qualifiers on"
+			" covered index paths."),
+		NULL, &EnableIndexOnlyScanForRangeMatch,
+		DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_RANGE_MATCH,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

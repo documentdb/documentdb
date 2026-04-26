@@ -765,7 +765,7 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
 
 -- groupby pushdown works for non-multi-key indexes
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$match": { "a": { "$exists": true } } }, { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
-                                                                           QUERY PLAN                                                                            
+                                                                   QUERY PLAN                                                                   
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=100 loops=1)
    Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -777,14 +777,15 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          innerScanLoops: 100 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
-         ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=100 loops=1)
+         ->  Index Only Scan using a_1 on documents_68003_680006 collection (actual rows=100 loops=1)
                Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
                Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(13 rows)
+               Heap Fetches: 100
+(14 rows)
 
 set enable_bitmapscan to off;
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
-                                                                           QUERY PLAN                                                                            
+                                                                   QUERY PLAN                                                                   
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=100 loops=1)
    Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -796,14 +797,15 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          innerScanLoops: 100 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
-         ->  Index Scan using a_1 on documents_68003_680006 collection (actual rows=100 loops=1)
+         ->  Index Only Scan using a_1 on documents_68003_680006 collection (actual rows=100 loops=1)
                Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(13 rows)
+               Heap Fetches: 100
+(14 rows)
 
 -- the same does not work on multi-key indexes
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "query_orderby_perf_arr", "pipeline": [ { "$match": { "a": { "$exists": true } } }, { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
-                                                                           QUERY PLAN                                                                            
+                                                                   QUERY PLAN                                                                   
 ---------------------------------------------------------------------
  HashAggregate (actual rows=101 loops=1)
    Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -1040,7 +1042,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
 ---------------------------------------------------------------------
  Sort (actual rows=100 loops=1)
    Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 35kB
+   Sort Method: quicksort  Memory: 36kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
          indexName: a_1_id_1
          indexKey: {"a": 1,"_id": 1}
@@ -2002,7 +2004,7 @@ SELECT collection_id AS collection_id_5 FROM documentdb_api_catalog.collections 
 ANALYZE documentdb_data.documents_:collection_id_5;
 set documentdb.forceDisableSeqScan to on;
 EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "ordering_groups", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
-                                                                           QUERY PLAN                                                                            
+                                                                   QUERY PLAN                                                                   
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
    Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -2014,10 +2016,11 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
          innerScanLoops: 3 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 100)]
-         ->  Index Scan using a_1 on documents_68009_680018 collection (actual rows=100 loops=1)
+         ->  Index Only Scan using a_1 on documents_68009_680018 collection (actual rows=100 loops=1)
                Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(13 rows)
+               Heap Fetches: 100
+(14 rows)
 
 SELECT document FROM bson_aggregation_pipeline('comp_ordind_db', '{ "aggregate": "ordering_groups", "pipeline": [ { "$group": { "_id": "$a", "c": { "$count": {} } } } ] }');
                              document                              

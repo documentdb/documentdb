@@ -85,8 +85,12 @@ SELECT document FROM bson_aggregation_pipeline('comp_db2', '{ "aggregate": "orde
 reset enable_indexscan;
 reset enable_bitmapscan;
 set documentdb.forceDisableSeqScan to on;
+-- Disable bitmap scan so the planner deterministically picks Index Only Scan
+-- for this covered $group + $count query instead of Bitmap Heap Scan.
+set enable_bitmapscan to off;
 EXPLAIN (ANALYZE OFF, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('comp_db2', '{ "aggregate": "ordered_delete", "pipeline": [ { "$match": { "a": { "$lte": 4 } } }, { "$group": { "_id": "$a", "c": { "$count": {} } }} ] }');
 SELECT document FROM bson_aggregation_pipeline('comp_db2', '{ "aggregate": "ordered_delete", "pipeline": [ { "$match": { "a": { "$lte": 4 } } }, { "$group": { "_id": "$a", "c": { "$count": {} } }} ] }');
+reset enable_bitmapscan;
 
 -- now delete everthing
 reset documentdb.forceDisableSeqScan;
