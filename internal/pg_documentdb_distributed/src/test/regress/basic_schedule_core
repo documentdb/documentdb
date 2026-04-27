@@ -168,3 +168,4 @@ test: three_column_data_table
 test: bson_distributed_mem_vtable_palloc_test
 
 test: command_bulk_write
+test: retryable_writes_local_table

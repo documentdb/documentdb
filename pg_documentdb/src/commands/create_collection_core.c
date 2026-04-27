@@ -22,6 +22,7 @@
 #include "utils/query_utils.h"
 #include "utils/version_utils.h"
 #include "api_hooks.h"
+#include "commands/retryable_writes.h"
 
 extern bool EnableNativeColocation;
 extern bool EnableDataTableWithoutCreationTime;
@@ -282,8 +283,11 @@ CreatePostgresDataTable(uint64_t collectionId, const char *colocateWith, const
 								&isNull);
 
 	/* Create a retry table colocated with the data table. */
-	CreateRetryTable(retryTableNameInfo->data, dataTableNameInfo->data,
-					 distributionColumnUsed, shardCount);
+	if (!UseLocalRetryTable())
+	{
+		CreateRetryTable(retryTableNameInfo->data, dataTableNameInfo->data,
+						 distributionColumnUsed, shardCount);
+	}
 
 	return dataTableNameInfo->data;
 }

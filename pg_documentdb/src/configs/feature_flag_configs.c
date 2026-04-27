@@ -402,6 +402,10 @@ bool EnableUpdateBsonDocument = DEFAULT_ENABLE_UPDATE_BSON_DOCUMENT;
  * SECTION: Cluster administration & DDL feature flags
  */
 
+/* Added in v113, enabled in v113, remove after v116 */
+#define DEFAULT_ENABLE_LOCAL_RETRY_TABLE true
+bool EnableLocalRetryTable = DEFAULT_ENABLE_LOCAL_RETRY_TABLE;
+
 /* Added in v108, enabled in v108, unknown retirement schedule */
 #define DEFAULT_ENABLE_SCHEMA_ENFORCEMENT_FOR_CSFLE true
 bool EnableSchemaEnforcementForCSFLE = DEFAULT_ENABLE_SCHEMA_ENFORCEMENT_FOR_CSFLE;
@@ -441,7 +445,7 @@ bool EnableStreamingCursorDrainViaDestReceiver =
  * SECTION: Changestream feature flags
  */
 
-/* Added in v111, Pending stabilization, enable in v120 */
+/* Added in v112, Pending stabilization, enable in v120 */
 #define DEFAULT_ENABLE_PREIMAGES false
 bool EnablePreImages = DEFAULT_ENABLE_PREIMAGES;
 
@@ -529,6 +533,13 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableLocalRetryTable", newGucPrefix),
+		gettext_noop(
+			"Whether to use a single local retry table instead of per-collection distributed retry tables (After retirement move it to testing configs)"),
+		NULL, &EnableLocalRetryTable, DEFAULT_ENABLE_LOCAL_RETRY_TABLE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.skipFailOnCollation", newGucPrefix),
