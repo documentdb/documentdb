@@ -702,6 +702,35 @@ primary key, btree, for table "documentdb_api_catalog.roles"
  document        | documentdb_core.bson |           |          | 
 
 \d documentdb_data.*
+                  Table "documentdb_data.retryable_writes"
+     Column      |           Type           | Collation | Nullable | Default 
+-----------------+--------------------------+-----------+----------+---------
+ collection_id   | bigint                   |           | not null | 
+ shard_key_value | bigint                   |           | not null | 
+ transaction_id  | text                     |           | not null | 
+ object_id       | documentdb_core.bson     |           |          | 
+ rows_affected   | boolean                  |           | not null | 
+ write_time      | timestamp with time zone |           |          | now()
+ result_document | documentdb_core.bson     |           |          | 
+Indexes:
+    "retryable_writes_pkey" PRIMARY KEY, btree (collection_id, shard_key_value, transaction_id)
+    "retryable_writes_collection_id_object_id_idx" btree (collection_id, object_id)
+
+Index "documentdb_data.retryable_writes_collection_id_object_id_idx"
+    Column     |         Type         | Key? |  Definition   
+---------------+----------------------+------+---------------
+ collection_id | bigint               | yes  | collection_id
+ object_id     | documentdb_core.bson | yes  | object_id
+btree, for table "documentdb_data.retryable_writes"
+
+   Index "documentdb_data.retryable_writes_pkey"
+     Column      |  Type  | Key? |   Definition    
+-----------------+--------+------+-----------------
+ collection_id   | bigint | yes  | collection_id
+ shard_key_value | bigint | yes  | shard_key_value
+ transaction_id  | text   | yes  | transaction_id
+primary key, btree, for table "documentdb_data.retryable_writes"
+
 -- show all functions, procedures, aggregates and window aggregates in documentdb_api_v2.
 \df documentdb_api_v2.*
                                                                                                                                                                                                   List of functions

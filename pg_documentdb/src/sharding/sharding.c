@@ -31,15 +31,14 @@
 #include "collation/collation.h"
 #include "utils/guc_utils.h"
 #include "utils/version_utils.h"
-#include "utils/version_utils.h"
 #include "utils/list_utils.h"
 #include "index_am/index_am_extend.h"
 #include "index_am/index_am_utils.h"
 #include "metadata/index.h"
+#include "commands/retryable_writes.h"
 
 extern bool EnableNativeColocation;
 extern int ShardingMaxChunks;
-extern bool RecreateRetryTableOnSharding;
 extern char *ApiGucPrefixV2;
 extern bool EnableRbacCompliantSchemas;
 extern bool EnablePrepareUnique;
@@ -1644,24 +1643,6 @@ ShardCollectionCore(ShardCollectionArgs *args)
 
 
 	ExtensionExecuteQueryViaSPI(queryInfo->data, readOnly, SPI_OK_UTILITY, &isNull);
-
-	/* Make GUC default eventually: Recreate retry_table here with new shards */
-	if (RecreateRetryTableOnSharding)
-	{
-		StringInfo retryTableNameInfo = makeStringInfo();
-		appendStringInfo(retryTableNameInfo, "%s.retry_%lu", ApiDataSchemaName,
-						 collection->collectionId);
-
-		/* Recreate the retry table */
-		resetStringInfo(queryInfo);
-		appendStringInfo(queryInfo, "DROP TABLE %s", retryTableNameInfo->data);
-		ExtensionExecuteQueryViaSPI(queryInfo->data, readOnly, SPI_OK_UTILITY, &isNull);
-
-		/* Since we're colocating with, shardCount should be 0 */
-		int shardCountForRetry = 0;
-		CreateRetryTable(retryTableNameInfo->data, qualifiedDataTableName,
-						 distributionColumn, shardCountForRetry);
-	}
 
 	bool isPrepareUniqueArrayNull = true;
 	Datum prepareUniqueNamesArray = (Datum) 0;
