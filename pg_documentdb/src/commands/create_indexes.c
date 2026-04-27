@@ -53,6 +53,7 @@
 #include "metadata/collection.h"
 #include "metadata/metadata_cache.h"
 #include "planner/mongo_query_operator.h"
+#include "planner/documentdb_planner.h"
 #include "query/query_operator.h"
 #include "utils/error_utils.h"
 #include "utils/guc_utils.h"
@@ -702,6 +703,8 @@ command_reindex(const CallStmt *callStmt,
 				const ParamListInfo params,
 				DestReceiver *destReceiver)
 {
+	ThrowIfWriteCommandNotAllowed();
+
 	/* must name it as "fcinfo" to be able to use PG_ARG/PG_GETARG functions */
 	LOCAL_FCINFO(fcinfo, FUNC_MAX_ARGS);
 	InitFCInfoForCallStmt(fcinfo, callStmt, context, params);

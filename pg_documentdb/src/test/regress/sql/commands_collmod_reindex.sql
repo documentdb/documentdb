@@ -46,6 +46,19 @@ SET documentdb.enableUniqueReindex TO true;
 ------------------------------------------------------------
 SELECT documentdb_api.coll_mod('reindex_db', 'reindex_unique_coll', '{ "collMod": "reindex_unique_coll", "index": { "name": "a_1_unique", "reindex": true, "hidden": true } }');
 
+-- Capture collection_id for \d checks
+SELECT collection_id as unique_coll_id FROM documentdb_api_catalog.collections WHERE database_name = 'reindex_db' AND collection_name = 'reindex_unique_coll' \gset
+
+-- Show table state before any reindex
+\d documentdb_data.documents_:unique_coll_id
+
+-- Show constraints before any reindex (only stable fields, no OIDs)
+SELECT conname, contype, convalidated
+FROM pg_constraint
+WHERE conrelid = ('documentdb_data.documents_' || :unique_coll_id)::regclass
+  AND contype IN ('p', 'x')
+ORDER BY conname;
+
 ------------------------------------------------------------
 -- Reindex a unique index via collMod
 ------------------------------------------------------------
@@ -60,6 +73,16 @@ CALL documentdb_api_internal.build_index_background(1);
 
 -- Verify the queue is empty after processing
 SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WHERE index_id >= 25703000 AND index_id <= 25703100 ORDER BY index_id;
+
+-- Verify no _ccold/_ccnew artifacts remain and constraint is intact
+\d documentdb_data.documents_:unique_coll_id
+
+-- Verify only expected constraints exist (no _ccold/_ccnew constraint artifacts)
+SELECT conname, contype, convalidated
+FROM pg_constraint
+WHERE conrelid = ('documentdb_data.documents_' || :unique_coll_id)::regclass
+  AND contype IN ('p', 'x')
+ORDER BY conname;
 
 -- Verify the unique index still exists and is valid
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('reindex_db', '{ "listIndexes": "reindex_unique_coll" }');
@@ -90,6 +113,16 @@ SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WH
 CALL documentdb_api_internal.build_index_concurrently(1);
 CALL documentdb_api_internal.build_index_background(1);
 SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WHERE index_id >= 25703000 AND index_id <= 25703100 ORDER BY index_id;
+
+-- Verify no _ccold/_ccnew artifacts remain after _id reindex and primary key is intact
+\d documentdb_data.documents_:unique_coll_id
+
+-- Verify only expected constraints exist after _id reindex (no _ccold/_ccnew artifacts)
+SELECT conname, contype, convalidated
+FROM pg_constraint
+WHERE conrelid = ('documentdb_data.documents_' || :unique_coll_id)::regclass
+  AND contype IN ('p', 'x')
+ORDER BY conname;
 
 -- Verify _id index still works after reindex
 SELECT document FROM documentdb_api_catalog.bson_aggregation_find('reindex_db', '{ "find": "reindex_unique_coll", "filter": { "_id": 10 } }');

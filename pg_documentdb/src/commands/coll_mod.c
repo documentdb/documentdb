@@ -23,6 +23,7 @@
 #include "commands/commands_common.h"
 #include "utils/documentdb_errors.h"
 #include "metadata/collection.h"
+#include "planner/documentdb_planner.h"
 #include "api_hooks.h"
 #include "metadata/index.h"
 #include "metadata/metadata_cache.h"
@@ -171,6 +172,8 @@ PG_FUNCTION_INFO_V1(command_coll_mod);
 Datum
 command_coll_mod(PG_FUNCTION_ARGS)
 {
+	ThrowIfWriteCommandNotAllowed();
+
 	if (PG_ARGISNULL(2))
 	{
 		ereport(ERROR, (errmsg("collMod spec cannot be NULL")));

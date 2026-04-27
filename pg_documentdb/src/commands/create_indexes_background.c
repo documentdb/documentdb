@@ -171,7 +171,7 @@ static Datum ComposeBuildIndexResponse(FunctionCallInfo fcinfo, pgbson *buildInd
 									   pgbson *requestDetailBson, bool ok);
 static Datum ComposeCheckIndexStatusResponse(FunctionCallInfo fcinfo, pgbson *bson, bool
 											 ok, bool finish);
-static void TryDropCollectionIndex(int indexId, bool isReindex, bool honorUnique);
+static void TryDropCollectionIndex(int indexId, bool isReindex);
 static void TryDropReindexedCollectionIndex(int indexId);
 static bool PruneSkippableIndexes(MemoryContext mcxt);
 static BackgroundIndexRunStatus build_index_concurrently_from_indexqueue_core(
@@ -358,8 +358,7 @@ build_index_concurrently_from_indexqueue_core(MemoryContext stableContext)
 			if (indexCmdRequest->cmdType == CREATE_INDEX_COMMAND_TYPE)
 			{
 				bool isReindex = false;
-				bool honorUnique = true;
-				TryDropCollectionIndex(indexCmdRequest->indexId, isReindex, honorUnique);
+				TryDropCollectionIndex(indexCmdRequest->indexId, isReindex);
 
 				/* remove the request permanently */
 				RemoveRequestFromIndexQueue(indexCmdRequest->indexId,
@@ -404,8 +403,7 @@ build_index_concurrently_from_indexqueue_core(MemoryContext stableContext)
 			UINT64_FORMAT,
 			indexCmdRequest->indexId, collectionId);
 		bool isReindex = indexCmdRequest->cmdType == REINDEX_COMMAND_TYPE;
-		bool honorUnique = !isReindex;
-		TryDropCollectionIndex(indexCmdRequest->indexId, isReindex, honorUnique);
+		TryDropCollectionIndex(indexCmdRequest->indexId, isReindex);
 	}
 
 	/* save the memory context before committing the transaction */
@@ -485,7 +483,6 @@ build_index_concurrently_from_indexqueue_core(MemoryContext stableContext)
 
 	/* declared volatile because of the longjmp in PG_CATCH */
 	volatile bool markedIndexAsValid = false;
-	volatile bool postProcessReindexIsValid = false;
 	if (indexCreated)
 	{
 		/* Set the stats target for the index to 0 for unique indexes */
@@ -516,7 +513,6 @@ build_index_concurrently_from_indexqueue_core(MemoryContext stableContext)
 					indexCmdRequest->indexId, collectionId);
 				PostProcessIndexForReIndex(indexCmdRequest->collectionId,
 										   indexCmdRequest->indexId);
-				postProcessReindexIsValid = true;
 			}
 
 			elog_unredacted(
@@ -575,7 +571,7 @@ build_index_concurrently_from_indexqueue_core(MemoryContext stableContext)
 			UINT64_FORMAT,
 			indexCmdRequest->indexId, collectionId);
 		TryDropCollectionIndex(indexCmdRequest->indexId, indexCmdRequest->cmdType ==
-							   REINDEX_COMMAND_TYPE, postProcessReindexIsValid);
+							   REINDEX_COMMAND_TYPE);
 
 		/* MarkIndexRequestStatus to failure for the indexId and cmdType = indexCmdRequest->cmdType */
 		elog_unredacted(
@@ -1996,7 +1992,7 @@ TryDropReindexedCollectionIndex(int indexId)
  * Wrapper around DropPostgresIndex which takes indexId as input and deletes the corresponding postgres Index.
  */
 static void
-TryDropCollectionIndex(int indexId, bool isReindex, bool honorUnique)
+TryDropCollectionIndex(int indexId, bool isReindex)
 {
 	if (SkipIndexCleanupOnFailure)
 	{
@@ -2014,15 +2010,6 @@ TryDropCollectionIndex(int indexId, bool isReindex, bool honorUnique)
 			bool forceReadWrite = EnableDropInvalidIndexesOnReadOnly;
 			if (isReindex)
 			{
-				/*
-				 * Unique reindex might have failed before registering the unique constraint.
-				 * TODO: instead of relying from a parameter, we should check the index metadata to determine if the unique constraint was registered.
-				 */
-				if (!honorUnique)
-				{
-					indexDetails->indexSpec.indexUnique = BoolIndexOption_False;
-				}
-
 				DropPostgresIndexWithSuffix(
 					indexDetails->collectionId, indexDetails,
 					concurrently, missingOk, "_ccnew");
@@ -2158,8 +2145,7 @@ PruneSkippableIndexes(MemoryContext mcxt)
 			{
 				/* remove any stale entry from PG */
 				bool isReindex = false;
-				bool honorUnique = true;
-				TryDropCollectionIndex(request->indexId, isReindex, honorUnique);
+				TryDropCollectionIndex(request->indexId, isReindex);
 
 				/* remove the request permanently */
 				RemoveRequestFromIndexQueue(request->indexId,
@@ -2169,8 +2155,7 @@ PruneSkippableIndexes(MemoryContext mcxt)
 			else
 			{
 				bool isReindex = request->cmdType == REINDEX_COMMAND_TYPE;
-				bool honorUnique = !isReindex;
-				TryDropCollectionIndex(request->indexId, isReindex, honorUnique);
+				TryDropCollectionIndex(request->indexId, isReindex);
 
 				/* remove the request permanently */
 				RemoveRequestFromIndexQueue(request->indexId,
