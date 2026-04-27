@@ -10,6 +10,7 @@
 #include <postgres.h>
 #include <access/xact.h>
 #include <catalog/namespace.h>
+#include <catalog/dependency.h>
 #include <commands/sequence.h>
 #include <executor/spi.h>
 #include <fmgr.h>
@@ -745,27 +746,57 @@ DropPostgresIndexWithSuffix(uint64 collectionId, IndexDetails *index, bool concu
 	Assert(suffix != NULL);
 
 	StringInfo cmdStr = makeStringInfo();
-	bool isUnique = GetBoolFromBoolIndexOptionDefaultFalse(index->indexSpec.indexUnique);
-	if (isUnique || (strncmp(index->indexSpec.indexName,
-							 ID_INDEX_NAME, strlen(ID_INDEX_NAME)) == 0))
+
+	/*
+	 * Determine the physical index name based on whether this is the _id index
+	 * or a regular index. We use the index spec name rather than probing the
+	 * catalog to avoid a race where a concurrent drop could cause us to
+	 * accidentally resolve and drop the real primary key constraint of another
+	 * collection's _id index.
+	 */
+	bool isIdIndex = (strncmp(index->indexSpec.indexName,
+							  ID_INDEX_NAME, strlen(ID_INDEX_NAME)) == 0);
+
+	char indexName[NAMEDATALEN] = { 0 };
+	if (isIdIndex)
 	{
-		/* These are constraints */
+		pg_sprintf(indexName, DOCUMENT_DATA_PRIMARY_KEY_FORMAT_PREFIX UINT64_FORMAT "%s",
+				   collectionId, suffix);
+	}
+	else
+	{
+		pg_sprintf(indexName, DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "%s",
+				   index->indexId, suffix);
+	}
+
+	Oid indexOid = get_relname_relid(indexName, ApiDataNamespaceOid());
+	if (!OidIsValid(indexOid))
+	{
+		if (!missingOk)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"Unexpected index \"%s\" does not exist when trying to drop it.",
+								indexName)));
+		}
+
+		return;
+	}
+
+	/*
+	 * Check whether the physical index is backed by a constraint. This is
+	 * always true for _id indexes and can also be true for unique indexes
+	 * (including background unique index builds that failed validation but
+	 * already registered the constraint).
+	 */
+	bool isConstraint = isIdIndex || OidIsValid(get_index_constraint(indexOid));
+
+	if (isConstraint)
+	{
 		appendStringInfo(cmdStr,
 						 "ALTER TABLE %s." DOCUMENT_DATA_TABLE_NAME_FORMAT
-						 " DROP CONSTRAINT %s ", ApiDataSchemaName, collectionId,
-						 missingOk ? "IF EXISTS" : "");
-		if (isUnique)
-		{
-			appendStringInfo(cmdStr,
-							 DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "%s",
-							 index->indexId, suffix);
-		}
-		else
-		{
-			appendStringInfo(cmdStr,
-							 DOCUMENT_DATA_PRIMARY_KEY_FORMAT_PREFIX UINT64_FORMAT "%s",
-							 collectionId, suffix);
-		}
+						 " DROP CONSTRAINT %s %s", ApiDataSchemaName, collectionId,
+						 missingOk ? "IF EXISTS" : "", indexName);
 
 		bool isNull = true;
 		bool readOnly = false;
@@ -776,11 +807,10 @@ DropPostgresIndexWithSuffix(uint64 collectionId, IndexDetails *index, bool concu
 	{
 		/* These are indexes */
 		appendStringInfo(cmdStr,
-						 "DROP INDEX %s %s %s."
-						 DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "%s%s",
+						 "DROP INDEX %s %s %s.%s%s",
 						 concurrently ? "CONCURRENTLY" : "",
-						 missingOk ? "IF EXISTS" : "", ApiDataSchemaName, index->indexId,
-						 suffix, concurrently ? "" : " CASCADE");
+						 missingOk ? "IF EXISTS" : "", ApiDataSchemaName, indexName,
+						 concurrently ? "" : " CASCADE");
 
 		if (concurrently)
 		{

@@ -108,8 +108,6 @@ SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WH
 
 -- Process the reindex queue
 CALL documentdb_api_internal.build_index_concurrently(1);
-NOTICE:  constraint "documents_rum_index_1984302_ccnew" of relation "documents_1984301" does not exist, skipping
-NOTICE:  constraint "documents_rum_index_1984302_ccnew_198430002" of relation "documents_1984301_198430002" does not exist, skipping
 CALL documentdb_api_internal.build_index_background(1);
 -- Verify the queue is empty
 SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WHERE index_id >= 1984300 AND index_id <= 1984400 ORDER BY index_id;
@@ -163,10 +161,6 @@ SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WH
 (1 row)
 
 CALL documentdb_api_internal.build_index_concurrently(1);
-NOTICE:  constraint "documents_rum_index_1984307_ccnew" of relation "documents_1984301" does not exist, skipping
-NOTICE:  constraint "documents_rum_index_1984307_ccnew_198430006" of relation "documents_1984301_198430006" does not exist, skipping
-NOTICE:  constraint "documents_rum_index_1984307_ccnew_198430007" of relation "documents_1984301_198430007" does not exist, skipping
-NOTICE:  constraint "documents_rum_index_1984307_ccnew_198430008" of relation "documents_1984301_198430008" does not exist, skipping
 CALL documentdb_api_internal.build_index_background(1);
 SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WHERE index_id >= 1984300 AND index_id <= 1984400 ORDER BY index_id;
  cmd_type | index_cmd 
@@ -234,14 +228,6 @@ SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WH
 (1 row)
 
 CALL documentdb_api_internal.build_index_concurrently(1);
-NOTICE:  constraint "collection_pk_1984301_ccnew" of relation "documents_1984301" does not exist, skipping
-NOTICE:  constraint "collection_pk_1984301_ccnew_198430006" of relation "documents_1984301_198430006" does not exist, skipping
-NOTICE:  constraint "collection_pk_1984301_ccnew_198430007" of relation "documents_1984301_198430007" does not exist, skipping
-NOTICE:  constraint "collection_pk_1984301_ccnew_198430008" of relation "documents_1984301_198430008" does not exist, skipping
-NOTICE:  constraint "collection_pk_1984301_ccold" of relation "documents_1984301" does not exist, skipping
-NOTICE:  constraint "collection_pk_1984301_ccold_198430006" of relation "documents_1984301_198430006" does not exist, skipping
-NOTICE:  constraint "collection_pk_1984301_ccold_198430007" of relation "documents_1984301_198430007" does not exist, skipping
-NOTICE:  constraint "collection_pk_1984301_ccold_198430008" of relation "documents_1984301_198430008" does not exist, skipping
 CALL documentdb_api_internal.build_index_background(1);
 SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WHERE index_id >= 1984300 AND index_id <= 1984400 ORDER BY index_id;
  cmd_type | index_cmd 
@@ -299,10 +285,6 @@ SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WH
 (1 row)
 
 CALL documentdb_api_internal.build_index_concurrently(1);
-NOTICE:  constraint "documents_rum_index_1984312_ccnew" of relation "documents_1984303" does not exist, skipping
-NOTICE:  constraint "documents_rum_index_1984312_ccnew_198430011" of relation "documents_1984303_198430011" does not exist, skipping
-NOTICE:  constraint "documents_rum_index_1984312_ccnew_198430012" of relation "documents_1984303_198430012" does not exist, skipping
-NOTICE:  constraint "documents_rum_index_1984312_ccnew_198430013" of relation "documents_1984303_198430013" does not exist, skipping
 CALL documentdb_api_internal.build_index_background(1);
 SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WHERE index_id >= 1984300 AND index_id <= 1984400 ORDER BY index_id;
  cmd_type | index_cmd 
