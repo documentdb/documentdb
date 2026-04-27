@@ -13,14 +13,54 @@ args = ["clippy", "--workspace", "--all-targets", "--all-features", "--frozen", 
 command = "cargo"
 args = ["deny", "check", "bans"]
 
+[tasks.notice]
+clear = true
+script_runner = "@shell"
+script = '''
+"$CARGO_MAKE_WORKING_DIRECTORY/../scripts/generate_notice.sh" \
+  -d "$CARGO_MAKE_WORKING_DIRECTORY/documentdb_gateway_core" \
+  -o "$CARGO_MAKE_WORKING_DIRECTORY/NOTICE"
+'''
+
+[tasks.notice-frozen]
+clear = true
+script_runner = "@shell"
+script = '''
+"$CARGO_MAKE_WORKING_DIRECTORY/../scripts/generate_notice.sh" \
+  -d "$CARGO_MAKE_WORKING_DIRECTORY/documentdb_gateway_core" \
+  -o "$CARGO_MAKE_WORKING_DIRECTORY/NOTICE" \
+  -f
+'''
+
+[tasks.check-notice]
+clear = true
+script_runner = "@shell"
+script = '''
+TEMP_NOTICE_FILE="$(mktemp)"
+trap 'rm -f "$TEMP_NOTICE_FILE"' EXIT
+
+"$CARGO_MAKE_WORKING_DIRECTORY/../scripts/generate_notice.sh" \
+  -d "$CARGO_MAKE_WORKING_DIRECTORY/documentdb_gateway_core" \
+  -o "$TEMP_NOTICE_FILE" \
+  -f
+
+if ! cmp -s "$CARGO_MAKE_WORKING_DIRECTORY/NOTICE" "$TEMP_NOTICE_FILE"; then
+  echo "NOTICE is out of date. Run 'cargo make notice' in pg_documentdb_gw to regenerate it."
+  diff -u "$CARGO_MAKE_WORKING_DIRECTORY/NOTICE" "$TEMP_NOTICE_FILE" || true
+  exit 1
+fi
+'''
+
 [tasks.lint]
-dependencies = ["format-check", "clippy", "deny"]
+dependencies = ["format-check", "clippy", "deny", "check-notice"]
 
 [tasks.build]
+dependencies = ["notice"]
 command = "cargo"
 args = ["build", "--workspace"]
 
 [tasks.release-build]
+dependencies = ["notice-frozen"]
 command = "cargo"
 args = ["build", "--frozen", "--profile=release-with-symbols"]
 
