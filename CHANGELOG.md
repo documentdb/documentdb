@@ -1,4 +1,5 @@
 ### documentdb v0.112-0 (Unreleased) ###
+* Removed feature flag `documentdb.enableUpdateBsonDocument` and dropped legacy composite-returning `bson_update_document` UDF — all callers now use the scalar `update_bson_document` UDF
 * Eliminate subquery migration in $group for unsharded and sharded with constant _id aggregation queries. Guarded with `EnableGroupSubqueryElimination` *[Perf]*
 * Support collation with non-unique ordered indexes with $lt, $lte. Requires `EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
 * Support index pushdown for `$group` stage when `_id` is a multi-field document expression *[Perf]*

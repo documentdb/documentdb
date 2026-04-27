@@ -390,15 +390,6 @@ bool EnableCollationWithNewGroupAccumulators =
 	DEFAULT_ENABLE_COLLATION_WITH_NEW_GROUP_ACCUMULATORS;
 
 /*
- * SECTION: DML & Write path feature flags
- */
-
-/* Added in v109, enabled in v109, remove after v112 */
-#define DEFAULT_ENABLE_UPDATE_BSON_DOCUMENT true
-bool EnableUpdateBsonDocument = DEFAULT_ENABLE_UPDATE_BSON_DOCUMENT;
-
-
-/*
  * SECTION: Cluster administration & DDL feature flags
  */
 
@@ -768,13 +759,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Enables db admin requirement for role CRUD APIs through the data plane."),
 		NULL, &EnableRolesAdminDBCheck, DEFAULT_ENABLE_ROLES_ADMIN_DB_CHECK,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableUpdateBsonDocument", newGucPrefix),
-		gettext_noop(
-			"Whether to enable the update_bson_document command."),
-		NULL, &EnableUpdateBsonDocument, DEFAULT_ENABLE_UPDATE_BSON_DOCUMENT,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
