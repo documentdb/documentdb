@@ -68,6 +68,7 @@ where
             header,
             request,
             Right((&command_error, response.as_bytes().len())),
+            Some(error),
             collection,
             request_tracker,
             activity_id,
@@ -136,6 +137,7 @@ where
     let error = DocumentDBError::documentdb_error(
         ErrorCode::ShutdownInProgress,
         "Graceful shutdown requested".to_owned(),
+        0,
     );
     reply_with_request_error(
         connection_context,
@@ -272,6 +274,7 @@ mod tests {
         let error = DocumentDBError::documentdb_error(
             ErrorCode::BadValue,
             "bad request payload".to_owned(),
+            0,
         );
         let (mut response_writer, mut response_reader) = tokio::io::duplex(4096);
 
@@ -321,6 +324,11 @@ mod tests {
         assert_eq!(
             events[0].error_code_name(),
             Some(ErrorCode::BadValue.to_string().as_str())
+        );
+        assert_eq!(
+            events[0].sub_status_code(),
+            0,
+            "DocumentDBError variants do not carry a backend sub-status code",
         );
     }
 }

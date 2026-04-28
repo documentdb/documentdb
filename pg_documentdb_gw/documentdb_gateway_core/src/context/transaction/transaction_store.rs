@@ -117,6 +117,7 @@ impl TransactionStore {
                 return Err(DocumentDBError::documentdb_error(
                     ErrorCode::TransactionTooOld,
                     "Transaction number is lower than last seen transaction".to_owned(),
+                    0,
                 ));
             }
         }
@@ -144,6 +145,7 @@ impl TransactionStore {
                     return Err(DocumentDBError::documentdb_error(
                         ErrorCode::ConflictingOperationInProgress,
                         error_message,
+                        0,
                     ));
                 }
             }
@@ -153,6 +155,7 @@ impl TransactionStore {
                     return Err(DocumentDBError::documentdb_error(
                         ErrorCode::ConflictingOperationInProgress,
                         "This transaction is already started.".to_owned(),
+                        0,
                     ));
                 }
 
@@ -198,6 +201,7 @@ impl TransactionStore {
                         "Cannot continue transaction {}",
                         transaction_info.transaction_number
                     ),
+                    0,
                 ))
             };
         }
@@ -212,6 +216,7 @@ impl TransactionStore {
                         "Transaction {} already committed",
                         transaction_info.transaction_number
                     ),
+                    0,
                 ));
             }
         }
@@ -223,6 +228,7 @@ impl TransactionStore {
                 "Cannot continue transaction {}",
                 transaction_info.transaction_number
             ),
+            0,
         ))
     }
 
@@ -272,6 +278,7 @@ impl TransactionStore {
                 DocumentDBError::documentdb_error(
                     ErrorCode::NoSuchTransaction,
                     "No such transaction to abort".to_owned(),
+                    0,
                 )
             })
     }
@@ -298,6 +305,7 @@ impl TransactionStore {
             Err(DocumentDBError::documentdb_error(
                 ErrorCode::NoSuchTransaction,
                 "No such transaction to commit".to_owned(),
+                0,
             ))
         }
     }

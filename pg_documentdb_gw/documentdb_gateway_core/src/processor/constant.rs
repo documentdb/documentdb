@@ -62,6 +62,7 @@ pub fn process_get_rw_concern(request_context: &RequestContext<'_>) -> Result<Re
         other => Err(DocumentDBError::documentdb_error(
             ErrorCode::UnknownBsonField,
             format!("Not a valid value for getDefaultRWConcern: {other}"),
+            0,
         )),
     })?;
 
@@ -69,6 +70,7 @@ pub fn process_get_rw_concern(request_context: &RequestContext<'_>) -> Result<Re
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::Unauthorized,
             "Only the admin database can process getDefaultRWConcern.".to_owned(),
+            0,
         ));
     }
 

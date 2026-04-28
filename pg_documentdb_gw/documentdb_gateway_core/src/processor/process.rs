@@ -346,6 +346,7 @@ pub async fn process_request(
                 "Command '{}' not supported.",
                 request_context.payload.request_type().to_command_str()
             ),
+            0,
         )),
     };
 
@@ -355,7 +356,7 @@ pub async fn process_request(
             Err(error)
                 if matches!(
                     error.kind(),
-                    ErrorKind::DocumentDBError(ErrorCode::WriteConflict, _, _, _)
+                    ErrorKind::DocumentDBError(ErrorCode::WriteConflict, _, _, _, _)
                 ) =>
             {
                 transaction::process_abort(connection_context).await?;

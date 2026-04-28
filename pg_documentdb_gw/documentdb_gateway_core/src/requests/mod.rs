@@ -75,6 +75,7 @@ impl RequestInfo<'_> {
         self.collection.ok_or(DocumentDBError::documentdb_error(
             ErrorCode::InvalidNamespace,
             "Invalid namespace".to_owned(),
+            0,
         ))
     }
 
@@ -159,6 +160,7 @@ impl<'a> Request<'a> {
             _ => Err(DocumentDBError::documentdb_error(
                 ErrorCode::TypeMismatch,
                 "Unexpected type".to_owned(),
+                0,
             )),
         }
     }
@@ -183,6 +185,7 @@ impl<'a> Request<'a> {
                         .ok_or(DocumentDBError::documentdb_error(
                             ErrorCode::InvalidNamespace,
                             "Invalid namespace".to_owned(),
+                            0,
                         ))?
                         .to_owned(),
                 );

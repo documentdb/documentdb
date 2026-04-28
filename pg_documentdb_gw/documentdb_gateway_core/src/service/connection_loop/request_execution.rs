@@ -130,6 +130,7 @@ where
             header,
             Some(request_context.payload),
             Left(&response),
+            None,
             collection,
             request_context.tracker,
             request_context.activity_id,

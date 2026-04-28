@@ -615,7 +615,7 @@ mod tests {
 
         assert!(matches!(
             err.kind(),
-            ErrorKind::DocumentDBError(ErrorCode::InternalError, _, _, _)
+            ErrorKind::DocumentDBError(ErrorCode::InternalError, _, _, _, _)
         ));
     }
 
@@ -710,7 +710,7 @@ mod tests {
 
         assert!(matches!(
             error.kind(),
-            ErrorKind::DocumentDBError(ErrorCode::InternalError, _, _, _)
+            ErrorKind::DocumentDBError(ErrorCode::InternalError, _, _, _, _)
         ));
     }
 

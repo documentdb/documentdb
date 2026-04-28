@@ -73,6 +73,7 @@ impl GatewayTransaction {
                 DocumentDBError::documentdb_error(
                     ErrorCode::NoSuchTransaction,
                     "No transaction found to commit".to_owned(),
+                    0,
                 )
             })?
             .commit()
@@ -89,6 +90,7 @@ impl GatewayTransaction {
                 DocumentDBError::documentdb_error(
                     ErrorCode::NoSuchTransaction,
                     "No transaction found to abort".to_owned(),
+                    0,
                 )
             })?
             .abort()
