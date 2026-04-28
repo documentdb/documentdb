@@ -353,6 +353,10 @@ bool FailOnNonEmptyGroupCountArg = DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG;
 #define DEFAULT_ENABLE_SORT_GROUP_STAGE true
 bool EnableSortGroupStage = DEFAULT_ENABLE_SORT_GROUP_STAGE;
 
+/* Added in v112, Pending stabilization, enable in v113 */
+#define DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR false
+bool EnableSortPushToAccumulator = DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR;
+
 /* Added in v112, enabled in v112, remove after v114 */
 #define DEFAULT_ENABLE_DUPLICATE_FIELD_FIX true
 bool EnableDuplicateFieldFix = DEFAULT_ENABLE_DUPLICATE_FIELD_FIX;
@@ -824,6 +828,13 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Whether to enable the $sortGroup stage."),
 		NULL, &EnableSortGroupStage, DEFAULT_ENABLE_SORT_GROUP_STAGE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableSortPushToAccumulator", newGucPrefix),
+		gettext_noop(
+			"Whether to push sort order into accumulator in $sortGroup."),
+		NULL, &EnableSortPushToAccumulator, DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

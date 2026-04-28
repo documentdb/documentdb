@@ -482,6 +482,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgro
 ROLLBACK;
 -- 4b. sortGroup ON: Sort node should disappear, orderby pushed to aggregate
 SET documentdb.enableSortGroupStage TO on;
+SET documentdb.enableSortPushToAccumulator TO on;
 set citus.propagate_set_commands to 'local';
 BEGIN;
 set local citus.max_adaptive_executor_pool_size to 1;
@@ -497,6 +498,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgro
 
 ROLLBACK;
 RESET documentdb.enableSortGroupStage;
+RESET documentdb.enableSortPushToAccumulator;
 SELECT documentdb_api.drop_collection('db', 'fl_sortgroup_dist');
  drop_collection 
 ---------------------------------------------------------------------

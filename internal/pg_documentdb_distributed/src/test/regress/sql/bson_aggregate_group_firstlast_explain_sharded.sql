@@ -204,6 +204,7 @@ ROLLBACK;
 
 -- sortGroup ON: Sort node should disappear, orderby pushed to aggregate
 SET documentdb.enableSortGroupStage TO on;
+SET documentdb.enableSortPushToAccumulator TO on;
 BEGIN;
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
@@ -216,6 +217,7 @@ $cmd$);
 ROLLBACK;
 
 RESET documentdb.enableSortGroupStage;
+RESET documentdb.enableSortPushToAccumulator;
 
 -- Cleanup
 SELECT documentdb_api.drop_collection('db', 'group_firstlast_dist');

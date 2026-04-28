@@ -91,6 +91,7 @@ extern bool RemoveMatchNamespaceFilters;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableGroupByCompoundIdIndexPushdown;
 extern bool EnableSortGroupStage;
+extern bool EnableSortPushToAccumulator;
 
 /* GUC to config tdigest compression */
 extern int TdigestCompressionAccuracy;
@@ -5592,7 +5593,8 @@ HandleSortGroup(const bson_value_t *existingValue, Query *query,
 
 	SortGroupAnalysisResult analysisResult = AnalyzeSortGroupAccumulators(&groupValue,
 																		  &sortValue);
-	bool canPushSort = analysisResult.canPushSortToAccumulator;
+	bool canPushSort = EnableSortPushToAccumulator &&
+					   analysisResult.canPushSortToAccumulator;
 	if (canPushSort)
 	{
 		ValidateSortSpec(&sortValue);

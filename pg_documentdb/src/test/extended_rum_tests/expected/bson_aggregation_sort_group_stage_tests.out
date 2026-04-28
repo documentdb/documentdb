@@ -50,6 +50,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 -- 3. With enableSortGroupStage on
 SET LOCAL documentdb.enableSortGroupStage TO on;
+SET LOCAL documentdb.enableSortPushToAccumulator TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
                                         document                                         
 -----------------------------------------------------------------------------------------
@@ -101,6 +102,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 -- 5. Sort on v, with enableSortGroupStage on
 SET LOCAL documentdb.enableSortGroupStage TO on;
+SET LOCAL documentdb.enableSortPushToAccumulator TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "v": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
                                         document                                         
 -----------------------------------------------------------------------------------------

@@ -980,6 +980,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 -- With sortGroup ON: Sort node for {g,seq} should disappear, and orderby pushed to aggregate
 SET documentdb.enableSortGroupStage TO on;
+SET documentdb.enableSortPushToAccumulator TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                  document                 
 ------------------------------------------
@@ -1535,7 +1536,7 @@ RESET documentdb.enableOrderByIndexTerm;
 -- 40. Nested field paths in sort spec
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','fl_nested_sort','{ "_id": 1, "g": "A", "info": { "priority": 3 }, "val": "low-pri" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:466: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:467: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1595,7 +1596,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_nested_sort');
 --     while case-insensitive collation (strength=1) sorts alphabetically ("apple" < "Banana").
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','fl_collation_sortpush','{ "_id": 1, "g": "A", "name": "cherry", "seq": 2 }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:482: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:483: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1695,6 +1696,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_collation_sortpush');
  t
 (1 row)
 
+RESET documentdb.enableSortPushToAccumulator;
 RESET documentdb.enableSortGroupStage;
 SELECT documentdb_api.drop_collection('db', 'fl_sortgroup_test');
  drop_collection 

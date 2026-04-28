@@ -319,6 +319,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 -- With sortGroup ON: Sort node for {g,seq} should disappear, and orderby pushed to aggregate
 SET documentdb.enableSortGroupStage TO on;
+SET documentdb.enableSortPushToAccumulator TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
 
@@ -509,6 +510,7 @@ SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 
 SELECT documentdb_api.drop_collection('db', 'fl_collation_sortpush');
 
+RESET documentdb.enableSortPushToAccumulator;
 RESET documentdb.enableSortGroupStage;
 SELECT documentdb_api.drop_collection('db', 'fl_sortgroup_test');
 

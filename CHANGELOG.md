@@ -8,7 +8,7 @@
 * Support collation with non-unique ordered indexes with `$not` combined with `$gt`, `$gte`, `$lt`, `$lte`. Requires `EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
 * Fix crash in `BsonOrderFinal` and `BsonOrderFinalOnSorted` when `BSONFIRSTN`/`BSONLASTN` aggregates run on empty sharded collections, caused by a NULL datum not being detected before detoasting. Also fix similar crash in `bson_maxminn_combine` for `BSONMAXN`/`BSONMINN` *[Bugfix]* (#531)
 * Migrate `DrainStreamingQuery` from SPI cursor-based execution to direct executor invocation via `DestReceiver`, eliminating Portal/SPI overhead for streaming queries *[Perf]*
-* Support for pushing sort order into accumulator in `$sortGroup` stage *[Perf]*
+* Add `enableSortPushToAccumulator` GUC to control pushing sort order into accumulator in `$sortGroup`; disabled by default while pending stabilization. *[Bugfix]*
 
 ### documentdb v0.111-0 (Unreleased) ###
 * Support index pushdown for `$group` stage when `_id` is a single-field document expression (e.g., `{ _id: { "field": "$path" } }`) *[Perf]*
