@@ -277,8 +277,6 @@ typedef struct
 } WorkerUpdateParam;
 
 
-extern bool UseLocalExecutionShardQueries;
-
 static BatchUpdateSpec * BuildBatchUpdateSpec(bson_iter_t *updateCommandIter,
 											  pgbsonsequence *updateDocs,
 											  Datum *databaseNameDatum);

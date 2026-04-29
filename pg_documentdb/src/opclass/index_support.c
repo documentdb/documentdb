@@ -366,7 +366,6 @@ static const ForceIndexSupportFuncs ForceIndexOperatorSupport[] =
 
 extern bool EnableVectorForceIndexPushdown;
 extern bool EnableGeonearForceIndexPushdown;
-extern bool EnableCompositeIndexPlanner;
 extern bool EnableExprLookupIndexPushdown;
 extern bool EnableUnifyPfeOnIndexInfo;
 extern bool ForceIndexOnlyScanIfAvailable;

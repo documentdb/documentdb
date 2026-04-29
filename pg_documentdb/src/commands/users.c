@@ -39,9 +39,6 @@ extern int ScramDefaultSaltLen;
 /* GUC that controls the max number of users allowed*/
 extern int MaxUserLimit;
 
-/* GUC that controls the blocked role prefix list*/
-extern char *BlockedRolePrefixList;
-
 /* GUC that controls whether we use username/password validation*/
 extern bool EnableUsernamePasswordConstraints;
 

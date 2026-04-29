@@ -92,8 +92,6 @@ typedef struct
 	List *writeErrors;
 } BatchDeletionResult;
 
-extern bool UseLocalExecutionShardQueries;
-
 PG_FUNCTION_INFO_V1(command_delete);
 PG_FUNCTION_INFO_V1(command_delete_one);
 PG_FUNCTION_INFO_V1(command_delete_worker);

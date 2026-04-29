@@ -125,7 +125,6 @@ PG_FUNCTION_INFO_V1(gin_bson_composite_ordering_transform);
 PG_FUNCTION_INFO_V1(gin_bson_composite_index_term_transform);
 PG_FUNCTION_INFO_V1(gin_bson_composite_rum_config);
 
-extern bool EnableCollation;
 extern bool RumHasMultiKeyPaths;
 extern bool RumUseNewCompositeTermGeneration;
 extern bool EnableCompositeWildcardIndex;

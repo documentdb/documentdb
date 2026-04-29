@@ -42,7 +42,6 @@ extern int ShardingMaxChunks;
 extern char *ApiGucPrefixV2;
 extern bool EnableRbacCompliantSchemas;
 extern bool EnablePrepareUnique;
-extern bool ForceUpdateIndexInline;
 extern bool EnablePerCollectionPlannerStatistics;
 
 /* Metadata about shard keys - this is unchanged through

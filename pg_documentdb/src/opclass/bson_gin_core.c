@@ -126,7 +126,6 @@ typedef struct DollarExistsQueryData
 } DollarExistsQueryData;
 
 extern bool EnableGenerateNonExistsTerm;
-extern bool EnableCollation;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */

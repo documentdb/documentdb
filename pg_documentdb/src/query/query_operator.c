@@ -140,7 +140,6 @@ typedef struct MatchNamespaceFiltersContext
 	bool isInvalidNSFilters;
 } MatchNamespaceFiltersContext;
 
-extern bool EnableCollation;
 extern bool EnableDollarInToScalarArrayOpExprConversion;
 extern bool EnableIdIndexPushdownForQueryOp;
 

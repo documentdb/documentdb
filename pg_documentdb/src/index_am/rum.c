@@ -44,8 +44,6 @@
 #include "query/bson_dollar_selectivity.h"
 
 extern bool ForceUseIndexIfAvailable;
-extern bool EnableIndexOnlyScan;
-extern bool EnableIndexOnlyScanOnCostFunction;
 extern bool DisableExtendedRumExplainPlans;
 extern bool EnableOrderedCostEstimator;
 extern bool EnableExtendedExplainPlans;

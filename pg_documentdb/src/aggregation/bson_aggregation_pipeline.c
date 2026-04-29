@@ -85,7 +85,6 @@ extern bool FailOnNonEmptyGroupCountArg;
 extern bool FailOnGroupIdDuplicate;
 extern bool EnableGroupSubqueryElimination;
 extern bool ForceGroupSubqueryElimination;
-extern bool EnableUseLookupNewProjectInlineMethod;
 extern bool InlineChangeStreamMatchStage;
 extern bool RemoveMatchNamespaceFilters;
 extern bool EnableOrderByIndexTerm;

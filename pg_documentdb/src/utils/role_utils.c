@@ -29,26 +29,8 @@
 
 #define SCRAM_MAX_SALT_LEN 64
 
-/* GUC to enable user crud operations */
-extern bool EnableUserCrud;
-
-/* GUC that controls the default salt length*/
-extern int ScramDefaultSaltLen;
-
-/* GUC that controls the max number of users allowed*/
-extern int MaxUserLimit;
-
 /* GUC that controls the blocked role prefix list*/
 extern char *BlockedRolePrefixList;
-
-/* GUC that controls whether we use username/password validation*/
-extern bool EnableUsernamePasswordConstraints;
-
-/* GUC that controls whether the usersInfo command returns privileges*/
-extern bool EnableUsersInfoPrivileges;
-
-/* GUC that controls whether native authentication is enabled*/
-extern bool IsNativeAuthEnabled;
 
 static void WriteSinglePrivilegeDocument(const ConsolidatedPrivilege *privilege,
 										 pgbson_array_writer *privilegesArrayWriter);

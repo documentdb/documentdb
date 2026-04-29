@@ -158,7 +158,6 @@ static inline void ReportInsertFeatureUsage(int batchSize);
 bool EnableCreateCollectionOnInsert = true;
 extern bool UseLocalExecutionShardQueries;
 extern bool EnableBypassDocumentValidation;
-extern bool EnableSchemaValidation;
 extern int BatchUpdateLockTimeoutMs;
 
 /*
