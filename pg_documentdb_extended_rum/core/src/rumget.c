@@ -394,10 +394,12 @@ scanPostingTree(Relation index, RumScanEntry scanEntry,
 			ItemPointerSetMin(&item.item.iptr);
 
 			ptr = RumDataPageGetData(page);
+			InitBlockNumberIncrZero(blockNumberIncr);
 			for (i = FirstOffsetNumber; i <= maxoff; i++)
 			{
-				ptr = rumDataPageLeafRead(ptr, attnum, &item.item, false,
-										  rumstate);
+				ptr = rumDataPageLeafReadWithBlockNumberIncr(ptr, attnum, &item.item,
+															 false, rumstate,
+															 &blockNumberIncr);
 
 				if (scanEntryBounds != NULL &&
 					!IsEntryInBounds(rumstate, scanEntry, &item.item, scanEntryBounds,
@@ -667,11 +669,13 @@ collectMatchBitmap(RumBtreeData *btree, RumBtreeStack *stack,
 
 			MemSet(&item, 0, sizeof(item));
 			ItemPointerSetMin(&item.item.iptr);
+			InitBlockNumberIncrZero(blockNumberIncr);
 			for (i = 0; i < RumGetNPosting(itup); i++)
 			{
 				bool checkMaximum = true;
-				ptr = rumDataPageLeafRead(ptr, scanEntry->attnum, &item.item,
-										  true, rumstate);
+				ptr = rumDataPageLeafReadWithBlockNumberIncr(ptr, scanEntry->attnum,
+															 &item.item, true, rumstate,
+															 &blockNumberIncr);
 				if (scanEntryBounds != NULL &&
 					!IsEntryInBounds(rumstate, scanEntry, &item.item, scanEntryBounds,
 									 checkMaximum))
@@ -2372,9 +2376,7 @@ entryGetNextItem(RumState *rumstate, RumScanEntry entry, Snapshot snapshot,
 			OffsetNumber maxoff,
 						 i;
 			Pointer ptr;
-			RumItem item;
 			bool searchBorder;
-
 			searchBorder = (ScanDirectionIsForward(entry->scanDirection) &&
 							ItemPointerIsValid(&entry->curItem.iptr));
 
@@ -2408,7 +2410,6 @@ entryGetNextItem(RumState *rumstate, RumScanEntry entry, Snapshot snapshot,
 			maxoff = RumDataPageMaxOff(page);
 			entry->cachedLsn = PageGetLSN(page);
 			entry->nlist = maxoff;
-			ItemPointerSetMin(&item.iptr);
 			ptr = RumDataPageGetData(page);
 
 			/*
@@ -2447,11 +2448,14 @@ entryGetNextItem(RumState *rumstate, RumScanEntry entry, Snapshot snapshot,
 				break;
 			}
 
+			InitBlockNumberIncrZero(blockNumberIncr);
 			for (i = FirstOffsetNumber; i <= maxoff; i = OffsetNumberNext(i))
 			{
-				ptr = rumDataPageLeafRead(ptr, entry->attnum, &item, true,
-										  rumstate);
-				entry->list[i - FirstOffsetNumber] = item;
+				RumItem *slot = &entry->list[i - FirstOffsetNumber];
+				ptr = rumDataPageLeafReadWithBlockNumberIncr(ptr, entry->attnum,
+															 slot, true,
+															 rumstate,
+															 &blockNumberIncr);
 
 				if (searchBorder)
 				{
@@ -2460,7 +2464,7 @@ entryGetNextItem(RumState *rumstate, RumScanEntry entry, Snapshot snapshot,
 					int cmp = compareRumItem(rumstate,
 											 entry->attnumOrig,
 											 &entry->curItem,
-											 &item);
+											 slot);
 
 					if (cmp > 0)
 					{
@@ -3320,19 +3324,24 @@ scanPage(RumState *rumstate, RumScanEntry entry, RumItem *item, bool equalOk)
 	entry->nlist = maxoff - first + 1;
 	entry->cachedLsn = PageGetLSN(page);
 	bound = -1;
+
+	InitBlockNumberIncr(blockNumberIncr, (&iter_item.iptr));
+
 	for (i = first; i <= maxoff; i++)
 	{
-		ptr = rumDataPageLeafRead(ptr, entry->attnum, &iter_item, true,
-								  rumstate);
-		entry->list[i - first] = iter_item;
+		RumItem *slot = &entry->list[i - first];
+
+		ptr = rumDataPageLeafReadWithBlockNumberIncr(ptr, entry->attnum,
+													 slot, true,
+													 rumstate,
+													 &blockNumberIncr);
 
 		if (bound != -1)
 		{
 			continue;
 		}
 
-		cmp = compareRumItem(rumstate, entry->attnumOrig,
-							 item, &iter_item);
+		cmp = compareRumItem(rumstate, entry->attnumOrig, item, slot);
 
 		if (cmp <= 0)
 		{
