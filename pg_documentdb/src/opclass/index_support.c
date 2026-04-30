@@ -380,6 +380,7 @@ extern bool EnableCursorPlanBeforeRestrictionPathUpdate;
 /* Top level exports */
 /* --------------------------------------------------------- */
 PG_FUNCTION_INFO_V1(dollar_support);
+PG_FUNCTION_INFO_V1(dollar_support_object_id);
 PG_FUNCTION_INFO_V1(bson_dollar_lookup_filter_support);
 PG_FUNCTION_INFO_V1(bson_dollar_merge_filter_support);
 
@@ -474,6 +475,36 @@ dollar_support(PG_FUNCTION_ARGS)
 				req->startup = 0;
 				responsePointer = (Pointer) req;
 			}
+		}
+	}
+
+	PG_RETURN_POINTER(responsePointer);
+}
+
+
+Datum
+dollar_support_object_id(PG_FUNCTION_ARGS)
+{
+	Node *supportRequest = (Node *) PG_GETARG_POINTER(0);
+	Pointer responsePointer = NULL;
+	if (IsA(supportRequest, SupportRequestIndexCondition))
+	{
+		/* Try to convert operator/function call to index conditions */
+		SupportRequestIndexCondition *req =
+			(SupportRequestIndexCondition *) supportRequest;
+
+		/* if we matched the condition to the index, then this function is not lossy -
+		 * The operator is a perfect match for the function.
+		 */
+		req->lossy = false;
+
+		if (req->index->relam == BTREE_AM_OID)
+		{
+			ereport(NOTICE, errmsg("bson_dollar_support_object_id for BTREE_AM_OID."));
+		}
+		else
+		{
+			ereport(NOTICE, errmsg("bson_dollar_support_object_id for RUM."));
 		}
 	}
 

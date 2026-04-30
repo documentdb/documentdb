@@ -359,9 +359,11 @@ static bool IsExistPositiveMatch(pgbson *filter);
 static pgbsonelement PopulateRegexState(PG_FUNCTION_ARGS,
 										TraverseRegexValidateState *state);
 static void PopulateRegexFromQuery(RegexData *regexState, pgbsonelement *filterElement);
+static Datum BsonDollarInCore(PG_FUNCTION_ARGS, bool hasObjectIdArg);
 static void PopulateDollarInValidationState(PG_FUNCTION_ARGS,
 											TraverseInValidateState *state,
-											pgbsonelement *filterElement);
+											pgbsonelement *filterElement,
+											bool isObjectIdOverload);
 static void PopulateDollarInStateFromQuery(BsonDollarInQueryState *dollarInState,
 										   const pgbson *filter);
 static pgbsonelement PopulateElemMatchValidationState(PG_FUNCTION_ARGS,
@@ -545,11 +547,17 @@ PG_FUNCTION_INFO_V1(bson_dollar_type);
 PG_FUNCTION_INFO_V1(bson_dollar_all);
 PG_FUNCTION_INFO_V1(bson_dollar_elemmatch);
 PG_FUNCTION_INFO_V1(bson_dollar_eq);
+PG_FUNCTION_INFO_V1(bson_dollar_eq_object_id);
 PG_FUNCTION_INFO_V1(bson_dollar_gt);
+PG_FUNCTION_INFO_V1(bson_dollar_gt_object_id);
 PG_FUNCTION_INFO_V1(bson_dollar_gte);
+PG_FUNCTION_INFO_V1(bson_dollar_gte_object_id);
 PG_FUNCTION_INFO_V1(bson_dollar_lt);
+PG_FUNCTION_INFO_V1(bson_dollar_lt_object_id);
 PG_FUNCTION_INFO_V1(bson_dollar_lte);
+PG_FUNCTION_INFO_V1(bson_dollar_lte_object_id);
 PG_FUNCTION_INFO_V1(bson_dollar_in);
+PG_FUNCTION_INFO_V1(bson_dollar_in_object_id);
 PG_FUNCTION_INFO_V1(bson_dollar_ne);
 PG_FUNCTION_INFO_V1(bson_dollar_nin);
 PG_FUNCTION_INFO_V1(bson_dollar_exists);
@@ -1062,6 +1070,24 @@ bson_dollar_eq(PG_FUNCTION_ARGS)
 
 
 /*
+ * bson_dollar_eq_object_id implements the $eq functionality
+ * in the runtime. This traverses the document based on
+ * filter dot-notation syntax and for all possible values, checks
+ * that at least one matches the equality semantics on the value
+ * provided.
+ */
+Datum
+bson_dollar_eq_object_id(PG_FUNCTION_ARGS)
+{
+	pgbson *document = PG_GETARG_PGBSON(0);
+	pgbson *filter = PG_GETARG_PGBSON(2);
+	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForValue;
+	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareEqualMatch,
+										   isNullFilterEquality));
+}
+
+
+/*
  * implements the $eq functionality
  * in the runtime. Checks that the value in the element provided
  * is equal to the value in the filter.
@@ -1093,6 +1119,25 @@ bson_dollar_gt(PG_FUNCTION_ARGS)
 {
 	pgbson *document = PG_GETARG_PGBSON(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
+
+	IsQueryFilterNullFunc isNullFilterEquality = NULL;
+	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareGreaterMatch,
+										   isNullFilterEquality));
+}
+
+
+/*
+ * bson_dollar_gt_object_id implements the $gt functionality
+ * in the runtime. This traverses the document based on
+ * filter dot-notation syntax and for all possible values, checks
+ * that at least one matches the greater than semantics on the value
+ * provided.
+ */
+Datum
+bson_dollar_gt_object_id(PG_FUNCTION_ARGS)
+{
+	pgbson *document = PG_GETARG_PGBSON(0);
+	pgbson *filter = PG_GETARG_PGBSON(2);
 
 	IsQueryFilterNullFunc isNullFilterEquality = NULL;
 	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareGreaterMatch,
@@ -1147,6 +1192,24 @@ bson_dollar_gte(PG_FUNCTION_ARGS)
 {
 	pgbson *document = PG_GETARG_PGBSON(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
+	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForValue;
+	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareGreaterEqualMatch,
+										   isNullFilterEquality));
+}
+
+
+/*
+ * bson_dollar_gte_object_id implements the $gte functionality
+ * in the runtime. This traverses the document based on
+ * filter dot-notation syntax and for all possible values, checks
+ * that at least one matches the greater than or equal
+ *  semantics on the value provided.
+ */
+Datum
+bson_dollar_gte_object_id(PG_FUNCTION_ARGS)
+{
+	pgbson *document = PG_GETARG_PGBSON(0);
+	pgbson *filter = PG_GETARG_PGBSON(2);
 	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForValue;
 	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareGreaterEqualMatch,
 										   isNullFilterEquality));
@@ -1349,6 +1412,18 @@ bson_dollar_lt(PG_FUNCTION_ARGS)
 }
 
 
+Datum
+bson_dollar_lt_object_id(PG_FUNCTION_ARGS)
+{
+	pgbson *document = PG_GETARG_PGBSON(0);
+	pgbson *filter = PG_GETARG_PGBSON(2);
+
+	IsQueryFilterNullFunc isNullFilterEquality = NULL;
+	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareLessMatch,
+										   isNullFilterEquality));
+}
+
+
 /*
  * implements the $lt functionality
  * in the runtime. Checks that the value in the element provided
@@ -1378,6 +1453,25 @@ bson_dollar_lte(PG_FUNCTION_ARGS)
 {
 	pgbson *document = PG_GETARG_PGBSON(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
+
+	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForValue;
+	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareLessEqualMatch,
+										   isNullFilterEquality));
+}
+
+
+/*
+ * bson_dollar_lte_object_id implements the $lte functionality
+ * in the runtime. This traverses the document based on
+ * filter dot-notation syntax and for all possible values, checks
+ * that at least one matches the less than or equal
+ *  semantics on the value provided.
+ */
+Datum
+bson_dollar_lte_object_id(PG_FUNCTION_ARGS)
+{
+	pgbson *document = PG_GETARG_PGBSON(0);
+	pgbson *filter = PG_GETARG_PGBSON(2);
 
 	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForValue;
 	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareLessEqualMatch,
@@ -1431,26 +1525,22 @@ bson_value_dollar_lte(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_in(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
-	bson_iter_t documentIterator;
-	TraverseInValidateState state = { 0 };
+	bool hasObjectIdArg = false;
+	return BsonDollarInCore(fcinfo, hasObjectIdArg);
+}
 
-	pgbsonelement filterElement = { 0 };
-	PopulateDollarInValidationState(fcinfo, &state, &filterElement);
 
-	PgbsonInitIterator(document, &documentIterator);
-
-	TraverseBson(&documentIterator, filterElement.path, &state.traverseState,
-				 &CompareExecutionFuncs);
-	if (state.hasNull)
-	{
-		/* If any element in the input is null and the target path cannot be found in the document, we'll choose that document. */
-		PG_RETURN_BOOL(state.traverseState.compareResult != CompareResult_Mismatch);
-	}
-	else
-	{
-		PG_RETURN_BOOL(state.traverseState.compareResult == CompareResult_Match);
-	}
+/*
+ * bson_dollar_in_object_id implements the $in functionality
+ * in the runtime. This traverses the document based on
+ * filter dot-notation syntax and for all possible values, checks
+ * that at least one matches at least one of the input array values.
+ */
+Datum
+bson_dollar_in_object_id(PG_FUNCTION_ARGS)
+{
+	bool hasObjectIdArg = true;
+	return BsonDollarInCore(fcinfo, hasObjectIdArg);
 }
 
 
@@ -1462,7 +1552,8 @@ bson_dollar_in(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_lookup_join_filter(PG_FUNCTION_ARGS)
 {
-	return bson_dollar_in(fcinfo);
+	bool hasObjectIdArg = false;
+	return BsonDollarInCore(fcinfo, hasObjectIdArg);
 }
 
 
@@ -1489,7 +1580,7 @@ bson_value_dollar_in(PG_FUNCTION_ARGS)
 	TraverseInValidateState state = { 0 };
 
 	pgbsonelement filterElement = { 0 };
-	PopulateDollarInValidationState(fcinfo, &state, &filterElement);
+	PopulateDollarInValidationState(fcinfo, &state, &filterElement, false);
 
 	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForArray;
 	PG_RETURN_BOOL(CompareBsonValueAgainstQueryCore(element, &filterElement,
@@ -1515,7 +1606,7 @@ bson_dollar_nin(PG_FUNCTION_ARGS)
 	TraverseInValidateState state = { 0 };
 
 	pgbsonelement filterElement = { 0 };
-	PopulateDollarInValidationState(fcinfo, &state, &filterElement);
+	PopulateDollarInValidationState(fcinfo, &state, &filterElement, false);
 
 	PgbsonInitIterator(document, &documentIterator);
 
@@ -1546,7 +1637,7 @@ bson_value_dollar_nin(PG_FUNCTION_ARGS)
 	TraverseInValidateState state = { 0 };
 
 	pgbsonelement filterElement = { 0 };
-	PopulateDollarInValidationState(fcinfo, &state, &filterElement);
+	PopulateDollarInValidationState(fcinfo, &state, &filterElement, false);
 
 	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForArray;
 	PG_RETURN_BOOL(!CompareBsonValueAgainstQueryCore(element, &filterElement,
@@ -3757,6 +3848,32 @@ PopulateExprStateFromQuery(BsonDollarExprQueryState *state,
 }
 
 
+static Datum
+BsonDollarInCore(PG_FUNCTION_ARGS, bool hasObjectIdArg)
+{
+	pgbson *document = PG_GETARG_PGBSON(0);
+	bson_iter_t documentIterator;
+	TraverseInValidateState state = { 0 };
+
+	pgbsonelement filterElement = { 0 };
+	PopulateDollarInValidationState(fcinfo, &state, &filterElement, hasObjectIdArg);
+
+	PgbsonInitIterator(document, &documentIterator);
+
+	TraverseBson(&documentIterator, filterElement.path, &state.traverseState,
+				 &CompareExecutionFuncs);
+	if (state.hasNull)
+	{
+		/* If any element in the input is null and the target path cannot be found in the document, we'll choose that document. */
+		PG_RETURN_BOOL(state.traverseState.compareResult != CompareResult_Mismatch);
+	}
+	else
+	{
+		PG_RETURN_BOOL(state.traverseState.compareResult == CompareResult_Match);
+	}
+}
+
+
 /*
  * Based on the PG_FUNCTION_ARGS, builds or retrieves the cached
  * per-query state for $in. Using the cached state, the function
@@ -3766,9 +3883,26 @@ PopulateExprStateFromQuery(BsonDollarExprQueryState *state,
 static void
 PopulateDollarInValidationState(PG_FUNCTION_ARGS,
 								TraverseInValidateState *state,
-								pgbsonelement *filterElement)
+								pgbsonelement *filterElement,
+								bool isObjectIdOverload)
 {
-	pgbson *filter = PG_GETARG_PGBSON(1);
+	/* The object_id overload has 3 args: (document, object_id, query).
+	 * The query filter is at arg position 2 instead of 1.
+	 * We use an explicit flag rather than checking PG_NARGS() because other
+	 * 3-arg call sites (e.g. bson_dollar_lookup_join_filter) use position 1. */
+	pgbson *filter = NULL;
+	int argPosition = -1;
+	if (isObjectIdOverload)
+	{
+		Assert(PG_NARGS() == 3);
+		argPosition = 2;
+		filter = PG_GETARG_PGBSON(2);
+	}
+	else
+	{
+		argPosition = 1;
+		filter = PG_GETARG_PGBSON(1);
+	}
 
 	BsonDollarInQueryState *dollarInState = NULL;
 
@@ -3778,7 +3912,7 @@ PopulateDollarInValidationState(PG_FUNCTION_ARGS,
 	SetCachedFunctionState(
 		dollarInState,
 		BsonDollarInQueryState,
-		1,
+		argPosition,
 		PopulateDollarInStateFromQuery,
 		filter);
 	if (dollarInState == NULL)

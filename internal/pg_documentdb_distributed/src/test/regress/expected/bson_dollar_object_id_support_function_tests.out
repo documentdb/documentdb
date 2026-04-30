@@ -1,0 +1,198 @@
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
+SET citus.next_shard_id TO 198440000;
+SET documentdb.next_collection_id TO 1984400;
+SET documentdb.next_collection_index_id TO 1984400;
+-- Insert test data
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('objid_support_db', 'test_support_func', FORMAT('{ "_id": %s, "a": %s }', g, g)::bson) FROM generate_series(1, 100) g) i;
+NOTICE:  creating collection
+ count 
+---------------------------------------------------------------------
+   100
+(1 row)
+
+-- Test 1: Direct invocation of the 3-argument UDFs to validate runtime results.
+-- These are the object_id overloads (bson, bson, bsonquery) used for btree index pushdown.
+-- bson_dollar_eq: should return true when _id matches
+SELECT bson_dollar_eq('{ "_id": 5, "a": 5 }', '{ "": 5 }', '{ "_id": 5 }');
+ bson_dollar_eq 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- bson_dollar_eq: should return false when _id does not match
+SELECT bson_dollar_eq('{ "_id": 5, "a": 5 }', '{ "": 5 }', '{ "_id": 10 }');
+ bson_dollar_eq 
+---------------------------------------------------------------------
+ f
+(1 row)
+
+-- bson_dollar_gt: should return true when _id > value
+SELECT bson_dollar_gt('{ "_id": 10, "a": 10 }', '{ "": 10 }', '{ "_id": 5 }');
+ bson_dollar_gt 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- bson_dollar_gt: should return false when _id <= value
+SELECT bson_dollar_gt('{ "_id": 5, "a": 5 }', '{ "": 5 }', '{ "_id": 10 }');
+ bson_dollar_gt 
+---------------------------------------------------------------------
+ f
+(1 row)
+
+-- bson_dollar_gte: should return true when _id >= value
+SELECT bson_dollar_gte('{ "_id": 10, "a": 10 }', '{ "": 10 }', '{ "_id": 10 }');
+ bson_dollar_gte 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- bson_dollar_gte: should return false when _id < value
+SELECT bson_dollar_gte('{ "_id": 5, "a": 5 }', '{ "": 5 }', '{ "_id": 10 }');
+ bson_dollar_gte 
+---------------------------------------------------------------------
+ f
+(1 row)
+
+-- bson_dollar_lt: should return true when _id < value
+SELECT bson_dollar_lt('{ "_id": 5, "a": 5 }', '{ "": 5 }', '{ "_id": 10 }');
+ bson_dollar_lt 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- bson_dollar_lt: should return false when _id >= value
+SELECT bson_dollar_lt('{ "_id": 10, "a": 10 }', '{ "": 10 }', '{ "_id": 5 }');
+ bson_dollar_lt 
+---------------------------------------------------------------------
+ f
+(1 row)
+
+-- bson_dollar_lte: should return true when _id <= value
+SELECT bson_dollar_lte('{ "_id": 10, "a": 10 }', '{ "": 10 }', '{ "_id": 10 }');
+ bson_dollar_lte 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- bson_dollar_lte: should return false when _id > value
+SELECT bson_dollar_lte('{ "_id": 10, "a": 10 }', '{ "": 10 }', '{ "_id": 5 }');
+ bson_dollar_lte 
+---------------------------------------------------------------------
+ f
+(1 row)
+
+-- bson_dollar_in: should return true when _id is in the array
+SELECT bson_dollar_in('{ "_id": 5, "a": 5 }', '{ "": 5 }', '{ "_id": [1, 5, 10] }');
+ bson_dollar_in 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- bson_dollar_in: should return false when _id is not in the array
+SELECT bson_dollar_in('{ "_id": 7, "a": 7 }', '{ "": 7 }', '{ "_id": [1, 5, 10] }');
+ bson_dollar_in 
+---------------------------------------------------------------------
+ f
+(1 row)
+
+-- Test 2: Verify runtime results and NOTICE from support function (btree _id index).
+-- The support function emits a NOTICE when invoked during planning.
+SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
+  WHERE bson_dollar_eq(document, object_id, '{ "_id": 15 }');
+NOTICE:  bson_dollar_support_object_id for BTREE_AM_OID.
+                              document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "15" }, "a" : { "$numberInt" : "15" } }
+(1 row)
+
+SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
+  WHERE bson_dollar_gt(document, object_id, '{ "_id": 97 }');
+NOTICE:  bson_dollar_support_object_id for BTREE_AM_OID.
+                               document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "98" }, "a" : { "$numberInt" : "98" } }
+ { "_id" : { "$numberInt" : "99" }, "a" : { "$numberInt" : "99" } }
+ { "_id" : { "$numberInt" : "100" }, "a" : { "$numberInt" : "100" } }
+(3 rows)
+
+SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
+  WHERE bson_dollar_gte(document, object_id, '{ "_id": 99 }');
+NOTICE:  bson_dollar_support_object_id for BTREE_AM_OID.
+                               document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "99" }, "a" : { "$numberInt" : "99" } }
+ { "_id" : { "$numberInt" : "100" }, "a" : { "$numberInt" : "100" } }
+(2 rows)
+
+SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
+  WHERE bson_dollar_lt(document, object_id, '{ "_id": 3 }');
+NOTICE:  bson_dollar_support_object_id for BTREE_AM_OID.
+                             document                             
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "2" } }
+(2 rows)
+
+SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
+  WHERE bson_dollar_lte(document, object_id, '{ "_id": 2 }');
+NOTICE:  bson_dollar_support_object_id for BTREE_AM_OID.
+                             document                             
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "2" } }
+(2 rows)
+
+SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
+  WHERE bson_dollar_in(document, object_id, '{ "_id": [10, 20, 30] }');
+NOTICE:  bson_dollar_support_object_id for BTREE_AM_OID.
+                              document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "10" }, "a" : { "$numberInt" : "10" } }
+ { "_id" : { "$numberInt" : "20" }, "a" : { "$numberInt" : "20" } }
+ { "_id" : { "$numberInt" : "30" }, "a" : { "$numberInt" : "30" } }
+(3 rows)
+
+-- Test 3: Verify the support function is invoked for the RUM index path.
+-- Create a compound index on (a, _id) to trigger the RUM support function path.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('objid_support_db', '{ "createIndexes": "test_support_func", "indexes": [ { "key": { "a": 1, "_id": 1 }, "name": "idx_a_id" } ]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- These queries should emit NOTICE for RUM path
+SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
+  WHERE bson_dollar_eq(document, object_id, '{ "_id": 15 }');
+NOTICE:  bson_dollar_support_object_id for BTREE_AM_OID.
+NOTICE:  bson_dollar_support_object_id for RUM.
+NOTICE:  bson_dollar_support_object_id for RUM.
+                              document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "15" }, "a" : { "$numberInt" : "15" } }
+(1 row)
+
+SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
+  WHERE bson_dollar_gt(document, object_id, '{ "_id": 97 }');
+NOTICE:  bson_dollar_support_object_id for BTREE_AM_OID.
+NOTICE:  bson_dollar_support_object_id for RUM.
+NOTICE:  bson_dollar_support_object_id for RUM.
+                               document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "98" }, "a" : { "$numberInt" : "98" } }
+ { "_id" : { "$numberInt" : "99" }, "a" : { "$numberInt" : "99" } }
+ { "_id" : { "$numberInt" : "100" }, "a" : { "$numberInt" : "100" } }
+(3 rows)
+
+SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
+  WHERE bson_dollar_in(document, object_id, '{ "_id": [10, 20, 30] }');
+NOTICE:  bson_dollar_support_object_id for BTREE_AM_OID.
+NOTICE:  bson_dollar_support_object_id for RUM.
+NOTICE:  bson_dollar_support_object_id for RUM.
+                              document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "10" }, "a" : { "$numberInt" : "10" } }
+ { "_id" : { "$numberInt" : "20" }, "a" : { "$numberInt" : "20" } }
+ { "_id" : { "$numberInt" : "30" }, "a" : { "$numberInt" : "30" } }
+(3 rows)
+

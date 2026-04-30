@@ -80,6 +80,7 @@
  documentdb_api_catalog | bson_dollar_bits_any_set                | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
  documentdb_api_catalog | bson_dollar_elemmatch                   | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
  documentdb_api_catalog | bson_dollar_eq                          | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
+ documentdb_api_catalog | bson_dollar_eq                          | boolean                    | documentdb_core.bson, documentdb_core.bson, documentdb_core.bsonquery                                                           | func
  documentdb_api_catalog | bson_dollar_eq                          | boolean                    | documentdb_core.bson, documentdb_core.bsonquery                                                                                 | func
  documentdb_api_catalog | bson_dollar_exists                      | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
  documentdb_api_catalog | bson_dollar_expr                        | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
@@ -87,14 +88,19 @@
  documentdb_api_catalog | bson_dollar_geointersects               | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
  documentdb_api_catalog | bson_dollar_geowithin                   | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
  documentdb_api_catalog | bson_dollar_gt                          | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
+ documentdb_api_catalog | bson_dollar_gt                          | boolean                    | documentdb_core.bson, documentdb_core.bson, documentdb_core.bsonquery                                                           | func
  documentdb_api_catalog | bson_dollar_gt                          | boolean                    | documentdb_core.bson, documentdb_core.bsonquery                                                                                 | func
  documentdb_api_catalog | bson_dollar_gte                         | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
+ documentdb_api_catalog | bson_dollar_gte                         | boolean                    | documentdb_core.bson, documentdb_core.bson, documentdb_core.bsonquery                                                           | func
  documentdb_api_catalog | bson_dollar_gte                         | boolean                    | documentdb_core.bson, documentdb_core.bsonquery                                                                                 | func
  documentdb_api_catalog | bson_dollar_in                          | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
+ documentdb_api_catalog | bson_dollar_in                          | boolean                    | documentdb_core.bson, documentdb_core.bson, documentdb_core.bsonquery                                                           | func
  documentdb_api_catalog | bson_dollar_json_schema                 | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
  documentdb_api_catalog | bson_dollar_lt                          | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
+ documentdb_api_catalog | bson_dollar_lt                          | boolean                    | documentdb_core.bson, documentdb_core.bson, documentdb_core.bsonquery                                                           | func
  documentdb_api_catalog | bson_dollar_lt                          | boolean                    | documentdb_core.bson, documentdb_core.bsonquery                                                                                 | func
  documentdb_api_catalog | bson_dollar_lte                         | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
+ documentdb_api_catalog | bson_dollar_lte                         | boolean                    | documentdb_core.bson, documentdb_core.bson, documentdb_core.bsonquery                                                           | func
  documentdb_api_catalog | bson_dollar_lte                         | boolean                    | documentdb_core.bson, documentdb_core.bsonquery                                                                                 | func
  documentdb_api_catalog | bson_dollar_mod                         | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
  documentdb_api_catalog | bson_dollar_ne                          | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
@@ -168,6 +174,7 @@
  documentdb_api_catalog | bsonsum                                 | documentdb_core.bson       | documentdb_core.bson                                                                                                            | agg
  documentdb_api_catalog | documentdbrumhandler                    | index_am_handler           | internal                                                                                                                        | func
  documentdb_api_catalog | dollar_support                          | internal                   | internal                                                                                                                        | func
+ documentdb_api_catalog | dollar_support_object_id                | internal                   | internal                                                                                                                        | func
  documentdb_api_catalog | gin_bson_can_pre_consistent             | boolean                    | smallint, documentdb_core.bson, integer, internal, internal, internal                                                           | func
  documentdb_api_catalog | gin_bson_compare                        | integer                    | bytea, bytea                                                                                                                    | func
  documentdb_api_catalog | gin_bson_compare_partial                | integer                    | bytea, bytea, smallint, internal                                                                                                | func
@@ -180,7 +187,7 @@
  documentdb_api_catalog | gin_bson_wildcard_project_extract_value | internal                   | documentdb_core.bson, internal                                                                                                  | func
  documentdb_api_catalog | gin_bson_wildcard_project_options       | void                       | internal                                                                                                                        | func
  documentdb_api_catalog | query_match_support                     | internal                   | internal                                                                                                                        | func
-(122 rows)
+(129 rows)
 
 \df documentdb_api_internal.*
                                                                                                                                                                                                                                                                                                                               List of functions
