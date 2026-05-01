@@ -19,8 +19,48 @@ done
 
 scriptDir="$( cd -P "$( dirname "$source" )" && pwd )"
 
-# Validate index/runtime equivalence.
+# Validates a collation test pair (index vs runtime).
+validate_collation_test_output() {
+    local indexFile=$1
+    local runtimeFile=$2
+
+    # Strip everything before the first `SET search_path TO ` line (this is
+    # the first echoed line of <core>.sql in both variants — the index
+    # variant's preceding output is its index-creation preamble), and
+    # normalise `documents_<col>_<shard>` shard table names so the collection
+    # IDs that the index variant pre-allocates during preamble don't trip
+    # the diff.
+    local awkScript='
+        /^SET search_path TO / { capture = 1 }
+        capture {
+            gsub(/documents_[0-9]+_[0-9]+/, "documents_<SHARD>")
+            gsub(/documents_[0-9]+/, "documents_<COLLECTION>")
+            print
+        }
+        END {
+            if (!capture) {
+                print "ERROR: missing `SET search_path TO ` marker in " FILENAME > "/dev/stderr"
+                exit 2
+            }
+        }
+    '
+
+    $diff -s -I 'NOTICE:  creating collection' -I 'SELECT documentdb_api_internal.create_indexes' -I 'set local enable_seqscan' -I 'documentdb.next_collection_id' -I 'set local enable_bitmapscan' -I 'set local documentdb.forceUseIndexIfAvailable' -I 'set local citus.enable_local_execution' -I '\\set' -I 'set enable_seqscan' -I 'set documentdb.forceUseIndexIfAvailable' -I 'documentdb.enableGeospatial' \
+        <(awk "$awkScript" "$indexFile") <(awk "$awkScript" "$runtimeFile")
+}
+
+# Validate index/runtime equivalence for collation dist tests.
+for validationFileName in $(ls ./expected/bson_collation_*_tests_dist_index.out); do
+    runtimeFileName=${validationFileName/_tests_dist_index.out/_tests_dist_runtime.out};
+    validate_collation_test_output "$validationFileName" "$runtimeFileName"
+    if [ $? -ne 0 ]; then echo "Validation failed on '${validationFileName}' against '${runtimeFileName}' error code $?"; exit 1; fi;
+done
+
+# Validate index/runtime equivalence for all other tests.
 for validationFileName in $(ls ./expected/*_tests_index.out); do
+    case "$(basename $validationFileName)" in
+        bson_collation_*) continue ;;
+    esac
     runtimeFileName=${validationFileName/_tests_index.out/_tests_runtime.out};
 
     $diff -s -I 'SELECT documentdb_api_internal.create_indexes' -I 'set local enable_seqscan' -I 'documentdb.next_collection_id' -I 'set local enable_bitmapscan' -I 'set local documentdb.forceUseIndexIfAvailable' -I 'set local citus.enable_local_execution' -I '\\set' -I 'set enable_seqscan'  -I 'set documentdb.forceUseIndexIfAvailable' -I 'documentdb.enableGeospatial' \
@@ -175,7 +215,7 @@ for validationFile in $(ls $scriptDir/expected/*.out); do
 
     # Allow skipping unique checks
     skipUniqueCheck="false"
-    if [[ "$sqlFile" =~ "tests_runtime.sql" ]] || [[ "$sqlFile" =~ "explain_index_comp_wild" ]] || [[ "$sqlFile" =~ "explain_index_composite" ]] || [[ "$sqlFile" =~ "explain_index_comp_desc.sql" ]] || [[ "$sqlFile" =~ "tests_index_no_bitmap.sql" ]] || [[ "$sqlFile" =~ "tests_index.sql" ]] ||  [[ "$sqlFile" =~ "tests_index_backcompat.sql" ]] || [[ "$sqlFile" =~ "tests_pg17_explain" ]] || [[ "$sqlFile" =~ "tests_explain_index.sql" ]] || [[ "$sqlFile" =~ "tests_explain_index_no_bitmap.sql" ]]; then
+    if [[ "$sqlFile" =~ "tests_runtime.sql" ]] || [[ "$sqlFile" =~ "explain_index_comp_wild" ]] || [[ "$sqlFile" =~ "explain_index_composite" ]] || [[ "$sqlFile" =~ "explain_index_comp_desc.sql" ]] || [[ "$sqlFile" =~ "tests_index_no_bitmap.sql" ]] || [[ "$sqlFile" =~ "tests_index.sql" ]] ||  [[ "$sqlFile" =~ "tests_index_backcompat.sql" ]] || [[ "$sqlFile" =~ "tests_pg17_explain" ]] || [[ "$sqlFile" =~ "tests_explain_index.sql" ]] || [[ "$sqlFile" =~ "tests_explain_runtime.sql" ]] || [[ "$sqlFile" =~ "tests_dist_runtime.sql" ]] || [[ "$sqlFile" =~ "tests_dist_index.sql" ]] || [[ "$sqlFile" =~ "tests_dist_explain_index.sql" ]] || [[ "$sqlFile" =~ "tests_dist_explain_runtime.sql" ]] || [[ "$sqlFile" =~ "tests_explain_index_no_bitmap.sql" ]]; then
             skippedDuplicateCheckFile="$skippedDuplicateCheckFile $sqlFile"
             skipUniqueCheck="true"
     elif [[ "$sqlFile" =~ _pg[0-9]+ ]]; then

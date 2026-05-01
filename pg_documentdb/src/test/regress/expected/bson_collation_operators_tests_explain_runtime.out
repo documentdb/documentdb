@@ -1,0 +1,109 @@
+SET citus.next_shard_id TO 9600000;
+SET documentdb.next_collection_id TO 9600;
+SET documentdb.next_collection_index_id TO 9600;
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_api.insert_one('coll_operators_runtime_explain_db','single_field', '{"_id": 1, "a": "apple"}', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_operators_runtime_explain_db','single_field', '{"_id": 2, "a": "Apple"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_operators_runtime_explain_db','single_field', '{"_id": 3, "a": "BANANA"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_operators_runtime_explain_db','single_field', '{"_id": 4, "a": "banana"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_operators_runtime_explain_db','single_field', '{"_id": 5, "a": "cherry"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_operators_runtime_explain_db','single_field', '{"_id": 6, "a": 42}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- $eq with collation
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_operators_runtime_explain_db', '{ "find": "single_field", "filter": { "a": { "$eq": "Apple" } }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
+                               run_explain_and_trim                                
+-----------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_9601 collection
+   Recheck Cond: (shard_key_value = '9601'::bigint)
+   Filter: (document @= '{ "a" : "Apple", "collation" : "en-u-ks-level1" }'::bson)
+   ->  Bitmap Index Scan on _id_
+         Index Cond: (shard_key_value = '9601'::bigint)
+(5 rows)
+
+-- $gt with collation
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_operators_runtime_explain_db', '{ "find": "single_field", "filter": { "a": { "$gt": "banana" } }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
+                                run_explain_and_trim                                
+------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_9601 collection
+   Recheck Cond: (shard_key_value = '9601'::bigint)
+   Filter: (document @> '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
+   ->  Bitmap Index Scan on _id_
+         Index Cond: (shard_key_value = '9601'::bigint)
+(5 rows)
+
+-- $ne with collation
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_operators_runtime_explain_db', '{ "find": "single_field", "filter": { "a": { "$ne": "apple" } }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
+                                run_explain_and_trim                                
+------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_9601 collection
+   Recheck Cond: (shard_key_value = '9601'::bigint)
+   Filter: (document @!= '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson)
+   ->  Bitmap Index Scan on _id_
+         Index Cond: (shard_key_value = '9601'::bigint)
+(5 rows)
+
+-- $not on $gt with collation
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_operators_runtime_explain_db', '{ "find": "single_field", "filter": { "a": { "$not": { "$gt": "BANANA" } } }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
+                                                 run_explain_and_trim                                                  
+-----------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_9601 collection
+   Recheck Cond: (shard_key_value = '9601'::bigint)
+   Filter: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "BANANA", "collation" : "en-u-ks-level1" }'::bson)
+   ->  Bitmap Index Scan on _id_
+         Index Cond: (shard_key_value = '9601'::bigint)
+(5 rows)
+
+-- $not on $lte with collation
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_operators_runtime_explain_db', '{ "find": "single_field", "filter": { "a": { "$not": { "$lte": "banana" } } }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
+                                                  run_explain_and_trim                                                  
+------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_9601 collection
+   Recheck Cond: (shard_key_value = '9601'::bigint)
+   Filter: (document OPERATOR(documentdb_api_internal.@!<=) '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
+   ->  Bitmap Index Scan on _id_
+         Index Cond: (shard_key_value = '9601'::bigint)
+(5 rows)
+
+-- $not $lt against numeric (non-string operand bypasses collation)
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_operators_runtime_explain_db', '{ "find": "single_field", "filter": { "a": { "$not": { "$lt": 100 } } }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
+                                                         run_explain_and_trim                                                          
+---------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_9601 collection
+   Recheck Cond: (shard_key_value = '9601'::bigint)
+   Filter: (document OPERATOR(documentdb_api_internal.@!<) '{ "a" : { "$numberInt" : "100" }, "collation" : "en-u-ks-level1" }'::bson)
+   ->  Bitmap Index Scan on _id_
+         Index Cond: (shard_key_value = '9601'::bigint)
+(5 rows)
+

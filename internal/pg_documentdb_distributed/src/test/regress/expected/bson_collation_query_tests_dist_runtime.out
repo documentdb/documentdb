@@ -1,0 +1,589 @@
+SET citus.next_shard_id TO 95000000;
+SET documentdb.next_collection_id TO 95000;
+SET documentdb.next_collection_index_id TO 95000;
+\i sql/bson_collation_query_tests_dist_core.sql
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
+-- ======================================================================
+-- SECTION 1: $lookup on sharded collection (collation aware)
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_q_dist_db','coll_lookup_d', '{"_id": "Cat", "a": { "b": "Cat" }}');
+psql:sql/bson_collation_query_tests_dist_core.sql:7: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db','coll_lookup_d', '{"_id": "dog", "a": { "b": "dog" }}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db','coll_lookup_d', '{"_id": "DOG", "a": { "b": "DOG" }}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db','coll_lookup_d', '{"_id": "cAT", "a": { "b": "cAT" }}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_lookup_d', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
+    '{ "aggregate": "coll_lookup_d", "pipeline": [ { "$lookup": { "from": "coll_lookup_d", "as": "matched_docs", "localField": "_id", "foreignField": "_id", "pipeline": [ { "$match": { "$or" : [ { "a.b": "cat" }, { "a.b": "dog" } ] } } ] } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }');
+                                                                     document                                                                      
+---------------------------------------------------------------------
+ { "_id" : "dog", "a" : { "b" : "dog" }, "matched_docs" : [ { "_id" : "dog", "a" : { "b" : "dog" } }, { "_id" : "DOG", "a" : { "b" : "DOG" } } ] }
+ { "_id" : "DOG", "a" : { "b" : "DOG" }, "matched_docs" : [ { "_id" : "dog", "a" : { "b" : "dog" } }, { "_id" : "DOG", "a" : { "b" : "DOG" } } ] }
+ { "_id" : "Cat", "a" : { "b" : "Cat" }, "matched_docs" : [ { "_id" : "Cat", "a" : { "b" : "Cat" } }, { "_id" : "cAT", "a" : { "b" : "cAT" } } ] }
+ { "_id" : "cAT", "a" : { "b" : "cAT" }, "matched_docs" : [ { "_id" : "Cat", "a" : { "b" : "Cat" } }, { "_id" : "cAT", "a" : { "b" : "cAT" } } ] }
+(4 rows)
+
+END;
+-- _id join optimization GUC has no effect on sharded collections;
+-- the join remains collation-aware.
+BEGIN;
+SET LOCAL documentdb.enableLookupIdJoinOptimizationOnCollation TO true;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
+    '{ "aggregate": "coll_lookup_d", "pipeline": [ { "$lookup": { "from": "coll_lookup_d", "as": "matched_docs", "localField": "_id", "foreignField": "_id", "pipeline": [ { "$match": { "$or" : [ { "a.b": "cat" }, { "a.b": "dog" } ] } } ] } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }');
+                                                                     document                                                                      
+---------------------------------------------------------------------
+ { "_id" : "dog", "a" : { "b" : "dog" }, "matched_docs" : [ { "_id" : "dog", "a" : { "b" : "dog" } }, { "_id" : "DOG", "a" : { "b" : "DOG" } } ] }
+ { "_id" : "DOG", "a" : { "b" : "DOG" }, "matched_docs" : [ { "_id" : "dog", "a" : { "b" : "dog" } }, { "_id" : "DOG", "a" : { "b" : "DOG" } } ] }
+ { "_id" : "Cat", "a" : { "b" : "Cat" }, "matched_docs" : [ { "_id" : "Cat", "a" : { "b" : "Cat" } }, { "_id" : "cAT", "a" : { "b" : "cAT" } } ] }
+ { "_id" : "cAT", "a" : { "b" : "cAT" }, "matched_docs" : [ { "_id" : "Cat", "a" : { "b" : "Cat" } }, { "_id" : "cAT", "a" : { "b" : "cAT" } } ] }
+(4 rows)
+
+END;
+-- ======================================================================
+-- SECTION 2: Aggregation pipeline routing on sharded collection
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_agg_d', '{ "_id": "cat", "a": "cat" }');
+psql:sql/bson_collation_query_tests_dist_core.sql:33: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_agg_d', '{ "_id": "cAt", "a": "cAt" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_agg_d', '{ "_id": "dog", "a": "dog" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_agg_d', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- String _id with collation: results returned, plan fans out to all shards.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db', '{ "aggregate": "coll_agg_d", "pipeline": [ { "$match": { "_id": { "$eq": "CAT" } } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }');
+            document            
+---------------------------------------------------------------------
+ { "_id" : "cat", "a" : "cat" }
+ { "_id" : "cAt", "a" : "cAt" }
+(2 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db', '{ "aggregate": "coll_agg_d", "pipeline": [ { "$match": { "_id": { "$eq": "CAT" } } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }') $cmd$);
+                                                              run_explain_and_trim                                                              
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 8
+   Tasks Shown: One of 8
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_95002_95000014 collection
+               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(7 rows)
+
+END;
+-- Numeric _id with collation: not collation-aware, single shard.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT document FROM bson_aggregation_find('coll_q_dist_db', '{ "find": "coll_agg_d", "filter": { "_id": { "$eq": 2 } }, "sort": { "_id": 1 }, "limit": 5, "collation": { "locale": "en", "strength" : 1} }');
+ document 
+---------------------------------------------------------------------
+(0 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_q_dist_db', '{ "find": "coll_agg_d", "filter": { "_id": { "$eq": 2 } }, "sort": { "_id": 1 }, "limit": 5, "collation": { "locale": "en", "strength" : 1} }') $cmd$);
+                                                                                      run_explain_and_trim                                                                                      
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Limit
+               ->  Sort
+                     Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+                     ->  Index Scan using _id_ on documents_95002_95000015 collection
+                           Index Cond: ((shard_key_value = '-1389566185330078543'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
+                           Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "2" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(11 rows)
+
+END;
+-- ======================================================================
+-- SECTION 3: Aggregation pipeline with collation on sharded single_field_d
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_q_dist_db','single_field_d', '{"_id": 1, "a": "apple"}', NULL);
+psql:sql/bson_collation_query_tests_dist_core.sql:57: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db','single_field_d', '{"_id": 2, "a": "Apple"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db','single_field_d', '{"_id": 3, "a": "BANANA"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db','single_field_d', '{"_id": 4, "a": "banana"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db','single_field_d', '{"_id": 5, "a": "cherry"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db','single_field_d', '{"_id": 6, "a": "Cherry"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db','single_field_d', '{"_id": 7, "a": 42}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db','single_field_d', '{"_id": 8, "a": null}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'single_field_d', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db', '{ "aggregate": "single_field_d", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$eq": "cherry" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                      document                      
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "cherry" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "Cherry" }
+(2 rows)
+
+END;
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db', '{ "aggregate": "single_field_d", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$eq": "cherry" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
+                                                                 run_explain_and_trim                                                                  
+---------------------------------------------------------------------
+ Sort
+   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   ->  Custom Scan (Citus Adaptive)
+         Task Count: 8
+         Tasks Shown: One of 8
+         ->  Task
+               Node: host=localhost port=58070 dbname=regression
+               ->  Seq Scan on documents_95003_95000024 collection
+                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(9 rows)
+
+END;
+-- ======================================================================
+-- SECTION 4: Delete on sharded coll_delete_d with collation
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_delete_d', '{"_id": "dog", "a":"dog"}');
+psql:sql/bson_collation_query_tests_dist_core.sql:82: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_delete_d', '{"_id": "DOG", "a":"DOG"}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_delete_d', '{"_id": "cat", "a":"cat"}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_delete_d', '{"_id": "CAT", "a":"CAT"}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_delete_d', '{ "a": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- deleteMany respects collation across shards.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.delete('coll_q_dist_db', '{ "delete": "coll_delete_d", "deletes": [ { "q": {"a": "CaT" }, "limit": 0, "collation": { "locale": "en", "strength" : 1}}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""2"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_delete_d');
+            document            
+---------------------------------------------------------------------
+ { "_id" : "dog", "a" : "dog" }
+ { "_id" : "DOG", "a" : "DOG" }
+(2 rows)
+
+ROLLBACK;
+-- deleteOne errors when no _id and no shard-key filter.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.delete('coll_q_dist_db', '{ "delete": "coll_delete_d", "deletes": [ { "q": {"b": "CaT" }, "limit": 1, "collation": { "locale": "en", "strength" : 1}}]}');
+                                                                                                                                           delete                                                                                                                                           
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""1088"" }, ""errmsg"" : ""delete query with limit 1 must include either _id or shard key filter"" } ] }",f)
+(1 row)
+
+END;
+-- deleteOne errors with collation-aware shard key value filter.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.delete('coll_q_dist_db', '{ "delete": "coll_delete_d", "deletes": [ { "q": {"a": "CaT" }, "limit": 1, "collation": { "locale": "en", "strength" : 3}}]}');
+                                                                                                                                                      delete                                                                                                                                                      
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""1088"" }, ""errmsg"" : ""delete query with limit 1 must include either _id or collation-insensitive shard key filter"" } ] }",f)
+(1 row)
+
+END;
+-- deleteOne with both _id and shard key filter succeeds.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.delete('coll_q_dist_db', '{ "delete": "coll_delete_d", "deletes": [ { "q": {"_id": "CaT", "a": "CaT" }, "limit": 1, "collation": { "locale": "en", "strength" : 1}}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_delete_d');
+            document            
+---------------------------------------------------------------------
+ { "_id" : "CAT", "a" : "CAT" }
+ { "_id" : "dog", "a" : "dog" }
+ { "_id" : "DOG", "a" : "DOG" }
+(3 rows)
+
+ROLLBACK;
+-- ======================================================================
+-- SECTION 5: Delete on sharded single_field_d with collation
+-- ======================================================================
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT documentdb_api.delete('coll_q_dist_db', '{ "delete": "single_field_d", "deletes": [{ "q": { "a": "apple" }, "limit": 0, "collation": { "locale": "en", "strength": 1 } }] }');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""2"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT document FROM bson_aggregation_find('coll_q_dist_db', '{ "find": "single_field_d", "filter": { "_id": { "$in": [1, 2] } }, "sort": { "_id": 1 } }');
+ document 
+---------------------------------------------------------------------
+(0 rows)
+
+SELECT documentdb_api.delete('coll_q_dist_db', '{ "delete": "single_field_d", "deletes": [{ "q": { "a": { "$gt": "cherry" } }, "limit": 0, "collation": { "locale": "en", "strength": 1 } }] }');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT document FROM bson_aggregation_find('coll_q_dist_db', '{ "find": "single_field_d", "filter": {}, "sort": { "_id": 1 } }');
+                             document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "BANANA" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "banana" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "cherry" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "Cherry" }
+ { "_id" : { "$numberInt" : "7" }, "a" : { "$numberInt" : "42" } }
+ { "_id" : { "$numberInt" : "8" }, "a" : null }
+(6 rows)
+
+END;
+-- ======================================================================
+-- SECTION 6: bson_query_match on sharded collection — single shard key
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_qm_d', '{ "_id": "cat", "a": "cat" }');
+psql:sql/bson_collation_query_tests_dist_core.sql:132: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_qm_d', '{ "_id": "dog", "a": "dog" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_qm_d', '{ "_id": 3, "a": "peacock" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_qm_d', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- String shard-key value: collation-aware → fans out.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": "CAT" }', '{}', 'en-u-ks-level1');
+            document            
+---------------------------------------------------------------------
+ { "_id" : "cat", "a" : "cat" }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": "CAT" }', '{}', 'en-u-ks-level1') $cmd$);
+                                                              run_explain_and_trim                                                              
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 8
+   Tasks Shown: One of 8
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_95005_95000044 documents_95005
+               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(7 rows)
+
+END;
+-- Numeric shard-key value: not collation-aware → single shard.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": 3 }', '{}', 'en-u-ks-level1');
+                      document                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "peacock" }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": 3 }', '{}', 'en-u-ks-level1') $cmd$);
+                                                                                run_explain_and_trim                                                                                
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documents_95005_95000045 collection
+               Index Cond: ((shard_key_value = '-4918719581749358852'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "3" } }'::documentdb_core.bson))
+               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "3" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(8 rows)
+
+END;
+-- ======================================================================
+-- SECTION 7: bson_query_match on sharded collection — compound shard key
+-- ======================================================================
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_qm_d');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_qm_d', '{ "_id": "cAt", "a": "cAt" }');
+psql:sql/bson_collation_query_tests_dist_core.sql:158: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_qm_d', '{ "_id": "doG", "a": "DOg" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_qm_d', '{ "_id": 3, "a": "doG" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_qm_d', '{ "_id": "hashed", "a": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- All-string compound filter: collation-aware on both keys → fans out.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": "CAT", "a": "CAT" }', '{}', 'en-u-ks-level1');
+            document            
+---------------------------------------------------------------------
+ { "_id" : "cAt", "a" : "cAt" }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": "CAT", "a": "CAT" }', '{}', 'en-u-ks-level1') $cmd$);
+                                                                                                                            run_explain_and_trim                                                                                                                             
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 8
+   Tasks Shown: One of 8
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_95006_95000054 documents_95006
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson))
+(7 rows)
+
+END;
+-- Mixed-type compound filter (numeric _id + string a): the collated
+-- string portion still prevents pruning; query fans out.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": 1, "a": "CAT" }', '{}', 'en-u-ks-level1');
+ document 
+---------------------------------------------------------------------
+(0 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": 1, "a": "CAT" }', '{}', 'en-u-ks-level1') $cmd$);
+                                                                                                                                     run_explain_and_trim                                                                                                                                     
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 8
+   Tasks Shown: One of 8
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Seq Scan on documents_95006_95000054 documents_95006
+               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson))
+(7 rows)
+
+END;
+-- ======================================================================
+-- SECTION 12: $graphLookup on sharded collection (currently unsupported)
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_q_dist_db','coll_graph_src_d', '{"_id": "alice", "pet" : "dog" }');
+psql:sql/bson_collation_query_tests_dist_core.sql:183: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db','coll_graph_dst_d', '{"_id": "DOG", "name" : "DOG" }');
+psql:sql/bson_collation_query_tests_dist_core.sql:184: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db','coll_graph_dst_d', '{"_id": "dog", "name" : "dog" }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_graph_src_d', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_graph_dst_d', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
+    '{ "aggregate": "coll_graph_src_d", "pipeline": [ { "$graphLookup": { "from": "coll_graph_dst_d", "startWith": "$pet", "connectFromField": "name", "connectToField": "_id", "as": "destinations", "depthField": "depth" } } ],  "collation": { "locale": "en", "strength" : 1} }');
+psql:sql/bson_collation_query_tests_dist_core.sql:193: ERROR:  $graphLookup using 'from' on a sharded collection is currently unsupported
+END;
+-- ======================================================================
+-- CLEANUP
+-- ======================================================================
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_agg_d');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_delete_d');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_graph_dst_d');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_graph_src_d');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_lookup_d');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_qm_d');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'single_field_d');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
