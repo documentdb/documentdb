@@ -170,11 +170,14 @@ impl PgDataClient for DocumentDBDataClient {
     }
 
     async fn acquire_pool_connection(&self) -> Result<PoolConnection> {
-        self.connection_pool
-            .as_ref()
-            .ok_or(DocumentDBError::internal_error(
-                "Acquiring connection to postgres on unauthorized data client".to_owned(),
-            ))?
+        let connection_pool =
+            self.connection_pool
+                .as_ref()
+                .ok_or(DocumentDBError::internal_error(
+                    "Acquiring connection to postgres on unauthorized data client".to_owned(),
+                ))?;
+
+        connection_pool
             .acquire_connection()
             .await
             .map_err(DocumentDBError::from)

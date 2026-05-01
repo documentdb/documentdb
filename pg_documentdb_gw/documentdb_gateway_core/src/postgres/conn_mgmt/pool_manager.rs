@@ -32,6 +32,11 @@ const POSTGRES_POOL_CLEANUP_INTERVAL_SEC: u64 = 300;
 /// The threshold when a connection pool needs to be disposed
 const POSTGRES_POOL_DISPOSE_INTERVAL_SEC: u64 = 7200;
 
+async fn acquire_pooled_connection(pool: &ConnectionPool) -> Result<Connection> {
+    let pool_connection = pool.acquire_connection().await?;
+    Ok(Connection::new(pool_connection, false))
+}
+
 #[derive(Debug)]
 pub struct PoolManager {
     query_catalog: QueryCatalog,
@@ -66,19 +71,13 @@ impl PoolManager {
     /// # Errors
     /// Returns error if the operation fails.
     pub async fn system_requests_connection(&self) -> Result<Connection> {
-        Ok(Connection::new(
-            self.system_requests_pool.acquire_connection().await?,
-            false,
-        ))
+        acquire_pooled_connection(&self.system_requests_pool).await
     }
 
     /// # Errors
     /// Returns error if the operation fails.
     pub async fn authentication_connection(&self) -> Result<Connection> {
-        Ok(Connection::new(
-            self.system_auth_pool.acquire_connection().await?,
-            false,
-        ))
+        acquire_pooled_connection(&self.system_auth_pool).await
     }
 
     /// # Errors
@@ -176,13 +175,13 @@ impl PoolManager {
             K: Eq + Hash,
         {
             for entry in map {
-                reports.push(entry.value().status());
+                reports.push(entry.value().report_status());
             }
         }
 
         let mut pool_stats = vec![
-            self.system_auth_pool.status(),
-            self.system_requests_pool.status(),
+            self.system_auth_pool.report_status(),
+            self.system_requests_pool.report_status(),
         ];
 
         report(&self.user_data_pools, &mut pool_stats);
@@ -243,7 +242,7 @@ async fn validate_startup_pool(
     validation_query: &str,
     pool_name: &str,
 ) -> Result<()> {
-    let connection = Connection::new(pool.acquire_connection().await?, false);
+    let connection = acquire_pooled_connection(pool).await?;
     let rows = connection.query(validation_query, &[], &[]).await?;
     let row = rows.first().ok_or(DocumentDBError::internal_error(format!(
         "Startup validation query for {pool_name} returned no rows."
@@ -435,13 +434,12 @@ mod tests {
         }
     }
 
-    fn test_pool_manager() -> PoolManager {
+    fn test_pool_manager_with_setup(setup_config: &DocumentDBSetupConfiguration) -> PoolManager {
         let query_catalog = create_query_catalog();
-        let setup_config = setup_configuration();
         let postgres_system_user = setup_config.postgres_system_user();
 
         let system_requests_pool = ConnectionPool::new_with_user(
-            &setup_config,
+            setup_config,
             &query_catalog,
             postgres_system_user,
             None,
@@ -451,7 +449,7 @@ mod tests {
         .expect("Failed to create system requests pool");
 
         let authentication_pool = ConnectionPool::new_with_user(
-            &setup_config,
+            setup_config,
             &query_catalog,
             postgres_system_user,
             None,
@@ -466,6 +464,10 @@ mod tests {
             system_requests_pool,
             authentication_pool,
         )
+    }
+
+    fn test_pool_manager() -> PoolManager {
+        test_pool_manager_with_setup(&setup_configuration())
     }
 
     #[tokio::test]
@@ -740,5 +742,44 @@ mod tests {
 
         // only 2 system pools should remain since user and shared pools are expired
         assert_eq!(2, pool_manager.report_pool_stats().len());
+    }
+
+    #[tokio::test]
+    async fn test_report_pool_stats_flushes_interval_metrics_from_system_pools() {
+        yield_now().await;
+
+        let pool_manager = test_pool_manager();
+        let system_requests_identifier = pool_manager
+            .system_requests_pool
+            .status()
+            .identifier()
+            .to_owned();
+
+        pool_manager
+            .system_requests_pool
+            .record_connection_created(Duration::from_micros(13));
+        pool_manager
+            .system_requests_pool
+            .record_connection_timeout();
+
+        let reports = pool_manager.report_pool_stats();
+        let system_requests_report = reports
+            .iter()
+            .find(|report| report.identifier() == system_requests_identifier)
+            .expect("expected system requests pool report");
+
+        assert_eq!(system_requests_report.connections_created(), 1);
+        assert_eq!(system_requests_report.connection_create_time_us(), 13);
+        assert_eq!(system_requests_report.connection_timeouts(), 1);
+
+        let next_reports = pool_manager.report_pool_stats();
+        let next_system_requests_report = next_reports
+            .iter()
+            .find(|report| report.identifier() == system_requests_identifier)
+            .expect("expected system requests pool report after flush");
+
+        assert_eq!(next_system_requests_report.connections_created(), 0);
+        assert_eq!(next_system_requests_report.connection_create_time_us(), 0);
+        assert_eq!(next_system_requests_report.connection_timeouts(), 0);
     }
 }

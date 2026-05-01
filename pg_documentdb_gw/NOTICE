@@ -10,6 +10,7 @@ The full license texts for all dependencies are located in the 'pg_documentdb_gw
 - bson (MIT)
 - bytes (MIT)
 - dashmap (MIT)
+- deadpool (MIT OR Apache-2.0)
 - deadpool-postgres (MIT OR Apache-2.0)
 - dyn-clone (MIT OR Apache-2.0)
 - either (MIT OR Apache-2.0)

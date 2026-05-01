@@ -18,6 +18,7 @@ bitflags.workspace = true
 bson.workspace = true
 bytes.workspace = true
 dashmap.workspace = true
+deadpool.workspace = true
 deadpool-postgres.workspace = true
 documentdb_macros.workspace = true
 dyn-clone.workspace = true
