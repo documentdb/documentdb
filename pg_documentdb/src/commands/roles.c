@@ -24,27 +24,12 @@
 #include "utils/hashset_utils.h"
 #include "utils/role_utils.h"
 
-#define IS_NATIVE_BUILTIN_ROLE(roleName) \
-	(strcmp((roleName), "readAnyDatabase") == 0 || \
-	 strcmp((roleName), "readWriteAnyDatabase") == 0 || \
-	 strcmp((roleName), "clusterAdmin") == 0 || \
-	 strcmp((roleName), "root") == 0)
-
 /*
  * IS_INHERITABLE_ROLE checks if a role is allowed to be inherited by custom roles.
  */
 #define IS_INHERITABLE_ROLE(roleName) \
 	(strcmp(roleName, ApiReadOnlyRole) == 0 || \
 	 strcmp(roleName, ApiAdminRoleV2) == 0)
-
-/*
- * IS_CUSTOM_RBAC_ROLE checks if a role is an internal custom rbac role
- */
-#define IS_CUSTOM_RBAC_ROLE(roleName) \
-	(strcmp((roleName), ApiCollectionFindRole) == 0 || \
-	 strcmp((roleName), ApiCollectionInsertRole) == 0 || \
-	 strcmp((roleName), ApiCollectionUpdateRole) == 0 || \
-	 strcmp((roleName), ApiCollectionRemoveRole) == 0)
 
 /* GUC to enable user crud operations */
 extern bool EnableRoleCrud;
@@ -319,7 +304,8 @@ ParseCreateRoleSpec(pgbson *createRoleBson, CreateRoleSpec *createRoleSpec)
 									"The 'createRole' field must not be left empty.")));
 			}
 
-			if (ContainsReservedPgRoleNamePrefix(createRoleSpec->roleName))
+			if (ContainsReservedPgRoleNamePrefix(createRoleSpec->roleName) ||
+				IsReservedInternalRoleName(createRoleSpec->roleName))
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg(
@@ -771,7 +757,16 @@ ParseDropRoleSpec(pgbson *dropRoleBson, DropRoleSpec *dropRoleSpec)
 								errmsg("'dropRole' cannot be empty.")));
 			}
 
-			if (IS_BUILTIN_ROLE(roleNameValue) || IS_SYSTEM_LOGIN_ROLE(roleNameValue))
+			if (ContainsReservedPgRoleNamePrefix(roleNameValue) ||
+				IsReservedInternalRoleName(roleNameValue))
+			{
+				ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+								errmsg(
+									"The specified role '%s' does not exist.",
+									roleNameValue)));
+			}
+
+			if (IS_NATIVE_BUILTIN_ROLE(roleNameValue))
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg(

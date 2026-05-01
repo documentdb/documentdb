@@ -228,6 +228,28 @@ SELECT documentdb_api.create_role('{"createRole":"privRoleResourceNotDoc", "role
 -- Test privileges with actions not an array, should fail
 SELECT documentdb_api.create_role('{"createRole":"privRoleActionsNotArray", "roles":[], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":"find"}], "$db":"admin"}');
 
+-- Test createRole with system login role names, should fail
+SELECT documentdb_api.create_role('{"createRole":"documentdb_bg_worker_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+
+-- Test createRole with native built-in role names, should fail
+SELECT documentdb_api.create_role('{"createRole":"readAnyDatabase", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+
+-- Test that reserved role names are blocked for createRole
+SET documentdb.blockedRolePrefixList TO '';
+SELECT documentdb_api.create_role('{"createRole":"documentdb_readonly_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+RESET documentdb.blockedRolePrefixList;
+
+-- Test createRole with custom RBAC role names, should fail
+SET documentdb.blockedRolePrefixList TO '';
+SELECT documentdb_api.create_role('{"createRole":"documentdb_api_find_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+RESET documentdb.blockedRolePrefixList;
+
+-- Test createRole with blocked role names, should fail
+SET documentdb.blockedRolePrefixList TO 'block,test';
+SELECT documentdb_api.create_role('{"createRole":"block", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+SELECT documentdb_api.create_role('{"createRole":"test_block_user", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+RESET documentdb.blockedRolePrefixList;
+
 -- Clean up privilege test roles
 DROP ROLE IF EXISTS "privRoleFind";
 DROP ROLE IF EXISTS "privRoleInsert";
@@ -253,12 +275,6 @@ DROP ROLE IF EXISTS "noDbFieldRole";
 
 -- Clean up test users
 SELECT documentdb_api.drop_user('{"dropUser":"testRoleUser", "$db":"admin"}');
-
--- Test createRole with blocked role names, should fail
-SET documentdb.blockedRolePrefixList TO 'block,test';
-SELECT documentdb_api.create_role('{"createRole":"block", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
-SELECT documentdb_api.create_role('{"createRole":"test_block_user", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
-RESET documentdb.blockedRolePrefixList;
 
 -- Reset settings
 RESET documentdb.enableRoleCrud;

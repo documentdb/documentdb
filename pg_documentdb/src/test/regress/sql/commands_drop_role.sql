@@ -92,6 +92,28 @@ SELECT documentdb_api.drop_role('{"dropRole":"custom_role"}');
 SELECT rolname FROM pg_roles WHERE rolname = 'custom_role';
 SET documentdb.enableRolesAdminDBCheck TO ON;
 
+-- Test dropRole with system login role names, should fail
+SELECT documentdb_api.drop_role('{"dropRole":"documentdb_bg_worker_role", "$db":"admin"}');
+
+-- Test dropRole with native built-in role names, should fail
+SELECT documentdb_api.drop_role('{"dropRole":"readAnyDatabase", "$db":"admin"}');
+
+-- Test that reserved internal role names are blocked for dropRole
+SET documentdb.blockedRolePrefixList TO '';
+SELECT documentdb_api.drop_role('{"dropRole":"documentdb_readonly_role", "$db":"admin"}');
+RESET documentdb.blockedRolePrefixList;
+
+-- Test dropRole with custom RBAC role names, should fail
+SET documentdb.blockedRolePrefixList TO '';
+SELECT documentdb_api.drop_role('{"dropRole":"documentdb_api_find_role", "$db":"admin"}');
+RESET documentdb.blockedRolePrefixList;
+
+-- Test dropRole with custom blocked prefixes, should fail
+SET documentdb.blockedRolePrefixList TO 'block,test';
+SELECT documentdb_api.drop_role('{"dropRole":"block_role", "$db":"admin"}');
+SELECT documentdb_api.drop_role('{"dropRole":"test_role", "$db":"admin"}');
+RESET documentdb.blockedRolePrefixList;
+
 -- Clean up and Reset settings
 RESET documentdb.enableRoleCrud;
 RESET documentdb.enableRolesAdminDBCheck;
