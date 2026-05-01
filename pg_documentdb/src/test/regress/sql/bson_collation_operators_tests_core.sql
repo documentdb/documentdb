@@ -832,16 +832,17 @@ SELECT documentdb_api.insert_one('coll_op_db','accent_coll', '{"_id": 8, "a": "C
 SELECT documentdb_api.insert_one('coll_op_db','accent_coll', '{"_id": 9, "a": "CAFE"}', NULL);
 
 -- 18.1: $ne "cafe" at strength-1
--- In ICU, accent makes "café" a different primary character from "cafe".
--- Only cafe(1) and CAFE(9) (case-only difference) are excluded.
+-- At primary level ICU treats "cafe", "café", "Café", "CAFE" as equal,
+-- so all four (1, 2, 8, 9) are excluded.
 SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "accent_coll", "filter": { "a": { "$ne": "cafe" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 
 -- 18.2: $ne "cafe" at strength-2
--- Same behavior — cafe(1) and CAFE(9) excluded, accented variants kept.
+-- Accents matter at strength-2, so only cafe(1) and CAFE(9) are excluded.
 SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "accent_coll", "filter": { "a": { "$ne": "cafe" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 2 } }');
 
 -- 18.3: $not $gt "cafe" at strength-1 — a ≤ "cafe"
--- "café" > "cafe" even at strength-1 (accent is primary in ICU).
+-- All four café-variants are equal to "cafe" at primary level, so they are
+-- all kept; "caff" is greater so it is excluded.
 SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "accent_coll", "filter": { "a": { "$not": { "$gt": "cafe" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 
 -- 18.4: $not $gt "café" at strength-2 — a ≤ "café"

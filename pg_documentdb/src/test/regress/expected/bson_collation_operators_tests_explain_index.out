@@ -4938,16 +4938,16 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 $cmd$);
                                                                   run_explain_and_trim                                                                  
 --------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=7 loops=1)
+ Sort (actual rows=5 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          namespaceName: coll_operators_index_explain_db.accent_coll
          indexName: idx_accent_en_s1
          indexKey: {"a": 1}
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
-         ->  Index Scan using idx_accent_en_s1 on documents_9506 collection (actual rows=7 loops=1)
+         ->  Index Scan using idx_accent_en_s1 on documents_9506 collection (actual rows=5 loops=1)
                Index Cond: (document @!= '{ "a" : "cafe", "collation" : "en-u-ks-level1" }'::bson)
 (11 rows)
 
@@ -4974,16 +4974,16 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 $cmd$);
                                                                   run_explain_and_trim                                                                  
 --------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=4 loops=1)
+ Sort (actual rows=6 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
          namespaceName: coll_operators_index_explain_db.accent_coll
          indexName: idx_accent_en_s1
          indexKey: {"a": 1}
          isMultiKey: false
          indexBounds: ["a": [MinKey, "cafe"]], ["a": ({ }, MaxKey]]
-         ->  Index Scan using idx_accent_en_s1 on documents_9506 collection (actual rows=4 loops=1)
+         ->  Index Scan using idx_accent_en_s1 on documents_9506 collection (actual rows=6 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cafe", "collation" : "en-u-ks-level1" }'::bson)
 (11 rows)
 
@@ -5526,13 +5526,13 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 $cmd$);
                                                                   run_explain_and_trim                                                                  
 --------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=2 loops=1)
+ Sort (actual rows=3 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Index Scan using _id_ on documents_9509 collection (actual rows=2 loops=1)
+   ->  Index Scan using _id_ on documents_9509 collection (actual rows=3 loops=1)
          Index Cond: (shard_key_value = '9509'::bigint)
          Filter: (document @= '{ "a" : "ñapa", "collation" : "en-u-ks-level1" }'::bson)
-         Rows Removed by Filter: 5
+         Rows Removed by Filter: 4
 (7 rows)
 
 -- ===== 34B: German (de) locale — ß equivalence with ss =====

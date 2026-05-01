@@ -3019,22 +3019,20 @@ SELECT documentdb_api.insert_one('coll_op_db','accent_coll', '{"_id": 9, "a": "C
 (1 row)
 
 -- 18.1: $ne "cafe" at strength-1
--- In ICU, accent makes "café" a different primary character from "cafe".
--- Only cafe(1) and CAFE(9) (case-only difference) are excluded.
+-- At primary level ICU treats "cafe", "café", "Café", "CAFE" as equal,
+-- so all four (1, 2, 8, 9) are excluded.
 SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "accent_coll", "filter": { "a": { "$ne": "cafe" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                         document                        
 --------------------------------------------------------
- { "_id" : { "$numberInt" : "2" }, "a" : "café" }
  { "_id" : { "$numberInt" : "3" }, "a" : "caff" }
  { "_id" : { "$numberInt" : "4" }, "a" : "apple" }
  { "_id" : { "$numberInt" : "5" }, "a" : "banana" }
  { "_id" : { "$numberInt" : "6" }, "a" : "date" }
  { "_id" : { "$numberInt" : "7" }, "a" : "elderberry" }
- { "_id" : { "$numberInt" : "8" }, "a" : "Café" }
-(7 rows)
+(5 rows)
 
 -- 18.2: $ne "cafe" at strength-2
--- Same behavior — cafe(1) and CAFE(9) excluded, accented variants kept.
+-- Accents matter at strength-2, so only cafe(1) and CAFE(9) are excluded.
 SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "accent_coll", "filter": { "a": { "$ne": "cafe" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 2 } }');
                         document                        
 --------------------------------------------------------
@@ -3048,15 +3046,18 @@ SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "accent_coll
 (7 rows)
 
 -- 18.3: $not $gt "cafe" at strength-1 — a ≤ "cafe"
--- "café" > "cafe" even at strength-1 (accent is primary in ICU).
+-- All four café-variants are equal to "cafe" at primary level, so they are
+-- all kept; "caff" is greater so it is excluded.
 SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "accent_coll", "filter": { "a": { "$not": { "$gt": "cafe" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                       document                      
 ----------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "a" : "cafe" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "café" }
  { "_id" : { "$numberInt" : "4" }, "a" : "apple" }
  { "_id" : { "$numberInt" : "5" }, "a" : "banana" }
+ { "_id" : { "$numberInt" : "8" }, "a" : "Café" }
  { "_id" : { "$numberInt" : "9" }, "a" : "CAFE" }
-(4 rows)
+(6 rows)
 
 -- 18.4: $not $gt "café" at strength-2 — a ≤ "café"
 -- "cafe" < "café" at strength-2, so cafe IS included.
@@ -3212,7 +3213,7 @@ SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "compound_fi
 -- SECTION 20: Three-key composite index
 -- ======================================================================
 SELECT documentdb_api.insert_one('coll_op_db','three_key', '{"_id": 1,  "a": "apple",  "b": "red",    "c": "x"}', NULL);
-psql:sql/bson_collation_operators_tests_core.sql:890: NOTICE:  creating collection
+psql:sql/bson_collation_operators_tests_core.sql:891: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3329,7 +3330,7 @@ SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "three_key",
 -- SECTION 21: Multi-key (array field) with collation
 -- ======================================================================
 SELECT documentdb_api.insert_one('coll_op_db','multikey_coll', '{"_id": 1, "tags": ["ABC", "def"]}', NULL);
-psql:sql/bson_collation_operators_tests_core.sql:925: NOTICE:  creating collection
+psql:sql/bson_collation_operators_tests_core.sql:926: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3440,7 +3441,7 @@ SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "multikey_co
 -- ======================================================================
 -- ===== 22A: Spanish (es) locale — ñ sorts after n =====
 SELECT documentdb_api.insert_one('coll_op_db','es_locale', '{"_id": 1, "a": "napa"}', NULL);
-psql:sql/bson_collation_operators_tests_core.sql:958: NOTICE:  creating collection
+psql:sql/bson_collation_operators_tests_core.sql:959: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3534,7 +3535,7 @@ SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "es_locale",
 
 -- ===== 22B: German (de) locale — ß equivalence with ss =====
 SELECT documentdb_api.insert_one('coll_op_db','de_locale', '{"_id": 1, "a": "straße"}', NULL);
-psql:sql/bson_collation_operators_tests_core.sql:983: NOTICE:  creating collection
+psql:sql/bson_collation_operators_tests_core.sql:984: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
