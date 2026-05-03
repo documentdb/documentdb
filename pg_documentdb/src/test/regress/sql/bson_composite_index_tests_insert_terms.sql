@@ -24,6 +24,51 @@ SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_term
 -- nested paths
 SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "a": { "b": { "c": 1 } } }', '[ "a.b", "a.b.c" ]', 2000, true);
 
+-- term generation for dotted path index keys with literal vs nested fields
+-- index on "a.b.c" with a nested document a -> b -> c
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "a": { "b": { "c": 1 } } }', '[ "a.b.c" ]', 2000, true);
+
+-- index on "a.b.c" with a literal dotted field "a.b.c"
+-- should generate $undefined since dotted path traversal should not match literal field names
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "a.b.c": 1 }', '[ "a.b.c" ]', 2000, true);
+
+-- index on "a.b.c" with both literal and nested
+-- should only generate terms for the nested path value (3), not the literal field (99)
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "a.b.c": 99, "a": { "b": { "c": 3 } } }', '[ "a.b.c" ]', 2000, true);
+
+-- index on "a.b.c" with no matching path at all
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "a": { "b": { "d": 1 } } }', '[ "a.b.c" ]', 2000, true);
+
+-- composite index with two dotted paths: both nested
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "x": { "y": 10 }, "p": { "q": 20 } }', '[ "x.y", "p.q" ]', 2000, true);
+
+-- composite index with two dotted paths: both literal dotted field names
+-- should generate $undefined for both paths
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "x.y": 10, "p.q": 20 }', '[ "x.y", "p.q" ]', 2000, true);
+
+-- composite index with two dotted paths: mixed (nested x.y, literal "p.q")
+-- should generate term for x.y=10 and $undefined for p.q
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "x": { "y": 10 }, "p.q": 20 }', '[ "x.y", "p.q" ]', 2000, true);
+
+-- term generation for dotted fields in sub-paths (e.g. a: { "b.c": 1 })
+-- index on "a.b.c": a -> "b.c" (literal dotted sub-field) should NOT generate a term
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "a": { "b.c": 1 } }', '[ "a.b.c" ]', 2000, true);
+
+-- index on "a.b.c": both sub-path literal "b.c" and nested b -> c present - should only generate term for nested value (5)
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "a": { "b.c": 1, "b": { "c": 5 } } }', '[ "a.b.c" ]', 2000, true);
+
+-- index on "a.b.c.d": deeper nesting with a literal dotted sub-field at different levels
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "a": { "b": { "c": { "d": 7 } } } }', '[ "a.b.c.d" ]', 2000, true);
+
+-- index on "a.b.c.d": literal "b.c" at the a level - should NOT match
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "a": { "b.c": { "d": 7 } } }', '[ "a.b.c.d" ]', 2000, true);
+
+-- index on "a.b.c.d": literal "c.d" at the b level - should NOT match
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "a": { "b": { "c.d": 7 } } }', '[ "a.b.c.d" ]', 2000, true);
+
+-- composite index: one path has sub-path literal, other is nested - should generate $undefined for sub-path literal
+SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "a": { "b.c": 1 }, "x": { "y": 10 } }', '[ "a.b.c", "x.y" ]', 2000, true);
+
 -- create a table and insert some data.
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
@@ -204,3 +249,158 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
 -- fails
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'comp_db', '{ "createIndexes": "cmpcollcreate", "indexes": [ { "name": "comp_index22", "key": { "a1": 1, "a2": 1, "a3": 1, "a4": 1, "a5": 1, "a6": 1, "a7": 1, "a8": 1, "a9": 1, "a10": 1, "a11": 1, "a12": 1, "a13": 1, "a14": 1, "a15": 1, "a16": 1, "a17": 1, "a18": 1, "a19": 1, "a20": 1, "a21": 1, "a22": 1, "a23": 1, "a24": 1, "a25": 1, "a26": 1, "a27": 1, "a28": 1, "a29": 1, "a30": 1, "a31": 1, "a32": 1, "a33": 1 }, "enableCompositeTerm": true } ] }', TRUE);
+
+-- test dotted path fields: index on "a.b.c" should match nested documents
+-- but NOT documents with a literal field named "a.b.c"
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'comp_db', '{ "createIndexes": "dotted_path_coll", "indexes": [ { "name": "dotted_idx", "key": { "a.b.c": 1 } } ] }', TRUE);
+
+-- doc with nested path a -> b -> c (should match queries on "a.b.c")
+SELECT documentdb_api.insert_one('comp_db', 'dotted_path_coll', '{ "_id": 1, "a": { "b": { "c": 1 } } }');
+-- doc with literal dotted field name "a.b.c" (should NOT match queries on "a.b.c")
+SELECT documentdb_api.insert_one('comp_db', 'dotted_path_coll', '{ "_id": 2, "a.b.c": 1 }');
+-- doc with nested path and different value
+SELECT documentdb_api.insert_one('comp_db', 'dotted_path_coll', '{ "_id": 3, "a": { "b": { "c": 2 } } }');
+-- doc with both a literal "a.b.c" field and a nested a.b.c path
+SELECT documentdb_api.insert_one('comp_db', 'dotted_path_coll', '{ "_id": 4, "a.b.c": 99, "a": { "b": { "c": 3 } } }');
+-- doc with nested path but missing "c"
+SELECT documentdb_api.insert_one('comp_db', 'dotted_path_coll', '{ "_id": 5, "a": { "b": { "d": 1 } } }');
+
+-- exact match on a.b.c = 1: should match only the nested doc (_id 1),
+-- not the literal dotted field doc (_id 2).
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_path_coll", "filter": { "a.b.c": 1 } }');
+
+-- exact match on a.b.c = 2: should match only _id 3 (nested)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_path_coll", "filter": { "a.b.c": 2 } }');
+
+-- exact match on a.b.c = 3: should match only _id 4 (nested part)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_path_coll", "filter": { "a.b.c": 3 } }');
+
+-- range query (inequality) on a.b.c: should match _id 1, 3, 4 (nested only)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_path_coll", "filter": { "a.b.c": { "$gte": 1 } } }');
+
+-- $exists on a.b.c: should match docs with nested path (_id 1, 3, 4) only
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_path_coll", "filter": { "a.b.c": { "$exists": true } } }');
+
+-- $type filter on a.b.c (runtime recheck path): should match _id 1, 3, 4 only
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_path_coll", "filter": { "a.b.c": { "$type": "int" } } }');
+
+-- now test with a composite index on two dotted paths
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'comp_db', '{ "createIndexes": "dotted_comp_coll", "indexes": [ { "name": "dotted_comp_idx", "key": { "x.y": 1, "p.q": 1 } } ] }', TRUE);
+
+-- nested paths
+SELECT documentdb_api.insert_one('comp_db', 'dotted_comp_coll', '{ "_id": 1, "x": { "y": 10 }, "p": { "q": 20 } }');
+-- literal dotted field names
+SELECT documentdb_api.insert_one('comp_db', 'dotted_comp_coll', '{ "_id": 2, "x.y": 10, "p.q": 20 }');
+-- mixed: nested x.y, literal "p.q"
+SELECT documentdb_api.insert_one('comp_db', 'dotted_comp_coll', '{ "_id": 3, "x": { "y": 10 }, "p.q": 20 }');
+
+-- composite query on x.y and p.q: should only match _id 1 (both nested)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_comp_coll", "filter": { "x.y": 10, "p.q": 20 } }');
+
+-- single path query on x.y = 10: should only match _id 1 and _id 3 (nested x.y)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_comp_coll", "filter": { "x.y": 10 } }');
+
+-- single path query on p.q = 20: should only match _id 1 (nested p.q)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_comp_coll", "filter": { "p.q": 20 } }');
+
+-- test runtime filter (no index) with dotted path fields
+-- create a collection with no indexes other than _id and insert docs with literal vs nested paths
+SELECT documentdb_api.insert_one('comp_db', 'dotted_runtime_coll', '{ "_id": 1, "a": { "b": { "c": 1 } } }');
+SELECT documentdb_api.insert_one('comp_db', 'dotted_runtime_coll', '{ "_id": 2, "a.b.c": 1 }');
+SELECT documentdb_api.insert_one('comp_db', 'dotted_runtime_coll', '{ "_id": 3, "a": { "b": { "c": 2 } } }');
+SELECT documentdb_api.insert_one('comp_db', 'dotted_runtime_coll', '{ "_id": 4, "a.b.c": 99, "a": { "b": { "c": 3 } } }');
+SELECT documentdb_api.insert_one('comp_db', 'dotted_runtime_coll', '{ "_id": 5, "a": { "b": { "d": 1 } } }');
+
+-- runtime filter only (no index on a.b.c, seq scan): exact match
+-- runtime filter correctly excludes _id 2 (literal "a.b.c" field)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_runtime_coll", "filter": { "a.b.c": 1 } }');
+
+-- runtime filter only: range query
+-- runtime filter correctly excludes _id 2 (literal "a.b.c" field)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_runtime_coll", "filter": { "a.b.c": { "$gte": 1 } } }');
+
+-- runtime filter only: $exists
+-- runtime filter correctly excludes _id 2 (literal "a.b.c" field)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_runtime_coll", "filter": { "a.b.c": { "$exists": true } } }');
+
+-- runtime filter only: $type check
+-- runtime filter correctly excludes _id 2 (literal "a.b.c" field)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_runtime_coll", "filter": { "a.b.c": { "$type": "int" } } }');
+
+-- runtime filter via direct @@ operator: exact match on a.b.c
+-- these use the BSON match operator directly, bypassing any index
+-- nested doc: should match
+SELECT '{ "a": { "b": { "c": 1 } } }'::bson @@ '{ "a.b.c": 1 }';
+-- literal dotted field: should NOT match - runtime filter correctly returns false
+SELECT '{ "a.b.c": 1 }'::bson @@ '{ "a.b.c": 1 }';
+-- nested doc with different value: should not match
+SELECT '{ "a": { "b": { "c": 2 } } }'::bson @@ '{ "a.b.c": 1 }';
+-- both literal and nested: should match (via nested path)
+SELECT '{ "a.b.c": 99, "a": { "b": { "c": 1 } } }'::bson @@ '{ "a.b.c": 1 }';
+-- no matching path: should not match
+SELECT '{ "a": { "b": { "d": 1 } } }'::bson @@ '{ "a.b.c": 1 }';
+
+-- runtime filter via @@ with $gte on dotted path
+SELECT '{ "a": { "b": { "c": 5 } } }'::bson @@ '{ "a.b.c": { "$gte": 1 } }';
+-- literal dotted field: runtime filter correctly returns false
+SELECT '{ "a.b.c": 5 }'::bson @@ '{ "a.b.c": { "$gte": 1 } }';
+
+-- runtime filter via @@ with $exists on dotted path
+SELECT '{ "a": { "b": { "c": 1 } } }'::bson @@ '{ "a.b.c": { "$exists": true } }';
+-- literal dotted field: runtime filter correctly returns false
+SELECT '{ "a.b.c": 1 }'::bson @@ '{ "a.b.c": { "$exists": true } }';
+-- no nested c: should return false
+SELECT '{ "a": { "b": { "d": 1 } } }'::bson @@ '{ "a.b.c": { "$exists": true } }';
+
+-- test dotted fields in sub-paths: a: { "b.c": 1 } vs a: { b: { c: 1 } }
+-- index on "a.b.c" - queries should only match nested a -> b -> c, not a -> "b.c"
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'comp_db', '{ "createIndexes": "dotted_subpath_coll", "indexes": [ { "name": "subpath_idx", "key": { "a.b.c": 1 } } ] }', TRUE);
+
+-- doc with fully nested path a -> b -> c (should match queries on "a.b.c")
+SELECT documentdb_api.insert_one('comp_db', 'dotted_subpath_coll', '{ "_id": 1, "a": { "b": { "c": 1 } } }');
+-- doc with literal dotted sub-field a -> "b.c" (should NOT match queries on "a.b.c")
+SELECT documentdb_api.insert_one('comp_db', 'dotted_subpath_coll', '{ "_id": 2, "a": { "b.c": 1 } }');
+-- doc with both sub-path literal and nested
+SELECT documentdb_api.insert_one('comp_db', 'dotted_subpath_coll', '{ "_id": 3, "a": { "b.c": 99, "b": { "c": 5 } } }');
+-- doc with nested a -> b but no c
+SELECT documentdb_api.insert_one('comp_db', 'dotted_subpath_coll', '{ "_id": 4, "a": { "b": { "d": 1 } } }');
+-- doc with deeper nesting and sub-path literal at second level: a -> b -> "c.d"
+SELECT documentdb_api.insert_one('comp_db', 'dotted_subpath_coll', '{ "_id": 5, "a": { "b": { "c.d": 1 } } }');
+
+-- exact match on a.b.c = 1: should only match _id 1 (nested a -> b -> c)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_subpath_coll", "filter": { "a.b.c": 1 } }');
+
+-- exact match on a.b.c = 5: should only match _id 3 (nested part)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_subpath_coll", "filter": { "a.b.c": 5 } }');
+
+-- $exists on a.b.c: should match _id 1 and _id 3 (nested paths only)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_subpath_coll", "filter": { "a.b.c": { "$exists": true } } }');
+
+-- $gte on a.b.c: should match _id 1, _id 3 (nested paths only)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_subpath_coll", "filter": { "a.b.c": { "$gte": 1 } } }');
+
+-- runtime filter via @@ for sub-path dotted fields
+-- nested a -> b -> c: should match
+SELECT '{ "a": { "b": { "c": 1 } } }'::bson @@ '{ "a.b.c": 1 }';
+-- sub-path literal a -> "b.c": should NOT match
+SELECT '{ "a": { "b.c": 1 } }'::bson @@ '{ "a.b.c": 1 }';
+-- both present: should match via nested path
+SELECT '{ "a": { "b.c": 99, "b": { "c": 1 } } }'::bson @@ '{ "a.b.c": 1 }';
+-- sub-path literal a -> b -> "c.d": query on a.b.c.d should not match
+SELECT '{ "a": { "b": { "c.d": 7 } } }'::bson @@ '{ "a.b.c.d": 7 }';
+-- fully nested a -> b -> c -> d: should match
+SELECT '{ "a": { "b": { "c": { "d": 7 } } } }'::bson @@ '{ "a.b.c.d": 7 }';
+
+-- runtime filter (no index) for sub-path dotted fields
+SELECT documentdb_api.insert_one('comp_db', 'dotted_subpath_runtime_coll', '{ "_id": 1, "a": { "b": { "c": 1 } } }');
+SELECT documentdb_api.insert_one('comp_db', 'dotted_subpath_runtime_coll', '{ "_id": 2, "a": { "b.c": 1 } }');
+SELECT documentdb_api.insert_one('comp_db', 'dotted_subpath_runtime_coll', '{ "_id": 3, "a": { "b.c": 99, "b": { "c": 5 } } }');
+
+-- runtime filter correctly excludes _id 2 (a -> "b.c" sub-path literal)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_subpath_runtime_coll", "filter": { "a.b.c": 1 } }');
+
+-- runtime filter: $exists correctly excludes _id 2
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_subpath_runtime_coll", "filter": { "a.b.c": { "$exists": true } } }');

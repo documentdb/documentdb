@@ -230,6 +230,10 @@ bool EnableGroupByCompoundIdIndexPushdown =
 #define DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK true
 bool EnablePartialMatchHasRecheck = DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK;
 
+/* Added in v113, enabled in v113, remove after v116 */
+#define DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TERMS true
+bool EnableSkipDottedFieldIndexTerms = DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TERMS;
+
 /*
  * SECTION: Planner feature flags
  */
@@ -713,6 +717,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Whether to enable partial match has recheck for queries that have partial index matches."),
 		NULL, &EnablePartialMatchHasRecheck, DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableSkipDottedFieldIndexTerms", newGucPrefix),
+		gettext_noop(
+			"Whether to skip generating index terms for fields with dotted names (e.g. literal \"a.b\" field)."),
+		NULL, &EnableSkipDottedFieldIndexTerms,
+		DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TERMS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

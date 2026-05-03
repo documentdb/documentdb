@@ -2717,10 +2717,12 @@ SELECT documentdb_api.insert_one('db', 'wildcard_index_truncation_tests_single_f
 (1 row)
 
 /* making sure the array is being truncated */
-SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_single_path_generated_terms('{"_id": 3, "a.b.c": [ 2345, 1234, 1234, 1234, 1234 ] }', '', true, true, false, 60) term;
+SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_single_path_generated_terms('{"_id": 3, "a": { "b": { "c": [ 2345, 1234, 1234, 1234, 1234 ] } } }', '', true, true, false, 60) term;
  length |                                                             term                                                             
 ---------------------------------------------------------------------
      14 | { "_id" : { "$numberInt" : "3" } }
+     43 | { "a" : { "b" : { "c" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" } ] } } }
+     44 | { "a.b" : { "c" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" } ] } }
      45 | { "a.b.c" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" } ] }
      18 | { "a.b.c.0" : { "$numberInt" : "2345" } }
      16 | { "a.b.c" : { "$numberInt" : "2345" } }
@@ -2734,13 +2736,15 @@ SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documen
      16 | { "a.b.c" : { "$numberInt" : "1234" } }
       8 | { "" : true }
       7 | { "" : { "$maxKey" : 1 } }
-(14 rows)
+(16 rows)
 
 /* making sure the wildcard index terms are being generated correctly for a truncated value */
-SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_wildcard_project_generated_terms('{"_id": 3, "a.b.c": [ 2345, 1234, 1234, 1234, 1234, 76, 85 ] }', '["a"]', false, true, false, 60) term;
+SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_wildcard_project_generated_terms('{"_id": 3, "a": { "b": { "c": [ 2345, 1234, 1234, 1234, 1234, 76, 85 ] } } }', '["a"]', false, true, false, 60) term;
  length |                                                             term                                                             
 ---------------------------------------------------------------------
      14 | { "_id" : { "$numberInt" : "3" } }
+     43 | { "a" : { "b" : { "c" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" } ] } } }
+     44 | { "a.b" : { "c" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" } ] } }
      45 | { "a.b.c" : [ { "$numberInt" : "2345" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" }, { "$numberInt" : "1234" } ] }
      18 | { "a.b.c.0" : { "$numberInt" : "2345" } }
      16 | { "a.b.c" : { "$numberInt" : "2345" } }
@@ -2758,7 +2762,7 @@ SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documen
      16 | { "a.b.c" : { "$numberInt" : "85" } }
       8 | { "" : true }
       7 | { "" : { "$maxKey" : 1 } }
-(18 rows)
+(20 rows)
 
 SELECT documentdb_api.insert_one('db', 'wildcard_index_truncation_tests_single_field', '{"_id": 4, "a": { "b": { "c": 1, "d": 2, "e": "12334141424124" } } }');
                               insert_one                              

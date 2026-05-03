@@ -37,6 +37,7 @@
 #include "query/bson_dollar_operators.h"
 #include "query/query_operator.h"
 #include "utils/documentdb_errors.h"
+#include "utils/feature_counter.h"
 #include <math.h>
 
 /* --------------------------------------------------------- */
@@ -126,6 +127,7 @@ typedef struct DollarExistsQueryData
 } DollarExistsQueryData;
 
 extern bool EnableGenerateNonExistsTerm;
+extern bool EnableSkipDottedFieldIndexTerms;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -1405,6 +1407,9 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 		return;
 	}
 
+	const char *fieldName = bson_iter_key(bsonIter);
+	uint32_t fieldNameLength = bson_iter_key_len(bsonIter);
+
 	if (isArrayTerm)
 	{
 		/* if isArrayTerm is true (because we're inside an array context and we're generating */
@@ -1417,14 +1422,14 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 	else if (basePathLength == 0)
 	{
 		/* if we're at the root, simply use the field path. */
-		pathToInsert = bson_iter_key(bsonIter);
-		pathtoInsertLength = bson_iter_key_len(bsonIter);
+		pathToInsert = fieldName;
+		pathtoInsertLength = fieldNameLength;
 	}
 	else
 	{
 		/* otherwise build the path to insert. We use 'base.field' for the path */
 		/* since dot paths are illegal in field names. */
-		uint32_t fieldPathLength = bson_iter_key_len(bsonIter);
+		uint32_t fieldPathLength = fieldNameLength;
 		uint32_t pathToInsertAllocLength;
 
 		/* the length includes the two fields + the extra dot. */
@@ -1447,7 +1452,7 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 		/* construct <basePath>.<current key> string */
 		memcpy(pathStringInfo->data, basePath, basePathLength);
 		pathStringInfo->data[basePathLength] = '.';
-		memcpy(&pathStringInfo->data[basePathLength + 1], bson_iter_key(bsonIter),
+		memcpy(&pathStringInfo->data[basePathLength + 1], fieldName,
 			   fieldPathLength);
 		pathStringInfo->data[pathtoInsertLength] = 0;
 
@@ -1480,12 +1485,32 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 				NotifyHasArrayAncestors(context, pathIndex);
 			}
 
+			if (EnableSkipDottedFieldIndexTerms && !isArrayTerm &&
+				strchr(fieldName, '.') != NULL)
+			{
+				/* Field names with dotted path fields are not directly indexed since they can interfere with
+				 * queries for the same field.
+				 */
+				ReportFeatureUsage(FEATURE_INDEX_DOTTED_FIELD_NAME_SKIPPED);
+				return;
+			}
+
 			break;
 		}
 
 		case IndexTraverse_MatchAndRecurse:
 		case IndexTraverse_Match:
 		{
+			if (EnableSkipDottedFieldIndexTerms && !isArrayTerm &&
+				strchr(fieldName, '.') != NULL)
+			{
+				/* Field names with dotted path fields are not directly indexed since they can interfere with
+				 * queries for the same field.
+				 */
+				ReportFeatureUsage(FEATURE_INDEX_DOTTED_FIELD_NAME_SKIPPED);
+				return;
+			}
+
 			/*
 			 * if array of array has document inside it, we will be iterating document and generating parent path term
 			 * not the term directly with value of document.
