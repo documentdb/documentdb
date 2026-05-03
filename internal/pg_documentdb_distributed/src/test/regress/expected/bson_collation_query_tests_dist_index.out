@@ -125,6 +125,8 @@ SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_lookup_d', '{ "_i
 
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
 SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
     '{ "aggregate": "coll_lookup_d", "pipeline": [ { "$lookup": { "from": "coll_lookup_d", "as": "matched_docs", "localField": "_id", "foreignField": "_id", "pipeline": [ { "$match": { "$or" : [ { "a.b": "cat" }, { "a.b": "dog" } ] } } ] } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }');
                                                                      document                                                                      
@@ -141,6 +143,8 @@ END;
 BEGIN;
 SET LOCAL documentdb.enableLookupIdJoinOptimizationOnCollation TO true;
 SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
 SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
     '{ "aggregate": "coll_lookup_d", "pipeline": [ { "$lookup": { "from": "coll_lookup_d", "as": "matched_docs", "localField": "_id", "foreignField": "_id", "pipeline": [ { "$match": { "$or" : [ { "a.b": "cat" }, { "a.b": "dog" } ] } } ] } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }');
                                                                      document                                                                      
@@ -182,6 +186,8 @@ SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_agg_d', '{ "_id":
 -- String _id with collation: results returned, plan fans out to all shards.
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
 SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db', '{ "aggregate": "coll_agg_d", "pipeline": [ { "$match": { "_id": { "$eq": "CAT" } } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }');
             document            
 ---------------------------------------------------------------------
@@ -189,42 +195,16 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db', '{ "aggregate":
  { "_id" : "cAt", "a" : "cAt" }
 (2 rows)
 
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db', '{ "aggregate": "coll_agg_d", "pipeline": [ { "$match": { "_id": { "$eq": "CAT" } } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }') $cmd$);
-                                                              run_explain_and_trim                                                              
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Task Count: 8
-   Tasks Shown: One of 8
-   ->  Task
-         Node: host=localhost port=58070 dbname=regression
-         ->  Seq Scan on documents_95103_95100022 collection
-               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(7 rows)
-
 END;
 -- Numeric _id with collation: not collation-aware, single shard.
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
 SELECT document FROM bson_aggregation_find('coll_q_dist_db', '{ "find": "coll_agg_d", "filter": { "_id": { "$eq": 2 } }, "sort": { "_id": 1 }, "limit": 5, "collation": { "locale": "en", "strength" : 1} }');
  document 
 ---------------------------------------------------------------------
 (0 rows)
-
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_q_dist_db', '{ "find": "coll_agg_d", "filter": { "_id": { "$eq": 2 } }, "sort": { "_id": 1 }, "limit": 5, "collation": { "locale": "en", "strength" : 1} }') $cmd$);
-                                                                                      run_explain_and_trim                                                                                      
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Node: host=localhost port=58070 dbname=regression
-         ->  Limit
-               ->  Sort
-                     Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-                     ->  Index Scan using _id_ on documents_95103_95100023 collection
-                           Index Cond: ((shard_key_value = '-1389566185330078543'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
-                           Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "2" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(11 rows)
 
 END;
 -- ======================================================================
@@ -286,29 +266,14 @@ SELECT documentdb_api.shard_collection('coll_q_dist_db', 'single_field_d', '{ "_
 
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
 SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db', '{ "aggregate": "single_field_d", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$eq": "cherry" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
                       document                      
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "5" }, "a" : "cherry" }
  { "_id" : { "$numberInt" : "6" }, "a" : "Cherry" }
 (2 rows)
-
-END;
-BEGIN;
-SET LOCAL documentdb_core.enableCollation TO on;
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db', '{ "aggregate": "single_field_d", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$eq": "cherry" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
-                                                                 run_explain_and_trim                                                                  
----------------------------------------------------------------------
- Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
-   ->  Custom Scan (Citus Adaptive)
-         Task Count: 8
-         Tasks Shown: One of 8
-         ->  Task
-               Node: host=localhost port=58070 dbname=regression
-               ->  Seq Scan on documents_95104_95100030 collection
-                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(9 rows)
 
 END;
 -- ======================================================================
@@ -347,6 +312,8 @@ SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_delete_d', '{ "a"
 -- deleteMany respects collation across shards.
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
 SELECT documentdb_api.delete('coll_q_dist_db', '{ "delete": "coll_delete_d", "deletes": [ { "q": {"a": "CaT" }, "limit": 0, "collation": { "locale": "en", "strength" : 1}}]}');
                                          delete                                         
 ---------------------------------------------------------------------
@@ -364,6 +331,8 @@ ROLLBACK;
 -- deleteOne errors when no _id and no shard-key filter.
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
 SELECT documentdb_api.delete('coll_q_dist_db', '{ "delete": "coll_delete_d", "deletes": [ { "q": {"b": "CaT" }, "limit": 1, "collation": { "locale": "en", "strength" : 1}}]}');
                                                                                                                                            delete                                                                                                                                           
 ---------------------------------------------------------------------
@@ -374,6 +343,8 @@ END;
 -- deleteOne errors with collation-aware shard key value filter.
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
 SELECT documentdb_api.delete('coll_q_dist_db', '{ "delete": "coll_delete_d", "deletes": [ { "q": {"a": "CaT" }, "limit": 1, "collation": { "locale": "en", "strength" : 3}}]}');
                                                                                                                                                       delete                                                                                                                                                      
 ---------------------------------------------------------------------
@@ -384,6 +355,8 @@ END;
 -- deleteOne with both _id and shard key filter succeeds.
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
 SELECT documentdb_api.delete('coll_q_dist_db', '{ "delete": "coll_delete_d", "deletes": [ { "q": {"_id": "CaT", "a": "CaT" }, "limit": 1, "collation": { "locale": "en", "strength" : 1}}]}');
                                          delete                                         
 ---------------------------------------------------------------------
@@ -404,6 +377,8 @@ ROLLBACK;
 -- ======================================================================
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
 SELECT documentdb_api.delete('coll_q_dist_db', '{ "delete": "single_field_d", "deletes": [{ "q": { "a": "apple" }, "limit": 0, "collation": { "locale": "en", "strength": 1 } }] }');
                                          delete                                         
 ---------------------------------------------------------------------
@@ -463,46 +438,25 @@ SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_qm_d', '{ "_id": 
 -- String shard-key value: collation-aware → fans out.
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
 SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": "CAT" }', '{}', 'en-u-ks-level1');
             document            
 ---------------------------------------------------------------------
  { "_id" : "cat", "a" : "cat" }
 (1 row)
 
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": "CAT" }', '{}', 'en-u-ks-level1') $cmd$);
-                                                              run_explain_and_trim                                                              
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Task Count: 8
-   Tasks Shown: One of 8
-   ->  Task
-         Node: host=localhost port=58070 dbname=regression
-         ->  Seq Scan on documents_95106_95100046 documents_95106
-               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(7 rows)
-
 END;
 -- Numeric shard-key value: not collation-aware → single shard.
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
 SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": 3 }', '{}', 'en-u-ks-level1');
                       document                       
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "3" }, "a" : "peacock" }
 (1 row)
-
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": 3 }', '{}', 'en-u-ks-level1') $cmd$);
-                                                                                run_explain_and_trim                                                                                
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using _id_ on documents_95106_95100047 collection
-               Index Cond: ((shard_key_value = '-4918719581749358852'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "3" } }'::documentdb_core.bson))
-               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "3" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(8 rows)
 
 END;
 -- ======================================================================
@@ -515,7 +469,7 @@ SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_qm_d');
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_qm_d', '{ "_id": "cAt", "a": "cAt" }');
-psql:sql/bson_collation_query_tests_dist_core.sql:158: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_dist_core.sql:173: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -542,45 +496,25 @@ SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_qm_d', '{ "_id": 
 -- All-string compound filter: collation-aware on both keys → fans out.
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
 SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": "CAT", "a": "CAT" }', '{}', 'en-u-ks-level1');
             document            
 ---------------------------------------------------------------------
  { "_id" : "cAt", "a" : "cAt" }
 (1 row)
 
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": "CAT", "a": "CAT" }', '{}', 'en-u-ks-level1') $cmd$);
-                                                                                                                            run_explain_and_trim                                                                                                                             
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Task Count: 8
-   Tasks Shown: One of 8
-   ->  Task
-         Node: host=localhost port=58070 dbname=regression
-         ->  Seq Scan on documents_95107_95100056 documents_95107
-               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson))
-(7 rows)
-
 END;
 -- Mixed-type compound filter (numeric _id + string a): the collated
 -- string portion still prevents pruning; query fans out.
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
 SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": 1, "a": "CAT" }', '{}', 'en-u-ks-level1');
  document 
 ---------------------------------------------------------------------
 (0 rows)
-
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": 1, "a": "CAT" }', '{}', 'en-u-ks-level1') $cmd$);
-                                                                                                                                     run_explain_and_trim                                                                                                                                     
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Task Count: 8
-   Tasks Shown: One of 8
-   ->  Task
-         Node: host=localhost port=58070 dbname=regression
-         ->  Seq Scan on documents_95107_95100056 documents_95107
-               Filter: ((document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson))
-(7 rows)
 
 END;
 -- ======================================================================
@@ -618,9 +552,11 @@ SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_graph_dst_d', '{ 
 
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
 SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
     '{ "aggregate": "coll_graph_src_d", "pipeline": [ { "$graphLookup": { "from": "coll_graph_dst_d", "startWith": "$pet", "connectFromField": "name", "connectToField": "_id", "as": "destinations", "depthField": "depth" } } ],  "collation": { "locale": "en", "strength" : 1} }');
-psql:sql/bson_collation_query_tests_dist_core.sql:193: ERROR:  $graphLookup using 'from' on a sharded collection is currently unsupported
+psql:sql/bson_collation_query_tests_dist_core.sql:212: ERROR:  $graphLookup using 'from' on a sharded collection is currently unsupported
 END;
 -- ======================================================================
 -- CLEANUP
