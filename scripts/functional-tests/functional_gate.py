@@ -122,8 +122,6 @@ class GateResult:
         self.image = ""
         self.errors: list[dict] = []
         self.failed_tests: list[dict] = []
-        self.causality_available = False
-        self.causality_results: dict = {}
 
     def to_dict(self) -> dict:
         return {
@@ -141,8 +139,7 @@ class GateResult:
         }
 
 
-def summarize_gate(allowlist_path: str, report_path: str, image_path: str = "",
-                   main_report_path: str = "") -> GateResult:
+def summarize_gate(allowlist_path: str, report_path: str, image_path: str = "") -> GateResult:
     """Analyze pytest JSON report against the allow-list and produce a gate result."""
     result = GateResult()
 
@@ -251,19 +248,6 @@ def summarize_gate(allowlist_path: str, report_path: str, image_path: str = "",
     else:
         result.outcome = "PASS"
 
-    # Causality check
-    if main_report_path and os.path.exists(main_report_path):
-        result.causality_available = True
-        with open(main_report_path) as f:
-            main_report = json.load(f)
-        main_outcomes = {}
-        for test in main_report.get("tests", []):
-            main_outcomes[test.get("nodeid", "")] = test.get("outcome", "unknown")
-        for ft in result.failed_tests:
-            tid = ft["test_id"]
-            main_outcome = main_outcomes.get(tid, "not_found")
-            ft["also_fails_on_main"] = main_outcome != "passed"
-
     return result
 
 
@@ -297,11 +281,6 @@ def render_gate_markdown(result: GateResult) -> str:
         lines.append("**Failed tests:**")
         for ft in result.failed_tests:
             lines.append(f"- `{ft['short_name']}`")
-            if "also_fails_on_main" in ft:
-                if ft["also_fails_on_main"]:
-                    lines.append("  - Likely caused by this PR: **no** (also fails on main)")
-                else:
-                    lines.append("  - Likely caused by this PR: **yes**")
         lines.append("")
 
     if result.errors:
@@ -493,8 +472,9 @@ def cmd_validate_config(args):
 
 
 def cmd_summarize_gate(args):
-    result = summarize_gate(args.allowlist, args.report, args.image,
-                            getattr(args, "main_report", ""))
+    result = summarize_gate(args.allowlist, args.report, args.image)
+
+
     md = render_gate_markdown(result)
 
     # Write summary to stdout
@@ -559,8 +539,6 @@ def main():
     gate_parser = subparsers.add_parser("summarize-gate", help="Summarize PR gate results")
     gate_parser.add_argument("--report", required=True, help="Path to pytest JSON report")
     gate_parser.add_argument("--output-dir", default="", help="Directory for output artifacts")
-    gate_parser.add_argument("--main-report", default="",
-                             help="Path to main-branch pytest JSON report for causality check")
 
     # summarize-daily
     daily_parser = subparsers.add_parser("summarize-daily", help="Summarize daily delta")

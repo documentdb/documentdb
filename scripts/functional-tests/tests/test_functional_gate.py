@@ -216,34 +216,6 @@ class TestSummarizeGate:
         assert result.total_discovered == 9000
         assert result.outside_allowlist == 8997
 
-    def test_causality_check_available(self, tmp_path, valid_image, valid_allowlist):
-        report = make_pytest_report(tmp_path, [
-            {"nodeid": "tests/test_a.py::test_one", "outcome": "passed"},
-            {"nodeid": "tests/test_a.py::test_two", "outcome": "failed"},
-            {"nodeid": "tests/test_b.py::test_three", "outcome": "passed"},
-        ])
-        main_report = make_pytest_report(tmp_path, [
-            {"nodeid": "tests/test_a.py::test_one", "outcome": "passed"},
-            {"nodeid": "tests/test_a.py::test_two", "outcome": "passed"},
-            {"nodeid": "tests/test_b.py::test_three", "outcome": "passed"},
-        ], filename="main_report.json")
-        result = summarize_gate(valid_allowlist, report, valid_image, main_report)
-        assert result.causality_available is True
-        assert result.failed_tests[0]["also_fails_on_main"] is False
-
-    def test_causality_also_fails_on_main(self, tmp_path, valid_image, valid_allowlist):
-        report = make_pytest_report(tmp_path, [
-            {"nodeid": "tests/test_a.py::test_one", "outcome": "passed"},
-            {"nodeid": "tests/test_a.py::test_two", "outcome": "failed"},
-            {"nodeid": "tests/test_b.py::test_three", "outcome": "passed"},
-        ])
-        main_report = make_pytest_report(tmp_path, [
-            {"nodeid": "tests/test_a.py::test_one", "outcome": "passed"},
-            {"nodeid": "tests/test_a.py::test_two", "outcome": "failed"},
-            {"nodeid": "tests/test_b.py::test_three", "outcome": "passed"},
-        ], filename="main_report.json")
-        result = summarize_gate(valid_allowlist, report, valid_image, main_report)
-        assert result.failed_tests[0]["also_fails_on_main"] is True
 
 
 class TestGateMarkdown:
