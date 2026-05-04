@@ -1,0 +1,239 @@
+name: Functional tests
+run-name: ${{ github.event.pull_request.title || '' }}
+
+concurrency:
+  group: functional-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_daily:
+        description: 'Run daily delta report instead of PR gate'
+        default: false
+        required: false
+        type: boolean
+  push:
+    branches:
+      - 'main'
+    paths-ignore:
+      - '.devcontainer/**'
+      - '*.md'
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths-ignore:
+      - '.devcontainer/**'
+      - '*.md'
+  schedule:
+    - cron: '0 6 * * *'  # Daily at 06:00 UTC
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Job 1: Validate functional test configuration
+  # -----------------------------------------------------------------------
+  validate-config:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install Python dependencies
+        run: pip install pyyaml
+
+      - name: Validate functional test config
+        run: |
+          python3 scripts/functional-tests/functional_gate.py validate-config
+
+  # -----------------------------------------------------------------------
+  # Job 2: Check for allow-list removals
+  # -----------------------------------------------------------------------
+  check-allowlist-removals:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check for allow-list removals
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          if git show "$BASE_SHA:test-config/functional-tests/allowlist.yml" > /tmp/base_allowlist.yml 2>/dev/null; then
+            # Extract test IDs from base and head
+            python3 -c "
+          import yaml, sys
+          with open('/tmp/base_allowlist.yml') as f:
+              base = set(yaml.safe_load(f).get('tests', []))
+          with open('test-config/functional-tests/allowlist.yml') as f:
+              head = set(yaml.safe_load(f).get('tests', []))
+          removed = sorted(base - head)
+          if removed:
+              print(f'WARNING: {len(removed)} test(s) removed from allowlist.yml:')
+              for t in removed:
+                  print(f'  - {t}')
+              print()
+              print('Allow-list removals require explicit justification.')
+              print('If this is intentional, include the reason in the PR description.')
+              sys.exit(1)
+          else:
+              print('No allow-list removals detected.')
+          "
+          else
+            echo "No base allowlist.yml found (new file). Skipping removal check."
+          fi
+
+  # -----------------------------------------------------------------------
+  # Job 3: PR gate - run allow-listed tests
+  # -----------------------------------------------------------------------
+  functional-pr-gate:
+    if: >
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && !inputs.run_daily)
+    needs: validate-config
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Build and Install DocumentDB
+        run: |
+          chmod +x ./scripts/build_documentdb_with_scripts.sh
+          ./scripts/build_documentdb_with_scripts.sh --pg-version 17 --citus-version 12
+
+      - name: Export pg_config PATH
+        run: echo "/usr/lib/postgresql/17/bin" >> $GITHUB_PATH
+
+      - name: Install Rust
+        run: |
+          export CARGO_HOME=$HOME/.cargo
+          export RUSTUP_HOME=$HOME/.rustup
+          ./scripts/install_rustup.sh --install-toolchain
+          rustc --version && cargo --version
+
+      - name: Install Rust tools
+        run: ${{ github.workspace }}/scripts/install_rust_tools.sh ${{ github.workspace }}/rust-toolchain.toml
+
+      - name: Build and Install Gateway host
+        run: ./scripts/build_and_install_with_pgrx.sh -v 17 -d ./pg_documentdb_gw_host
+
+      - name: Start DocumentDB service
+        run: |
+          export PG_VERSION_USED=17
+          mkdir -p $RUNNER_TEMP/pgdata
+          ./scripts/start_oss_server.sh -d $RUNNER_TEMP/pgdata -c -g -r
+          cat $RUNNER_TEMP/pgdata/pglog.log || true
+
+      - name: Start Gateway
+        run: |
+          ./scripts/build_and_start_gateway.sh -u docdb_admin -p Admin100 -P 9712 &
+          # Wait for gateway
+          timeout 120 bash -c 'until nc -z localhost 10260 2>/dev/null; do sleep 2; done'
+          echo "Gateway is ready on port 10260"
+
+      - name: Install test dependencies
+        run: pip install pyyaml
+
+      - name: Pull functional-tests image
+        run: |
+          IMAGE=$(python3 -c "import yaml; print(yaml.safe_load(open('test-config/functional-tests/image.yml'))['image'])")
+          echo "Pulling $IMAGE"
+          docker pull "$IMAGE"
+
+      - name: Run allow-list gate
+        id: gate
+        run: |
+          CONNECTION_STRING="mongodb://docdb_admin:Admin100@localhost:10260/?tls=true&tlsAllowInvalidCertificates=true"
+          ./scripts/functional-tests/run-allowlist.sh --connection-string "$CONNECTION_STRING"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-test-results
+          overwrite: true
+          path: .test-results/functional-tests/
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-test-logs
+          overwrite: true
+          path: "**/*.log"
+
+  # -----------------------------------------------------------------------
+  # Job 4: Daily delta - full suite visibility report
+  # -----------------------------------------------------------------------
+  daily-functional-delta:
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.run_daily)
+    needs: validate-config
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Build and Install DocumentDB
+        run: |
+          chmod +x ./scripts/build_documentdb_with_scripts.sh
+          ./scripts/build_documentdb_with_scripts.sh --pg-version 17 --citus-version 12
+
+      - name: Export pg_config PATH
+        run: echo "/usr/lib/postgresql/17/bin" >> $GITHUB_PATH
+
+      - name: Install Rust
+        run: |
+          export CARGO_HOME=$HOME/.cargo
+          export RUSTUP_HOME=$HOME/.rustup
+          ./scripts/install_rustup.sh --install-toolchain
+
+      - name: Install Rust tools
+        run: ${{ github.workspace }}/scripts/install_rust_tools.sh ${{ github.workspace }}/rust-toolchain.toml
+
+      - name: Build and Install Gateway host
+        run: ./scripts/build_and_install_with_pgrx.sh -v 17 -d ./pg_documentdb_gw_host
+
+      - name: Start DocumentDB service
+        run: |
+          export PG_VERSION_USED=17
+          mkdir -p $RUNNER_TEMP/pgdata
+          ./scripts/start_oss_server.sh -d $RUNNER_TEMP/pgdata -c -g -r
+
+      - name: Start Gateway
+        run: |
+          ./scripts/build_and_start_gateway.sh -u docdb_admin -p Admin100 -P 9712 &
+          timeout 120 bash -c 'until nc -z localhost 10260 2>/dev/null; do sleep 2; done'
+
+      - name: Install test dependencies
+        run: pip install pyyaml
+
+      - name: Pull functional-tests image
+        run: |
+          IMAGE=$(python3 -c "import yaml; print(yaml.safe_load(open('test-config/functional-tests/image.yml'))['image'])")
+          docker pull "$IMAGE"
+
+      - name: Run daily delta
+        run: |
+          CONNECTION_STRING="mongodb://docdb_admin:Admin100@localhost:10260/?tls=true&tlsAllowInvalidCertificates=true"
+          ./scripts/functional-tests/run-daily-delta.sh --connection-string "$CONNECTION_STRING"
+
+      - name: Upload daily results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-functional-test-results
+          overwrite: true
+          path: .test-results/functional-tests-daily/
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-functional-test-logs
+          overwrite: true
+          path: "**/*.log"

@@ -1,0 +1,5 @@
+schema_version: 1
+image: ghcr.io/documentdb/functional-tests@sha256:a63d0ec11e2d71b2870dda3db00cdd7eba04c6b5f2149fb0e312964a3c60c511
+source_ref: documentdb/functional-tests@main
+source_sha: df2623cd3670b664e360806e529419f1548451a7
+updated_by: initial-setup
