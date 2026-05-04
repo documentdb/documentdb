@@ -7,7 +7,7 @@
 # functional-tests.
 #
 # Usage:
-#   ./scripts/functional-tests/start-documentdb-for-functional-tests.sh [options]
+#   ./documentdb-local/functional-tests/start-documentdb-for-functional-tests.sh [options]
 #
 # Options:
 #   --pg-version <ver>   PostgreSQL major version (default: 17)

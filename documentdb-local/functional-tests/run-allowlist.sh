@@ -5,7 +5,7 @@
 # mounts the allow-list plugin, and runs only allow-listed tests.
 #
 # Usage:
-#   ./scripts/functional-tests/run-allowlist.sh [--connection-string <url>]
+#   ./documentdb-local/functional-tests/run-allowlist.sh [--connection-string <url>]
 #
 # Environment:
 #   CONNECTION_STRING  Override the default connection string.
@@ -15,7 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-CONFIG_DIR="$REPO_ROOT/test-config/functional-tests"
+CONFIG_DIR="$SCRIPT_DIR/config"
 IMAGE_YML="$CONFIG_DIR/image.yml"
 ALLOWLIST_YML="$CONFIG_DIR/allowlist.yml"
 PLUGIN="$SCRIPT_DIR/conftest_allowlist.py"

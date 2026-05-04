@@ -9,14 +9,14 @@
 #   - outside-allow-list tests that still do not pass (visibility only)
 #
 # Usage:
-#   ./scripts/functional-tests/run-daily-delta.sh [--connection-string <url>]
+#   ./documentdb-local/functional-tests/run-daily-delta.sh [--connection-string <url>]
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-CONFIG_DIR="$REPO_ROOT/test-config/functional-tests"
+CONFIG_DIR="$SCRIPT_DIR/config"
 IMAGE_YML="$CONFIG_DIR/image.yml"
 ALLOWLIST_YML="$CONFIG_DIR/allowlist.yml"
 GATE_TOOL="$SCRIPT_DIR/functional_gate.py"

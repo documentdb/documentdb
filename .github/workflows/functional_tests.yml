@@ -54,7 +54,7 @@ jobs:
         run: pip install pyyaml
 
       - name: Validate functional test config
-        run: python3 scripts/functional-tests/functional_gate.py validate-config
+        run: python3 documentdb-local/functional-tests/functional_gate.py validate-config
 
   # -----------------------------------------------------------------------
   # Job 2: Check for allow-list removals (PRs only)
@@ -74,12 +74,12 @@ jobs:
       - name: Check for allow-list removals
         run: |
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          if git show "$BASE_SHA:test-config/functional-tests/allowlist.yml" > /tmp/base_allowlist.yml 2>/dev/null; then
+          if git show "$BASE_SHA:documentdb-local/functional-tests/config/allowlist.yml" > /tmp/base_allowlist.yml 2>/dev/null; then
             python3 -c "
           import yaml, sys
           with open('/tmp/base_allowlist.yml') as f:
               base = set(yaml.safe_load(f).get('tests', []))
-          with open('test-config/functional-tests/allowlist.yml') as f:
+          with open('documentdb-local/functional-tests/config/allowlist.yml') as f:
               head = set(yaml.safe_load(f).get('tests', []))
           removed = sorted(base - head)
           if removed:
@@ -185,7 +185,7 @@ jobs:
 
       - name: Pull functional-tests image
         run: |
-          IMAGE=$(python3 -c "import yaml; print(yaml.safe_load(open('test-config/functional-tests/image.yml'))['image'])")
+          IMAGE=$(python3 -c "import yaml; print(yaml.safe_load(open('documentdb-local/functional-tests/config/image.yml'))['image'])")
           echo "Pulling $IMAGE"
           docker pull "$IMAGE"
           echo "FUNC_TEST_IMAGE=$IMAGE" >> $GITHUB_ENV
@@ -197,8 +197,8 @@ jobs:
           chmod 777 .test-results/functional-tests
 
           docker run --rm --network host \
-            -v "$(pwd)/test-config/functional-tests/allowlist.yml:/allowlist.yml:ro" \
-            -v "$(pwd)/scripts/functional-tests/conftest_allowlist.py:/extra/conftest_allowlist.py:ro" \
+            -v "$(pwd)/documentdb-local/functional-tests/config/allowlist.yml:/allowlist.yml:ro" \
+            -v "$(pwd)/documentdb-local/functional-tests/conftest_allowlist.py:/extra/conftest_allowlist.py:ro" \
             -v "$(pwd)/.test-results/functional-tests:/results" \
             -e "PYTHONPATH=/extra" \
             ${{ env.FUNC_TEST_IMAGE }} \
@@ -217,9 +217,9 @@ jobs:
         if: always()
         run: |
           if [ -f .test-results/functional-tests/report.json ]; then
-            python3 scripts/functional-tests/functional_gate.py \
-              --image test-config/functional-tests/image.yml \
-              --allowlist test-config/functional-tests/allowlist.yml \
+            python3 documentdb-local/functional-tests/functional_gate.py \
+              --image documentdb-local/functional-tests/config/image.yml \
+              --allowlist documentdb-local/functional-tests/config/allowlist.yml \
               summarize-gate \
               --report .test-results/functional-tests/report.json \
               --output-dir .test-results/functional-tests
@@ -288,7 +288,7 @@ jobs:
 
       - name: Pull functional-tests image
         run: |
-          IMAGE=$(python3 -c "import yaml; print(yaml.safe_load(open('test-config/functional-tests/image.yml'))['image'])")
+          IMAGE=$(python3 -c "import yaml; print(yaml.safe_load(open('documentdb-local/functional-tests/config/image.yml'))['image'])")
           docker pull "$IMAGE"
           echo "FUNC_TEST_IMAGE=$IMAGE" >> $GITHUB_ENV
 
@@ -314,9 +314,9 @@ jobs:
         if: always()
         run: |
           if [ -f .test-results/functional-tests-daily/report.json ]; then
-            python3 scripts/functional-tests/functional_gate.py \
-              --image test-config/functional-tests/image.yml \
-              --allowlist test-config/functional-tests/allowlist.yml \
+            python3 documentdb-local/functional-tests/functional_gate.py \
+              --image documentdb-local/functional-tests/config/image.yml \
+              --allowlist documentdb-local/functional-tests/config/allowlist.yml \
               summarize-daily \
               --report .test-results/functional-tests-daily/report.json \
               --output-dir .test-results/functional-tests-daily

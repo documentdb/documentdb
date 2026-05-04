@@ -5,7 +5,7 @@
 # with outcome PASS, and outputs a candidate allowlist.yml.
 #
 # Usage:
-#   ./scripts/functional-tests/bootstrap-allowlist.sh [options]
+#   ./documentdb-local/functional-tests/bootstrap-allowlist.sh [options]
 #
 # Options:
 #   --connection-string <url>  Override default connection string
@@ -18,7 +18,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-CONFIG_DIR="$REPO_ROOT/test-config/functional-tests"
+CONFIG_DIR="$SCRIPT_DIR/config"
 IMAGE_YML="$CONFIG_DIR/image.yml"
 GATE_TOOL="$SCRIPT_DIR/functional_gate.py"
 RESULTS_DIR="$REPO_ROOT/.test-results/functional-tests-bootstrap"

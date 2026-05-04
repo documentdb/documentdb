@@ -87,3 +87,4 @@ target/
 .test-results/
 __pycache__/
 *.pyc
+rfcs/0007-functional-test-allowlist-gating.md

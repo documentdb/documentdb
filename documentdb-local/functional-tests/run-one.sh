@@ -5,10 +5,10 @@
 # Does not use or modify the allow-list.
 #
 # Usage:
-#   ./scripts/functional-tests/run-one.sh <pytest-node-id> [--connection-string <url>]
+#   ./documentdb-local/functional-tests/run-one.sh <pytest-node-id> [--connection-string <url>]
 #
 # Example:
-#   ./scripts/functional-tests/run-one.sh \
+#   ./documentdb-local/functional-tests/run-one.sh \
 #     documentdb_tests/compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_eq
 
 set -euo pipefail
@@ -16,7 +16,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-CONFIG_DIR="$REPO_ROOT/test-config/functional-tests"
+CONFIG_DIR="$SCRIPT_DIR/config"
 IMAGE_YML="$CONFIG_DIR/image.yml"
 RESULTS_DIR="$REPO_ROOT/.test-results/functional-tests"
 

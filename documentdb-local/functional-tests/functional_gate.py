@@ -295,7 +295,7 @@ def render_gate_markdown(result: GateResult) -> str:
         first_failed = result.failed_tests[0]["test_id"]
         lines.append("**Reproduce:**")
         lines.append(f"```")
-        lines.append(f"./scripts/functional-tests/run-one.sh {first_failed}")
+        lines.append(f"./documentdb-local/functional-tests/run-one.sh {first_failed}")
         lines.append(f"```")
 
     return "\n".join(lines)
@@ -525,9 +525,9 @@ def cmd_summarize_daily(args):
 def main():
     parser = argparse.ArgumentParser(
         description="DocumentDB Functional Test Gate Tooling (RFC-0007)")
-    parser.add_argument("--image", default="test-config/functional-tests/image.yml",
+    parser.add_argument("--image", default="documentdb-local/functional-tests/config/image.yml",
                         help="Path to image.yml")
-    parser.add_argument("--allowlist", default="test-config/functional-tests/allowlist.yml",
+    parser.add_argument("--allowlist", default="documentdb-local/functional-tests/config/allowlist.yml",
                         help="Path to allowlist.yml")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
