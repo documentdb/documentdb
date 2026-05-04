@@ -190,9 +190,13 @@ DocumentDB PR gate today.
 Recommended layout:
 
 ```text
-test-config/functional-tests/
-  image.yml               # pinned upstream functional-tests image
-  allowlist.yml           # source of truth for required passing tests
+documentdb-local/functional-tests/
+  config/
+    image.yml             # pinned upstream functional-tests image
+    allowlist.yml         # source of truth for required passing tests
+  scripts/                # local reproduction and bootstrap entry points
+  tools/                  # pytest plugin and report summarizer
+  tests/                  # unit tests for this tooling
 ```
 
 #### Image pin
@@ -221,8 +225,8 @@ Can we reproduce the same gate later?
 schema_version: 1
 
 tests:
-  - documentdb_tests/compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_eq
-  - documentdb_tests/compatibility/tests/core/query-and-write/commands/insert/test_insert_operations.py::test_insert_one
+  - compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_eq
+  - compatibility/tests/core/query-and-write/commands/insert/test_insert_operations.py::test_insert_one
 ```
 
 The allow-list should stay positive and simple. It should not become a catalog of every unsupported feature or every known upstream failure.
@@ -237,10 +241,12 @@ Phase 1 uses exact pytest node IDs as the machine key. Parameterized tests must 
 
 ```yaml
 tests:
-  - documentdb_tests/compatibility/tests/core/query-and-write/commands/find/test_find_comparison.py::test_find_comparison[$gt]
+  - compatibility/tests/core/query-and-write/commands/find/test_find_comparison.py::test_find_comparison[$gt]
 ```
 
 The allow-list should not use path globs, function-level wildcards, or marker-level matching in Phase 1. Those shortcuts are easier to write, but they can silently include new upstream cases without review. If upstream renames or rewrites parameter IDs, the gate should report missing IDs and require a reviewed replacement.
+
+Allow-list entries should use the pytest node IDs emitted by the pinned image. In the current image those IDs are rootdir-relative, for example `compatibility/tests/...`, not `documentdb_tests/compatibility/tests/...`.
 
 Reporting metadata such as area, short name, and tags should be derived automatically from upstream test paths, pytest markers, or result metadata. It should not be manually repeated on every allow-list entry.
 
@@ -278,7 +284,7 @@ The hook:
 
 This hook is maintained in the DocumentDB repo and mounted into the upstream container at runtime.
 
-Phase 1 keeps the PR gate simple by running only parallel-safe allow-listed tests under `-n auto`. If an allow-listed test is marked `no_parallel`, CI must fail with a clear allow-list configuration error instead of letting upstream deselection make the test look missing or skipped.
+Phase 1 keeps the PR gate simple by running only parallel-safe allow-listed tests with bounded, configurable xdist workers. The default is `4` workers for predictable CI and local behavior. If an allow-listed test is marked `no_parallel`, CI must fail with a clear allow-list configuration error instead of letting upstream deselection make the test look missing or skipped.
 
 A later phase may add a second sequential invocation for allow-listed `no_parallel` tests. Until that exists, they should be excluded from bootstrap output and rejected during allow-list validation.
 
@@ -288,7 +294,7 @@ Why this over alternatives:
 Pass IDs as CLI args          can hit OS arg length limits with many long node IDs
 --collect-only + second pass  still needs a way to pass selected IDs to the run step
 --deselect for non-listed     inverting thousands of IDs is worse than selecting required IDs
-conftest hook                 no arg limit, works with -n auto for parallel-safe tests,
+conftest hook                 no arg limit, works with bounded parallel workers,
                               detects missing IDs, reports deselect count natively
 ```
 
@@ -383,7 +389,7 @@ Action:
 
 Failed:
   short name: test_find_basic_queries.py::test_find_eq
-  full id: documentdb_tests/compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_eq
+  full id: compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_eq
 ```
 
 #### 2. Feature PR where tests already exist in the pinned image
@@ -708,7 +714,7 @@ Image:
   ghcr.io/documentdb/functional-tests@sha256:abc123
 
 Allow-list source:
-  test-config/functional-tests/allowlist.yml
+  documentdb-local/functional-tests/config/allowlist.yml
 
 Required allow-list:
   512 total
@@ -881,7 +887,7 @@ def pytest_collection_modifyitems(session, config, items):
     if no_parallel_ids:
         raise pytest.UsageError(
             "allowlist.yml contains tests marked no_parallel, but the Phase 1 "
-            "PR gate runs with -n auto and has no sequential phase: "
+            "PR gate runs with parallel workers and has no sequential phase: "
             + _format_ids(no_parallel_ids)
         )
 
@@ -896,13 +902,16 @@ Example invocation:
 
 ```bash
 docker run --network host \
-  -v "$(pwd)/test-config/functional-tests/allowlist.yml:/allowlist.yml" \
-  -v "$(pwd)/scripts/functional-tests/conftest_allowlist.py:/extra/conftest_allowlist.py" \
+  -v "$(pwd)/documentdb-local/functional-tests/config/allowlist.yml:/allowlist.yml" \
+  -v "$(pwd)/documentdb-local/functional-tests/tools/conftest_allowlist.py:/extra/conftest_allowlist.py" \
   -e PYTHONPATH=/extra \
   ghcr.io/documentdb/functional-tests@sha256:abc123 \
+  documentdb_tests/compatibility/tests \
   -p conftest_allowlist \
   --allowlist /allowlist.yml \
-  -n auto \
+  --engine-name documentdb \
+  -m "not no_parallel" \
+  -n 4 \
   --connection-string "mongodb://localhost:10260"
 ```
 
@@ -1011,16 +1020,13 @@ Normal PR authors should only need to understand a small set of outcomes.
             +--> ALLOWLIST ERROR
             |     Fix allowlist.yml or test selection.
             |
-            +--> IMAGE ERROR
-            |     Fix image.yml, image pull, or image metadata.
-            |
-            +--> INFRA ERROR
-                  Rerun or route to test infrastructure.
+            +--> EXECUTION/INFRA ERROR
+                  Inspect job log and uploaded artifacts.
 ```
 
 This keeps normal PR workflow simple while still preserving correctness.
 
-#### Configuration and image error subtypes
+#### Configuration error subtypes
 
 `ALLOWLIST ERROR` should include a subtype so the fix path is clear:
 
@@ -1029,85 +1035,61 @@ This keeps normal PR workflow simple while still preserving correctness.
 | `INVALID_SCHEMA` | `allowlist.yml` is malformed or uses unsupported fields. | Fix YAML/schema. |
 | `DUPLICATE_TEST_ID` | The same upstream test ID appears more than once. | Delete the duplicate entry. |
 | `UNKNOWN_TEST_ID` | The allow-listed ID is not present in the pinned image. | Replace ID or revert image bump. |
-| `TEST_NOT_COLLECTED` | The test exists but was not collected by pytest. | Fix selection/tooling. |
-| `TEST_NOT_EXECUTED` | The test was collected but did not run. | Fix selection/tooling. |
 | `ALLOWLISTED_NO_PARALLEL` | The allow-listed test is marked `no_parallel`, but Phase 1 has no sequential gate phase. | Update `allowlist.yml` or add an explicit sequential phase before promotion. |
 | `ALLOWLISTED_ENGINE_XFAIL` | The allow-listed test is marked `engine_xfail(engine="documentdb")`. | Do not treat it as validated coverage; update upstream marker/image or update `allowlist.yml`. |
 | `ALLOWLISTED_XPASS` | The test was expected to fail but passed; strict xfail behavior treats that as a failure. | Update the upstream expected-failure marker or block the image bump until the marker is corrected. |
 | `NON_PASS_OUTCOME` | The test was skipped, xfailed, xpassed, errored, or otherwise not `PASS`. | Fix test/product behavior or update `allowlist.yml`. |
 
-`IMAGE ERROR` should also include a subtype:
-
-| Subtype | Meaning | Typical fix |
-|---------|---------|-------------|
-| `IMAGE_PULL_FAILED` | CI could not pull the pinned image. | Retry or fix image reference/registry issue. |
-| `IMAGE_METADATA_MISMATCH` | Image digest/source metadata does not match `image.yml`. | Fix `image.yml` or republish/adopt correct image. |
-| `IMAGE_RUNTIME_ERROR` | The image starts but cannot run the expected test command. | Investigate upstream image or wrapper script. |
+Phase 1 validates image configuration and surfaces image pull/runtime failures through the workflow log. Structured image error subtypes are Phase 2 operational polish.
 
 #### Failure diagnosis requirements
 
-Every failed PR gate must tell the contributor what failed, whether the failure is likely caused by the PR, and what to do next. Contributors should not have to start with raw pytest logs.
+Every failed PR gate must tell the contributor what failed and what to do next. Contributors should not have to start with raw pytest logs.
 
 A failed functional gate summary should answer:
 
 1. Which allow-listed tests failed?
-2. Did the same tests fail on `main` with the same pinned image and allow-list?
-3. Is the failure product-shaped, configuration-shaped, or infrastructure-shaped?
-4. What is the recommended next action?
-5. How can the contributor reproduce the failure locally?
+2. Were any allow-listed tests missing or non-pass?
+3. What is the recommended next action?
+4. How can the contributor reproduce the failure locally?
 
-Recommended failure categories:
+Phase 1 intentionally does not run a `main` causality comparison or detailed product-vs-infra mismatch taxonomy. Those features are useful, but they add operational complexity and belong in Phase 2 after the strict allow-list gate is proven.
 
-| Category | Meaning | Contributor action |
-|----------|---------|--------------------|
-| `RESULT_MISMATCH` | The command ran, but returned different data than expected. | Usually fix DocumentDB behavior. |
-| `ERROR_MISMATCH` | The command failed differently than expected. | Check validation, error code, or error message behavior. |
-| `UNEXPECTED_ERROR` | The test expected success, but DocumentDB returned an error. | Check whether the PR broke supported behavior. |
-| `INFRA_ERROR` | Environment, connection, timeout, startup, or infrastructure failure. | Rerun or route to test infrastructure. |
-| `ALLOWLIST_ERROR` | Allow-list schema, duplicate ID, missing ID, or test selection problem. | Fix `allowlist.yml` or selection tooling. |
-| `IMAGE_ERROR` | Image pull, metadata, or runtime problem. | Fix `image.yml`, registry access, or image adoption. |
-
-Expected PR-caused failure summary:
+Expected failed-test summary:
 
 ```text
-Functional gate failed
+Functional gate: FAIL (ALLOWED_TEST_FAILED)
 
-Likely caused by this PR:
-  yes
+Allow-list:
+  selected: 332
+  passed: 331
+  failed: 1
+  missing: 0
+  non-pass: 0
 
-Causality check:
-  failed on PR branch: yes
-  failed on main with same image: no
+What this means:
+  Every allowlisted test must be collected, executed, and pass.
+  A failed, skipped, xfail/xpass, errored, or missing allowlisted test is a gate failure.
 
-Failure type:
-  RESULT_MISMATCH
-
-Failed required test:
-  short name: test_find_basic_queries.py::test_find_eq
-  full id: documentdb_tests/compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_eq
+Failed tests:
+  compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_eq
 
 Action:
-  Fix DocumentDB behavior.
+  Start with the local reproduction command, then inspect report.json,
+  results.xml, and documentdb.log in the artifact if needed.
 ```
 
-Expected not-caused-by-PR summary:
+Expected allow-list error summary:
 
 ```text
-Functional gate failed
+Functional gate: FAIL (ALLOWLIST_ERROR)
 
-Likely caused by this PR:
-  no
+Errors:
+  [UNKNOWN_TEST_ID] Allow-listed test not found in report:
+  compatibility/tests/core/query-and-write/commands/find/test_old_name.py::test_find_eq
 
-Causality check:
-  failed on PR branch: yes
-  failed on main with same image: yes
-
-Failure type:
-  INFRA_ERROR
-
-Action:
-  This is probably not caused by your PR.
-  Route to test infrastructure or main-branch break investigation.
+Reproduce:
+  ./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist
 ```
 
 #### Local reproduction command
@@ -1118,11 +1100,11 @@ The command should support both the full allow-list and one failed test:
 
 ```text
 # Reproduce the full PR gate locally.
-./scripts/functional-tests/run-allowlist.sh
+./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist
 
 # Reproduce one failed allow-listed test.
-./scripts/functional-tests/run-one.sh \
-  documentdb_tests/compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_eq
+./documentdb-local/functional-tests/scripts/run-functional-tests.sh single \
+  compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_eq
 ```
 
 The reproduction command should print the image digest, connection target, selected test IDs, and result artifact paths:
@@ -1135,8 +1117,8 @@ Selected tests:
   1
 
 Result artifacts:
-  test-results/functional-tests/report.json
-  test-results/functional-tests/summary.md
+  .test-results/functional-tests/allowlist/report.json
+  .test-results/functional-tests/allowlist/gate-summary.md
 ```
 
 The script should read `image.yml` and `allowlist.yml` by default so local reproduction uses the same pinned image and selected test IDs as CI. If local reproduction requires environment variables, seed data, or a running DocumentDB instance, the script should fail with a clear message instead of silently running a different setup.
@@ -1275,20 +1257,22 @@ Dashboards, historical trend pages, and richer PR comments are useful later, but
 
 ### Implementation PRs
 
-- [ ] PR #XXX: bootstrap script and initial `allowlist.yml`
-- [ ] PR #XXX: pytest collection hook and `run-allowlist.sh`
-- [ ] PR #XXX: PR gate workflow and summary formatter
-- [ ] PR #XXX: scheduled or on-demand full-suite promotion report workflow
-- [ ] PR #XXX: image freshness automation (Phase 2)
+- [x] PR #602: Phase 1 implementation under `documentdb-local/functional-tests/`
+  - pinned image config and initial `allowlist.yml`
+  - pytest collection hook
+  - unified local runner for allowlist, single, smoke, full, daily, and bootstrap modes
+  - PR gate workflow and summary formatter
+  - scheduled or on-demand full-suite promotion report workflow
+- [ ] Future PR: image freshness automation (Phase 2)
 
 ### Status updates
 
-- [ ] Add status updates when implementation begins.
+- [x] Phase 1 implementation is available in PR #602.
 
 ### Open questions
 
-- [ ] Decide the Phase 1 cadence for full-suite promotion reports.
-- [ ] Decide whether Phase 1 needs a sequential path for allow-listed `no_parallel` tests.
+- [x] Phase 1 full-suite promotion reports are scheduled and manually runnable; cadence can be adjusted based on maintainer promotion bandwidth.
+- [x] Phase 1 rejects allow-listed `no_parallel` tests; a sequential path is deferred to Phase 2 if needed.
 
 ---
 
@@ -1322,9 +1306,9 @@ The following concerns are real, but they should not block Phase 1. They are cap
 | Regression signal | Allowed tests represent supported behavior and make support-boundary changes visible in PRs. |
 | Controlled coverage growth | Promotion reports show candidates without blocking normal PRs. |
 | Reproducibility | Every PR gate records the exact upstream image used. |
-| Actionable failures | Failed PR gates explain likely cause, next action, and whether the failure also happens on `main`. |
+| Actionable failures | Failed PR gates explain what failed, what the allow-list contract means, the next action, and how to reproduce locally. |
 | Local reproduction | Failed PR gates provide copy-paste commands for reproducing the full gate or one failed test. |
-| Freshness automation | Scheduled jobs keep image adoption visible and prevent the pinned image from silently getting stale. |
+| Freshness automation | Future scheduled jobs can keep image adoption visible and prevent the pinned image from silently getting stale. |
 | Lower triage burden | DocumentDB does not need to classify every upstream failure before using the framework. |
 
 ---
@@ -1335,15 +1319,15 @@ The following concerns are real, but they should not block Phase 1. They are cap
 |------|------------|
 | Allow-list becomes too small and coverage stalls | Track promotion-candidate metrics and manually promote selected passing tests. |
 | Green PR gate is mistaken for full compatibility | PR summaries show allow-listed count, total upstream count, and outside allow-list count. |
-| Contributors cannot understand failures | CI summaries include failure category, causality check, recommended action, and reproduction command. |
-| Config errors have unclear fix paths | Split allow-list and image errors into clear subtypes. |
+| Contributors cannot understand failures | CI summaries include the gate outcome, allow-list contract explanation, recommended action, artifacts, and reproduction command. |
+| Config errors have unclear fix paths | Split allow-list errors into clear subtypes; keep image pull/runtime taxonomy for Phase 2. |
 | Area reporting is inaccurate | Derive area from path/markers and report `unknown` when inference is unclear. |
 | Upstream renames tests | Treat missing allow-listed tests as config errors and require replacement review. |
-| Pinned image gets stale | Run scheduled image freshness checks, open/update image bump PRs, and report upstream commits behind. |
+| Pinned image gets stale | Phase 2 should run scheduled image freshness checks, open/update image bump PRs, and report upstream commits behind. |
 | Single full-suite pass is flaky | Keep promotion manual instead of automatically promoting from one pass. |
 | Local reproduction differs from CI | Reproduction commands must print the image digest, selected tests, connection target, and result artifacts. |
 | PR gate becomes slow as allow-list grows | Split future allow-lists into required smoke, required functional, and scheduled broader suites if needed. |
-| Upstream image changes existing allowed test behavior | Candidate image validation catches this before the image becomes the PR gate image. |
+| Upstream image changes existing allowed test behavior | Phase 2 candidate image validation catches this before the image becomes the PR gate image. |
 
 ---
 
@@ -1352,8 +1336,8 @@ The following concerns are real, but they should not block Phase 1. They are cap
 1. Normal DocumentDB PRs run a pinned upstream image with only allow-listed tests.
 2. `allowlist.yml` is the source of truth and validates schema plus duplicate IDs.
 3. PR summaries clearly show selected, passed, failed, missing, and outside allow-list counts.
-4. Image bumps are reviewable and prove the existing allow-list still passes.
-5. Failed PR gate summaries show failure category, likely causality, recommended action, and local reproduction command.
+4. Failed PR gate summaries show what failed, the allow-list contract, recommended action, artifacts, and local reproduction command.
+5. Local reproduction supports full allow-list and single-test debugging from the pinned image.
 6. Phase 1 promotion-candidate full-suite reports show allow-listed failures and outside allow-list passing tests.
 7. Phase 1 manual promotion PRs can grow the allow-list without surprising unrelated PRs.
 8. Phase 2 image freshness automation opens or updates image bump PRs and blocked-adoption reports.
