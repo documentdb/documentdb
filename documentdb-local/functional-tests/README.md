@@ -7,6 +7,21 @@ The upstream tests are not stored in this repository. They are pulled from the
 pinned Docker image in `config/image.yml`; `config/allowlist.yml` defines the
 tests that must pass in the PR gate.
 
+## Phase 1 implementation notes
+
+The draft RFC uses illustrative paths and examples. This implementation uses the
+following concrete choices:
+
+- Tooling lives under `documentdb-local/functional-tests/`.
+- Allowlist entries use pytest node IDs as emitted by the pinned image. In the
+  current image, those IDs are rootdir-relative, for example
+  `compatibility/tests/...`, not `documentdb_tests/compatibility/tests/...`.
+- CI uses bounded, configurable xdist workers with a default of `4`, rather than
+  unbounded `-n auto`.
+- Phase 1 summaries do not run a `main` causality comparison or detailed
+  product-vs-infra mismatch taxonomy. Those are deferred operational polish; the
+  Phase 1 gate remains strict for allowlisted tests.
+
 ## Layout
 
 ```text
@@ -21,7 +36,8 @@ documentdb-local/functional-tests/
 
 - Docker
 - Python 3 with `pyyaml`
-- A running DocumentDB endpoint, normally `documentdb-local` on port `10260`
+- A running DocumentDB endpoint, normally `documentdb-local` on port `10260`,
+  unless you use the runner's managed DocumentDB options
 
 Validate the local gate configuration:
 
@@ -29,17 +45,67 @@ Validate the local gate configuration:
 python3 documentdb-local/functional-tests/tools/functional_gate.py validate-config
 ```
 
-## Start DocumentDB locally
+## Build/start DocumentDB locally
 
-If you do not already have a local DocumentDB endpoint running, use:
+For the closest local reproduction of CI, let the test runner build the
+`documentdb-local` image, start it, wait for the readiness log, and then run the
+selected test mode:
+
+```bash
+./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist \
+  --build-and-start-documentdb
+```
+
+This uses the same package-build plus `Dockerfile_documentdb_local` flow as the
+GitHub Actions workflow. The managed container is removed after the run and its
+logs are written to `documentdb.log` in the result directory.
+
+Useful managed DocumentDB options:
+
+```bash
+--build-documentdb               Build the documentdb-local Docker image
+--start-documentdb               Start the image, wait for readiness, then run tests
+--build-and-start-documentdb     Build, start, wait, and run tests in one command
+--use-existing-documentdb-image <image>
+                                 Start a prebuilt image ref without rebuilding;
+                                 pulls if missing locally
+--documentdb-image <image>       Image ref, default documentdb-local:functional-tests
+--documentdb-container <name>    Container name, default documentdb-functional-tests
+--documentdb-port <port>         Host port mapped to container port 10260
+--pg-version <ver>               PostgreSQL version for package/image build, default 17
+--package-os <os>                Package OS for build, default deb13
+--build-dir <path>               Repo-local build artifact directory
+--ready-timeout <seconds>        Startup readiness timeout, default 180
+--keep-documentdb                Keep the managed container running after tests
+```
+
+Examples:
+
+```bash
+# Build, start, wait, and run the PR gate.
+./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist \
+  --build-and-start-documentdb
+
+# Start a previously built/published image reference and run the PR gate without rebuilding.
+./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist \
+  --use-existing-documentdb-image ghcr.io/documentdb/documentdb/documentdb-local:latest
+
+# Reuse an already built image and keep the container for manual debugging.
+./documentdb-local/functional-tests/scripts/run-functional-tests.sh single \
+  compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_all_documents \
+  --start-documentdb \
+  --keep-documentdb
+```
+
+If you prefer the source-build path instead of the Docker image path, use:
 
 ```bash
 ./documentdb-local/functional-tests/scripts/start-documentdb-for-functional-tests.sh
 ```
 
-The script builds/starts DocumentDB and prints a `CONNECTION_STRING=...` value
-when the gateway is ready. Use that value with the runner if it differs from the
-default.
+That helper builds/starts DocumentDB from local scripts and prints a
+`CONNECTION_STRING=...` value when the gateway is ready. Use that value with the
+runner if it differs from the default.
 
 ## Run functional tests locally
 
@@ -63,12 +129,15 @@ Modes:
 Common options:
 
 ```bash
---connection-string <url>  Override the DocumentDB connection string
+--connection-string <url>  Override the DocumentDB connection string, including
+                           managed-container runs
 --workers <n>              Number of pytest-xdist workers, default 4
 --results-dir <path>       Output directory
 --test <nodeid>            Test ID for single mode
 --runs <n>                 Bootstrap run count
 --output <path>            Bootstrap candidate output path
+--build-and-start-documentdb
+                           Build/start managed documentdb-local before tests
 -- <pytest args>           Extra arguments passed to pytest
 ```
 
@@ -77,6 +146,10 @@ Examples:
 ```bash
 # Run the same allowlist gate used by PR validation.
 ./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist
+
+# Build/start local DocumentDB and then run the PR gate.
+./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist \
+  --build-and-start-documentdb
 
 # Reproduce one failing test from a gate summary.
 ./documentdb-local/functional-tests/scripts/run-functional-tests.sh single \
@@ -104,7 +177,9 @@ CONNECTION_STRING='mongodb://docdb_admin:Admin100@localhost:10260/?tls=true&tlsA
 
 ## Debug a CI failure
 
-Start with the generated artifacts, then reproduce locally.
+Start with the generated artifacts, then reproduce locally. The simplest path is:
+read the summary, run one failed test locally, then inspect raw artifacts only if
+the single-test repro is not enough.
 
 1. Identify which job failed:
    - PR gate: `functional-pr-gate`
@@ -128,9 +203,11 @@ Start with the generated artifacts, then reproduce locally.
    less .test-results/functional-tests-daily/daily-summary.md
    ```
 
-   The PR gate summary includes the first failed test and a local reproduction
-   command. The daily summary separates allowlisted regressions from outside
-   allowlist promotion candidates.
+   The PR gate summary explains whether the failure is a failed test, a
+   missing allowlisted test, or another non-pass outcome. It includes a local
+   reproduction command. The daily summary separates allowlisted regressions
+   from outside-allowlist promotion candidates and lists any allowlisted tests
+   missing from the full-suite report.
 
 4. Inspect raw test and server details when needed:
 
@@ -145,13 +222,23 @@ Start with the generated artifacts, then reproduce locally.
 5. Reproduce the failing test locally:
 
    ```bash
-   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh single <pytest-node-id>
-   ```
+    ./documentdb-local/functional-tests/scripts/run-functional-tests.sh single <pytest-node-id>
+    ```
 
-   If many allowlisted tests failed, reproduce the whole gate:
+   If you already have a prebuilt `documentdb-local` image, reuse it to avoid a
+   rebuild:
 
    ```bash
-   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist
+   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh single <pytest-node-id> \
+     --use-existing-documentdb-image <image>
+   ```
+
+   If many allowlisted tests failed, or the summary reports missing/non-pass
+   allowlisted tests, reproduce the whole gate:
+
+   ```bash
+   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist \
+     --build-and-start-documentdb
    ```
 
 6. If artifacts are missing or the test container failed before producing
@@ -163,6 +250,9 @@ Start with the generated artifacts, then reproduce locally.
 
    Common causes are image pull failures, DocumentDB readiness failures, or a
    result directory permission problem before pytest writes artifacts.
+   Daily runs intentionally fail with a clear error if `report.json` is missing,
+   so a pre-report infrastructure failure is not mistaken for a healthy
+   promotion report.
 
 ## Updating the allowlist
 

@@ -320,6 +320,9 @@ jobs:
               summarize-daily \
               --report .test-results/functional-tests-daily/report.json \
               --output-dir .test-results/functional-tests-daily
+          else
+            echo "::error::No report.json produced. Daily functional test execution may have failed before producing results."
+            exit 1
           fi
 
       - name: Collect DocumentDB logs

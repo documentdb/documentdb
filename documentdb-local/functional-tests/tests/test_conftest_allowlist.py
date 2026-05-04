@@ -162,8 +162,8 @@ class TestInvalidSchema:
 
 
 class TestNoAllowlist:
-    def test_no_allowlist_runs_all(self, test_dir):
+    def test_loaded_plugin_requires_allowlist(self, test_dir):
         r = run_pytest(test_dir,
-                       "def test_a():\n    pass\ndef test_b():\n    pass\n")
-        assert r.returncode == 0
-        assert "2 passed" in r.stdout
+                        "def test_a():\n    pass\ndef test_b():\n    pass\n")
+        assert r.returncode != 0
+        assert "MISSING_ALLOWLIST" in r.stderr

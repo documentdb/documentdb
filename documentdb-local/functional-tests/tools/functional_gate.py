@@ -277,10 +277,17 @@ def render_gate_markdown(result: GateResult) -> str:
     lines.append(f"- outside allow-list and not run in PR gate: {result.outside_allowlist}")
     lines.append("")
 
+    if result.outcome != "PASS":
+        lines.append("**What this means:**")
+        lines.append("- Every allowlisted test must be collected, executed, and pass.")
+        lines.append("- A failed, skipped, xfail/xpass, errored, or missing allowlisted test is a gate failure.")
+        lines.append("- Start with the repro command below, then inspect `report.json`, `results.xml`, and `documentdb.log` in the uploaded artifact or local results directory.")
+        lines.append("")
+
     if result.failed_tests:
         lines.append("**Failed tests:**")
         for ft in result.failed_tests:
-            lines.append(f"- `{ft['short_name']}`")
+            lines.append(f"- `{ft['test_id']}`")
         lines.append("")
 
     if result.errors:
@@ -291,11 +298,14 @@ def render_gate_markdown(result: GateResult) -> str:
             lines.append(f"- ... and {len(result.errors) - 10} more")
         lines.append("")
 
-    if result.outcome != "PASS" and result.failed_tests:
-        first_failed = result.failed_tests[0]["test_id"]
+    if result.outcome != "PASS":
         lines.append("**Reproduce:**")
         lines.append(f"```")
-        lines.append(f"./documentdb-local/functional-tests/scripts/run-functional-tests.sh single {first_failed}")
+        if result.failed_tests:
+            first_failed = result.failed_tests[0]["test_id"]
+            lines.append(f"./documentdb-local/functional-tests/scripts/run-functional-tests.sh single {first_failed}")
+        else:
+            lines.append("./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist")
         lines.append(f"```")
 
     return "\n".join(lines)
@@ -403,6 +413,21 @@ def render_daily_markdown(delta: dict) -> str:
             lines.append(f"- `{entry['test_id']}` ({entry['outcome']})")
         if len(delta["allowlisted_failed"]) > 20:
             lines.append(f"- ... and {len(delta['allowlisted_failed']) - 20} more")
+        lines.append("")
+
+    if delta.get("allowlisted_missing"):
+        lines.append("**Allow-listed tests missing from the report:**")
+        for test_id in delta["allowlisted_missing"][:20]:
+            lines.append(f"- `{test_id}`")
+        if len(delta["allowlisted_missing"]) > 20:
+            lines.append(f"- ... and {len(delta['allowlisted_missing']) - 20} more")
+        lines.append("")
+
+    if delta.get("allowlisted_failed") or delta.get("allowlisted_missing"):
+        lines.append("**Debug next:**")
+        lines.append("- Missing or non-passing allowlisted tests violate the Phase 1 support-boundary contract.")
+        lines.append("- Inspect `daily-summary.json`, `report.json`, `results.xml`, and `documentdb.log` in the daily artifact.")
+        lines.append("- Reproduce locally with `./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist` or run a single failed node ID.")
         lines.append("")
 
     return "\n".join(lines)
@@ -518,8 +543,11 @@ def cmd_summarize_daily(args):
         with open(summary_file, "a") as f:
             f.write(md + "\n")
 
-    has_allowlisted_failures = len(delta.get("allowlisted_failed", [])) > 0
-    return 1 if has_allowlisted_failures else 0
+    has_allowlisted_contract_violations = (
+        len(delta.get("allowlisted_failed", [])) > 0
+        or len(delta.get("allowlisted_missing", [])) > 0
+    )
+    return 1 if has_allowlisted_contract_violations else 0
 
 
 def main():

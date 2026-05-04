@@ -30,7 +30,10 @@ def pytest_addoption(parser):
 def pytest_collection_modifyitems(session, config, items):
     allowlist_path = config.getoption("--allowlist")
     if not allowlist_path:
-        return
+        raise pytest.UsageError(
+            "[MISSING_ALLOWLIST] conftest_allowlist was loaded without --allowlist. "
+            "Pass --allowlist <path> or do not load the plugin."
+        )
 
     # Load and validate allowlist
     with open(allowlist_path) as f:
@@ -119,7 +122,7 @@ def pytest_collection_modifyitems(session, config, items):
         suffix = f"\n  ... and {len(no_parallel_ids) - 10} more" if len(no_parallel_ids) > 10 else ""
         raise pytest.UsageError(
             f"[ALLOWLISTED_NO_PARALLEL] allowlist.yml contains {len(no_parallel_ids)} tests "
-            f"marked no_parallel, but the Phase 1 PR gate runs with -n auto and has no "
+            f"marked no_parallel, but the Phase 1 PR gate runs with parallel workers and has no "
             f"sequential phase:\n  {np_list}{suffix}"
         )
 

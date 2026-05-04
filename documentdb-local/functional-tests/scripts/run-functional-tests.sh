@@ -12,6 +12,8 @@
 # Examples:
 #   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist
 #   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh single --test compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_all_documents
+#   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist --build-and-start-documentdb
+#   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist --use-existing-documentdb-image ghcr.io/documentdb/documentdb/documentdb-local:latest
 #   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh smoke --workers 4
 #   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh full --workers 4
 #   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh daily --workers 4
@@ -32,12 +34,31 @@ GATE_TOOL="$FUNCTIONAL_TESTS_DIR/tools/functional_gate.py"
 
 DEFAULT_CONNECTION_STRING="mongodb://docdb_admin:Admin100@host.docker.internal:10260/?tls=true&tlsAllowInvalidCertificates=true"
 MODE="${1:-}"
+CONNECTION_STRING_EXPLICIT=false
+if [ -n "${CONNECTION_STRING+x}" ]; then
+    CONNECTION_STRING_EXPLICIT=true
+fi
 CONNECTION_STRING="${CONNECTION_STRING:-$DEFAULT_CONNECTION_STRING}"
 WORKERS=4
 RESULTS_DIR=""
 TEST_ID=""
 RUNS=1
 OUTPUT="allowlist-candidate.yml"
+BUILD_DOCUMENTDB=false
+START_DOCUMENTDB=false
+PULL_DOCUMENTDB_IMAGE=false
+KEEP_DOCUMENTDB=false
+DOCUMENTDB_IMAGE="documentdb-local:functional-tests"
+DOCUMENTDB_CONTAINER="documentdb-functional-tests"
+DOCUMENTDB_PORT="${DOCUMENTDB_PORT:-10260}"
+DOCUMENTDB_USER="${DOCUMENTDB_USER:-docdb_admin}"
+DOCUMENTDB_PASSWORD="${DOCUMENTDB_PASSWORD:-Admin100}"
+PG_VERSION="${PG_VERSION:-17}"
+PACKAGE_OS="deb13"
+DOCUMENTDB_BUILD_DIR="$REPO_ROOT/.test-results/functional-tests/documentdb-build"
+DOCUMENTDB_BASE_IMAGE="debian:trixie-slim"
+DOCUMENTDB_READY_TIMEOUT=180
+MANAGED_DOCUMENTDB_STARTED=false
 PYTEST_ARGS=()
 
 show_help() {
@@ -59,24 +80,203 @@ Examples:
   $0 allowlist
   $0 single compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_all_documents
   $0 single --test compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_all_documents
+  $0 allowlist --build-and-start-documentdb
+  $0 allowlist --use-existing-documentdb-image ghcr.io/documentdb/documentdb/documentdb-local:latest
   $0 smoke --workers 4
   $0 full --workers 4
   $0 daily --workers 4
   $0 bootstrap --runs 3 --output allowlist-candidate.yml
 
 Options:
-  --connection-string <url>  Override the DocumentDB connection string.
+  --connection-string <url>  Override the DocumentDB connection string, including
+                             the managed container connection string.
   --workers <n>              Number of pytest-xdist workers (default: 4).
   --results-dir <path>       Output directory (default: .test-results/functional-tests/<mode>).
   --test <nodeid>            Pytest node ID for single mode.
   --runs <n>                 Number of bootstrap runs (default: 1).
   --output <path>            Bootstrap candidate output path (default: allowlist-candidate.yml).
+  --build-documentdb         Build the local documentdb-local Docker image before running tests.
+  --start-documentdb         Start documentdb-local, wait for readiness, then run tests.
+  --build-and-start-documentdb
+                             Build, start, wait, and run tests in one command.
+  --use-existing-documentdb-image <image>
+                             Start a prebuilt image ref without rebuilding; pulls if missing locally.
+  --documentdb-image <image> Managed documentdb-local image ref for build/start (default: documentdb-local:functional-tests).
+  --documentdb-container <name>
+                             Managed container name (default: documentdb-functional-tests).
+  --documentdb-port <port>   Managed DocumentDB host port (default: 10260).
+  --documentdb-user <user>   Managed DocumentDB username (default: docdb_admin).
+  --documentdb-password <pw> Managed DocumentDB password (default: Admin100).
+  --pg-version <ver>         PostgreSQL major version for local image builds (default: 17).
+  --package-os <os>          Package OS for local image builds (default: deb13).
+  --build-dir <path>         Repo-local build artifact directory.
+  --base-image <image>       Base image for documentdb-local Docker build (default: debian:trixie-slim).
+  --ready-timeout <seconds>  Startup readiness timeout (default: 180).
+  --keep-documentdb          Leave the managed container running after tests.
   --help                     Show this help.
   -- <pytest args>           Extra arguments passed through to pytest.
 
 Environment:
   CONNECTION_STRING          Alternative way to set the connection string.
+                             Preserved when using managed DocumentDB startup.
 EOF
+}
+
+repo_relative_path() {
+    python3 -c "import os, sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))" "$1" "$2"
+}
+
+cleanup_managed_documentdb() {
+    local exit_code=$?
+
+    if [ "$MANAGED_DOCUMENTDB_STARTED" = "true" ]; then
+        echo ""
+        echo "Collecting managed DocumentDB logs:"
+        echo "  $RESULTS_DIR/documentdb.log"
+        docker logs "$DOCUMENTDB_CONTAINER" > "$RESULTS_DIR/documentdb.log" 2>&1 || true
+
+        if [ "$KEEP_DOCUMENTDB" = "true" ]; then
+            echo "Keeping managed DocumentDB container running:"
+            echo "  $DOCUMENTDB_CONTAINER"
+        else
+            echo "Stopping managed DocumentDB container:"
+            echo "  $DOCUMENTDB_CONTAINER"
+            docker rm -f "$DOCUMENTDB_CONTAINER" >/dev/null 2>&1 || true
+        fi
+    fi
+
+    exit "$exit_code"
+}
+
+build_documentdb_image() {
+    case "$PACKAGE_OS" in
+        deb*|ubuntu*) ;;
+        *)
+            echo "--package-os must produce a Debian package for Dockerfile_documentdb_local, got: $PACKAGE_OS"
+            exit 1
+            ;;
+    esac
+
+    mkdir -p "$DOCUMENTDB_BUILD_DIR"
+    DOCUMENTDB_BUILD_DIR="$(cd "$DOCUMENTDB_BUILD_DIR" && pwd)"
+    case "$DOCUMENTDB_BUILD_DIR/" in
+        "$REPO_ROOT"/*) ;;
+        *)
+            echo "--build-dir must be inside the repository so Docker can copy the built package: $DOCUMENTDB_BUILD_DIR"
+            exit 1
+            ;;
+    esac
+
+    local build_dir_rel
+    local packages_dir_rel
+    local packages_dir
+    local deb_file
+    local deb_rel
+
+    build_dir_rel="$(repo_relative_path "$DOCUMENTDB_BUILD_DIR" "$REPO_ROOT")"
+    packages_dir_rel="$build_dir_rel/downloaded-artifacts"
+    packages_dir="$REPO_ROOT/$packages_dir_rel"
+
+    echo "Building documentdb-local package:"
+    echo "  OS:        $PACKAGE_OS"
+    echo "  PG:        $PG_VERSION"
+    echo "  Output:    $packages_dir"
+    rm -rf "$packages_dir"
+    mkdir -p "$packages_dir"
+    (
+        cd "$REPO_ROOT"
+        ./packaging/build_packages.sh --os "$PACKAGE_OS" --pg "$PG_VERSION" --output-dir "$packages_dir_rel"
+    )
+
+    deb_file="$(find "$packages_dir" -maxdepth 1 -type f -name '*.deb' ! -name '*dbgsym*' | sort | head -1)"
+    if [ -z "$deb_file" ]; then
+        echo "No non-dbgsym .deb package found in $packages_dir"
+        exit 1
+    fi
+    deb_rel="$(repo_relative_path "$deb_file" "$REPO_ROOT")"
+
+    echo "Building documentdb-local Docker image:"
+    echo "  Image:     $DOCUMENTDB_IMAGE"
+    echo "  Base:      $DOCUMENTDB_BASE_IMAGE"
+    echo "  Package:   $deb_rel"
+    (
+        cd "$REPO_ROOT"
+        docker build \
+            --build-arg BASE_IMAGE="$DOCUMENTDB_BASE_IMAGE" \
+            --build-arg POSTGRES_VERSION="$PG_VERSION" \
+            --build-arg DEB_PACKAGE_REL_PATH="$deb_rel" \
+            -t "$DOCUMENTDB_IMAGE" \
+            -f packaging/gateway/docker/Dockerfile_documentdb_local .
+    )
+}
+
+start_managed_documentdb() {
+    if ! docker image inspect "$DOCUMENTDB_IMAGE" >/dev/null 2>&1; then
+        if [ "$PULL_DOCUMENTDB_IMAGE" = "true" ]; then
+            echo "DocumentDB image not found locally; pulling:"
+            echo "  $DOCUMENTDB_IMAGE"
+            docker pull "$DOCUMENTDB_IMAGE"
+        else
+            echo "DocumentDB image not found: $DOCUMENTDB_IMAGE"
+            echo "Use --build-documentdb, --build-and-start-documentdb, or --use-existing-documentdb-image <image>."
+            exit 1
+        fi
+    fi
+
+    if docker ps -a --format '{{.Names}}' | grep -Fx "$DOCUMENTDB_CONTAINER" >/dev/null; then
+        echo "Removing existing managed DocumentDB container:"
+        echo "  $DOCUMENTDB_CONTAINER"
+        docker rm -f "$DOCUMENTDB_CONTAINER" >/dev/null
+    fi
+
+    echo "Starting managed DocumentDB container:"
+    echo "  Container: $DOCUMENTDB_CONTAINER"
+    echo "  Image:     $DOCUMENTDB_IMAGE"
+    echo "  Host port: $DOCUMENTDB_PORT"
+    docker run -d \
+        --name "$DOCUMENTDB_CONTAINER" \
+        -p "$DOCUMENTDB_PORT:10260" \
+        "$DOCUMENTDB_IMAGE" \
+        --username "$DOCUMENTDB_USER" \
+        --password "$DOCUMENTDB_PASSWORD" \
+        --skip-init-data \
+        >/dev/null
+    MANAGED_DOCUMENTDB_STARTED=true
+
+    echo "Waiting for DocumentDB readiness log (timeout: ${DOCUMENTDB_READY_TIMEOUT}s)..."
+    local elapsed=0
+    while ! docker logs "$DOCUMENTDB_CONTAINER" 2>&1 | grep -q "=== DocumentDB is ready ==="; do
+        if ! docker ps --format '{{.Names}}' | grep -Fx "$DOCUMENTDB_CONTAINER" >/dev/null; then
+            echo "Managed DocumentDB container exited before readiness."
+            docker logs "$DOCUMENTDB_CONTAINER" 2>&1 || true
+            exit 1
+        fi
+        if [ "$elapsed" -ge "$DOCUMENTDB_READY_TIMEOUT" ]; then
+            echo "DocumentDB did not become ready within ${DOCUMENTDB_READY_TIMEOUT}s."
+            docker logs "$DOCUMENTDB_CONTAINER" 2>&1 || true
+            exit 1
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+
+    if [ "$CONNECTION_STRING_EXPLICIT" = "true" ]; then
+        echo "Using user-provided DocumentDB connection string."
+    else
+        CONNECTION_STRING="mongodb://${DOCUMENTDB_USER}:${DOCUMENTDB_PASSWORD}@127.0.0.1:${DOCUMENTDB_PORT}/?tls=true&tlsAllowInvalidCertificates=true"
+    fi
+    echo "Waiting for DocumentDB host port ${DOCUMENTDB_PORT}..."
+    elapsed=0
+    while ! timeout 1 bash -c "</dev/tcp/127.0.0.1/${DOCUMENTDB_PORT}" >/dev/null 2>&1; do
+        if [ "$elapsed" -ge "$DOCUMENTDB_READY_TIMEOUT" ]; then
+            echo "DocumentDB host port ${DOCUMENTDB_PORT} did not become reachable within ${DOCUMENTDB_READY_TIMEOUT}s."
+            docker logs "$DOCUMENTDB_CONTAINER" 2>&1 || true
+            exit 1
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+    echo "Managed DocumentDB is ready."
 }
 
 if [ -z "$MODE" ] || [ "$MODE" = "--help" ] || [ "$MODE" = "-h" ]; then
@@ -96,12 +296,27 @@ esac
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --connection-string) CONNECTION_STRING="$2"; shift 2 ;;
+        --connection-string) CONNECTION_STRING="$2"; CONNECTION_STRING_EXPLICIT=true; shift 2 ;;
         --workers) WORKERS="$2"; shift 2 ;;
         --results-dir) RESULTS_DIR="$2"; shift 2 ;;
         --test) TEST_ID="$2"; shift 2 ;;
         --runs) RUNS="$2"; shift 2 ;;
         --output) OUTPUT="$2"; shift 2 ;;
+        --build-documentdb) BUILD_DOCUMENTDB=true; shift ;;
+        --start-documentdb) START_DOCUMENTDB=true; shift ;;
+        --build-and-start-documentdb) BUILD_DOCUMENTDB=true; START_DOCUMENTDB=true; shift ;;
+        --use-existing-documentdb-image) DOCUMENTDB_IMAGE="$2"; BUILD_DOCUMENTDB=false; START_DOCUMENTDB=true; PULL_DOCUMENTDB_IMAGE=true; shift 2 ;;
+        --documentdb-image) DOCUMENTDB_IMAGE="$2"; shift 2 ;;
+        --documentdb-container) DOCUMENTDB_CONTAINER="$2"; shift 2 ;;
+        --documentdb-port) DOCUMENTDB_PORT="$2"; shift 2 ;;
+        --documentdb-user) DOCUMENTDB_USER="$2"; shift 2 ;;
+        --documentdb-password) DOCUMENTDB_PASSWORD="$2"; shift 2 ;;
+        --pg-version) PG_VERSION="$2"; shift 2 ;;
+        --package-os) PACKAGE_OS="$2"; shift 2 ;;
+        --build-dir) DOCUMENTDB_BUILD_DIR="$2"; shift 2 ;;
+        --base-image) DOCUMENTDB_BASE_IMAGE="$2"; shift 2 ;;
+        --ready-timeout) DOCUMENTDB_READY_TIMEOUT="$2"; shift 2 ;;
+        --keep-documentdb) KEEP_DOCUMENTDB=true; shift ;;
         --help|-h)
             show_help
             exit 0
@@ -154,6 +369,16 @@ if [ "$MODE" = "bootstrap" ] && ! [[ "$RUNS" =~ ^[1-9][0-9]*$ ]]; then
     exit 1
 fi
 
+if ! [[ "$DOCUMENTDB_READY_TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
+    echo "--ready-timeout must be a positive integer"
+    exit 1
+fi
+
+if ! [[ "$DOCUMENTDB_PORT" =~ ^[1-9][0-9]*$ ]]; then
+    echo "--documentdb-port must be a positive integer"
+    exit 1
+fi
+
 if ! command -v docker &>/dev/null; then
     echo "Docker is required but not found in PATH."
     exit 1
@@ -166,6 +391,15 @@ fi
 IMAGE=$(python3 -c "import yaml; print(yaml.safe_load(open('$IMAGE_YML'))['image'])")
 mkdir -p "$RESULTS_DIR"
 chmod 777 "$RESULTS_DIR"
+trap cleanup_managed_documentdb EXIT
+
+if [ "$BUILD_DOCUMENTDB" = "true" ]; then
+    build_documentdb_image
+fi
+
+if [ "$START_DOCUMENTDB" = "true" ]; then
+    start_managed_documentdb
+fi
 
 echo "DocumentDB functional test runner"
 echo ""
@@ -174,6 +408,12 @@ echo "Image:       $IMAGE"
 echo "Connection:  $CONNECTION_STRING"
 echo "Workers:     $WORKERS"
 echo "Results:     $RESULTS_DIR"
+if [ "$BUILD_DOCUMENTDB" = "true" ] || [ "$START_DOCUMENTDB" = "true" ]; then
+    echo "DocumentDB:"
+    echo "  image:     $DOCUMENTDB_IMAGE"
+    echo "  container: $DOCUMENTDB_CONTAINER"
+    echo "  host port: $DOCUMENTDB_PORT"
+fi
 if [ -n "$TEST_ID" ]; then
     echo "Test:        $TEST_ID"
 fi
@@ -301,10 +541,11 @@ case "$MODE" in
             docker run --rm --network host \
                 -v "$RUN_DIR:/results" \
                 "$IMAGE" \
-            documentdb_tests/compatibility/tests \
-            --engine-name documentdb \
-            --connection-string "$CONNECTION_STRING" \
-            -n "$WORKERS" \
+                documentdb_tests/compatibility/tests \
+                --engine-name documentdb \
+                --connection-string "$CONNECTION_STRING" \
+                -m "not no_parallel" \
+                -n "$WORKERS" \
                 --json-report --json-report-file=/results/report.json \
                 --junitxml=/results/results.xml \
                 -v \

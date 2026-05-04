@@ -16,6 +16,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
 from functional_gate import (
     ConfigError,
+    cmd_summarize_daily,
     validate_config,
     validate_allowlist_config,
     validate_image_config,
@@ -241,6 +242,17 @@ class TestGateMarkdown:
         md = render_gate_markdown(result)
         assert "FAIL" in md
         assert "scripts/run-functional-tests.sh single" in md
+        assert "Every allowlisted test must be collected, executed, and pass." in md
+
+    def test_missing_summary_includes_allowlist_repro(self, tmp_path, valid_image, valid_allowlist):
+        report = make_pytest_report(tmp_path, [
+            {"nodeid": "tests/test_a.py::test_one", "outcome": "passed"},
+            {"nodeid": "tests/test_b.py::test_three", "outcome": "passed"},
+        ])
+        result = summarize_gate(valid_allowlist, report, valid_image)
+        md = render_gate_markdown(result)
+        assert "FAIL" in md
+        assert "scripts/run-functional-tests.sh allowlist" in md
 
 
 # --- Daily delta ---
@@ -281,6 +293,32 @@ class TestSummarizeDaily:
         assert "deny" not in md.lower()
         assert "invalid" not in md.lower()
         assert "rejected" not in md.lower()
+
+    def test_daily_markdown_lists_missing_allowlisted_tests(self, tmp_path, valid_image, valid_allowlist):
+        report = make_pytest_report(tmp_path, [
+            {"nodeid": "tests/test_a.py::test_one", "outcome": "passed"},
+            {"nodeid": "tests/test_b.py::test_three", "outcome": "passed"},
+        ])
+        delta = summarize_daily(valid_allowlist, report, valid_image)
+        md = render_daily_markdown(delta)
+        assert "Allow-listed tests missing from the report" in md
+        assert "tests/test_a.py::test_two" in md
+
+    def test_summarize_daily_exits_nonzero_when_allowlisted_test_missing(
+        self, tmp_path, valid_image, valid_allowlist
+    ):
+        report = make_pytest_report(tmp_path, [
+            {"nodeid": "tests/test_a.py::test_one", "outcome": "passed"},
+            {"nodeid": "tests/test_b.py::test_three", "outcome": "passed"},
+        ])
+        output_dir = tmp_path / "daily-output"
+        args = type("Args", (), {
+            "allowlist": valid_allowlist,
+            "report": report,
+            "image": valid_image,
+            "output_dir": str(output_dir),
+        })()
+        assert cmd_summarize_daily(args) == 1
 
 
 # --- Area derivation ---
