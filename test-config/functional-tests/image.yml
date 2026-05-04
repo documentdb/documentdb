@@ -1,5 +1,6 @@
 schema_version: 1
-image: ghcr.io/documentdb/functional-tests@sha256:0039f886d90a04d782dea9a0d0c96ee042a8608b5edeae357b926129defdd80c
+# Pin the manifest list digest so Docker auto-selects the correct platform (amd64/arm64).
+image: ghcr.io/documentdb/functional-tests@sha256:79ed3d433bc2664655a31064a66eee3bef3cc2a8b4eabfaab3e3ef62d44ce3ba
 source_ref: documentdb/functional-tests@main
 source_sha: df2623cd3670b664e360806e529419f1548451a7
 updated_by: initial-setup

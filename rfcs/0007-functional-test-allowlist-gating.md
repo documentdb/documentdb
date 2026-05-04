@@ -176,17 +176,22 @@ test-config/functional-tests/
 `image.yml` records the upstream image used by the required PR gate.
 
 ```yaml
+# Pin the manifest list digest (not a per-platform digest).
+# Docker auto-selects the correct platform (amd64/arm64) at pull time.
 image: ghcr.io/documentdb/functional-tests@sha256:abc123
 source_ref: documentdb/functional-tests@main
 source_sha: abcdef123456
 updated_by: https://github.com/documentdb/documentdb/pull/NNNN
 ```
 
+The image digest must reference the manifest list, not a per-platform manifest. This ensures the same pinned digest works on amd64 CI runners and arm64 local development machines. Docker resolves the manifest list to the correct platform-specific image automatically.
+
 This file answers:
 
 ```text
 Which upstream test suite did this PR gate use?
 Can we reproduce the same gate later?
+Does it work on both CI (amd64) and local dev (arm64)?
 ```
 
 ### Allow-list
