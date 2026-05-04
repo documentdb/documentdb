@@ -1,10 +1,10 @@
 schema_version: 1
 
 tests:
-  - documentdb_tests/compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_all_documents
-  - documentdb_tests/compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_with_filter
-  - documentdb_tests/compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_one
-  - documentdb_tests/compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_empty_collection
-  - documentdb_tests/compatibility/tests/core/query-and-write/commands/insert/test_insert_operations.py::test_insert_one_document
-  - documentdb_tests/compatibility/tests/core/query-and-write/commands/insert/test_insert_operations.py::test_insert_many_documents
-  - documentdb_tests/compatibility/tests/core/query-and-write/commands/insert/test_insert_operations.py::test_insert_with_custom_id
+  - compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_all_documents
+  - compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_with_filter
+  - compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_one
+  - compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_empty_collection
+  - compatibility/tests/core/query-and-write/commands/insert/test_insert_operations.py::test_insert_one_document
+  - compatibility/tests/core/query-and-write/commands/insert/test_insert_operations.py::test_insert_many_documents
+  - compatibility/tests/core/query-and-write/commands/insert/test_insert_operations.py::test_insert_with_custom_id
