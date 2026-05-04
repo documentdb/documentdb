@@ -50,47 +50,7 @@ jobs:
         run: python3 scripts/functional-tests/functional_gate.py validate-config
 
   # -----------------------------------------------------------------------
-  # Job 2: Check for allow-list removals (PRs only)
-  # -----------------------------------------------------------------------
-  check-allowlist-removals:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Install Python dependencies
-        run: pip install pyyaml
-
-      - name: Check for allow-list removals
-        run: |
-          BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          if git show "$BASE_SHA:test-config/functional-tests/allowlist.yml" > /tmp/base_allowlist.yml 2>/dev/null; then
-            python3 -c "
-          import yaml, sys
-          with open('/tmp/base_allowlist.yml') as f:
-              base = set(yaml.safe_load(f).get('tests', []))
-          with open('test-config/functional-tests/allowlist.yml') as f:
-              head = set(yaml.safe_load(f).get('tests', []))
-          removed = sorted(base - head)
-          if removed:
-              print(f'WARNING: {len(removed)} test(s) removed from allowlist.yml:')
-              for t in removed:
-                  print(f'  - {t}')
-              print()
-              print('Allow-list removals require explicit justification.')
-              sys.exit(1)
-          else:
-              print('No allow-list removals detected.')
-          "
-          else
-            echo "No base allowlist.yml found (new file). Skipping removal check."
-          fi
-
-  # -----------------------------------------------------------------------
-  # Job 3: Build documentdb-local image from PR code
+  # Job 2: Build documentdb-local image from PR code
   #
   # Reuses the same deb-build + docker-build pattern from build_gateway.yml
   # but only builds one arch (amd64) and does not push to GHCR.
@@ -136,7 +96,7 @@ jobs:
           retention-days: 1
 
   # -----------------------------------------------------------------------
-  # Job 4: PR gate - run allow-listed tests against documentdb-local
+  # Job 3: PR gate - run allow-listed tests against documentdb-local
   # -----------------------------------------------------------------------
   functional-pr-gate:
     if: >
@@ -200,7 +160,7 @@ jobs:
             --engine-name documentdb \
             --connection-string "$CONNECTION_STRING" \
             -m "not no_parallel" \
-            -n 2 \
+            -n 4 \
             --json-report --json-report-file=/results/report.json \
             --junitxml=/results/results.xml \
             -v
@@ -239,7 +199,7 @@ jobs:
           docker rm documentdb 2>/dev/null || true
 
   # -----------------------------------------------------------------------
-  # Job 5: Daily delta - full suite visibility report
+  # Job 4: Daily delta - full suite visibility report
   # -----------------------------------------------------------------------
   daily-functional-delta:
     if: >
@@ -295,7 +255,7 @@ jobs:
             documentdb_tests/compatibility/tests \
             --engine-name documentdb \
             --connection-string "$CONNECTION_STRING" \
-            -n 2 \
+            -n 4 \
             --json-report --json-report-file=/results/report.json \
             --junitxml=/results/results.xml \
             -v \

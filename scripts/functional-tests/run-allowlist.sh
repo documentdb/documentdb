@@ -78,7 +78,7 @@ docker run --rm --network host \
     --engine-name documentdb \
     --connection-string "$CONNECTION_STRING" \
     -m "not no_parallel" \
-    -n 2 \
+    -n 4 \
     --json-report --json-report-file=/results/report.json \
     --junitxml=/results/results.xml \
     -v \
