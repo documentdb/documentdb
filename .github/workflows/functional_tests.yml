@@ -169,9 +169,9 @@ jobs:
             --password ${{ env.DOCUMENTDB_PASSWORD }} \
             --skip-init-data
 
-          echo "Waiting for DocumentDB gateway..."
-          timeout 120 bash -c 'until nc -z localhost ${{ env.DOCUMENTDB_PORT }} 2>/dev/null; do sleep 2; done'
-          echo "DocumentDB gateway is ready on port ${{ env.DOCUMENTDB_PORT }}"
+          echo "Waiting for DocumentDB to be fully ready..."
+          timeout 180 bash -c 'until docker logs documentdb 2>&1 | grep -q "=== DocumentDB is ready ==="; do sleep 2; done'
+          echo "DocumentDB is ready on port ${{ env.DOCUMENTDB_PORT }}"
 
       - name: Install Python dependencies
         run: pip install pyyaml
@@ -271,9 +271,9 @@ jobs:
             --password ${{ env.DOCUMENTDB_PASSWORD }} \
             --skip-init-data
 
-          echo "Waiting for DocumentDB gateway..."
-          timeout 120 bash -c 'until nc -z localhost ${{ env.DOCUMENTDB_PORT }} 2>/dev/null; do sleep 2; done'
-          echo "DocumentDB gateway is ready"
+          echo "Waiting for DocumentDB to be fully ready..."
+          timeout 180 bash -c 'until docker logs documentdb 2>&1 | grep -q "=== DocumentDB is ready ==="; do sleep 2; done'
+          echo "DocumentDB is ready"
 
       - name: Install Python dependencies
         run: pip install pyyaml

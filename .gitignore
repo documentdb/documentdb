@@ -85,3 +85,5 @@ target/
 
 # Functional test result artifacts
 .test-results/
+__pycache__/
+*.pyc
