@@ -13,6 +13,12 @@ on:
         default: false
         required: false
         type: boolean
+      parallelism:
+        description: 'Number of pytest-xdist workers'
+        default: '4'
+        required: false
+        type: choice
+        options: ['1', '2', '4']
   push:
     branches:
       - 'main'
@@ -32,6 +38,7 @@ env:
   DOCUMENTDB_USER: docdb_admin
   DOCUMENTDB_PASSWORD: Admin100
   DOCUMENTDB_PORT: 10260
+  PYTEST_WORKERS: ${{ inputs.parallelism || '4' }}
 
 jobs:
   # -----------------------------------------------------------------------
@@ -160,7 +167,7 @@ jobs:
             --engine-name documentdb \
             --connection-string "$CONNECTION_STRING" \
             -m "not no_parallel" \
-            -n 4 \
+            -n ${{ env.PYTEST_WORKERS }} \
             --json-report --json-report-file=/results/report.json \
             --junitxml=/results/results.xml \
             -v
@@ -255,7 +262,7 @@ jobs:
             documentdb_tests/compatibility/tests \
             --engine-name documentdb \
             --connection-string "$CONNECTION_STRING" \
-            -n 4 \
+            -n ${{ env.PYTEST_WORKERS }} \
             --json-report --json-report-file=/results/report.json \
             --junitxml=/results/results.xml \
             -v \
