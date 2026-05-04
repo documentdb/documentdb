@@ -27,6 +27,12 @@ on:
   schedule:
     - cron: '0 6 * * *'  # Daily at 06:00 UTC
 
+env:
+  PG_VERSION: 17
+  DOCUMENTDB_USER: docdb_admin
+  DOCUMENTDB_PASSWORD: Admin100
+  DOCUMENTDB_PORT: 10260
+
 jobs:
   # -----------------------------------------------------------------------
   # Job 1: Validate functional test configuration
@@ -41,11 +47,10 @@ jobs:
         run: pip install pyyaml
 
       - name: Validate functional test config
-        run: |
-          python3 scripts/functional-tests/functional_gate.py validate-config
+        run: python3 scripts/functional-tests/functional_gate.py validate-config
 
   # -----------------------------------------------------------------------
-  # Job 2: Check for allow-list removals
+  # Job 2: Check for allow-list removals (PRs only)
   # -----------------------------------------------------------------------
   check-allowlist-removals:
     if: github.event_name == 'pull_request'
@@ -56,11 +61,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install Python dependencies
+        run: pip install pyyaml
+
       - name: Check for allow-list removals
         run: |
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
           if git show "$BASE_SHA:test-config/functional-tests/allowlist.yml" > /tmp/base_allowlist.yml 2>/dev/null; then
-            # Extract test IDs from base and head
             python3 -c "
           import yaml, sys
           with open('/tmp/base_allowlist.yml') as f:
@@ -74,7 +81,6 @@ jobs:
                   print(f'  - {t}')
               print()
               print('Allow-list removals require explicit justification.')
-              print('If this is intentional, include the reason in the PR description.')
               sys.exit(1)
           else:
               print('No allow-list removals detected.')
@@ -84,56 +90,89 @@ jobs:
           fi
 
   # -----------------------------------------------------------------------
-  # Job 3: PR gate - run allow-listed tests
+  # Job 3: Build documentdb-local image from PR code
+  #
+  # Reuses the same deb-build + docker-build pattern from build_gateway.yml
+  # but only builds one arch (amd64) and does not push to GHCR.
+  # -----------------------------------------------------------------------
+  build-documentdb-local:
+    if: >
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # Same deb build step as build_gateway.yml
+      - name: Build Debian Package
+        run: |
+          ./packaging/build_packages.sh --os deb13 --pg ${{ env.PG_VERSION }} --output-dir downloaded-artifacts
+          ls -la downloaded-artifacts/
+
+      # Same docker build step as build_gateway.yml, single arch
+      - name: Build documentdb-local image
+        run: |
+          DEB_FILE=$(ls downloaded-artifacts/ | grep -v 'dbgsym' | head -1)
+          echo "Building documentdb-local image with deb: $DEB_FILE"
+          docker build \
+            --build-arg BASE_IMAGE=debian:trixie-slim \
+            --build-arg POSTGRES_VERSION=${{ env.PG_VERSION }} \
+            --build-arg DEB_PACKAGE_REL_PATH=downloaded-artifacts/$DEB_FILE \
+            -t documentdb-local:ci \
+            -f packaging/gateway/docker/Dockerfile_documentdb_local .
+
+      - name: Save image as artifact
+        run: docker save documentdb-local:ci | gzip > /tmp/documentdb-local.tar.gz
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentdb-local-image
+          path: /tmp/documentdb-local.tar.gz
+          retention-days: 1
+
+  # -----------------------------------------------------------------------
+  # Job 4: PR gate - run allow-listed tests against documentdb-local
   # -----------------------------------------------------------------------
   functional-pr-gate:
     if: >
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && !inputs.run_daily)
-    needs: validate-config
+    needs: [validate-config, build-documentdb-local]
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Build and Install DocumentDB
+      - name: Download documentdb-local image
+        uses: actions/download-artifact@v4
+        with:
+          name: documentdb-local-image
+          path: /tmp
+
+      - name: Load documentdb-local image
+        run: docker load < /tmp/documentdb-local.tar.gz
+
+      - name: Start DocumentDB container
         run: |
-          chmod +x ./scripts/build_documentdb_with_scripts.sh
-          ./scripts/build_documentdb_with_scripts.sh --pg-version 17 --citus-version 12
+          docker run -d \
+            --name documentdb \
+            -p ${{ env.DOCUMENTDB_PORT }}:${{ env.DOCUMENTDB_PORT }} \
+            documentdb-local:ci \
+            --username ${{ env.DOCUMENTDB_USER }} \
+            --password ${{ env.DOCUMENTDB_PASSWORD }}
 
-      - name: Export pg_config PATH
-        run: echo "/usr/lib/postgresql/17/bin" >> $GITHUB_PATH
+          echo "Waiting for DocumentDB gateway..."
+          timeout 120 bash -c 'until nc -z localhost ${{ env.DOCUMENTDB_PORT }} 2>/dev/null; do sleep 2; done'
+          echo "DocumentDB gateway is ready on port ${{ env.DOCUMENTDB_PORT }}"
 
-      - name: Install Rust
-        run: |
-          export CARGO_HOME=$HOME/.cargo
-          export RUSTUP_HOME=$HOME/.rustup
-          ./scripts/install_rustup.sh --install-toolchain
-          rustc --version && cargo --version
-
-      - name: Install Rust tools
-        run: ${{ github.workspace }}/scripts/install_rust_tools.sh ${{ github.workspace }}/rust-toolchain.toml
-
-      - name: Build and Install Gateway host
-        run: ./scripts/build_and_install_with_pgrx.sh -v 17 -d ./pg_documentdb_gw_host
-
-      - name: Start DocumentDB service
-        run: |
-          export PG_VERSION_USED=17
-          mkdir -p $RUNNER_TEMP/pgdata
-          ./scripts/start_oss_server.sh -d $RUNNER_TEMP/pgdata -c -g -r
-          cat $RUNNER_TEMP/pgdata/pglog.log || true
-
-      - name: Start Gateway
-        run: |
-          ./scripts/build_and_start_gateway.sh -u docdb_admin -p Admin100 -P 9712 &
-          # Wait for gateway
-          timeout 120 bash -c 'until nc -z localhost 10260 2>/dev/null; do sleep 2; done'
-          echo "Gateway is ready on port 10260"
-
-      - name: Install test dependencies
+      - name: Install Python dependencies
         run: pip install pyyaml
 
       - name: Pull functional-tests image
@@ -141,12 +180,48 @@ jobs:
           IMAGE=$(python3 -c "import yaml; print(yaml.safe_load(open('test-config/functional-tests/image.yml'))['image'])")
           echo "Pulling $IMAGE"
           docker pull "$IMAGE"
+          echo "FUNC_TEST_IMAGE=$IMAGE" >> $GITHUB_ENV
 
       - name: Run allow-list gate
-        id: gate
         run: |
-          CONNECTION_STRING="mongodb://docdb_admin:Admin100@localhost:10260/?tls=true&tlsAllowInvalidCertificates=true"
-          ./scripts/functional-tests/run-allowlist.sh --connection-string "$CONNECTION_STRING"
+          CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${{ env.DOCUMENTDB_PASSWORD }}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
+          mkdir -p .test-results/functional-tests
+
+          docker run --rm --network host \
+            -v "$(pwd)/test-config/functional-tests/allowlist.yml:/allowlist.yml:ro" \
+            -v "$(pwd)/scripts/functional-tests/conftest_allowlist.py:/extra/conftest_allowlist.py:ro" \
+            -v "$(pwd)/.test-results/functional-tests:/results" \
+            -e "PYTHONPATH=/extra" \
+            ${{ env.FUNC_TEST_IMAGE }} \
+            documentdb_tests/compatibility/tests \
+            -p conftest_allowlist \
+            --allowlist /allowlist.yml \
+            --engine-name documentdb \
+            --connection-string "$CONNECTION_STRING" \
+            -m "not no_parallel" \
+            -n 4 \
+            --json-report --json-report-file=/results/report.json \
+            --junitxml=/results/results.xml \
+            -v
+
+      - name: Summarize gate results
+        if: always()
+        run: |
+          if [ -f .test-results/functional-tests/report.json ]; then
+            python3 scripts/functional-tests/functional_gate.py \
+              --image test-config/functional-tests/image.yml \
+              --allowlist test-config/functional-tests/allowlist.yml \
+              summarize-gate \
+              --report .test-results/functional-tests/report.json \
+              --output-dir .test-results/functional-tests
+          else
+            echo "::error::No report.json produced. Test execution may have failed."
+            exit 1
+          fi
+
+      - name: Collect DocumentDB logs
+        if: always()
+        run: docker logs documentdb > .test-results/functional-tests/documentdb.log 2>&1 || true
 
       - name: Upload test results
         if: always()
@@ -156,71 +231,89 @@ jobs:
           overwrite: true
           path: .test-results/functional-tests/
 
-      - name: Upload logs
+      - name: Cleanup
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: functional-test-logs
-          overwrite: true
-          path: "**/*.log"
+        run: |
+          docker stop documentdb 2>/dev/null || true
+          docker rm documentdb 2>/dev/null || true
 
   # -----------------------------------------------------------------------
-  # Job 4: Daily delta - full suite visibility report
+  # Job 5: Daily delta - full suite visibility report
   # -----------------------------------------------------------------------
   daily-functional-delta:
     if: >
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && inputs.run_daily)
-    needs: validate-config
+    needs: [validate-config, build-documentdb-local]
     runs-on: ubuntu-22.04
     timeout-minutes: 120
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Build and Install DocumentDB
+      - name: Download documentdb-local image
+        uses: actions/download-artifact@v4
+        with:
+          name: documentdb-local-image
+          path: /tmp
+
+      - name: Load documentdb-local image
+        run: docker load < /tmp/documentdb-local.tar.gz
+
+      - name: Start DocumentDB container
         run: |
-          chmod +x ./scripts/build_documentdb_with_scripts.sh
-          ./scripts/build_documentdb_with_scripts.sh --pg-version 17 --citus-version 12
+          docker run -d \
+            --name documentdb \
+            -p ${{ env.DOCUMENTDB_PORT }}:${{ env.DOCUMENTDB_PORT }} \
+            documentdb-local:ci \
+            --username ${{ env.DOCUMENTDB_USER }} \
+            --password ${{ env.DOCUMENTDB_PASSWORD }}
 
-      - name: Export pg_config PATH
-        run: echo "/usr/lib/postgresql/17/bin" >> $GITHUB_PATH
+          echo "Waiting for DocumentDB gateway..."
+          timeout 120 bash -c 'until nc -z localhost ${{ env.DOCUMENTDB_PORT }} 2>/dev/null; do sleep 2; done'
+          echo "DocumentDB gateway is ready"
 
-      - name: Install Rust
-        run: |
-          export CARGO_HOME=$HOME/.cargo
-          export RUSTUP_HOME=$HOME/.rustup
-          ./scripts/install_rustup.sh --install-toolchain
-
-      - name: Install Rust tools
-        run: ${{ github.workspace }}/scripts/install_rust_tools.sh ${{ github.workspace }}/rust-toolchain.toml
-
-      - name: Build and Install Gateway host
-        run: ./scripts/build_and_install_with_pgrx.sh -v 17 -d ./pg_documentdb_gw_host
-
-      - name: Start DocumentDB service
-        run: |
-          export PG_VERSION_USED=17
-          mkdir -p $RUNNER_TEMP/pgdata
-          ./scripts/start_oss_server.sh -d $RUNNER_TEMP/pgdata -c -g -r
-
-      - name: Start Gateway
-        run: |
-          ./scripts/build_and_start_gateway.sh -u docdb_admin -p Admin100 -P 9712 &
-          timeout 120 bash -c 'until nc -z localhost 10260 2>/dev/null; do sleep 2; done'
-
-      - name: Install test dependencies
+      - name: Install Python dependencies
         run: pip install pyyaml
 
       - name: Pull functional-tests image
         run: |
           IMAGE=$(python3 -c "import yaml; print(yaml.safe_load(open('test-config/functional-tests/image.yml'))['image'])")
           docker pull "$IMAGE"
+          echo "FUNC_TEST_IMAGE=$IMAGE" >> $GITHUB_ENV
 
-      - name: Run daily delta
+      - name: Run daily full suite
         run: |
-          CONNECTION_STRING="mongodb://docdb_admin:Admin100@localhost:10260/?tls=true&tlsAllowInvalidCertificates=true"
-          ./scripts/functional-tests/run-daily-delta.sh --connection-string "$CONNECTION_STRING"
+          CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${{ env.DOCUMENTDB_PASSWORD }}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
+          mkdir -p .test-results/functional-tests-daily
+
+          docker run --rm --network host \
+            -v "$(pwd)/.test-results/functional-tests-daily:/results" \
+            ${{ env.FUNC_TEST_IMAGE }} \
+            documentdb_tests/compatibility/tests \
+            --engine-name documentdb \
+            --connection-string "$CONNECTION_STRING" \
+            -n 4 \
+            --json-report --json-report-file=/results/report.json \
+            --junitxml=/results/results.xml \
+            -v \
+            || true  # Don't fail on test failures; we analyze the report
+
+      - name: Summarize daily delta
+        if: always()
+        run: |
+          if [ -f .test-results/functional-tests-daily/report.json ]; then
+            python3 scripts/functional-tests/functional_gate.py \
+              --image test-config/functional-tests/image.yml \
+              --allowlist test-config/functional-tests/allowlist.yml \
+              summarize-daily \
+              --report .test-results/functional-tests-daily/report.json \
+              --output-dir .test-results/functional-tests-daily
+          fi
+
+      - name: Collect DocumentDB logs
+        if: always()
+        run: docker logs documentdb > .test-results/functional-tests-daily/documentdb.log 2>&1 || true
 
       - name: Upload daily results
         if: always()
@@ -230,10 +323,8 @@ jobs:
           overwrite: true
           path: .test-results/functional-tests-daily/
 
-      - name: Upload logs
+      - name: Cleanup
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: daily-functional-test-logs
-          overwrite: true
-          path: "**/*.log"
+        run: |
+          docker stop documentdb 2>/dev/null || true
+          docker rm documentdb 2>/dev/null || true
