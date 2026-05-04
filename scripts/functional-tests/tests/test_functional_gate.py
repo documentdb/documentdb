@@ -194,7 +194,8 @@ class TestSummarizeGate:
         result = summarize_gate(valid_allowlist, report, valid_image)
         assert result.non_pass == 1
 
-    def test_coverage_boundary(self, tmp_path, valid_image, valid_allowlist):
+    def test_coverage_boundary_fallback(self, tmp_path, valid_image, valid_allowlist):
+        """Fallback path when summary.collected is absent."""
         report = make_pytest_report(tmp_path, [
             {"nodeid": "tests/test_a.py::test_one", "outcome": "passed"},
             {"nodeid": "tests/test_a.py::test_two", "outcome": "passed"},
@@ -203,6 +204,17 @@ class TestSummarizeGate:
         result = summarize_gate(valid_allowlist, report, valid_image)
         assert result.total_discovered == 503
         assert result.outside_allowlist == 500
+
+    def test_coverage_boundary_collected(self, tmp_path, valid_image, valid_allowlist):
+        """Primary path using summary.collected from real pytest reports."""
+        report = make_pytest_report(tmp_path, [
+            {"nodeid": "tests/test_a.py::test_one", "outcome": "passed"},
+            {"nodeid": "tests/test_a.py::test_two", "outcome": "passed"},
+            {"nodeid": "tests/test_b.py::test_three", "outcome": "passed"},
+        ], summary={"total": 3, "collected": 9000})
+        result = summarize_gate(valid_allowlist, report, valid_image)
+        assert result.total_discovered == 9000
+        assert result.outside_allowlist == 8997
 
     def test_causality_check_available(self, tmp_path, valid_image, valid_allowlist):
         report = make_pytest_report(tmp_path, [

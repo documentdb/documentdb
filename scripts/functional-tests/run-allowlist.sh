@@ -70,7 +70,7 @@ docker run --rm --network host \
     -v "$ALLOWLIST_YML:/allowlist.yml:ro" \
     -v "$PLUGIN:/extra/conftest_allowlist.py:ro" \
     -v "$RESULTS_DIR:/results" \
-    -e "PYTHONPATH=/extra:\${PYTHONPATH:-}" \
+    -e "PYTHONPATH=/extra" \
     "$IMAGE" \
     documentdb_tests/compatibility/tests \
     -p conftest_allowlist \
