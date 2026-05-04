@@ -295,7 +295,7 @@ def render_gate_markdown(result: GateResult) -> str:
         first_failed = result.failed_tests[0]["test_id"]
         lines.append("**Reproduce:**")
         lines.append(f"```")
-        lines.append(f"./documentdb-local/functional-tests/run-one.sh {first_failed}")
+        lines.append(f"./documentdb-local/functional-tests/scripts/run-functional-tests.sh single {first_failed}")
         lines.append(f"```")
 
     return "\n".join(lines)

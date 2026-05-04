@@ -7,7 +7,7 @@
 # functional-tests.
 #
 # Usage:
-#   ./documentdb-local/functional-tests/start-documentdb-for-functional-tests.sh [options]
+#   ./documentdb-local/functional-tests/scripts/start-documentdb-for-functional-tests.sh [options]
 #
 # Options:
 #   --pg-version <ver>   PostgreSQL major version (default: 17)
@@ -22,7 +22,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 PG_VERSION="${PG_VERSION:-17}"
 GATEWAY_PORT="${GATEWAY_PORT:-10260}"

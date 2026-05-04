@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-PLUGIN_PATH = str(Path(__file__).parent.parent / "conftest_allowlist.py")
+PLUGIN_PATH = str(Path(__file__).parent.parent / "tools" / "conftest_allowlist.py")
 
 
 @pytest.fixture

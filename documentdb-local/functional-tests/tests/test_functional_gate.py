@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-# Add scripts dir to path so we can import the module
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add tools dir to path so we can import the module
+sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
 from functional_gate import (
     ConfigError,
     validate_config,
@@ -240,7 +240,7 @@ class TestGateMarkdown:
         result = summarize_gate(valid_allowlist, report, valid_image)
         md = render_gate_markdown(result)
         assert "FAIL" in md
-        assert "run-one.sh" in md
+        assert "scripts/run-functional-tests.sh single" in md
 
 
 # --- Daily delta ---
