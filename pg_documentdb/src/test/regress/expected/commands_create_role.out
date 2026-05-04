@@ -395,6 +395,29 @@ ERROR:  'resource' must be a document.
 -- Test privileges with actions not an array, should fail
 SELECT documentdb_api.create_role('{"createRole":"privRoleActionsNotArray", "roles":[], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":"find"}], "$db":"admin"}');
 ERROR:  'actions' must be an array.
+-- Test createRole with system login role names, should fail
+SELECT documentdb_api.create_role('{"createRole":"documentdb_bg_worker_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+ERROR:  Role name 'documentdb_bg_worker_role' is reserved and can't be used as a custom role name.
+-- Test createRole with native built-in role names, should fail
+SELECT documentdb_api.create_role('{"createRole":"readAnyDatabase", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+ERROR:  Role name 'readAnyDatabase' is a built-in role and can't be used as a custom role name.
+-- Test that reserved role names are blocked for createRole
+SET documentdb.blockedRolePrefixList TO '';
+SELECT documentdb_api.create_role('{"createRole":"documentdb_readonly_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+ERROR:  Role name 'documentdb_readonly_role' is reserved and can't be used as a custom role name.
+RESET documentdb.blockedRolePrefixList;
+-- Test createRole with custom RBAC role names, should fail
+SET documentdb.blockedRolePrefixList TO '';
+SELECT documentdb_api.create_role('{"createRole":"documentdb_api_find_role", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+ERROR:  Role name 'documentdb_api_find_role' is reserved and can't be used as a custom role name.
+RESET documentdb.blockedRolePrefixList;
+-- Test createRole with blocked role names, should fail
+SET documentdb.blockedRolePrefixList TO 'block,test';
+SELECT documentdb_api.create_role('{"createRole":"block", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+ERROR:  Role name 'block' is reserved and can't be used as a custom role name.
+SELECT documentdb_api.create_role('{"createRole":"test_block_user", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
+ERROR:  Role name 'test_block_user' is reserved and can't be used as a custom role name.
+RESET documentdb.blockedRolePrefixList;
 -- Clean up privilege test roles
 DROP ROLE IF EXISTS "privRoleFind";
 DROP ROLE IF EXISTS "privRoleInsert";
@@ -423,13 +446,6 @@ SELECT documentdb_api.drop_user('{"dropUser":"testRoleUser", "$db":"admin"}');
  { "ok" : { "$numberInt" : "1" } }
 (1 row)
 
--- Test createRole with blocked role names, should fail
-SET documentdb.blockedRolePrefixList TO 'block,test';
-SELECT documentdb_api.create_role('{"createRole":"block", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
-ERROR:  Role name 'block' is reserved and can't be used as a custom role name.
-SELECT documentdb_api.create_role('{"createRole":"test_block_user", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
-ERROR:  Role name 'test_block_user' is reserved and can't be used as a custom role name.
-RESET documentdb.blockedRolePrefixList;
 -- Reset settings
 RESET documentdb.enableRoleCrud;
 RESET documentdb.blockedRolePrefixList;

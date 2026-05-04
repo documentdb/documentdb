@@ -79,7 +79,13 @@ pub fn log_request_failure(
                 ..Default::default()
             });
         }
-        ErrorKind::DocumentDBError(code, _msg, error_message_loggable, backtrace) => {
+        ErrorKind::DocumentDBError(
+            code,
+            _msg,
+            error_message_loggable,
+            sub_status_code,
+            backtrace,
+        ) => {
             let error_code = *code as i32;
             log_request_failure_inner(&RequestFailureLogFields {
                 activity_id,
@@ -88,6 +94,7 @@ pub fn log_request_failure(
                 backtrace: Some(backtrace),
                 error_message_loggable: error_message_loggable.as_deref(),
                 error_code: Some(&error_code),
+                sub_status_code: Some(sub_status_code),
                 ..Default::default()
             });
         }
@@ -109,6 +116,7 @@ pub fn log_request_failure(
                 )
                 .internal_note();
 
+                let sub_status_code = responses::postgres_sqlstate_to_i32(dbe.code());
                 log_request_failure_inner(&RequestFailureLogFields {
                     activity_id,
                     error_source: "PostgresError",
@@ -116,7 +124,7 @@ pub fn log_request_failure(
                     backtrace: Some(backtrace),
                     error_message_loggable,
                     sub_status: Some(dbe.code().code()),
-                    sub_status_code: Some(&responses::postgres_sqlstate_to_i32(dbe.code())),
+                    sub_status_code: Some(&sub_status_code),
                     error_hint: dbe.hint(),
                     error_file_name: dbe.file(),
                     error_file_line_num: dbe.line().as_ref(),
@@ -135,6 +143,7 @@ pub fn log_request_failure(
             }
         }
         ErrorKind::PostgresDocumentDBError(pg_code, msg, backtrace) => {
+            let sub_status_code = *pg_code;
             let (sql_state, error_message_loggable): (Option<SqlState>, Option<String>) =
                 match responses::i32_to_postgres_sqlstate(*pg_code) {
                     Ok(state) => {
@@ -168,7 +177,7 @@ pub fn log_request_failure(
                 sub_status: sql_state
                     .as_ref()
                     .map(tokio_postgres::error::SqlState::code),
-                sub_status_code: Some(pg_code),
+                sub_status_code: Some(&sub_status_code),
                 ..Default::default()
             });
         }

@@ -101,7 +101,7 @@ impl CommandError {
                 );
                 Self::internal_error()
             }
-            ErrorKind::DocumentDBError(error_code, msg, _, _) => {
+            ErrorKind::DocumentDBError(error_code, msg, _, _, _) => {
                 Self::new(*error_code, msg.clone())
             }
             ErrorKind::IoError(_, _)

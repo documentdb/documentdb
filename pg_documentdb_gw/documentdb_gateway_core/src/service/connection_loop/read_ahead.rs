@@ -60,10 +60,10 @@ mod tests {
         response_to: i32,
         op_code: OpCode,
     ) {
-        assert_eq!(header.length, length);
-        assert_eq!(header.request_id, request_id);
-        assert_eq!(header.response_to, response_to);
-        assert_eq!(header.op_code, op_code);
+        assert_eq!(header.message_length(), length);
+        assert_eq!(header.request_id(), request_id);
+        assert_eq!(header.response_to(), response_to);
+        assert_eq!(header.op_code(), op_code);
     }
 
     fn encode_header(length: i32, request_id: i32, response_to: i32, op_code: OpCode) -> Vec<u8> {

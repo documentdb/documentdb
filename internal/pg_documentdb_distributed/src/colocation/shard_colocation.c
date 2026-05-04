@@ -26,6 +26,7 @@
 #include "sharding/sharding.h"
 #include "commands/commands_common.h"
 #include "commands/parse_error.h"
+#include "commands/retryable_writes.h"
 
 #include "metadata/metadata_cache.h"
 #include "metadata/collection.h"
@@ -311,23 +312,42 @@ documentdb_command_move_collection(PG_FUNCTION_ARGS)
 										argOids, argDatums, NULL, false, SPI_OK_SELECT,
 										&resultNullIgnore);
 
-	/* Next re-colocate the retry table with the main table */
-	const char *retryTableUpdateColocationQuery =
-		"SELECT update_distributed_table_colocation($1, colocate_with => $2)";
-	StringInfoData retryTableNameData;
-	initStringInfo(&retryTableNameData);
-	appendStringInfo(&retryTableNameData, "%s.retry_%ld", ApiDataSchemaName,
-					 collection->collectionId);
+	if (UseLocalRetryTable())
+	{
+		/*
+		 * LocalRetryTable is enabled, drop the retry table for the collection if exists.
+		 */
+		StringInfoData retryTableDropQuery;
+		initStringInfo(&retryTableDropQuery);
+		appendStringInfo(&retryTableDropQuery,
+						 "DROP TABLE IF EXISTS %s.retry_" INT64_FORMAT,
+						 ApiDataSchemaName, collection->collectionId);
 
-	Oid retryArgOid[2] = { TEXTOID, TEXTOID };
-	Datum retryArgDatums[2] = {
-		CStringGetTextDatum(retryTableNameData.data), CStringGetTextDatum(
-			tableNameData.data)
-	};
-	ExtensionExecuteQueryWithArgsViaSPI(retryTableUpdateColocationQuery, 2,
-										retryArgOid, retryArgDatums, NULL, false,
-										SPI_OK_SELECT,
-										&resultNullIgnore);
+		ExtensionExecuteQueryViaSPI(retryTableDropQuery.data, false, SPI_OK_UTILITY,
+									&resultNullIgnore);
+	}
+	else
+	{
+		/* LocalRetryTable is not enabled
+		 * Re-colocate the retry table with the main table
+		 */
+		const char *retryTableUpdateColocationQuery =
+			"SELECT update_distributed_table_colocation($1, colocate_with => $2)";
+		StringInfoData retryTableNameData;
+		initStringInfo(&retryTableNameData);
+		appendStringInfo(&retryTableNameData, "%s.retry_%ld", ApiDataSchemaName,
+						 collection->collectionId);
+
+		Oid retryArgOid[2] = { TEXTOID, TEXTOID };
+		Datum retryArgDatums[2] = {
+			CStringGetTextDatum(retryTableNameData.data), CStringGetTextDatum(
+				tableNameData.data)
+		};
+		ExtensionExecuteQueryWithArgsViaSPI(retryTableUpdateColocationQuery, 2,
+											retryArgOid, retryArgDatums, NULL, false,
+											SPI_OK_SELECT,
+											&resultNullIgnore);
+	}
 
 	/* Now move the shard to the target group */
 	const char *shardTransferMode = useLogicalReplication ? "force_logical" :
@@ -552,11 +572,14 @@ HandleDistributedColocation(MongoCollection *collection, const
 															   targetWithNamespace);
 	}
 
-	/* Colocate retry with the original table */
-	char *retryTableWithNamespace = psprintf("%s.retry_%ld", ApiDataSchemaName,
-											 collection->collectionId);
-	UndistributeAndRedistributeTable(retryTableWithNamespace, tableWithNamespace,
-									 retryTableShardKeyValue);
+	if (!UseLocalRetryTable())
+	{
+		/* Colocate retry with the original table */
+		char *retryTableWithNamespace = psprintf("%s.retry_%ld", ApiDataSchemaName,
+												 collection->collectionId);
+		UndistributeAndRedistributeTable(retryTableWithNamespace, tableWithNamespace,
+										 retryTableShardKeyValue);
+	}
 }
 
 

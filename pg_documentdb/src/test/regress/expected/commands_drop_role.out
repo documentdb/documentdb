@@ -108,16 +108,16 @@ SELECT documentdb_api.drop_role('{"dropRole":null, "$db":"admin"}');
 ERROR:  The BSON field 'dropRole' has an incorrect type 'null'; it should be of type 'string'.
 -- Test dropping built-in roles, should fail
 SELECT documentdb_api.drop_role('{"dropRole":"documentdb_admin_role", "$db":"admin"}');
-ERROR:  Cannot drop built-in role 'documentdb_admin_role'.
+ERROR:  The specified role 'documentdb_admin_role' does not exist.
 -- Test dropRole with a non-admin database, should fail
 SELECT documentdb_api.drop_role('{"dropRole":"custom_role", "lsid":"test", "$db":"nonAdminDatabase"}');
 ERROR:  DropRole must be called from 'admin' database.
 -- Test dropRole of a system role
 SELECT documentdb_api.drop_role('{"dropRole":"documentdb_bg_worker_role", "$db":"admin"}');
-ERROR:  Cannot drop built-in role 'documentdb_bg_worker_role'.
+ERROR:  The specified role 'documentdb_bg_worker_role' does not exist.
 -- Test dropRole of non-existing role with built-in role prefix, which should fail with role not found
 SELECT documentdb_api.drop_role('{"dropRole":"documentdb_role", "$db":"admin"}');
-ERROR:  role "documentdb_role" does not exist
+ERROR:  The specified role 'documentdb_role' does not exist.
 -- Test dropRole with unsupported field, should fail
 SELECT documentdb_api.drop_role('{"dropRole":"custom_role", "unsupportedField":"value", "$db":"admin"}');
 ERROR:  Unsupported field specified: 'unsupportedField'.
@@ -167,6 +167,29 @@ SELECT rolname FROM pg_roles WHERE rolname = 'custom_role';
 (0 rows)
 
 SET documentdb.enableRolesAdminDBCheck TO ON;
+-- Test dropRole with system login role names, should fail
+SELECT documentdb_api.drop_role('{"dropRole":"documentdb_bg_worker_role", "$db":"admin"}');
+ERROR:  The specified role 'documentdb_bg_worker_role' does not exist.
+-- Test dropRole with native built-in role names, should fail
+SELECT documentdb_api.drop_role('{"dropRole":"readAnyDatabase", "$db":"admin"}');
+ERROR:  Cannot drop built-in role 'readAnyDatabase'.
+-- Test that reserved internal role names are blocked for dropRole
+SET documentdb.blockedRolePrefixList TO '';
+SELECT documentdb_api.drop_role('{"dropRole":"documentdb_readonly_role", "$db":"admin"}');
+ERROR:  The specified role 'documentdb_readonly_role' does not exist.
+RESET documentdb.blockedRolePrefixList;
+-- Test dropRole with custom RBAC role names, should fail
+SET documentdb.blockedRolePrefixList TO '';
+SELECT documentdb_api.drop_role('{"dropRole":"documentdb_api_find_role", "$db":"admin"}');
+ERROR:  The specified role 'documentdb_api_find_role' does not exist.
+RESET documentdb.blockedRolePrefixList;
+-- Test dropRole with custom blocked prefixes, should fail
+SET documentdb.blockedRolePrefixList TO 'block,test';
+SELECT documentdb_api.drop_role('{"dropRole":"block_role", "$db":"admin"}');
+ERROR:  The specified role 'block_role' does not exist.
+SELECT documentdb_api.drop_role('{"dropRole":"test_role", "$db":"admin"}');
+ERROR:  The specified role 'test_role' does not exist.
+RESET documentdb.blockedRolePrefixList;
 -- Clean up and Reset settings
 RESET documentdb.enableRoleCrud;
 RESET documentdb.enableRolesAdminDBCheck;

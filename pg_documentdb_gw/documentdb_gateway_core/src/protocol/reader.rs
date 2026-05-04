@@ -65,25 +65,37 @@ where
 /// # Errors
 ///
 /// Returns an error if the operation fails.
-pub async fn read_request<S>(header: &Header, stream: &mut S) -> Result<RequestMessage>
+pub async fn read_request<S>(
+    authenticated: bool,
+    header: &Header,
+    stream: &mut S,
+) -> Result<RequestMessage>
 where
     S: AsyncRead + Unpin,
 {
-    let message_size = usize::try_from(header.length).map_err(|error| {
-        tracing::error!("Message length could not be converted to a usize: {error}");
-        DocumentDBError::bad_value("Message length could not be converted to a usize".to_owned())
-    })?;
+    #[expect(
+        clippy::cast_sign_loss,
+        reason = "Header length is guaranteed to fit in usize"
+    )]
+    let message_size: usize = header.message_length() as usize - Header::LENGTH;
+
+    if !authenticated && header.message_length() > crate::protocol::MAX_PRE_AUTH_MESSAGE_SIZE_BYTES
+    {
+        return Err(DocumentDBError::internal_error(
+            "Message size exceeds the maximum allowed size.".to_owned(),
+        ));
+    }
 
     // 16 bytes of the message were already used by the headers
-    let mut message: Vec<u8> = vec![0; message_size - Header::LENGTH];
+    let mut message: Vec<u8> = vec![0; message_size];
 
     stream.read_exact(&mut message).await?;
 
     Ok(RequestMessage {
         request: message,
-        op_code: header.op_code,
-        request_id: header.request_id,
-        response_to: header.response_to,
+        op_code: header.op_code(),
+        request_id: header.request_id(),
+        response_to: header.response_to(),
     })
 }
 

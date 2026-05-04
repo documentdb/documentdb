@@ -32,6 +32,7 @@ pub async fn process_create_indexes(
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::IllegalOperation,
             "Creating indexes in the \"config\" or \"admin\" databases is not allowed".to_owned(),
+            0,
         ));
     }
 
@@ -103,7 +104,7 @@ pub async fn wait_for_index(
                 DocumentDBError::internal_error("Failed to convert max_time_ms to u128".to_owned())
             })?;
             if start_time.elapsed().as_millis() > max_time_ms {
-                return Err(DocumentDBError::documentdb_error(ErrorCode::ExceededTimeLimit, "The command being executed was terminated due to a command timeout. This may be due to concurrent transactions. Consider increasing the maxTimeMS on the command.".to_owned()));
+                return Err(DocumentDBError::documentdb_error(ErrorCode::ExceededTimeLimit, "The command being executed was terminated due to a command timeout. This may be due to concurrent transactions. Consider increasing the maxTimeMS on the command.".to_owned(), 0));
             }
         }
     }

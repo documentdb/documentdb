@@ -184,6 +184,7 @@ fn convert_to_scale(scale: RawBsonRef) -> Result<f64> {
                 "Unexpected bson type for scale: {:#?}",
                 scale.element_type()
             ),
+            0,
         )),
     }
 }
@@ -263,6 +264,7 @@ pub async fn process_kill_op(
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::Unauthorized,
             "killOp may only be run against the admin database.".to_owned(),
+            0,
         ));
     }
 
@@ -335,6 +337,7 @@ pub async fn process_get_parameter(
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::Unauthorized,
             "getParameter may only be run against the admin database.".to_owned(),
+            0,
         ));
     }
 

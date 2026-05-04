@@ -664,7 +664,7 @@ ShouldScheduleIndexBuildsCore()
 
 
 static List *
-GetDistributedShardIndexOidsCore(uint64_t collectionId, int indexId, bool ignoreMissing)
+GetDistributedShardIndexOidsCore(uint64_t collectionId, Oid indexOid, bool ignoreMissing)
 {
 	/* First for the given collection, get the shard ids associated with it */
 	char tableName[NAMEDATALEN] = { 0 };
@@ -677,18 +677,18 @@ GetDistributedShardIndexOidsCore(uint64_t collectionId, int indexId, bool ignore
 
 	List *indexShardList = NIL;
 	ListCell *shardCell;
+	const char *indexName = get_rel_name(indexOid);
 	foreach(shardCell, shardIdList)
 	{
 		uint64_t *shardIdPointer = (uint64_t *) lfirst(shardCell);
 		char shardIndexName[NAMEDATALEN] = { 0 };
-		pg_sprintf(shardIndexName, DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "_%lu", indexId,
-				   *shardIdPointer);
+		pg_sprintf(shardIndexName, "%s_%lu", indexName, *shardIdPointer);
 
 
-		Oid indexOid = get_relname_relid(shardIndexName, ApiDataNamespaceOid());
-		if (indexOid != InvalidOid)
+		Oid shardIndexOid = get_relname_relid(shardIndexName, ApiDataNamespaceOid());
+		if (shardIndexOid != InvalidOid)
 		{
-			indexShardList = lappend_oid(indexShardList, indexOid);
+			indexShardList = lappend_oid(indexShardList, shardIndexOid);
 		}
 		else if (!ignoreMissing)
 		{

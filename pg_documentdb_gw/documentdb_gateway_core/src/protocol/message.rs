@@ -24,8 +24,6 @@ pub struct Message<'a> {
     pub(crate) _request_id: Option<i32>,
 }
 
-const _DEFAULT_MAX_MESSAGE_SIZE_BYTES: i32 = 48 * 1024 * 1024;
-
 impl Message<'_> {
     /// # Errors
     /// Returns error if the operation fails.

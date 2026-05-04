@@ -35,9 +35,6 @@
 CreateBsonUpdateTracker_HookType create_update_tracker_hook = NULL;
 BuildUpdateDescription_HookType build_update_description_hook = NULL;
 
-/* This GUC determines whether to use update_bson_document instead of the bson_update_document command. */
-extern bool EnableUpdateBsonDocument;
-
 /* TODO: This is a hack - in reality we should remove updateDesc and rewrite the query to be better */
 int NumBsonDocumentsUpdated = 0;
 
@@ -166,42 +163,22 @@ PG_FUNCTION_INFO_V1(bson_update_document_with_update_desc);
  * { "": <update|replace|pipeline> }.
  * The third argument is the query spec used to form this update. This is the document
  * that is generally passed to the @@ operator and is of the form { "$and": [ { "a": 1}, { "b": 1 }]}
- * TODO : i) Remove buildUpdateDesc 5th input argument
- * ii) Remove updateDesc return value
- * As both of above were used in older change_stream implementation and not getting used anywhere now.
+ * This is the C entry point for the update_bson_document SQL UDF, which returns a scalar bson value.
  */
 Datum
 bson_update_document(PG_FUNCTION_ARGS)
 {
-	/* Ensure correct return type. TODO: Remove this check after full migration to update_bson_document. */
+	/* Validate scalar bson return type (update_bson_document UDF). */
 	TupleDesc tupleDescriptor = NULL;
-	bool callerIsUpdateBsonDocument = EnableUpdateBsonDocument &&
-									  IsClusterVersionAtleast(DocDB_V0, 109, 0);
-	if (callerIsUpdateBsonDocument)
+	Oid resultTypeId = InvalidOid;
+	if (get_call_result_type(fcinfo, &resultTypeId, &tupleDescriptor) != TYPEFUNC_SCALAR)
 	{
-		Oid resultTypeId = InvalidOid;
-		if (get_call_result_type(fcinfo, &resultTypeId, &tupleDescriptor) !=
-			TYPEFUNC_SCALAR)
-		{
-			elog(ERROR, "return type must be a scalar type");
-		}
-
-		if (resultTypeId != BsonTypeId())
-		{
-			elog(ERROR, "return type must be a single bson value");
-		}
+		elog(ERROR, "return type must be a scalar type");
 	}
-	else
-	{
-		if (get_call_result_type(fcinfo, NULL, &tupleDescriptor) != TYPEFUNC_COMPOSITE)
-		{
-			elog(ERROR, "return type must be a row type");
-		}
 
-		if (tupleDescriptor->natts != 2)
-		{
-			elog(ERROR, "incorrect number of output arguments");
-		}
+	if (resultTypeId != BsonTypeId())
+	{
+		elog(ERROR, "return type must be a single bson value");
 	}
 
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1) || PG_ARGISNULL(2))
@@ -217,17 +194,9 @@ bson_update_document(PG_FUNCTION_ARGS)
 	pgbson *arrayFiltersDoc = PG_GETARG_MAYBE_NULL_PGBSON(3);
 
 	bson_value_t variableSpec = { 0 };
-	if (callerIsUpdateBsonDocument)
+	if (PG_NARGS() > 4 && !PG_ARGISNULL(4))
 	{
-		if (PG_NARGS() > 4 && !PG_ARGISNULL(4))
-		{
-			pgbson *variableSpecDoc = PG_GETARG_PGBSON(4);
-			variableSpec = ConvertPgbsonToBsonValue(variableSpecDoc);
-		}
-	}
-	else if (PG_NARGS() > 5 && !PG_ARGISNULL(5))
-	{
-		pgbson *variableSpecDoc = PG_GETARG_PGBSON(5);
+		pgbson *variableSpecDoc = PG_GETARG_PGBSON(4);
 		variableSpec = ConvertPgbsonToBsonValue(variableSpecDoc);
 	}
 
@@ -244,7 +213,7 @@ bson_update_document(PG_FUNCTION_ARGS)
 	}
 
 	BsonUpdateSource updateSource = { 0 };
-	if (callerIsUpdateBsonDocument && PG_NARGS() > 7)
+	if (PG_NARGS() > 7)
 	{
 		if (!PG_ARGISNULL(6))
 		{
@@ -288,46 +257,18 @@ bson_update_document(PG_FUNCTION_ARGS)
 										  &updateSource, NULL);
 	}
 
-	if (callerIsUpdateBsonDocument)
-	{
-		if (document != NULL)
-		{
-			NumBsonDocumentsUpdated++;
-			LastBsonUpdateReturnedNewValue = true;
-			PG_RETURN_POINTER(document);
-		}
-		else
-		{
-			/* No update is needed */
-			LastBsonUpdateReturnedNewValue = false;
-			PG_RETURN_NULL();
-		}
-	}
-
-	/* TODO : Remove below code once we move to update_bson_document udf completely */
-	/* Returns (newDocument bson, updateDesc bson) */
-	Datum values[2];
-	bool nulls[2];
-	memset(values, 0, sizeof(values));
-	memset(nulls, 0, sizeof(nulls));
-
 	if (document != NULL)
 	{
 		NumBsonDocumentsUpdated++;
 		LastBsonUpdateReturnedNewValue = true;
-		values[0] = PointerGetDatum(document);
-		nulls[1] = true;
+		PG_RETURN_POINTER(document);
 	}
 	else
 	{
 		/* No update is needed */
 		LastBsonUpdateReturnedNewValue = false;
-		nulls[0] = true;
-		nulls[1] = true;
+		PG_RETURN_NULL();
 	}
-
-	HeapTuple ret = heap_form_tuple(tupleDescriptor, values, nulls);
-	return HeapTupleGetDatum(ret);
 }
 
 

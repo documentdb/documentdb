@@ -405,7 +405,7 @@ async fn perform_oidc_authentication(
                         "External identity is not present in the system.".to_owned(),
                     )),
                     // All other errors are returned as InternalError in authentication code path.
-                    _ => Err(DocumentDBError::authentication_failed_with_custom_log(
+                    _ => Err(DocumentDBError::authentication_failed_internal_error(
                         generic_internal_error_message().to_owned(),
                         &format!(
                             "DbError during authentication: {}, code: {}, file: {}, line: {}.",
@@ -424,7 +424,7 @@ async fn perform_oidc_authentication(
                 "Non DbError from backend during authentication. error = {{error}}"
             );
 
-            Err(DocumentDBError::authentication_failed_with_custom_log(
+            Err(DocumentDBError::authentication_failed_internal_error(
                 generic_internal_error_message().to_owned(),
                 &format!("Non DbError from backend during authentication. error = {e}"),
             ))
@@ -773,6 +773,7 @@ async fn get_salt_and_iteration(
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::AuthenticationFailed,
             "Invalid account: User details not found in the database".to_owned(),
+            0,
         ));
     }
 

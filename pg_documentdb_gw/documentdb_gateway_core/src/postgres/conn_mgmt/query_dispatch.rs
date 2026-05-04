@@ -473,6 +473,7 @@ where
                             "Query exceeded command timeout of {}ms",
                             command_timeout.as_millis()
                         ),
+                        0,
                     ));
                 }
 

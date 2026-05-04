@@ -4,10 +4,16 @@
 set -u
 # exit immediately if a command exits with a non-zero status
 set -e
+# ensure pipeline failures are caught
+set -o pipefail
 
 documentdbSourceFile=$1
-codeMappingFile=$2
-targetFile=$3
+extensionErrorMappingFile=$2
+corePgErrorMappingsFile=$3
+targetFile=$4
+
+tempTargetFile=$(mktemp)
+trap 'rm -f "$tempTargetFile"' EXIT
 
 declare -A documentdbErrorKeys=()
 declare -A documentdbErrorOrdinals=()
@@ -27,6 +33,16 @@ for fileLine in $(cat $documentdbSourceFile); do
         _pgError="${BASH_REMATCH[2]}"
         _existOrdinal="${BASH_REMATCH[3]}"
 
+        if [[ -n "${documentdbErrorKeys[$_name]+x}" ]]; then
+            echo "Duplicate error name detected: $_name"
+            exit 1
+        fi
+
+        if [[ -n "${documentdbErrorOrdinals[$_existOrdinal]+x}" ]]; then
+            echo "Duplicate error ordinal detected: $_existOrdinal"
+            exit 1
+        fi
+
         documentdbErrorKeys["$_name"]=$_pgError
         documentdbErrorOrdinals["$_existOrdinal"]=$_name
 
@@ -42,7 +58,7 @@ done
 declare -A externalErrorKeys=()
 isFirst=""
 _maxErrorCode=0
-for fileLine in $(cat $codeMappingFile); do
+for fileLine in $(cat $extensionErrorMappingFile); do
         # Skip the header.
     if [ "$isFirst" = "" ]; then
         isFirst="false"
@@ -54,6 +70,11 @@ for fileLine in $(cat $codeMappingFile); do
     if [[ $fileLine =~ $regex ]]; then
         _externalError="${BASH_REMATCH[1]}"
         _externalErrorName="${BASH_REMATCH[2]}"
+
+        if [[ -n "${externalErrorKeys[$_externalErrorName]+x}" ]]; then
+            echo "Duplicate error name detected: $_externalErrorName"
+            exit 1
+        fi
 
         externalErrorKeys["$_externalErrorName"]=$_externalError
 
@@ -69,19 +90,41 @@ for fileLine in $(cat $codeMappingFile); do
     fi
 done
 
-echo "Max error code is $_maxErrorCode, maxOrdinal is $maxOrdinal"
-echo "external error count ${#externalErrorKeys[@]}, documentdb error count ${#documentdbErrorKeys[@]}"
+echo "[Extension error mappings] Max error code is $_maxErrorCode, maxOrdinal is $maxOrdinal"
+echo "[Extension error mappings] external error count ${#externalErrorKeys[@]}, documentdb error count ${#documentdbErrorKeys[@]}"
 
 if [ "${#externalErrorKeys[@]}" != "${#documentdbErrorKeys[@]}" ]; then
-    echo "mismatch between documentdb errors and external errors detected";
+    echo "[Extension error mappings] mismatch between documentdb errors and external errors detected";
     exit 1
 fi
 
-echo "ErrorName,ErrorCode,ExternalError,ErrorOrdinal" > $targetFile
 for fileIndex in $(seq 1 $maxOrdinal); do
     _errorName=${documentdbErrorOrdinals[$fileIndex]}
     _errorCode=${documentdbErrorKeys[$_errorName]}
     _externalError=${externalErrorKeys[$_errorName]}
 
-    echo "$_errorName,$_errorCode,$_externalError,$fileIndex" >> $targetFile
+    echo "$_errorName,$_errorCode,$_externalError" >> "$tempTargetFile"
 done
+
+# Now read mappings of core postgres errors to external error codes.
+if [[ $(head -n 1 "$corePgErrorMappingsFile") != "ErrorName,ErrorCode,ExternalErrorCode" ]]; then
+    echo "ERROR: file '$corePgErrorMappingsFile' has invalid header"
+    exit 1
+else
+    while IFS=',' read -ra tokens; do
+        _errorName="${tokens[0]}"
+        _errorCode="${tokens[1]}"
+        _externalErrorCode="${tokens[2]}"
+
+        if [[ -n "${documentdbErrorKeys[$_errorName]+x}" ]]; then
+            echo "Duplicate error name detected: $_errorName"
+            exit 1
+        fi
+
+        documentdbErrorKeys["$_errorName"]=$_errorCode
+        echo "$_errorName,$_errorCode,$_externalErrorCode" >> "$tempTargetFile"
+    done < <(tail -n +2 "$corePgErrorMappingsFile")
+fi
+
+echo "ErrorName,ErrorCode,ExternalErrorCode" > "$targetFile"
+sort -t',' -k3,3n "$tempTargetFile" >> "$targetFile"

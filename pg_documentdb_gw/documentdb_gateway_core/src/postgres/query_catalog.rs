@@ -24,6 +24,7 @@ pub struct QueryCatalog {
     pub pg_settings: String,
     pub pg_is_in_recovery: String,
     pub extension_versions: String,
+    pub startup_validation_probe: String,
 
     // explain/mod.rs
     pub explain: String, // Has 2 params
@@ -165,6 +166,11 @@ impl QueryCatalog {
     #[must_use]
     pub fn extension_versions(&self) -> &str {
         &self.extension_versions
+    }
+
+    #[must_use]
+    pub fn startup_validation_probe(&self) -> &str {
+        &self.startup_validation_probe
     }
 
     // Explain getters
@@ -545,6 +551,7 @@ pub fn create_query_catalog() -> QueryCatalog {
             pg_settings: "SELECT name, setting FROM pg_settings WHERE name LIKE 'documentdb.%' OR name IN ('max_connections', 'default_transaction_read_only')".to_owned(),
             pg_is_in_recovery: "SELECT pg_is_in_recovery()".to_owned(),
             extension_versions: "SELECT documentdb_core.bson_build_document('internal', ARRAY[ (SELECT extversion FROM pg_extension WHERE extname = 'documentdb' LIMIT 1), documentdb_api.binary_version() ])".to_owned(),
+            startup_validation_probe: "SELECT documentdb_core.bson_build_document('a', 1)".to_owned(),
 
             // explain/mod.rs
             explain: "EXPLAIN (FORMAT JSON, ANALYZE {analyze}, VERBOSE True, BUFFERS {analyze}, TIMING {analyze}) SELECT document FROM documentdb_api_catalog.bson_aggregation_{query_base}($1, $2)".to_owned(),
@@ -616,7 +623,6 @@ pub fn create_query_catalog() -> QueryCatalog {
             // indexing.rs
             create_indexes_background: "SELECT * FROM documentdb_api.create_indexes_background($1, $2)".to_owned(),
             check_build_index_status: "SELECT * FROM documentdb_api_internal.check_build_index_status($1)".to_owned(),
-            re_index: "CALL documentdb_api.re_index($1, $2)".to_owned(),
             drop_indexes: "CALL documentdb_api.drop_indexes($1, $2)".to_owned(),
             list_indexes_cursor_first_page: "SELECT cursorPage, continuation, persistConnection, cursorId FROM documentdb_api.list_indexes_cursor_first_page($1, $2)".to_owned(),
 

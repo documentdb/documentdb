@@ -1,6 +1,6 @@
 #!/bin/bash
 # Generate NOTICE file with alphabetically sorted dependencies
-# Usage: ./generate_notice.sh -d [project-directory] -o [output_file]
+# Usage: ./generate_notice.sh -d [project-directory] -o [output_file] [-f]
 
 # fail if trying to reference a variable that is not set.
 set -u
@@ -11,12 +11,15 @@ set -e
 SOURCEDIR=""
 NOTICE_FILE=""
 help="false"
+frozen="false"
 
-while getopts "d:o:h" opt; do
+while getopts "d:o:fh" opt; do
   case $opt in
     d) SOURCEDIR="$OPTARG"
     ;;
     o) NOTICE_FILE="$OPTARG"
+    ;;
+    f) frozen="true"
     ;;
     h) help="true"
     ;;
@@ -32,9 +35,10 @@ while getopts "d:o:h" opt; do
 done
 
 if [ "$help" == "true" ]; then
-    echo "Usage: $0 -d <source_directory> -o <output_file> [-h]"
+    echo "Usage: $0 -d <source_directory> -o <output_file> [-f] [-h]"
     echo "  -d <source_directory>   : Directory containing the source code to build and install (defaults to current dir)."
     echo "  -o <output_file>        : Output file for the generated NOTICE (defaults to NOTICE)."
+    echo "  -f                      : Run cargo-about with --frozen."
     echo "  -h                      : Display this help message."
     exit 0
 fi
@@ -49,12 +53,17 @@ if [ ! -f "$SOURCEDIR/Cargo.toml" ]; then
 fi
 
 OUTPUT_FILE="${NOTICE_FILE:-NOTICE}"
+CARGO_ABOUT_FLAGS=()
+
+if [ "$frozen" == "true" ]; then
+    CARGO_ABOUT_FLAGS+=(--frozen)
+fi
 
 # Generate JSON output from cargo-about
-cargo about generate -c $SOURCEDIR/about.toml -m $SOURCEDIR/Cargo.toml --format json > /tmp/licenses.json
+cargo about generate "${CARGO_ABOUT_FLAGS[@]}" -c $SOURCEDIR/about.toml -m $SOURCEDIR/Cargo.toml --format json > /tmp/licenses.json
 
 # Allowlist of crates to exclude (these are part of our own codebase)
-ALLOWLIST="documentdb_gateway|documentdb_macros"
+ALLOWLIST="documentdb_gateway|documentdb_macros|documentdb_gateway_core"
 
 # Write header
 {

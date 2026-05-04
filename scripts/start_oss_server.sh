@@ -64,17 +64,18 @@ workerNodeDirectoryPrefix=""
 
 # Append a configuration line to postgresql.conf in the given Postgres data directory
 AddPostgresConfigToServers() {
-  if [[ $# -lt 2 ]]; then
-    echo "Usage: AddPostgresConfigToServers <postgres_dir> <config_line>" >&2
+  if [[ $# -lt 2 || $# -gt 3 ]]; then
+    echo "Usage: AddPostgresConfigToServers <postgres_dir> <config_line> [upsert]" >&2
     return 1
   fi
-  local dir="$1"; shift
-  local line="$*"
-  echo "$line" >> "$dir/postgresql.conf"
+  local dir="$1"
+  local line="$2"
+  local upsert="${3:-false}"
+  AddPostgresConfigToServer "$dir" "$line" "$upsert"
   if [ "$numberWorkerNodes" -gt 0 ]; then
     # Also add the config to worker instances
     for (( i=1; i<=$numberWorkerNodes; i++ )); do
-      echo "$line" >> "$workerNodeDirectoryPrefix$i/postgresql.conf"
+      AddPostgresConfigToServer "$workerNodeDirectoryPrefix$i" "$line" "$upsert"
     done
   fi
 }
@@ -93,6 +94,47 @@ AddHBAConfigToServers() {
     for (( i=1; i<=$numberWorkerNodes; i++ )); do
       echo "$line" >> "$workerNodeDirectoryPrefix$i/pg_hba.conf"
     done
+  fi
+}
+
+EnableGatewayWorkerPreload() {
+  local dir="$1"
+  local sharedPreloadLibraries="$2"
+  local desiredPreloadLibraries="${sharedPreloadLibraries}, pg_documentdb_gw_host"
+
+  if grep -Eq "^[[:space:]]*shared_preload_libraries[[:space:]]*=.*pg_documentdb_gw_host" \
+    "$dir/postgresql.conf"; then
+    echo "pg_documentdb_gw_host is already configured in shared_preload_libraries; skipping update."
+    return 1
+  fi
+
+  AddPostgresConfigToServer \
+    "$dir" \
+    "shared_preload_libraries = '$desiredPreloadLibraries'" \
+    "true"
+  echo "Configured pg_documentdb_gw_host in shared_preload_libraries for the coordinator."
+}
+
+BootstrapGatewayWorkerOnCoordinator() {
+  local user="$1"
+  local port="$2"
+  local dir="$3"
+  local sharedPreloadLibraries="$4"
+  local serverLogPath="$5"
+  local restartCoordinatorForGateway="false"
+
+  # Bootstrap the hosted gateway after the backend extension is fully installed so the
+  # worker's startup validation can rely on `documentdb_api` already existing.
+  psql -p "$port" -U "$user" -d postgres -X -c \
+    "CREATE EXTENSION IF NOT EXISTS pg_documentdb_gw_host CASCADE;"
+  if EnableGatewayWorkerPreload "$dir" "$sharedPreloadLibraries"; then
+    restartCoordinatorForGateway="true"
+  fi
+
+  if [ "$restartCoordinatorForGateway" == "true" ]; then
+    echo "${green}Restarting coordinator to activate pg_documentdb_gw_host${reset}"
+    StopServer "$dir"
+    StartServer "$dir" "$port" "$serverLogPath"
   fi
 }
 
@@ -206,20 +248,6 @@ else
   extensionName="documentdb"
 fi
 
-preloadLibraries="pg_documentdb_core, pg_documentdb"
-
-if [ "$distributed" == "true" ]; then
-  preloadLibraries="citus, $preloadLibraries, pg_documentdb_distributed"
-fi
-
-if [ "$gatewayWorker" == "true" ]; then
-  preloadLibraries="$preloadLibraries, pg_documentdb_gw_host"
-fi
-
-if [ "$useDocumentdbExtendedRum" == "true" ]; then
-  preloadLibraries="$preloadLibraries, pg_documentdb_extended_rum"
-fi
-
 source="${BASH_SOURCE[0]}"
 while [[ -h $source ]]; do
    scriptroot="$( cd -P "$( dirname "$source" )" && pwd )"
@@ -269,6 +297,18 @@ else
     echo "${green}Found existing PostgreSQL data directory at $postgresDirectory${reset}"
 fi
 
+clusterPreloadLibraries="pg_documentdb_core, pg_documentdb"
+
+if [ "$distributed" == "true" ]; then
+  clusterPreloadLibraries="citus, $clusterPreloadLibraries, pg_documentdb_distributed"
+fi
+
+if [ "$useDocumentdbExtendedRum" == "true" ]; then
+  clusterPreloadLibraries="$clusterPreloadLibraries, pg_documentdb_extended_rum"
+fi
+
+sharedPreloadLibraries="pg_cron, $clusterPreloadLibraries"
+
 # We stop the coordinator first and the worker node servers
 # afterwards. However this order is not required and it doesn't
 # really matter which order we choose to stop the active servers.
@@ -297,12 +337,12 @@ fi
 echo "InitDatabaseExtended $initSetup $postgresDirectory"
 
 if [ "$initSetup" == "true" ]; then
-    InitDatabaseExtended $postgresDirectory "$preloadLibraries"
+    InitDatabaseExtended $postgresDirectory "$sharedPreloadLibraries"
 
     # Initialize worker node data directories for multinode setups
     if [ "$numberWorkerNodes" -gt 0 ]; then
       for (( i=1; i<=$numberWorkerNodes; i++ )); do
-        InitDatabaseExtended "${workerNodeDirectoryPrefix}${i}" "$preloadLibraries"
+        InitDatabaseExtended "${workerNodeDirectoryPrefix}${i}" "$sharedPreloadLibraries"
       done
     fi
 fi
@@ -318,8 +358,11 @@ fi
 
 if [ "$gatewayWorker" == "true" ]; then
   setupConfigurationFile="$scriptDir/../pg_documentdb_gw/SetupConfiguration.json"
-  AddPostgresConfigToServers "$postgresDirectory" "documentdb_gateway.database = 'postgres'"
-  AddPostgresConfigToServers "$postgresDirectory" "documentdb_gateway.setup_configuration_file = '$setupConfigurationFile'"
+  AddPostgresConfigToServer "$postgresDirectory" "documentdb_gateway.database = 'postgres'" "true"
+  AddPostgresConfigToServer \
+    "$postgresDirectory" \
+    "documentdb_gateway.setup_configuration_file = '$setupConfigurationFile'" \
+    "true"
 fi
 
 if [ "$useDocumentdbExtendedRum" == "true" ] && [ "$initSetup" == "true" ]; then
@@ -376,6 +419,15 @@ if [ "$initSetup" == "true" ]; then
   if [ "$customAdminUser" != "" ]; then
     SetupCustomAdminUser "$customAdminUser" "$customAdminUserPassword" $coordinatorPort "$userName"
   fi
+fi
+
+if [ "$gatewayWorker" == "true" ]; then
+  BootstrapGatewayWorkerOnCoordinator \
+    "$userName" \
+    "$coordinatorPort" \
+    "$postgresDirectory" \
+    "$sharedPreloadLibraries" \
+    "$logPath"
 fi
 
 if [ "$valgrindMode" == "true" ]; then

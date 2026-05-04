@@ -322,3 +322,39 @@ SET documentdb.maxUserLimit TO 500;
 
 -- Reset the feature flag for db admin requirement
 RESET documentdb.enableUsersAdminDBCheck;
+
+-- Unit test for IS_BUILTIN_ROLE, IS_CUSTOM_RBAC_ROLE, IS_SYSTEM_LOGIN_ROLE, and IS_NATIVE_BUILTIN_ROLE macros
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.test_is_reserved_role_name(text)
+RETURNS bool
+LANGUAGE C AS 'pg_documentdb', $$test_is_reserved_internal_role_name$$;
+
+-- IS_BUILTIN_ROLE: all builtin roles should be reserved
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_admin_role');
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_cluster_admin_role');
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_readonly_role');
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_readwrite_role');
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_root_role');
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_user_admin_role');
+
+-- IS_CUSTOM_RBAC_ROLE: all custom RBAC roles should be reserved
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_api_find_role');
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_api_insert_role');
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_api_remove_role');
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_api_update_role');
+
+-- IS_SYSTEM_LOGIN_ROLE: system login roles should be reserved
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_bg_worker_role');
+
+-- Negative cases: normal usernames should NOT be reserved
+SELECT documentdb_test_helpers.test_is_reserved_role_name('normal_user');
+SELECT documentdb_test_helpers.test_is_reserved_role_name('admin');
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_some_other_thing');
+
+-- dropUser with IS_BUILTIN_ROLE name
+SELECT documentdb_api.drop_user('{"dropUser":"documentdb_readonly_role", "$db":"admin"}');
+-- updateUser with IS_BUILTIN_ROLE name
+SELECT documentdb_api.update_user('{"updateUser":"documentdb_readonly_role", "pwd":"New$123Pass", "$db":"admin"}');
+-- usersInfo with a reserved name should still work (read-only, no blocking)
+SELECT documentdb_api.users_info('{"usersInfo":"documentdb_readonly_role", "$db":"admin"}');
+
+DROP FUNCTION documentdb_test_helpers.test_is_reserved_role_name(text);

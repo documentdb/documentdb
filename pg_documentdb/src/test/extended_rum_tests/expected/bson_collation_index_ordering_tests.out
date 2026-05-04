@@ -178,7 +178,7 @@ Check constraints:
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_numord_true"}');
                                                                                                                                                                                                                                       cursorpage                                                                                                                                                                                                                                       
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_numord_true", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" } }, "name" : "item_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -262,7 +262,7 @@ Check constraints:
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_numord_false"}');
                                                                                                                                                                                                                                         cursorpage                                                                                                                                                                                                                                        
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_numord_false", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" } }, "name" : "item_numord_false_idx", "collation" : { "locale" : "en", "numericOrdering" : false }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -346,7 +346,7 @@ Check constraints:
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_compound_numord_true"}');
                                                                                                                                                                                                                                                              cursorpage                                                                                                                                                                                                                                                             
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_compound_numord_true", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" }, "qty" : { "$numberInt" : "1" } }, "name" : "item_qty_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -430,7 +430,7 @@ Check constraints:
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_compound_numord_false"}');
                                                                                                                                                                                                                                                               cursorpage                                                                                                                                                                                                                                                               
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_compound_numord_false", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" }, "qty" : { "$numberInt" : "1" } }, "name" : "item_qty_numord_false_idx", "collation" : { "locale" : "en", "numericOrdering" : false }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -520,7 +520,7 @@ Check constraints:
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_single_s1"}');
                                                                                                                                                                                                                                       cursorpage                                                                                                                                                                                                                                       
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_single_s1", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "name" : { "$numberInt" : "1" } }, "name" : "name_s1_idx", "collation" : { "locale" : "en", "strength" : { "$numberInt" : "1" } }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -608,7 +608,7 @@ Check constraints:
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_compound_s1_numord"}');
                                                                                                                                                                                                                                                                              cursorpage                                                                                                                                                                                                                                                                              
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_compound_s1_numord", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "name" : { "$numberInt" : "1" }, "age" : { "$numberInt" : "1" } }, "name" : "name_age_s1_numord_idx", "collation" : { "locale" : "en", "strength" : { "$numberInt" : "1" }, "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -693,7 +693,7 @@ Check constraints:
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_compound_s3"}');
                                                                                                                                                                                                                                                          cursorpage                                                                                                                                                                                                                                                          
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_compound_s3", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "name" : { "$numberInt" : "1" }, "age" : { "$numberInt" : "1" } }, "name" : "name_age_s3_idx", "collation" : { "locale" : "en", "strength" : { "$numberInt" : "3" } }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -771,7 +771,7 @@ Check constraints:
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_array_numord"}');
                                                                                                                                                                                                                                         cursorpage                                                                                                                                                                                                                                        
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_array_numord", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "codes" : { "$numberInt" : "1" } }, "name" : "codes_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -845,7 +845,7 @@ Check constraints:
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_compound_array"}');
                                                                                                                                                                                                                                                                  cursorpage                                                                                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_compound_array", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "codes" : { "$numberInt" : "1" }, "priority" : { "$numberInt" : "1" } }, "name" : "codes_priority_numord_false_idx", "collation" : { "locale" : "en", "numericOrdering" : false }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -931,7 +931,7 @@ Check constraints:
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_build_numord"}');
                                                                                                                                                                                                                                                          cursorpage                                                                                                                                                                                                                                                          
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_build_numord", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" }, "tag" : { "$numberInt" : "1" } }, "name" : "item_tag_build_numord_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -1021,7 +1021,7 @@ Check constraints:
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_missing"}');
                                                                                                                                                                                                                                                  cursorpage                                                                                                                                                                                                                                                  
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_missing", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "x" : { "$numberInt" : "1" }, "y" : { "$numberInt" : "1" } }, "name" : "x_y_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -1112,7 +1112,7 @@ Check constraints:
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_multi_coll"}');
                                                                                                                                                                                                                                                                                                                                                                                              cursorpage                                                                                                                                                                                                                                                                                                                                                                                             
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_multi_coll", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" } }, "name" : "item_val_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } }, { "v" : { "$numberInt" : "2" }, "key" : { "item" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" } }, "name" : "item_val_numord_false_idx", "collation" : { "locale" : "en", "numericOrdering" : false }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -1202,7 +1202,7 @@ Check constraints:
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_three_key"}');
                                                                                                                                                                                                                                                                           cursorpage                                                                                                                                                                                                                                                                          
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_three_key", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "region" : { "$numberInt" : "1" }, "code" : { "$numberInt" : "1" }, "seq" : { "$numberInt" : "1" } }, "name" : "region_code_seq_numord_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -1276,7 +1276,7 @@ Check constraints:
 
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('ord_coll_ordered_db', '{"listIndexes": "ord_truncated"}');
                                                                                                                                                                                                                                                             cursorpage                                                                                                                                                                                                                                                             
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ord_coll_ordered_db.ord_truncated", "firstBatch" : [ { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }, { "v" : { "$numberInt" : "2" }, "key" : { "longfield" : { "$numberInt" : "1" }, "tag" : { "$numberInt" : "1" } }, "name" : "longfield_tag_numord_true_idx", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -4216,10 +4216,11 @@ SET documentdb.enableExtendedExplainPlans TO on;
 SET documentdb.max_non_ordered_term_scan_threshold TO 1;
 SET enable_seqscan TO OFF;
 -- I1: Accented characters — "café" vs "cafe"
--- Key finding: In ICU collation, the accent on "é" makes "café" a different
--- primary character from "cafe" — they are NOT equal even at strength-1.
--- "cafe" = "CAFE" (case only) at strength-1, but "café" ≠ "cafe" at any strength.
--- Ordering: cafe/CAFE < café/Café < caff (accent sorts after non-accent).
+-- ICU primary level (strength-1) treats accents and case as equal, so
+-- "cafe" = "café" = "CAFE" = "Café". Strength-2 keeps accents distinct
+-- but ignores case. Strength-3 keeps both.
+-- Ordering: at strength-1 all four cafe-variants tie; strength-2 puts
+-- cafe/CAFE before café/Café before caff.
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 1, "a": "cafe"}', NULL);
 NOTICE:  creating collection
                               insert_one                              
@@ -4275,7 +4276,7 @@ SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
--- Strength-1 index (case-insensitive; cafe/café remain distinct)
+-- Strength-1 index (case + accent insensitive — all cafe-variants collapse)
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
   'ord_coll_ordered_db',
   '{
@@ -4311,39 +4312,37 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
--- I1a: $ne "cafe" at strength-1 — excludes "cafe"(1) and "CAFE"(9) (case-only equiv)
--- "café"(2) and "Café"(8) are NOT excluded — accent makes them different at all strengths.
--- Should return: café(2), caff(3), apple(4), banana(5), date(6), elderberry(7), Café(8) = 7 docs
+-- I1a: $ne "cafe" at strength-1 — excludes all four cafe-variants (1, 2, 8, 9)
+-- because at primary level "cafe" = "café" = "CAFE" = "Café".
+-- Should return: caff(3), apple(4), banana(5), date(6), elderberry(7) = 5 docs
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$ne": "cafe" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                         document                        
 --------------------------------------------------------
- { "_id" : { "$numberInt" : "2" }, "a" : "café" }
  { "_id" : { "$numberInt" : "3" }, "a" : "caff" }
  { "_id" : { "$numberInt" : "4" }, "a" : "apple" }
  { "_id" : { "$numberInt" : "5" }, "a" : "banana" }
  { "_id" : { "$numberInt" : "6" }, "a" : "date" }
  { "_id" : { "$numberInt" : "7" }, "a" : "elderberry" }
- { "_id" : { "$numberInt" : "8" }, "a" : "Café" }
-(7 rows)
+(5 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$ne": "cafe" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
                                                                   run_explain_and_trim                                                                  
 --------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=7 loops=1)
+ Sort (actual rows=5 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          namespaceName: ord_coll_ordered_db.ord_accent_coll
          indexName: idx_accent_en_strength1
          indexKey: {"a": 1}
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
-         innerScanLoops: 7 loops
+         innerScanLoops: 6 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 7)]
-         ->  Index Scan using idx_accent_en_strength1 on documents_8118 collection (actual rows=7 loops=1)
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
+         ->  Index Scan using idx_accent_en_strength1 on documents_8118 collection (actual rows=5 loops=1)
                Index Cond: (document @!= '{ "a" : "cafe", "collation" : "en-u-ks-level1" }'::bson)
 (14 rows)
 
@@ -4383,17 +4382,20 @@ $cmd$);
 (14 rows)
 
 -- I1c: $not $gt "cafe" at strength-1 — a ≤ "cafe"
--- Since "café" > "cafe" even at strength-1, only cafe(1), CAFE(9) are ≤ "cafe", plus apple, banana.
--- Should return: cafe(1), apple(4), banana(5), CAFE(9) = 4 docs
--- Excluded: café(2), caff(3), date(6), elderberry(7), Café(8)
+-- All four cafe-variants are equal to "cafe" at primary level, so they are
+-- all ≤ "cafe"; "caff" is greater so it is excluded.
+-- Should return: cafe(1), café(2), apple(4), banana(5), Café(8), CAFE(9) = 6 docs
+-- Excluded: caff(3), date(6), elderberry(7)
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$not": { "$gt": "cafe" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                       document                      
 ----------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "a" : "cafe" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "café" }
  { "_id" : { "$numberInt" : "4" }, "a" : "apple" }
  { "_id" : { "$numberInt" : "5" }, "a" : "banana" }
+ { "_id" : { "$numberInt" : "8" }, "a" : "Café" }
  { "_id" : { "$numberInt" : "9" }, "a" : "CAFE" }
-(4 rows)
+(6 rows)
 
 -- I1d: $not $gt "cafe" at strength-2 — a ≤ "cafe" at strength-2
 -- At strength-2: "cafe" < "café" (accent matters), so "café" > "cafe"

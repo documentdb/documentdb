@@ -23,6 +23,7 @@
 #include "commands/commands_common.h"
 #include "utils/documentdb_errors.h"
 #include "metadata/collection.h"
+#include "planner/documentdb_planner.h"
 #include "api_hooks.h"
 #include "metadata/index.h"
 #include "metadata/metadata_cache.h"
@@ -155,7 +156,6 @@ static void UpdatePostgresIndexOverride(uint64_t collectionId, int indexId, int 
 										bool
 										value);
 static void UpdatePostgresIndexesForHide(List *indexOids, bool hidden);
-static void UpdatePostgresIndexesForPrepareUnique(List *indexOids, bool prepareUnique);
 static void UpdatePostgresIndexesForUnique(List *indexOids, bool unique);
 static void RegisterExclusionInPgIndexCatalog(Oid indexoid);
 
@@ -172,6 +172,8 @@ PG_FUNCTION_INFO_V1(command_coll_mod);
 Datum
 command_coll_mod(PG_FUNCTION_ARGS)
 {
+	ThrowIfWriteCommandNotAllowed();
+
 	if (PG_ARGISNULL(2))
 	{
 		ereport(ERROR, (errmsg("collMod spec cannot be NULL")));
@@ -1257,7 +1259,7 @@ UpdatePostgresIndexCore(uint64_t collectionId, int indexId, IndexMetadataUpdateO
 
 	/* Add any additional shard OIDs needed for this */
 	indexOidList = list_concat(indexOidList,
-							   GetShardIndexOids(collectionId, indexId,
+							   GetShardIndexOids(collectionId, indexOid,
 												 ignoreMissingShards));
 
 	switch (operation)
@@ -1336,7 +1338,7 @@ UpdatePostgresIndexesForHide(List *indexOids, bool hidden)
  * This is done using the CreateConstraintEntry function which will also update the pg_depend catalog to mark the table as the owner of the constraint.
  * If this is successful, the index will be marked as an exclusion index in the pg_index catalog.
  */
-static void
+void
 UpdatePostgresIndexesForPrepareUnique(List *indexOids, bool prepareUnique)
 {
 	ListCell *cell;

@@ -23,12 +23,12 @@ SELECT documentdb_api.drop_user('{"dropUser":"documentdb_unblocked", "$db":"admi
 
 SET documentdb.blockedRolePrefixList TO 'documentdb';
 SELECT documentdb_api.drop_user('{"dropUser":"documentdb_unblocked", "$db":"admin"}');
-ERROR:  Invalid username.
+ERROR:  The specified user does not exist.
 SET documentdb.blockedRolePrefixList TO 'newBlock, newBlock2';
 SELECT documentdb_api.create_user('{"createUser":"newBlock_user", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}, {"role":"clusterAdmin","db":"admin"}], "$db":"admin"}');
-ERROR:  Invalid username, use a different username.
+ERROR:  Username is reserved, use a different username.
 SELECT documentdb_api.create_user('{"createUser":"newBlock2_user", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}, {"role":"clusterAdmin","db":"admin"}], "$db":"admin"}');
-ERROR:  Invalid username, use a different username.
+ERROR:  Username is reserved, use a different username.
 RESET documentdb.blockedRolePrefixList;
 --Enable DB admin requirement feature flag
 SET documentdb.enableUsersAdminDBCheck TO ON;
@@ -166,7 +166,7 @@ SELECT documentdb_api.create_user('{"createUser":"test_user", "pwd":"Valid$123Pa
 ERROR:  The 'roles' attribute is required to be in an array format
 --Create a user with a blocked prefix
 SELECT documentdb_api.create_user('{"createUser":"documentdb_user2", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}, {"role":"clusterAdmin","db":"admin"}], "$db":"admin"}');
-ERROR:  Invalid username, use a different username.
+ERROR:  Username is reserved, use a different username.
 --Create an already existing user
 SELECT documentdb_api.create_user('{"createUser":"test_user2", "pwd":"test_password", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}, {"role":"clusterAdmin","db":"admin"}], "$db":"admin"}');
 ERROR:  role "test_user2" already exists
@@ -289,16 +289,16 @@ SELECT documentdb_api.users_info('{"usersInfo":"test_user5", "$db":"admin"}');
 
 --Drop a reserved user, should fail
 SELECT documentdb_api.drop_user('{"dropUser":"documentdb_user", "$db":"admin"}');
-ERROR:  Invalid username.
+ERROR:  The specified user does not exist.
 --Drop non-existent user
 SELECT documentdb_api.drop_user('{"dropUser":"nonexistent_user", "$db":"admin"}');
 ERROR:  role "nonexistent_user" does not exist
 --Drop a system user
 SELECT documentdb_api.drop_user('{"dropUser":"documentdb_bg_worker_role", "$db":"admin"}');
-ERROR:  Invalid username.
+ERROR:  The specified user does not exist.
 --Drop a built-in user
 SELECT documentdb_api.drop_user('{"dropUser":"documentdb_admin_role", "$db":"admin"}');
-ERROR:  Invalid username.
+ERROR:  The specified user does not exist.
 --Drop with disallowed parameter
 SELECT documentdb_api.drop_user('{"user":"test_user", "$db":"admin"}');
 ERROR:  The specified field 'user' is not supported.
@@ -611,3 +611,109 @@ SELECT documentdb_api.drop_user('{"dropUser":"adminUser", "$db":"admin"}');
 SET documentdb.maxUserLimit TO 500;
 -- Reset the feature flag for db admin requirement
 RESET documentdb.enableUsersAdminDBCheck;
+-- Unit test for IS_BUILTIN_ROLE, IS_CUSTOM_RBAC_ROLE, IS_SYSTEM_LOGIN_ROLE, and IS_NATIVE_BUILTIN_ROLE macros
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.test_is_reserved_role_name(text)
+RETURNS bool
+LANGUAGE C AS 'pg_documentdb', $$test_is_reserved_internal_role_name$$;
+-- IS_BUILTIN_ROLE: all builtin roles should be reserved
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_admin_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_cluster_admin_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_readonly_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_readwrite_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_root_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_user_admin_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+-- IS_CUSTOM_RBAC_ROLE: all custom RBAC roles should be reserved
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_api_find_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_api_insert_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_api_remove_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_api_update_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+-- IS_SYSTEM_LOGIN_ROLE: system login roles should be reserved
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_bg_worker_role');
+ test_is_reserved_role_name 
+----------------------------
+ t
+(1 row)
+
+-- Negative cases: normal usernames should NOT be reserved
+SELECT documentdb_test_helpers.test_is_reserved_role_name('normal_user');
+ test_is_reserved_role_name 
+----------------------------
+ f
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('admin');
+ test_is_reserved_role_name 
+----------------------------
+ f
+(1 row)
+
+SELECT documentdb_test_helpers.test_is_reserved_role_name('documentdb_some_other_thing');
+ test_is_reserved_role_name 
+----------------------------
+ f
+(1 row)
+
+-- dropUser with IS_BUILTIN_ROLE name
+SELECT documentdb_api.drop_user('{"dropUser":"documentdb_readonly_role", "$db":"admin"}');
+ERROR:  The specified user does not exist.
+-- updateUser with IS_BUILTIN_ROLE name
+SELECT documentdb_api.update_user('{"updateUser":"documentdb_readonly_role", "pwd":"New$123Pass", "$db":"admin"}');
+ERROR:  The specified user does not exist.
+-- usersInfo with a reserved name should still work (read-only, no blocking)
+SELECT documentdb_api.users_info('{"usersInfo":"documentdb_readonly_role", "$db":"admin"}');
+            users_info             
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+DROP FUNCTION documentdb_test_helpers.test_is_reserved_role_name(text);

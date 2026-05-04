@@ -58,6 +58,11 @@ RUN sudo groupmod -g 103 postgres && sudo usermod -u 105 -g 103 postgres
 RUN sudo apt-get update && \
     sudo apt-get install -y --no-install-recommends \
     jq openssl lsof libc6 python3-venv netcat-openbsd && \
+    arch="$(dpkg --print-architecture)" && \
+    sudo wget -q "https://downloads.mongodb.com/compass/mongodb-mongosh_2.5.6_${arch}.deb" \
+        -O "/tmp/mongodb-mongosh_2.5.6_${arch}.deb" && \
+    sudo dpkg -i "/tmp/mongodb-mongosh_2.5.6_${arch}.deb" && \
+    sudo rm "/tmp/mongodb-mongosh_2.5.6_${arch}.deb" && \
     sudo rm -rf /var/lib/apt/lists/*
 
 ENV LANGUAGE=en_US.UTF-8 \
@@ -76,6 +81,9 @@ ENV CERT_PATH="" \
     OWNER="documentdb" \
     PG_VERSION_USED="${POSTGRES_VERSION}" \
     ALLOW_EXTERNAL_CONNECTIONS="false" \
+    TLS_MODE="allowTLS" \
+    INIT_DATA="" \
+    INIT_DATA_PATH="/init_doc_db.d" \
     PATH=/usr/lib/postgresql/${POSTGRES_VERSION}/bin:$PATH
 
 RUN sudo mkdir /home/documentdb/gateway
@@ -91,13 +99,19 @@ COPY pg_documentdb_gw/SetupConfiguration.json /home/documentdb/gateway/pg_docume
 COPY scripts/start_oss_server.sh /home/documentdb/gateway/scripts/start_oss_server.sh
 COPY scripts/build_and_start_gateway.sh /home/documentdb/gateway/scripts/build_and_start_gateway.sh
 COPY documentdb-local/scripts/emulator_entrypoint.sh /home/documentdb/gateway/scripts/emulator_entrypoint.sh
+COPY documentdb-local/scripts/init_documentdb_data.sh /home/documentdb/gateway/scripts/init_documentdb_data.sh
 COPY scripts/utils.sh /home/documentdb/gateway/scripts/utils.sh
 COPY scripts/setup_psqlrc.sh /home/documentdb/gateway/scripts/setup_psqlrc.sh
+COPY documentdb-local/sample-data /home/documentdb/gateway/sample-data
 COPY packaging/test_packages/test_gateway.py /home/documentdb/gateway/scripts/test_gateway.py
 COPY packaging/test_packages/test-gateway-install-entrypoint.sh /home/documentdb/gateway/scripts/test-gateway-install-entrypoint.sh
 
+# Create default initialization directory for user-provided scripts
+RUN sudo mkdir -p /init_doc_db.d
+
 USER documentdb
 RUN sudo chown -R documentdb:documentdb /home/documentdb/gateway
+RUN sudo chmod +x /home/documentdb/gateway/scripts/init_documentdb_data.sh
 
 WORKDIR /home/documentdb/gateway/scripts
 ENTRYPOINT ["/bin/bash", "-c", "/home/documentdb/gateway/scripts/test-gateway-install-entrypoint.sh"]

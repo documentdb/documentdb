@@ -70,7 +70,6 @@ static bool IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOption
 
 extern Datum gin_bson_exclusion_pre_consistent(PG_FUNCTION_ARGS);
 extern uint32_t MaxWildcardIndexKeySize;
-extern bool EnableCollation;
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
 
 /*

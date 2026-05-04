@@ -162,8 +162,6 @@ PGDLLEXPORT char *DocumentDBApiInternalSchemaName = "documentdb_api_internal";
 
 PGDLLEXPORT char *ApiCatalogToCoreSchemaName = "documentdb_core";
 
-extern bool EnableRbacCompliantSchemas;
-
 typedef struct DocumentDBApiOidCacheData
 {
 	/* OID of the <bigint> OPERATOR(pg_catalog.=) <bigint> operator */

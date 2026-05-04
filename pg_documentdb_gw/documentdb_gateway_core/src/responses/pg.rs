@@ -701,12 +701,7 @@ impl<'a> PostgresErrorMappedResult<'a> {
 
 #[cfg(test)]
 mod tests {
-    use tokio_postgres::error::SqlState;
-
-    use crate::error::ErrorCode;
-    use crate::responses::CustomPostgresErrorMapper;
-
-    use super::{map_pg_error_helper, PostgresErrorMappedResult};
+    use super::*;
 
     #[derive(Debug)]
     struct TestMapper;
@@ -770,5 +765,176 @@ mod tests {
         );
         assert_eq!(result.error_code(), ErrorCode::OutOfDiskSpace);
         assert_eq!(result.error_message(), "disk full");
+    }
+
+    #[test]
+    fn test_map_with_unique_violation_in_transaction_returns_write_conflict() {
+        let result = map_pg_error_helper(
+            true,
+            false,
+            &SqlState::UNIQUE_VIOLATION,
+            "duplicate key value violates unique constraint",
+            "test-activity",
+            None,
+        );
+
+        assert_eq!(result.error_code(), ErrorCode::WriteConflict);
+        assert_eq!(result.error_message(), duplicate_key_violation_message());
+    }
+
+    #[test]
+    fn test_map_with_unique_violation_no_transaction_returns_duplicate_key() {
+        let result = map_pg_error_helper(
+            false,
+            false,
+            &SqlState::UNIQUE_VIOLATION,
+            "duplicate key value violates unique constraint",
+            "test-activity",
+            None,
+        );
+
+        assert_eq!(result.error_code(), ErrorCode::DuplicateKey);
+        assert_eq!(result.error_message(), duplicate_key_violation_message());
+    }
+
+    #[test]
+    fn test_map_with_query_canceled_in_transaction_returns_timeout_message() {
+        let result = map_pg_error_helper(
+            true,
+            false,
+            &SqlState::QUERY_CANCELED,
+            "canceling statement due to statement timeout",
+            "test-activity",
+            None,
+        );
+
+        assert_eq!(result.error_code(), ErrorCode::ExceededTimeLimit);
+        assert_eq!(
+            result.error_message(),
+            "The command being executed was terminated due to a command timeout. This may be due to concurrent transactions."
+        );
+    }
+
+    #[test]
+    fn test_map_with_query_canceled_no_transaction_suggests_max_time_ms() {
+        let result = map_pg_error_helper(
+            false,
+            false,
+            &SqlState::QUERY_CANCELED,
+            "canceling statement due to statement timeout",
+            "test-activity",
+            None,
+        );
+
+        assert_eq!(result.error_code(), ErrorCode::ExceededTimeLimit);
+        assert!(result
+            .error_message()
+            .contains("Consider increasing the maxTimeMS"));
+    }
+
+    #[test]
+    fn test_map_with_read_only_transaction_on_replica_returns_illegal_operation() {
+        let result = map_pg_error_helper(
+            false,
+            true,
+            &SqlState::READ_ONLY_SQL_TRANSACTION,
+            "cannot execute INSERT in a read-only transaction",
+            "test-activity",
+            None,
+        );
+
+        assert_eq!(result.error_code(), ErrorCode::IllegalOperation);
+        assert_eq!(
+            result.error_message(),
+            "Cannot execute the operation on this replica cluster"
+        );
+    }
+
+    #[test]
+    fn test_map_with_read_only_transaction_no_replica_returns_exceeded_time_limit() {
+        let result = map_pg_error_helper(
+            false,
+            false,
+            &SqlState::READ_ONLY_SQL_TRANSACTION,
+            "cannot execute INSERT in a read-only transaction",
+            "test-activity",
+            None,
+        );
+
+        assert_eq!(result.error_code(), ErrorCode::ExceededTimeLimit);
+        assert_eq!(
+            result.error_message(),
+            "Exceeded time limit while waiting for a new primary to be elected"
+        );
+    }
+
+    #[test]
+    fn test_map_with_program_limit_exceeded_memory_message_returns_exceeded_memory_limit() {
+        let result = map_pg_error_helper(
+            false,
+            false,
+            &SqlState::PROGRAM_LIMIT_EXCEEDED,
+            "memory required is 120 MB, maintenance_work_mem is 64 MB",
+            "test-activity",
+            None,
+        );
+
+        assert_eq!(result.error_code(), ErrorCode::ExceededMemoryLimit);
+        assert!(result
+            .error_message()
+            .contains("index creation requires resources too large"));
+    }
+
+    #[test]
+    fn test_map_with_numeric_out_of_range_halfvec_returns_bad_value() {
+        let result = map_pg_error_helper(
+            false,
+            false,
+            &SqlState::NUMERIC_VALUE_OUT_OF_RANGE,
+            "value is out of range for type halfvec",
+            "test-activity",
+            None,
+        );
+
+        assert_eq!(result.error_code(), ErrorCode::BadValue);
+        assert_eq!(
+            result.error_message(),
+            "Some values in the vector are out of range for half vector index"
+        );
+    }
+
+    #[test]
+    fn test_map_with_internal_error_tsquery_stack_returns_bad_value() {
+        let result = map_pg_error_helper(
+            false,
+            false,
+            &SqlState::INTERNAL_ERROR,
+            "tsquery stack too small",
+            "test-activity",
+            None,
+        );
+
+        assert_eq!(result.error_code(), ErrorCode::BadValue);
+        assert!(result
+            .error_message()
+            .contains("$text query is exceeding the maximum allowed depth"));
+    }
+
+    #[test]
+    fn test_map_with_cannot_connect_now_returns_shutdown_in_progress() {
+        let result = map_pg_error_helper(
+            false,
+            false,
+            &SqlState::CANNOT_CONNECT_NOW,
+            "the database system is shutting down",
+            "test-activity",
+            None,
+        );
+
+        assert_eq!(result.error_code(), ErrorCode::ShutdownInProgress);
+        assert_eq!(
+            result.error_message(),
+            "Request terminated due to shutdown on the server."
+        );
     }
 }

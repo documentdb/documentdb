@@ -52,7 +52,7 @@ pub async fn handle(
                 (RequestType::CommitTransaction, error)
                     if matches!(
                         error.kind(),
-                        ErrorKind::DocumentDBError(ErrorCode::TransactionCommitted, _, _, _)
+                        ErrorKind::DocumentDBError(ErrorCode::TransactionCommitted, _, _, _, _)
                     ) =>
                 {
                     Ok(())

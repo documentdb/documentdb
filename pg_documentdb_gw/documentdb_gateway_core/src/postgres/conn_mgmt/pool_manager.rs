@@ -17,9 +17,8 @@ use crate::{
     error::{DocumentDBError, Result},
     postgres::{
         conn_mgmt::{Connection, ConnectionPool, ConnectionPoolStatus, PgPoolSettings},
-        QueryCatalog,
+        PgDocument, QueryCatalog,
     },
-    startup,
     telemetry::event_id::EventId,
 };
 
@@ -32,6 +31,11 @@ pub const AUTHENTICATION_MAX_CONNECTIONS: usize = 5;
 const POSTGRES_POOL_CLEANUP_INTERVAL_SEC: u64 = 300;
 /// The threshold when a connection pool needs to be disposed
 const POSTGRES_POOL_DISPOSE_INTERVAL_SEC: u64 = 7200;
+
+async fn acquire_pooled_connection(pool: &ConnectionPool) -> Result<Connection> {
+    let pool_connection = pool.acquire_connection().await?;
+    Ok(Connection::new(pool_connection, false))
+}
 
 #[derive(Debug)]
 pub struct PoolManager {
@@ -67,19 +71,13 @@ impl PoolManager {
     /// # Errors
     /// Returns error if the operation fails.
     pub async fn system_requests_connection(&self) -> Result<Connection> {
-        Ok(Connection::new(
-            self.system_requests_pool.acquire_connection().await?,
-            false,
-        ))
+        acquire_pooled_connection(&self.system_requests_pool).await
     }
 
     /// # Errors
     /// Returns error if the operation fails.
     pub async fn authentication_connection(&self) -> Result<Connection> {
-        Ok(Connection::new(
-            self.system_auth_pool.acquire_connection().await?,
-            false,
-        ))
+        acquire_pooled_connection(&self.system_auth_pool).await
     }
 
     /// # Errors
@@ -98,7 +96,7 @@ impl PoolManager {
             &self.query_catalog,
             username,
             Some(password),
-            &format!("{}-UserData", self.setup_configuration.application_name()),
+            &format!("{}-Data", self.setup_configuration.application_name()),
             settings,
         )?);
 
@@ -140,7 +138,7 @@ impl PoolManager {
                     &self.query_catalog,
                     self.setup_configuration.postgres_data_user(),
                     self.setup_configuration.postgres_data_user_password(),
-                    &format!("{}-SharedData", self.setup_configuration.application_name()),
+                    &format!("{}-Data", self.setup_configuration.application_name()),
                     settings,
                 )?);
 
@@ -177,13 +175,13 @@ impl PoolManager {
             K: Eq + Hash,
         {
             for entry in map {
-                reports.push(entry.value().status());
+                reports.push(entry.value().report_status());
             }
         }
 
         let mut pool_stats = vec![
-            self.system_auth_pool.status(),
-            self.system_requests_pool.status(),
+            self.system_auth_pool.report_status(),
+            self.system_requests_pool.report_status(),
         ];
 
         report(&self.user_data_pools, &mut pool_stats);
@@ -220,75 +218,123 @@ pub fn clean_unused_pools(service_context: ServiceContext) {
     });
 }
 
-async fn get_system_connection_pool(
+fn get_system_connection_pool(
     setup_configuration: &dyn SetupConfiguration,
     query_catalog: &QueryCatalog,
     pool_name: &str,
     max_connections: usize,
-) -> ConnectionPool {
-    // Capture necessary values to avoid lifetime issues
+) -> Result<ConnectionPool> {
     let postgres_system_user = setup_configuration.postgres_system_user();
     let full_pool_name = format!("{}-{}", setup_configuration.application_name(), pool_name);
 
-    startup::create_postgres_object(
-        || async {
-            ConnectionPool::new_with_user(
-                setup_configuration,
-                query_catalog,
-                postgres_system_user,
-                None,
-                &full_pool_name,
-                PgPoolSettings::system_pool_settings(max_connections),
-            )
-        },
+    ConnectionPool::new_with_user(
         setup_configuration,
+        query_catalog,
+        postgres_system_user,
+        None,
+        &full_pool_name,
+        PgPoolSettings::system_pool_settings(max_connections),
     )
-    .await
 }
 
+async fn validate_startup_pool(
+    pool: &ConnectionPool,
+    validation_query: &str,
+    pool_name: &str,
+) -> Result<()> {
+    let connection = acquire_pooled_connection(pool).await?;
+    let rows = connection.query(validation_query, &[], &[]).await?;
+    let row = rows.first().ok_or(DocumentDBError::internal_error(format!(
+        "Startup validation query for {pool_name} returned no rows."
+    )))?;
+
+    let _: PgDocument<'_> = row.try_get(0).map_err(|error| {
+        DocumentDBError::internal_error(format!(
+            "Startup validation query for {pool_name} returned an unexpected BSON payload: \
+             {error}"
+        ))
+    })?;
+
+    Ok(())
+}
+
+fn startup_validation_query(query_catalog: &QueryCatalog) -> Result<&str> {
+    if !query_catalog.extension_versions().is_empty() {
+        return Ok(query_catalog.extension_versions());
+    }
+
+    if !query_catalog.startup_validation_probe().is_empty() {
+        return Ok(query_catalog.startup_validation_probe());
+    }
+
+    Err(DocumentDBError::internal_error(
+        "Startup validation requires an extension-backed probe query, but none was configured."
+            .to_owned(),
+    ))
+}
+
+async fn validate_startup_pools(
+    query_catalog: &QueryCatalog,
+    system_requests_pool: &ConnectionPool,
+    authentication_pool: &ConnectionPool,
+) -> Result<()> {
+    let validation_query = startup_validation_query(query_catalog)?;
+
+    validate_startup_pool(system_requests_pool, validation_query, "SystemRequests").await?;
+    validate_startup_pool(authentication_pool, validation_query, "PreAuthRequests").await
+}
+
+/// # Errors
+/// Returns an error if a required startup pool cannot be created, connected,
+/// or validated with an extension-backed startup validation query.
 pub async fn create_connection_pool_manager(
     query_catalog: QueryCatalog,
     setup_configuration: Box<dyn SetupConfiguration>,
-) -> Arc<PoolManager> {
+) -> Result<Arc<PoolManager>> {
     let system_requests_pool = get_system_connection_pool(
         setup_configuration.as_ref(),
         &query_catalog,
         "SystemRequests",
         SYSTEM_REQUESTS_MAX_CONNECTIONS,
-    )
-    .await;
+    )?;
 
-    tracing::info!("SystemRequests pool initialized.");
+    tracing::info!("SystemRequests pool configured.");
 
     let authentication_pool = get_system_connection_pool(
         setup_configuration.as_ref(),
         &query_catalog,
         "PreAuthRequests",
         AUTHENTICATION_MAX_CONNECTIONS,
-    )
-    .await;
+    )?;
 
-    tracing::info!("PreAuthRequests pool initialized.");
+    tracing::info!("PreAuthRequests pool configured.");
 
-    Arc::new(PoolManager::new(
+    validate_startup_pools(&query_catalog, &system_requests_pool, &authentication_pool).await?;
+
+    tracing::info!("SystemRequests and PreAuthRequests pools validated.");
+
+    Ok(Arc::new(PoolManager::new(
         query_catalog,
         setup_configuration,
         system_requests_pool,
         authentication_pool,
-    ))
+    )))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use bson::{rawbson, RawBson};
+    use tokio::{task::yield_now, time::sleep};
+
     use crate::{
         configuration::{CertInputType, CertificateOptions, DocumentDBSetupConfiguration},
         error::{ErrorCode, ErrorKind},
         postgres::create_query_catalog,
     };
-    use bson::{rawbson, RawBson};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use tokio::{task::yield_now, time::sleep};
 
     #[derive(Debug)]
     struct MaxConnectionConfig {
@@ -388,13 +434,12 @@ mod tests {
         }
     }
 
-    fn test_pool_manager() -> PoolManager {
+    fn test_pool_manager_with_setup(setup_config: &DocumentDBSetupConfiguration) -> PoolManager {
         let query_catalog = create_query_catalog();
-        let setup_config = setup_configuration();
         let postgres_system_user = setup_config.postgres_system_user();
 
         let system_requests_pool = ConnectionPool::new_with_user(
-            &setup_config,
+            setup_config,
             &query_catalog,
             postgres_system_user,
             None,
@@ -404,7 +449,7 @@ mod tests {
         .expect("Failed to create system requests pool");
 
         let authentication_pool = ConnectionPool::new_with_user(
-            &setup_config,
+            setup_config,
             &query_catalog,
             postgres_system_user,
             None,
@@ -419,6 +464,10 @@ mod tests {
             system_requests_pool,
             authentication_pool,
         )
+    }
+
+    fn test_pool_manager() -> PoolManager {
+        test_pool_manager_with_setup(&setup_configuration())
     }
 
     #[tokio::test]
@@ -568,7 +617,7 @@ mod tests {
 
         assert!(matches!(
             err.kind(),
-            ErrorKind::DocumentDBError(ErrorCode::InternalError, _, _, _)
+            ErrorKind::DocumentDBError(ErrorCode::InternalError, _, _, _, _)
         ));
     }
 
@@ -599,6 +648,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_data_pool_uses_data_application_name() {
+        yield_now().await;
+
+        let dynamic_configuration = MaxConnectionConfig {
+            max_conn: 100.into(),
+        };
+        let pool_manager = test_pool_manager();
+
+        pool_manager
+            .allocate_data_pool("user", "password", &dynamic_configuration)
+            .unwrap();
+
+        let user_pool = pool_manager
+            .get_data_pool("user", &dynamic_configuration)
+            .unwrap();
+        let identifier = user_pool.status().identifier().to_owned();
+
+        assert!(
+            identifier.contains("-Data-"),
+            "Expected data pool identifier to contain '-Data-', got '{identifier}'"
+        );
+        assert!(
+            !identifier.contains("UserData"),
+            "Data pool identifier should not contain the legacy UserData suffix: '{identifier}'"
+        );
+    }
+
+    #[test]
+    fn test_startup_validation_query_prefers_extension_versions() {
+        let query_catalog = QueryCatalog {
+            extension_versions: "SELECT version_probe".to_owned(),
+            startup_validation_probe: "SELECT bson_probe".to_owned(),
+            ..Default::default()
+        };
+
+        let query = startup_validation_query(&query_catalog)
+            .expect("Expected startup validation query to be selected");
+
+        assert_eq!("SELECT version_probe", query);
+    }
+
+    #[test]
+    fn test_startup_validation_query_uses_bson_probe_when_versions_missing() {
+        let query_catalog = QueryCatalog {
+            extension_versions: String::new(),
+            startup_validation_probe: "SELECT bson_probe".to_owned(),
+            ..Default::default()
+        };
+
+        let query = startup_validation_query(&query_catalog)
+            .expect("Expected BSON startup probe to be selected");
+
+        assert_eq!("SELECT bson_probe", query);
+    }
+
+    #[test]
+    fn test_startup_validation_query_errors_without_extension_probe() {
+        let query_catalog = QueryCatalog::default();
+
+        let error = startup_validation_query(&query_catalog)
+            .expect_err("Expected missing startup validation query to error");
+
+        assert!(matches!(
+            error.kind(),
+            ErrorKind::DocumentDBError(ErrorCode::InternalError, _, _, _, _)
+        ));
+    }
+
+    #[tokio::test]
     async fn test_clean_unused_pools_with_expired_pools_removes_user_and_shared() {
         // We still need an async context to create the connection pool (see ConnectionPool::new_with_user),
         // but the test itself doesn't need to be async since we are not awaiting anything after the pool creation,
@@ -624,5 +742,44 @@ mod tests {
 
         // only 2 system pools should remain since user and shared pools are expired
         assert_eq!(2, pool_manager.report_pool_stats().len());
+    }
+
+    #[tokio::test]
+    async fn test_report_pool_stats_flushes_interval_metrics_from_system_pools() {
+        yield_now().await;
+
+        let pool_manager = test_pool_manager();
+        let system_requests_identifier = pool_manager
+            .system_requests_pool
+            .status()
+            .identifier()
+            .to_owned();
+
+        pool_manager
+            .system_requests_pool
+            .record_connection_created(Duration::from_micros(13));
+        pool_manager
+            .system_requests_pool
+            .record_connection_timeout();
+
+        let reports = pool_manager.report_pool_stats();
+        let system_requests_report = reports
+            .iter()
+            .find(|report| report.identifier() == system_requests_identifier)
+            .expect("expected system requests pool report");
+
+        assert_eq!(system_requests_report.connections_created(), 1);
+        assert_eq!(system_requests_report.connection_create_time_us(), 13);
+        assert_eq!(system_requests_report.connection_timeouts(), 1);
+
+        let next_reports = pool_manager.report_pool_stats();
+        let next_system_requests_report = next_reports
+            .iter()
+            .find(|report| report.identifier() == system_requests_identifier)
+            .expect("expected system requests pool report after flush");
+
+        assert_eq!(next_system_requests_report.connections_created(), 0);
+        assert_eq!(next_system_requests_report.connection_create_time_us(), 0);
+        assert_eq!(next_system_requests_report.connection_timeouts(), 0);
     }
 }

@@ -149,6 +149,14 @@ command_drop_collection(PG_FUNCTION_ARGS)
 	ExtensionExecuteQueryViaSPI(deleteCommand->data, readOnly, SPI_OK_UTILITY, &isNull);
 
 	resetStringInfo(deleteCommand);
+
+	/*
+	 * TODO: We don't clean the retry table records today. with local retry tables
+	 * as well we don't attempt to clean these as soon as the collection is dropped
+	 * because concurrently there can be retry request still coming for the collection
+	 * which will be considered a new write and will create the collection again.
+	 * We need to implement TTL for orphaned retried rows for dropped collections.
+	 */
 	appendStringInfo(deleteCommand,
 					 "DROP TABLE IF EXISTS %s.retry_" INT64_FORMAT,
 					 ApiDataSchemaName, collection->collectionId);

@@ -707,6 +707,7 @@ impl FromStr for RequestType {
             _ => Err(DocumentDBError::documentdb_error(
                 ErrorCode::CommandNotFound,
                 format!("Command '{cmd_name}' not found."),
+                0,
             )),
         }
     }

@@ -3,6 +3,7 @@ SET documentdb.next_collection_id TO 500;
 SET documentdb.next_collection_index_id TO 500;
 set documentdb_rum.enable_new_bulk_delete to on;
 set documentdb_rum.enable_new_bulk_delete_inline_data_pages to on;
+set documentdb_rum.prune_rum_empty_pages to off;
 \i sql/rum_vacuum_cleanup_tests_core.sql
 SELECT name, setting, reset_val, boot_val FROM pg_settings WHERE name in ('documentdb_rum.track_incomplete_split', 'documentdb_rum.fix_incomplete_split');
                  name                  | setting | reset_val | boot_val 

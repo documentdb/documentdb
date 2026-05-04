@@ -11,7 +11,6 @@ use tokio_postgres::IsolationLevel;
 
 use crate::context::transaction::TransactionNumber;
 use crate::{
-    configuration::DynamicConfiguration,
     context::{CursorStore, SessionId},
     error::{DocumentDBError, ErrorCode, Result},
     postgres::{self, conn_mgmt::Connection},
@@ -39,7 +38,6 @@ impl GatewayTransaction {
     ///
     /// Returns an error if the operation fails.
     pub async fn start(
-        config: Arc<dyn DynamicConfiguration>,
         request: &RequestTransactionInfo,
         conn: Arc<Connection>,
         isolation_level: IsolationLevel,
@@ -49,7 +47,7 @@ impl GatewayTransaction {
             session_id,
             transaction_number: request.transaction_number,
             pg_transaction: Some(postgres::Transaction::start(conn, isolation_level).await?),
-            cursors: CursorStore::new(config, false),
+            cursors: CursorStore::new(),
         })
     }
 
@@ -75,6 +73,7 @@ impl GatewayTransaction {
                 DocumentDBError::documentdb_error(
                     ErrorCode::NoSuchTransaction,
                     "No transaction found to commit".to_owned(),
+                    0,
                 )
             })?
             .commit()
@@ -91,6 +90,7 @@ impl GatewayTransaction {
                 DocumentDBError::documentdb_error(
                     ErrorCode::NoSuchTransaction,
                     "No transaction found to abort".to_owned(),
+                    0,
                 )
             })?
             .abort()

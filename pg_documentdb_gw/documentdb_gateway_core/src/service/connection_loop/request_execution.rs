@@ -130,6 +130,7 @@ where
             header,
             Some(request_context.payload),
             Left(&response),
+            None,
             collection,
             request_context.tracker,
             request_context.activity_id,
@@ -321,7 +322,7 @@ mod tests {
         let (response_header, response_document) = decode_op_msg_response(&response_bytes);
         assert_header_matches(
             &response_header,
-            response_header.length,
+            response_header.message_length(),
             71,
             71,
             OpCode::Msg,

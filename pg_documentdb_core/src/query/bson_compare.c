@@ -1467,26 +1467,32 @@ CompareStrings(const char *left, uint32_t leftLength, const char *right, uint32_
 		return leftLength - rightLength;
 	}
 
-	int32_t cmp;
-
 	/* simple collation also uses binary comparison */
 	if (!IsCollationValid(collationString) ||
 		IsSimpleCollation(collationString))
 	{
-		cmp = memcmp(left, right, minLength);
-	}
-	else
-	{
-		cmp = StringCompareWithCollation(left, leftLength, right, rightLength,
-										 collationString);
+		int32_t cmp = memcmp(left, right, minLength);
+		if (cmp != 0)
+		{
+			return cmp;
+		}
+
+		/*
+		 * memcmp only inspects the first minLength bytes; if those are equal,
+		 * the longer string sorts after the shorter one (e.g. "cafe" < "cafes").
+		 */
+		return leftLength - rightLength;
 	}
 
-	if (cmp != 0)
-	{
-		return cmp;
-	}
-
-	return leftLength - rightLength;
+	/*
+	 * ucol_strcollUTF8 already takes the full strings into account and applies
+	 * the configured collation strength, so its result is final. Applying a
+	 * byte-length tiebreaker here would incorrectly report collation-equal
+	 * strings of different byte lengths (e.g. "cafe" vs "café" at strength 1)
+	 * as unequal.
+	 */
+	return StringCompareWithCollation(left, leftLength, right, rightLength,
+									  collationString);
 }
 
 

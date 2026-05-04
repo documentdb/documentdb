@@ -209,6 +209,7 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_AGGREGATE_GROUP_CONCAT_ARRAYS] = "group_concat_arrays",
 	[FEATURE_AGGREGATE_GROUP_COUNT] = "group_count",
 	[FEATURE_AGGREGATE_GROUP_COUNT_WITH_ARG] = "group_count_with_arg",
+	[FEATURE_AGGREGATE_GROUP_DECOMPOSED_GROUP_BY] = "group_decomposed_group_by",
 	[FEATURE_AGGREGATE_GROUP_FIRST] = "group_first",
 	[FEATURE_AGGREGATE_GROUP_FIRST_N] = "group_first_n",
 	[FEATURE_AGGREGATE_GROUP_LAST] = "group_last",
@@ -364,6 +365,7 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 
 	[FEATURE_INDEX_AM_PREREGISTERED] = "index_am_preregistered",
 	[FEATURE_INDEX_HINT] = "index_hint",
+	[FEATURE_INDEX_DOTTED_FIELD_NAME_SKIPPED] = "index_dotted_field_name_skipped",
 
 	/* Feature counter region - Top-level let support */
 	[FEATURE_LET_TOP_LEVEL] = "let_top_level",

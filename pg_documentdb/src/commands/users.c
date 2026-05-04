@@ -39,9 +39,6 @@ extern int ScramDefaultSaltLen;
 /* GUC that controls the max number of users allowed*/
 extern int MaxUserLimit;
 
-/* GUC that controls the blocked role prefix list*/
-extern char *BlockedRolePrefixList;
-
 /* GUC that controls whether we use username/password validation*/
 extern bool EnableUsernamePasswordConstraints;
 
@@ -330,7 +327,15 @@ ParseCreateUserSpec(pgbson *createSpec, CreateUserSpec *spec)
 			}
 
 			if (ContainsReservedPgRoleNamePrefix(spec->createUser) ||
-				(EnableUsernamePasswordConstraints && !IsUsernameValid(spec->createUser)))
+				IsReservedInternalRoleName(spec->createUser))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"Username is reserved, use a different username.")));
+			}
+
+			if (EnableUsernamePasswordConstraints &&
+				!IsUsernameValid(spec->createUser))
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg("Invalid username, use a different username.")));
@@ -617,10 +622,10 @@ ParseDropUserSpec(pgbson *dropSpec)
 			}
 
 			if (ContainsReservedPgRoleNamePrefix(dropUser) ||
-				IS_SYSTEM_LOGIN_ROLE(dropUser))
+				IsReservedInternalRoleName(dropUser))
 			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-								errmsg("Invalid username.")));
+				ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+								errmsg("The specified user does not exist.")));
 			}
 		}
 		else if (strcmp(key, "$db") == 0 && EnableUsersAdminDBCheck)
@@ -790,6 +795,13 @@ ParseUpdateUserSpec(pgbson *updateSpec, UpdateUserSpec *spec)
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg(
 									"'updateUser' is a required field.")));
+			}
+
+			if (ContainsReservedPgRoleNamePrefix(spec->updateUser) ||
+				IsReservedInternalRoleName(spec->updateUser))
+			{
+				ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+								errmsg("The specified user does not exist.")));
 			}
 
 			userFound = true;

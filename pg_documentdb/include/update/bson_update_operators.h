@@ -26,14 +26,17 @@ typedef enum ModifyType
 	 */
 	MODIFY_TYPE_NOCHANGE = 0,
 
-	/* No change to the original value, but we rewrite the original value
-	 * in the new document. This is still tracked as no change.
-	 * e.g. $addToSet,
+	/* No change from the update spec, but the operator itself wrote the
+	 * original value into the new document. Caller must not write it again.
+	 * This is still tracked as no change.
 	 *
-	 * Only difference with this and the `NOCHANGE` is that in this case we
+	 * e.g. $addToSet {arr: 1} on {arr: [1, 2]} -> no change, operator writes [1, 2].
+	 * e.g. $pullAll {arr: [3]} on {arr: [1, 2]} -> no change, operator writes [1, 2].
+	 *
+	 * Only difference with this and `NOCHANGE` is that in this case we
 	 * don't attempt to write the original value again which is known to be added.
 	 */
-	MODIFY_TYPE_ORIGINAL_REWRITE,
+	MODIFY_TYPE_OPERATOR_WRITTEN,
 
 	/* Update has resulted in a change and this change is written to the new document.
 	 */

@@ -7,5 +7,6 @@
  */
 
 pub mod commands;
+pub mod rbac_utils;
 pub(crate) mod rbac_validator;
 pub(crate) mod users;

@@ -117,9 +117,6 @@ typedef struct OutArgs
 } OutArgs;
 
 
-/* GUC to enable $out aggregation stage */
-extern bool EnableCollation;
-
 /* GUC to enable schema validation */
 extern bool EnableSchemaValidation;
 

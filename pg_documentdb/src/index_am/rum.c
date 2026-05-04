@@ -44,8 +44,6 @@
 #include "query/bson_dollar_selectivity.h"
 
 extern bool ForceUseIndexIfAvailable;
-extern bool EnableIndexOnlyScan;
-extern bool EnableIndexOnlyScanOnCostFunction;
 extern bool DisableExtendedRumExplainPlans;
 extern bool EnableOrderedCostEstimator;
 extern bool EnableExtendedExplainPlans;
@@ -1079,6 +1077,14 @@ extension_rumendscan_core(IndexScanDesc scan, IndexAmRoutine *coreRoutine)
 	{
 		DocumentDBRumIndexState *outerScanState =
 			(DocumentDBRumIndexState *) scan->opaque;
+
+		if (outerScanState->indexArrayState != NULL && IndexArrayStateFuncs != NULL)
+		{
+			/* free the state */
+			IndexArrayStateFuncs->freeState(outerScanState->indexArrayState);
+			outerScanState->indexArrayState = NULL;
+		}
+
 		if (outerScanState->innerScan)
 		{
 			coreRoutine->amendscan(outerScanState->innerScan);

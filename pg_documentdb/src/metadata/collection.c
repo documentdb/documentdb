@@ -118,6 +118,7 @@ PG_FUNCTION_INFO_V1(command_ensure_valid_db_coll);
 PG_FUNCTION_INFO_V1(validate_dbname);
 PG_FUNCTION_INFO_V1(command_get_collection);
 PG_FUNCTION_INFO_V1(command_get_collection_or_view);
+PG_FUNCTION_INFO_V1(validate_collection_cache_entry);
 
 /* forward declarations */
 static void InitializeCollectionsHash(void);
@@ -1164,6 +1165,18 @@ GetMongoCollectionFromCatalogByNameDatum(Datum databaseNameDatum,
 			}
 		}
 
+		/* 10 is collection options */
+		if (tupleDescriptor->natts >= 10)
+		{
+			/* options stored as pgbson */
+			Datum optionsDatum = heap_getattr(tuple, 10, tupleDescriptor, &isNull);
+			if (!isNull)
+			{
+				pgbson *options = DatumGetPgBson(optionsDatum);
+				CopyCollectionOptions(options, collection);
+			}
+		}
+
 		collectionExists = true;
 	}
 
@@ -1404,6 +1417,37 @@ command_get_collection_or_view(PG_FUNCTION_ARGS)
 	bool allowViews = true;
 	Datum returnedDatum = GetCollectionOrViewCore(fcinfo, allowViews);
 	PG_RETURN_DATUM(returnedDatum);
+}
+
+
+/*
+ * validate_collection_cache_entry is a C function used in regression tests to validate
+ * that the collection cache is properly populated. It retrieves the same collection
+ * metadata from the cache by both name and id and compares the results to ensure they match.
+ * There are two ways to get collections today one is by name and the other is by id, if any new access method is
+ * added it should be added to the function as well, so that we can ensure that all the access methods are properly populating the cache.
+ */
+Datum
+validate_collection_cache_entry(PG_FUNCTION_ARGS)
+{
+	Datum databaseNameDatum = PG_GETARG_DATUM(0);
+	Datum collectionNameDatum = PG_GETARG_DATUM(1);
+
+	MongoCollection *collectionByName = GetMongoCollectionByNameDatum(databaseNameDatum,
+																	  collectionNameDatum,
+																	  AccessShareLock);
+
+	/* Invalidate collection cache, to fetch a new entry by id */
+	InvalidateCollectionsCache();
+
+	MongoCollection *collectionById = GetMongoCollectionByColId(
+		collectionByName->collectionId,
+		AccessShareLock);
+
+	int comparisonResult = memcmp(collectionByName, collectionById,
+								  sizeof(MongoCollection));
+
+	PG_RETURN_BOOL(comparisonResult == 0);
 }
 
 
@@ -2228,7 +2272,7 @@ UpdateCollectionOptions(MongoCollection *collection, const pgbson *updateSpec)
 					 ApiCatalogSchemaName, CoreSchemaName,
 					 CoreSchemaName,
 					 ApiCatalogSchemaName, collection->collectionId,
-					 ApiCatalogSchemaName, ApiCatalogSchemaName,
+					 ApiCatalogSchemaName, CoreSchemaName,
 					 CoreSchemaName, collection->collectionId);
 
 	ExtensionExecuteQueryWithArgsViaSPI(updateOptionQuery->data, numArgs,
@@ -2278,7 +2322,7 @@ RemoveCollectionOptions(MongoCollection *collection, const pgbson *removeArraySp
 					 ApiCatalogSchemaName, CoreSchemaName,
 					 CoreSchemaName,
 					 ApiCatalogSchemaName, collection->collectionId,
-					 ApiCatalogSchemaName, ApiCatalogSchemaName,
+					 ApiCatalogSchemaName, CoreSchemaName,
 					 CoreSchemaName, collection->collectionId);
 
 	ExtensionExecuteQueryWithArgsViaSPI(updateOptionQuery->data, numArgs,
@@ -2289,6 +2333,8 @@ RemoveCollectionOptions(MongoCollection *collection, const pgbson *removeArraySp
 
 /*
  * Copies all the required options from collection to in memory MongoCollection struct.
+ *
+ * See also sql/collection_cache_validity_test.sql to add options for cache validation
  */
 static void
 CopyCollectionOptions(const pgbson *options, MongoCollection *collection)

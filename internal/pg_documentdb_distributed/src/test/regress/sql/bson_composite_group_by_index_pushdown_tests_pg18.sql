@@ -1,1 +1,0 @@
-\i sql/bson_composite_group_by_index_pushdown_tests.sql

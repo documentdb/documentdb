@@ -126,18 +126,15 @@ static void ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, 
 											RangeTblEntry *rte, uint64 collectionId, bool
 											isShardQuery);
 
-extern bool EnableCollation;
 extern bool ForceDisableSeqScan;
 extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableLogRelationIndexesOrder;
-extern bool ForceBitmapScanForLookup;
 extern bool EnableIndexOnlyScan;
 extern bool EnableCursorsOnAggregationQueryRewrite;
 extern bool EnableIdIndexCustomCostFunction;
 extern bool EnableCompositeParallelIndexScan;
 extern bool ForceParallelScanIfAvailable;
-extern bool EnablePrimaryKeyCursorScan;
 extern bool EnableCursorPlanBeforeRestrictionPathUpdate;
 
 planner_hook_type ExtensionPreviousPlannerHook = NULL;

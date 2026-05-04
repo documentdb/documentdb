@@ -29,26 +29,8 @@
 
 #define SCRAM_MAX_SALT_LEN 64
 
-/* GUC to enable user crud operations */
-extern bool EnableUserCrud;
-
-/* GUC that controls the default salt length*/
-extern int ScramDefaultSaltLen;
-
-/* GUC that controls the max number of users allowed*/
-extern int MaxUserLimit;
-
 /* GUC that controls the blocked role prefix list*/
 extern char *BlockedRolePrefixList;
-
-/* GUC that controls whether we use username/password validation*/
-extern bool EnableUsernamePasswordConstraints;
-
-/* GUC that controls whether the usersInfo command returns privileges*/
-extern bool EnableUsersInfoPrivileges;
-
-/* GUC that controls whether native authentication is enabled*/
-extern bool IsNativeAuthEnabled;
 
 static void WriteSinglePrivilegeDocument(const ConsolidatedPrivilege *privilege,
 										 pgbson_array_writer *privilegesArrayWriter);
@@ -743,4 +725,36 @@ ConvertUserOrRoleNamesDatumToList(Datum *nameDatums, int namesCount)
 	}
 
 	return namesList;
+}
+
+
+/*
+ * Checks if the given name matches a reserved internal role name
+ * (system login role, builtin role, or custom RBAC role).
+ * Returns true if the name is reserved and should be rejected.
+ */
+bool
+IsReservedInternalRoleName(const char *name)
+{
+	return IS_SYSTEM_LOGIN_ROLE(name) ||
+		   IS_BUILTIN_ROLE(name) ||
+		   IS_CUSTOM_RBAC_ROLE(name);
+}
+
+
+/*
+ * Test-only SQL-callable function that exposes reserved-role detection
+ * for a given role name. Used by regression tests to verify reserved-role
+ * detection without going through the full createUser / dropUser path.
+ */
+PG_FUNCTION_INFO_V1(test_is_reserved_internal_role_name);
+Datum
+test_is_reserved_internal_role_name(PG_FUNCTION_ARGS)
+{
+	text *roleText = PG_GETARG_TEXT_P(0);
+	const char *roleName = text_to_cstring(roleText);
+
+	bool result = IsReservedInternalRoleName(roleName);
+
+	PG_RETURN_BOOL(result);
 }

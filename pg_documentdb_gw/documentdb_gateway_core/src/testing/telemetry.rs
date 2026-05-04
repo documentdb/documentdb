@@ -14,6 +14,7 @@ use either::Either;
 
 use crate::{
     context::ConnectionContext,
+    error::DocumentDBError,
     protocol::header::Header,
     requests::{request_tracker::RequestTracker, Request, RequestType},
     responses::{CommandError, Response},
@@ -28,6 +29,7 @@ pub struct RecordedTelemetryEvent {
     request_type: Option<RequestType>,
     is_error: bool,
     error_code_name: Option<String>,
+    sub_status_code: i32,
 }
 
 impl RecordedTelemetryEvent {
@@ -54,6 +56,10 @@ impl RecordedTelemetryEvent {
     pub fn error_code_name(&self) -> Option<&str> {
         self.error_code_name.as_deref()
     }
+
+    pub fn sub_status_code(&self) -> i32 {
+        self.sub_status_code
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -77,14 +83,18 @@ impl TelemetryProvider for RecordingTelemetryProvider {
         _: &Header,
         request: Option<&Request<'_>>,
         response: Either<&Response, (&CommandError, usize)>,
+        error: Option<&DocumentDBError>,
         collection: String,
         _: &RequestTracker,
         activity_id: &str,
         user_agent: &str,
     ) {
+        let sub_status_code = error
+            .and_then(DocumentDBError::sub_status_code)
+            .unwrap_or(0);
         let (is_error, error_code_name) = match response {
             Either::Left(_) => (false, None),
-            Either::Right((error, _)) => (true, Some(error.code().to_string())),
+            Either::Right((command_error, _)) => (true, Some(command_error.code().to_string())),
         };
 
         self.events
@@ -97,6 +107,7 @@ impl TelemetryProvider for RecordingTelemetryProvider {
                 request_type: request.map(Request::request_type),
                 is_error,
                 error_code_name,
+                sub_status_code,
             });
     }
 }

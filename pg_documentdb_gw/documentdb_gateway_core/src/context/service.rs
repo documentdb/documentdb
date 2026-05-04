@@ -10,7 +10,7 @@ use std::{sync::Arc, time::Duration};
 
 use crate::{
     configuration::{DynamicConfiguration, SetupConfiguration},
-    context::{CursorStore, TransactionStore},
+    context::{CursorStore, SessionManager, TransactionStore},
     postgres::{conn_mgmt::PoolManager, QueryCatalog},
     responses::CustomPostgresErrorMapper,
     service::TlsProvider,
@@ -22,11 +22,10 @@ pub struct ServiceContextInner {
     pub setup_configuration: Box<dyn SetupConfiguration>,
     pub dynamic_configuration: Arc<dyn DynamicConfiguration>,
     pub connection_pool_manager: Arc<PoolManager>,
-    pub cursor_store: CursorStore,
-    pub transaction_store: TransactionStore,
     pub tls_provider: TlsProvider,
     pub custom_pg_error_mapper: Option<Box<dyn CustomPostgresErrorMapper>>,
     pub request_metrics_enabled: bool,
+    session_manager: SessionManager,
 }
 
 #[derive(Debug, Clone)]
@@ -45,24 +44,30 @@ impl ServiceContext {
             .metrics()
             .metrics_enabled();
         let timeout_secs = setup_configuration.transaction_timeout_secs();
-        let cursor_store = CursorStore::new(Arc::clone(&dynamic_configuration), true);
+        let cursor_store = CursorStore::with_reaper(Arc::clone(&dynamic_configuration), true);
+        let transaction_store = TransactionStore::new(Duration::from_secs(timeout_secs));
+        let session_manager = SessionManager::new(transaction_store, cursor_store);
 
         let inner = ServiceContextInner {
             setup_configuration,
             dynamic_configuration,
             connection_pool_manager,
-            cursor_store,
-            transaction_store: TransactionStore::new(Duration::from_secs(timeout_secs)),
             tls_provider,
             custom_pg_error_mapper,
             request_metrics_enabled,
+            session_manager,
         };
         Self(Arc::new(inner))
     }
 
     #[must_use]
     pub fn cursor_store(&self) -> &CursorStore {
-        &self.0.cursor_store
+        self.0.session_manager.cursors()
+    }
+
+    #[must_use]
+    pub fn transaction_store(&self) -> &TransactionStore {
+        self.0.session_manager.transactions()
     }
 
     #[must_use]
@@ -73,11 +78,6 @@ impl ServiceContext {
     #[must_use]
     pub fn dynamic_configuration(&self) -> Arc<dyn DynamicConfiguration> {
         Arc::clone(&self.0.dynamic_configuration)
-    }
-
-    #[must_use]
-    pub fn transaction_store(&self) -> &TransactionStore {
-        &self.0.transaction_store
     }
 
     #[must_use]

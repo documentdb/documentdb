@@ -1361,10 +1361,11 @@ SET documentdb.max_non_ordered_term_scan_threshold TO 1;
 SET enable_seqscan TO OFF;
 
 -- I1: Accented characters — "café" vs "cafe"
--- Key finding: In ICU collation, the accent on "é" makes "café" a different
--- primary character from "cafe" — they are NOT equal even at strength-1.
--- "cafe" = "CAFE" (case only) at strength-1, but "café" ≠ "cafe" at any strength.
--- Ordering: cafe/CAFE < café/Café < caff (accent sorts after non-accent).
+-- ICU primary level (strength-1) treats accents and case as equal, so
+-- "cafe" = "café" = "CAFE" = "Café". Strength-2 keeps accents distinct
+-- but ignores case. Strength-3 keeps both.
+-- Ordering: at strength-1 all four cafe-variants tie; strength-2 puts
+-- cafe/CAFE before café/Café before caff.
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 1, "a": "cafe"}', NULL);
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 2, "a": "café"}', NULL);
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 3, "a": "caff"}', NULL);
@@ -1375,7 +1376,7 @@ SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 8, "a": "Café"}', NULL);
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_accent_coll', '{"_id": 9, "a": "CAFE"}', NULL);
 
--- Strength-1 index (case-insensitive; cafe/café remain distinct)
+-- Strength-1 index (case + accent insensitive — all cafe-variants collapse)
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
   'ord_coll_ordered_db',
   '{
@@ -1403,9 +1404,9 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   TRUE
 );
 
--- I1a: $ne "cafe" at strength-1 — excludes "cafe"(1) and "CAFE"(9) (case-only equiv)
--- "café"(2) and "Café"(8) are NOT excluded — accent makes them different at all strengths.
--- Should return: café(2), caff(3), apple(4), banana(5), date(6), elderberry(7), Café(8) = 7 docs
+-- I1a: $ne "cafe" at strength-1 — excludes all four cafe-variants (1, 2, 8, 9)
+-- because at primary level "cafe" = "café" = "CAFE" = "Café".
+-- Should return: caff(3), apple(4), banana(5), date(6), elderberry(7) = 5 docs
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$ne": "cafe" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$ne": "cafe" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
@@ -1419,9 +1420,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 $cmd$);
 
 -- I1c: $not $gt "cafe" at strength-1 — a ≤ "cafe"
--- Since "café" > "cafe" even at strength-1, only cafe(1), CAFE(9) are ≤ "cafe", plus apple, banana.
--- Should return: cafe(1), apple(4), banana(5), CAFE(9) = 4 docs
--- Excluded: café(2), caff(3), date(6), elderberry(7), Café(8)
+-- All four cafe-variants are equal to "cafe" at primary level, so they are
+-- all ≤ "cafe"; "caff" is greater so it is excluded.
+-- Should return: cafe(1), café(2), apple(4), banana(5), Café(8), CAFE(9) = 6 docs
+-- Excluded: caff(3), date(6), elderberry(7)
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$not": { "$gt": "cafe" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 
 -- I1d: $not $gt "cafe" at strength-2 — a ≤ "cafe" at strength-2

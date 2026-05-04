@@ -27,6 +27,7 @@ pub enum ErrorKind {
         ErrorCode,
         String, // Error message shown to user. This should not be logged as it may contain PII.
         Option<String>, // Error message for logging, must be PII free.
+        i32,    // Optional numeric sub-status code for telemetry and response payloads.
         Backtrace,
     ),
     PostgresError(tokio_postgres::Error, Backtrace),
@@ -77,6 +78,7 @@ impl DocumentDBError {
             ErrorCode::Unauthorized,
             msg.clone(),
             msg.into(),
+            0,
             Backtrace::capture(),
         ))
     }
@@ -87,16 +89,18 @@ impl DocumentDBError {
             ErrorCode::AuthenticationFailed,
             msg.clone(),
             msg.into(),
+            0,
             Backtrace::capture(),
         ))
     }
 
     #[must_use]
-    pub fn authentication_failed_with_custom_log(msg: String, message_log: &str) -> Self {
+    pub fn authentication_failed_internal_error(msg: String, message_log: &str) -> Self {
         Self::new(ErrorKind::DocumentDBError(
             ErrorCode::AuthenticationFailed,
             msg,
             Some(message_log.to_owned()),
+            -11,
             Backtrace::capture(),
         ))
     }
@@ -107,6 +111,7 @@ impl DocumentDBError {
             ErrorCode::BadValue,
             msg.clone(),
             msg.into(),
+            0,
             Backtrace::capture(),
         ))
     }
@@ -117,6 +122,7 @@ impl DocumentDBError {
             ErrorCode::InternalError,
             generic_internal_error_message().to_owned(),
             message_log.into(),
+            -11,
             Backtrace::capture(),
         ))
     }
@@ -127,6 +133,7 @@ impl DocumentDBError {
             ErrorCode::TypeMismatch,
             msg.clone(),
             msg.into(),
+            0,
             Backtrace::capture(),
         ))
     }
@@ -137,6 +144,7 @@ impl DocumentDBError {
             ErrorCode::UserNotFound,
             msg.clone(),
             msg.into(),
+            0,
             Backtrace::capture(),
         ))
     }
@@ -147,6 +155,7 @@ impl DocumentDBError {
             ErrorCode::RoleNotFound,
             msg.clone(),
             msg.into(),
+            0,
             Backtrace::capture(),
         ))
     }
@@ -157,6 +166,7 @@ impl DocumentDBError {
             ErrorCode::Location51003,
             msg.clone(),
             msg.into(),
+            0,
             Backtrace::capture(),
         ))
     }
@@ -167,6 +177,7 @@ impl DocumentDBError {
             ErrorCode::Location51002,
             msg.clone(),
             msg.into(),
+            0,
             Backtrace::capture(),
         ))
     }
@@ -177,6 +188,7 @@ impl DocumentDBError {
             ErrorCode::ReauthenticationRequired,
             msg.clone(),
             msg.into(),
+            0,
             Backtrace::capture(),
         ))
     }
@@ -186,11 +198,16 @@ impl DocumentDBError {
         reason = "need to refactor as a separate change"
     )]
     #[must_use]
-    pub fn documentdb_error(error_code: ErrorCode, error_message: String) -> Self {
+    pub fn documentdb_error(
+        error_code: ErrorCode,
+        error_message: String,
+        sub_status_code: i32,
+    ) -> Self {
         Self::new(ErrorKind::DocumentDBError(
             error_code,
             error_message.clone(),
             error_message.into(),
+            sub_status_code,
             Backtrace::capture(),
         ))
     }
@@ -205,6 +222,7 @@ impl DocumentDBError {
             code,
             message.to_owned(),
             Some(error_message_loggable.to_owned()),
+            0,
             Backtrace::capture(),
         ))
     }
@@ -212,7 +230,15 @@ impl DocumentDBError {
     #[must_use]
     pub const fn error_code_enum(&self) -> Option<ErrorCode> {
         match self.kind() {
-            ErrorKind::DocumentDBError(code, _, _, _) => Some(*code),
+            ErrorKind::DocumentDBError(code, _, _, _, _) => Some(*code),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn sub_status_code(&self) -> Option<i32> {
+        match self.kind() {
+            ErrorKind::DocumentDBError(_, _, _, sub_status_code, _) => Some(*sub_status_code),
             _ => None,
         }
     }
@@ -223,6 +249,7 @@ impl DocumentDBError {
             ErrorCode::CommandNotSupported,
             msg.clone(),
             msg.into(),
+            0,
             Backtrace::capture(),
         ))
     }
@@ -319,7 +346,7 @@ fn fmt_error_kind_pii_safe(
         ErrorKind::IoError(e, _) => {
             write!(f, "I/O error while processing request: {e}")
         }
-        ErrorKind::DocumentDBError(code, _, error_message_loggable, _) => {
+        ErrorKind::DocumentDBError(code, _, error_message_loggable, _, _) => {
             let msg = error_message_loggable.as_deref().unwrap_or("None");
             write!(
                 f,
