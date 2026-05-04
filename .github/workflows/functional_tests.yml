@@ -154,6 +154,7 @@ jobs:
         run: |
           CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${{ env.DOCUMENTDB_PASSWORD }}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
           mkdir -p .test-results/functional-tests
+          chmod 777 .test-results/functional-tests
 
           docker run --rm --network host \
             -v "$(pwd)/test-config/functional-tests/allowlist.yml:/allowlist.yml:ro" \
@@ -255,6 +256,7 @@ jobs:
         run: |
           CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${{ env.DOCUMENTDB_PASSWORD }}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
           mkdir -p .test-results/functional-tests-daily
+          chmod 777 .test-results/functional-tests-daily
 
           docker run --rm --network host \
             -v "$(pwd)/.test-results/functional-tests-daily:/results" \
