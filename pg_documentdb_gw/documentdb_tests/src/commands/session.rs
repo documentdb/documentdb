@@ -147,7 +147,7 @@ pub async fn validate_session_termination(
                         cmd_err.code
                     );
                     assert!(
-                        cmd_err.message.contains("Provided cursor was not found."),
+                        cmd_err.message.contains("Cursor not found in server"),
                         "Error message should indicate cursor not found, got: {}",
                         cmd_err.message
                     );

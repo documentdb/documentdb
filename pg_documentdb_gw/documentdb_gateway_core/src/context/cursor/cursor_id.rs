@@ -8,8 +8,49 @@
 
 use std::fmt;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+use crate::context::{SessionId, StoreKey, TransactionNumber};
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CursorId(i64);
+
+pub type CursorKey = StoreKey<CursorId>;
+
+#[derive(Debug)]
+pub struct CursorRef {
+    cursor_id: CursorId,
+    session_id: Option<SessionId>,
+    transaction_number: Option<TransactionNumber>,
+}
+
+impl CursorRef {
+    #[must_use]
+    pub const fn new(
+        cursor_id: CursorId,
+        session_id: Option<SessionId>,
+        transaction_number: Option<TransactionNumber>,
+    ) -> Self {
+        Self {
+            cursor_id,
+            session_id,
+            transaction_number,
+        }
+    }
+
+    #[must_use]
+    pub const fn cursor_id(&self) -> &CursorId {
+        &self.cursor_id
+    }
+
+    #[must_use]
+    pub const fn session_id(&self) -> Option<&SessionId> {
+        self.session_id.as_ref()
+    }
+
+    #[must_use]
+    pub const fn transaction_number(&self) -> Option<&TransactionNumber> {
+        self.transaction_number.as_ref()
+    }
+}
 
 impl CursorId {
     #[must_use]
@@ -32,6 +73,12 @@ impl From<&i64> for CursorId {
 
 impl From<CursorId> for i64 {
     fn from(cursor_id: CursorId) -> Self {
+        cursor_id.0
+    }
+}
+
+impl From<&CursorId> for i64 {
+    fn from(cursor_id: &CursorId) -> Self {
         cursor_id.0
     }
 }

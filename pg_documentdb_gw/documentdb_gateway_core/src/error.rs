@@ -72,6 +72,14 @@ impl DocumentDBError {
         Self::authentication_failed("Sasl payload invalid.".to_owned())
     }
 
+    /// Authentication and Authorization are two different mechansisms this method is provided
+    /// to ensure a clear separation of these concerns and informs what kind of error message
+    /// to return to the client.
+    #[must_use]
+    pub fn not_authenticated(msg: String) -> Self {
+        Self::unauthorized(msg)
+    }
+
     #[must_use]
     pub fn unauthorized(msg: String) -> Self {
         Self::new(ErrorKind::DocumentDBError(

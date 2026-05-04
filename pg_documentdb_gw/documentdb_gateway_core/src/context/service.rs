@@ -46,7 +46,11 @@ impl ServiceContext {
         let timeout_secs = setup_configuration.transaction_timeout_secs();
         let cursor_store = CursorStore::with_reaper(Arc::clone(&dynamic_configuration), true);
         let transaction_store = TransactionStore::new(Duration::from_secs(timeout_secs));
-        let session_manager = SessionManager::new(transaction_store, cursor_store);
+        let session_manager = SessionManager::new(
+            transaction_store,
+            cursor_store,
+            Duration::from_secs(timeout_secs) / 2,
+        );
 
         let inner = ServiceContextInner {
             setup_configuration,

@@ -19,9 +19,13 @@ use uuid::{Builder, Uuid};
 use crate::{
     auth::AuthState,
     configuration::DynamicConfiguration,
-    context::{Cursor, CursorKey, CursorStoreEntry, ServiceContext, SessionId, TransactionNumber},
+    context::{
+        session::SessionKey, Cursor, CursorKey, CursorRef, CursorStoreEntry, ServiceContext,
+        SessionId, TransactionNumber,
+    },
     error::Result,
     postgres::conn_mgmt::Connection,
+    security::principal::Principal,
     telemetry::TelemetryProvider,
 };
 
@@ -82,21 +86,28 @@ impl ConnectionContext {
     }
 
     #[must_use]
-    pub fn get_cursor(&self, id: i64, username: &str) -> Option<CursorStoreEntry> {
-        let key = CursorKey {
-            cursor_id: id.into(),
-            username: username.to_owned(),
-        };
-        // If there is a transaction, get the cursor to its store
+    pub fn get_cursor(&self, id: i64, caller: &Principal) -> Option<CursorStoreEntry> {
+        let key = CursorKey::new(id.into(), caller.clone());
+
+        // If there is a transaction, validate that the transaction owns the cursor before using it
         if let Some((session_id, _)) = self.transaction.as_ref() {
             let transaction_store = self.service_context.transaction_store();
-            if let Some(entry) = transaction_store.transactions.get(session_id) {
+            let session_key = SessionKey::new(session_id.clone(), caller.clone());
+            if let Some(entry) = transaction_store.transactions.get(&session_key) {
                 let (_, transaction) = entry.value();
-                return transaction.cursors.get_cursor(&key);
+                if !transaction.contains_cursor(id.into()) {
+                    return None;
+                }
             }
         }
 
         self.service_context.cursor_store().get_cursor(&key)
+    }
+
+    #[must_use]
+    pub fn get_cursor_ref(&self, id: i64, caller: &Principal) -> Option<CursorRef> {
+        let key = CursorKey::new(id.into(), caller.clone());
+        self.service_context.cursor_store().get_cursor_ref(&key)
     }
 
     #[expect(
@@ -107,16 +118,15 @@ impl ConnectionContext {
         &self,
         conn: Option<Arc<Connection>>,
         cursor: Cursor,
-        username: &str,
         db: &str,
         collection: &str,
         cursor_timeout: Duration,
         session_id: Option<SessionId>,
+        transaction_number: Option<TransactionNumber>,
+        caller: &Principal,
     ) {
-        let key = CursorKey {
-            cursor_id: cursor.cursor_id,
-            username: username.to_owned(),
-        };
+        let key = CursorKey::new(cursor.cursor_id, caller.clone());
+
         let value = CursorStoreEntry {
             conn,
             cursor,
@@ -125,15 +135,17 @@ impl ConnectionContext {
             timestamp: Instant::now(),
             cursor_timeout,
             session_id,
+            transaction_number,
         };
 
-        // If there is a transaction, add the cursor to its store
+        // If there is a transaction, add it to the tracked cursors
         if let Some((session_id, _)) = self.transaction.as_ref() {
             let transaction_store = self.service_context.transaction_store();
-            if let Some(entry) = transaction_store.transactions.get(session_id) {
+            let session_key: crate::context::StoreKey<SessionId> =
+                SessionKey::new(session_id.clone(), caller.clone());
+            if let Some(entry) = transaction_store.transactions.get(&session_key) {
                 let (_, transaction) = entry.value();
-                transaction.cursors.add_cursor(key, value);
-                return;
+                transaction.add_cursor(*key.id());
             }
         }
 

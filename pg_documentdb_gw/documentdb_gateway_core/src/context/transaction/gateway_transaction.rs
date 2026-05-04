@@ -6,12 +6,15 @@
  *-------------------------------------------------------------------------
  */
 
+use scc::HashSet;
 use std::sync::Arc;
 use tokio_postgres::IsolationLevel;
 
 use crate::context::transaction::TransactionNumber;
+use crate::context::CursorId;
+use crate::security::principal::Principal;
 use crate::{
-    context::{CursorStore, SessionId},
+    context::SessionId,
     error::{DocumentDBError, ErrorCode, Result},
     postgres::{self, conn_mgmt::Connection},
 };
@@ -29,7 +32,8 @@ pub struct RequestTransactionInfo {
 pub struct GatewayTransaction {
     pub session_id: SessionId,
     pub transaction_number: TransactionNumber,
-    pub cursors: CursorStore,
+    _owner: Principal,
+    cursors: HashSet<CursorId>,
     pg_transaction: Option<postgres::Transaction>,
 }
 
@@ -42,12 +46,14 @@ impl GatewayTransaction {
         conn: Arc<Connection>,
         isolation_level: IsolationLevel,
         session_id: SessionId,
+        owner: Principal,
     ) -> Result<Self> {
         Ok(Self {
             session_id,
             transaction_number: request.transaction_number,
             pg_transaction: Some(postgres::Transaction::start(conn, isolation_level).await?),
-            cursors: CursorStore::new(),
+            cursors: HashSet::new(),
+            _owner: owner,
         })
     }
 
@@ -100,6 +106,18 @@ impl GatewayTransaction {
     #[must_use]
     pub const fn transaction_number(&self) -> TransactionNumber {
         self.transaction_number
+    }
+
+    pub fn add_cursor(&self, cursor_id: CursorId) {
+        let _ = self.cursors.insert_sync(cursor_id);
+    }
+
+    pub fn remove_cursor(&self, cursor_id: CursorId) {
+        self.cursors.remove_sync(&cursor_id);
+    }
+
+    pub fn contains_cursor(&self, cursor_id: CursorId) -> bool {
+        self.cursors.contains_sync(&cursor_id)
     }
 }
 

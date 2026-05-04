@@ -11,12 +11,73 @@ use std::{sync::Arc, time::Duration};
 use bson::{rawdoc, RawArrayBuf};
 
 use crate::{
-    context::{ConnectionContext, Cursor, CursorId, CursorStoreEntry, RequestContext},
+    context::{
+        ConnectionContext, Cursor, CursorId, CursorStoreEntry, RequestContext, SessionId,
+        TransactionNumber,
+    },
     error::{DocumentDBError, ErrorCode, Result},
     postgres::{conn_mgmt::PullConnection, PgDataClient, PgDocument},
     protocol::OK_SUCCEEDED,
     responses::{PgResponse, RawResponse, Response},
 };
+
+/// Validates that a request is correct and enforces correct usage of a cursor.
+fn validate_get_more_request(
+    connection_session_id: Option<&SessionId>,
+    connection_transaction_number: Option<&TransactionNumber>,
+    cursor_session_id: Option<&SessionId>,
+    cursor_transaction_number: Option<&TransactionNumber>,
+) -> Result<()> {
+    // Session id validation
+    match (connection_session_id, cursor_session_id) {
+        (Some(req_sid), None) => {
+            // ErrorCode: 50736
+            return Err(DocumentDBError::internal_error(format!(
+                "Cannot run getMore on cursor, which was not created in a session, in session {req_sid:?}"
+            )));
+        }
+        (None, Some(cur_sid)) => {
+            // ErrorCode: 50737
+            return Err(DocumentDBError::internal_error(format!(
+                "Cannot run getMore on cursor, which was created in session {cur_sid:?}, without an lsid."
+            )));
+        }
+        (Some(req_sid), Some(cur_sid)) if req_sid != cur_sid => {
+            // ErrorCode: 50738
+            return Err(DocumentDBError::internal_error(format!(
+                "Cannot run getMore on cursor, which was created in session {cur_sid:?}, in session {req_sid:?}"
+            )));
+        }
+        _ => {}
+    }
+
+    // Transaction number validation (only when there is no session)
+    if connection_session_id.is_none() {
+        match (connection_transaction_number, cursor_transaction_number) {
+            (Some(req_tn), None) => {
+                // ErrorCode: 50739
+                return Err(DocumentDBError::internal_error(format!(
+                    "Cannot run getMore on cursor, which was not created in a transaction, in transaction {req_tn}"
+                )));
+            }
+            (None, Some(cur_tn)) => {
+                // ErrorCode: 50740
+                return Err(DocumentDBError::internal_error(format!(
+                    "Cannot run getMore on cursor, which was created in a transaction {cur_tn}, without a transaction."
+                )));
+            }
+            (Some(req_tn), Some(cur_tn)) if req_tn != cur_tn => {
+                // ErrorCode: 50741
+                return Err(DocumentDBError::internal_error(format!(
+                    "Cannot run getMore on cursor, which was created in a transaction {cur_tn}, in transaction {req_tn}"
+                )));
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
 
 pub async fn process_kill_cursors(
     request_context: &RequestContext<'_>,
@@ -53,7 +114,7 @@ pub async fn process_kill_cursors(
     let (removed_cursors, missing_cursors) = connection_context
         .service_context
         .cursor_store()
-        .kill_cursors(connection_context.auth_state.username()?, &cursor_ids);
+        .kill_cursors(&cursor_ids, connection_context.auth_state.principal()?);
 
     if !removed_cursors.is_empty() {
         pg_data_client
@@ -95,22 +156,52 @@ pub async fn process_get_more(
         }
         Ok(())
     })?;
+
+    let caller = connection_context.auth_state.principal()?;
+
     let id = id.ok_or(DocumentDBError::bad_value(
         "getMore not present in document".to_owned(),
     ))?;
+
+    // We use the session id from the request context since we may, or may not be in a transaction.
+    let current_session_id = request_context.info().session_id.as_ref();
+    let current_transaction_number = request_context
+        .info()
+        .transaction_info
+        .as_ref()
+        .map(|t| &t.transaction_number);
+
+    let cursor_ref =
+        connection_context
+            .get_cursor_ref(id, caller)
+            .ok_or(DocumentDBError::documentdb_error(
+                ErrorCode::CursorNotFound,
+                "Cursor not found in server".to_owned(),
+                0,
+            ))?;
+
+    // Validate Get More Request
+    validate_get_more_request(
+        current_session_id,
+        current_transaction_number,
+        cursor_ref.session_id(),
+        cursor_ref.transaction_number(),
+    )?;
+
     let CursorStoreEntry {
         conn: cursor_connection,
         cursor,
         db,
         collection,
         session_id,
+        transaction_number,
         mut cursor_timeout,
         ..
     } = connection_context
-        .get_cursor(id, connection_context.auth_state.username()?)
+        .get_cursor(id, caller)
         .ok_or(DocumentDBError::documentdb_error(
             ErrorCode::CursorNotFound,
-            "Provided cursor was not found.".to_owned(),
+            "Cursor not found in server".to_owned(),
             0,
         ))?;
 
@@ -149,14 +240,132 @@ pub async fn process_get_more(
                     cursor_id: CursorId::from(id),
                     continuation: continuation.0.to_raw_document_buf(),
                 },
-                connection_context.auth_state.username()?,
                 &db,
                 &collection,
                 cursor_timeout,
                 session_id,
+                transaction_number,
+                caller,
             );
         }
     }
 
     Ok(Response::Pg(PgResponse::new(results)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sid(bytes: &[u8]) -> SessionId {
+        SessionId::from(bytes)
+    }
+
+    fn tn(value: i64) -> TransactionNumber {
+        TransactionNumber::from(value)
+    }
+
+    #[test]
+    fn validate_get_more_request_no_session_no_transaction_ok() {
+        validate_get_more_request(None, None, None, None).unwrap();
+    }
+
+    #[test]
+    fn validate_get_more_request_matching_session_ok() {
+        let s = sid(b"session-1");
+        validate_get_more_request(Some(&s), None, Some(&s), None).unwrap();
+    }
+
+    #[test]
+    fn validate_get_more_request_matching_session_and_transaction_ok() {
+        let s = sid(b"session-1");
+        let t = tn(7);
+        validate_get_more_request(Some(&s), Some(&t), Some(&s), Some(&t)).unwrap();
+    }
+
+    #[test]
+    fn validate_get_more_request_request_session_but_cursor_has_none() {
+        let s = sid(b"session-1");
+        let err = validate_get_more_request(Some(&s), None, None, None).unwrap_err();
+        assert!(
+            err.to_string().contains("was not created in a session"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_get_more_request_cursor_session_but_request_has_none() {
+        let s = sid(b"session-1");
+        let err = validate_get_more_request(None, None, Some(&s), None).unwrap_err();
+        assert!(
+            err.to_string().contains("without an lsid"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_get_more_request_session_mismatch() {
+        let req = sid(b"session-req");
+        let cur = sid(b"session-cur");
+        let err = validate_get_more_request(Some(&req), None, Some(&cur), None).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("session-cur") || msg.contains("SessionId"));
+        assert!(msg.contains("in session"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn validate_get_more_request_request_transaction_but_cursor_has_none() {
+        let t = tn(3);
+        let err = validate_get_more_request(None, Some(&t), None, None).unwrap_err();
+        assert!(
+            err.to_string().contains("was not created in a transaction"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_get_more_request_cursor_transaction_but_request_has_none() {
+        let t = tn(3);
+        let err = validate_get_more_request(None, None, None, Some(&t)).unwrap_err();
+        assert!(
+            err.to_string().contains("without a transaction"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_get_more_request_transaction_mismatch() {
+        let req = tn(1);
+        let cur = tn(2);
+        let err = validate_get_more_request(None, Some(&req), None, Some(&cur)).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("created in a transaction 2") && msg.contains("in transaction 1"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_get_more_request_transaction_check_skipped_when_session_present() {
+        // When a session id is present on the connection, transaction-number
+        // mismatches are not checked.
+        let s = sid(b"session-1");
+        let req = tn(1);
+        let cur = tn(2);
+        validate_get_more_request(Some(&s), Some(&req), Some(&s), Some(&cur)).unwrap();
+    }
+
+    #[test]
+    fn validate_get_more_request_session_error_takes_precedence_over_transaction() {
+        let req_s = sid(b"session-req");
+        let cur_s = sid(b"session-cur");
+        let req_t = tn(1);
+        let cur_t = tn(2);
+        let err = validate_get_more_request(Some(&req_s), Some(&req_t), Some(&cur_s), Some(&cur_t))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("session"),
+            "expected session error, got: {err}"
+        );
+    }
 }

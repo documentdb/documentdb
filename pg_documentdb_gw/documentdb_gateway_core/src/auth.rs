@@ -29,6 +29,7 @@ use crate::{
     protocol::OK_SUCCEEDED,
     requests::{Request, RequestType},
     responses::{self, constant::generic_internal_error_message, RawResponse, Response},
+    security::principal::Principal,
 };
 
 const NONCE_LENGTH: usize = 2;
@@ -55,13 +56,14 @@ pub struct ScramFirstState {
 
 #[derive(Debug)]
 pub struct AuthState {
-    authorized: Arc<AtomicBool>,
+    authenticated: Arc<AtomicBool>,
     first_state: Option<ScramFirstState>,
     username: Option<String>,
     user_oid: Option<u32>,
     auth_kind: Option<AuthKind>,
     timer_initialized: Arc<AtomicBool>,
     auth_mechanism: AuthMechanism,
+    principal: Option<Principal>,
 }
 
 impl Default for AuthState {
@@ -74,14 +76,32 @@ impl AuthState {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            authorized: Arc::new(AtomicBool::new(false)),
+            authenticated: Arc::new(AtomicBool::new(false)),
             first_state: None,
             username: None,
             user_oid: None,
             auth_kind: None,
             timer_initialized: Arc::new(AtomicBool::new(false)),
             auth_mechanism: AuthMechanism::Unknown,
+            principal: None,
         }
+    }
+
+    /// Returns the principal associated with this authentication state
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the principal has not been set because the user OID is missing.
+    #[inline]
+    pub fn principal(&self) -> Result<&Principal> {
+        // There are other mechansims in request handling that determine when authentication
+        // expires. If this is valid - then at some point the user was authenticated and we
+        // don't invalidate what the authenticated principal was.
+        self.principal
+            .as_ref()
+            .ok_or(DocumentDBError::not_authenticated(
+                "User is not authenticated".to_owned(),
+            ))
     }
 
     /// Returns the username
@@ -109,12 +129,12 @@ impl AuthState {
     }
 
     #[must_use]
-    pub fn is_authorized(&self) -> bool {
-        self.authorized.load(Ordering::Acquire)
+    pub fn is_authenticated(&self) -> bool {
+        self.authenticated.load(Ordering::Acquire)
     }
 
-    pub fn set_authorized(&self, value: bool) {
-        self.authorized.store(value, Ordering::Release);
+    pub fn set_authenticated(&self, value: bool) {
+        self.authenticated.store(value, Ordering::Release);
     }
 
     #[must_use]
@@ -133,6 +153,21 @@ impl AuthState {
 
     pub const fn set_user_oid(&mut self, user_oid: u32) {
         self.user_oid = Some(user_oid);
+    }
+
+    /// This will update the currently authenticated principal if the username is correctly set.
+    fn update_principal(&mut self) {
+        if let (Some(username), Some(user_oid)) = (&self.username, self.user_oid) {
+            if self
+                .principal
+                .as_ref()
+                .is_none_or(|p| p.name() != username || p.oid() != user_oid)
+            {
+                self.principal = Some(Principal::new(username.to_owned(), user_oid));
+            }
+        } else {
+            self.principal = None;
+        }
     }
 
     /// Sets the auth kind
@@ -169,10 +204,10 @@ impl AuthState {
             ));
         }
 
-        let authorized = Arc::clone(&self.authorized);
+        let authenticated = Arc::clone(&self.authenticated);
         let connection_activity_id_owned = connection_activity_id.to_owned();
 
-        // Spawn new expiry task that counts down and sets authorized to false
+        // Spawn new expiry task that counts down and sets authenticated to false
         tokio::spawn(async move {
             timer_initialized.store(true, Ordering::Release);
 
@@ -183,7 +218,7 @@ impl AuthState {
                 activity_id = connection_activity_id_as_str,
                 "Authentication expiry timer elapsed"
             );
-            authorized.store(false, Ordering::Release);
+            authenticated.store(false, Ordering::Release);
             timer_initialized.store(false, Ordering::Release);
         });
 
@@ -448,8 +483,9 @@ async fn handle_oidc_token_authentication(
 
     connection_context.auth_state.set_username(&oid);
     connection_context.auth_state.user_oid = Some(get_user_oid(connection_context, &oid).await?);
+    connection_context.auth_state.update_principal();
 
-    connection_context.auth_state.set_authorized(true);
+    connection_context.auth_state.set_authenticated(true);
     connection_context
         .auth_state
         .set_auth_kind(AuthKind::ExternalIdentity)?;
@@ -646,12 +682,15 @@ async fn handle_sasl_continue(
         connection_context.auth_state.user_oid =
             Some(get_user_oid(connection_context, username).await?);
 
-        connection_context.auth_state.set_authorized(true);
+        connection_context.auth_state.set_authenticated(true);
         connection_context.allocate_data_pool("")?;
 
         connection_context
             .auth_state
             .set_auth_mechanism(AuthMechanism::ScramSha256);
+
+        // This will create a Principal from the username and user_oid and store it in auth_state
+        connection_context.auth_state.update_principal();
 
         Ok(Response::Raw(RawResponse(rawdoc! {
             "payload": payload,

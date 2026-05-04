@@ -17,6 +17,7 @@ pub mod processor;
 pub mod protocol;
 pub mod requests;
 pub mod responses;
+pub mod security;
 pub mod service;
 pub mod shutdown_controller;
 pub mod startup;

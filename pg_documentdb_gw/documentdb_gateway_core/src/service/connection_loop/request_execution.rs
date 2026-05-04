@@ -37,7 +37,7 @@ fn determine_request_execution_path(
         return RequestExecutionPath::AuthCommand;
     }
 
-    if !auth_state.is_authorized() {
+    if !auth_state.is_authenticated() {
         if auth_state.auth_kind() == Some(&auth::AuthKind::ExternalIdentity) {
             return RequestExecutionPath::ReauthenticationRequired;
         }
@@ -207,7 +207,7 @@ mod tests {
             .expect("auth kind should be set once in tests");
 
         let authorized = AuthState::new();
-        authorized.set_authorized(true);
+        authorized.set_authenticated(true);
 
         assert_eq!(
             determine_request_execution_path(&logout_request, &native_unauthorized),

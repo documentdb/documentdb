@@ -42,7 +42,7 @@ async fn terminate_sessions(
     sessions_field: &RawArray,
 ) -> Result<()> {
     let session_ids = parse_session_ids(sessions_field)?;
-
+    let caller = connection_context.auth_state.principal()?;
     let transaction_store = connection_context.service_context.transaction_store();
 
     for session_id in &session_ids {
@@ -63,7 +63,7 @@ async fn terminate_sessions(
 
         // Best effort to remove any transaction for the session
         let _ = transaction_store
-            .remove_transaction_by_session(session_id)
+            .remove_transaction_by_session(session_id, caller)
             .await?;
     }
 

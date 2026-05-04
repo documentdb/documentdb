@@ -42,7 +42,7 @@ where
     let request_tracker = RequestTracker::new();
 
     let read_request_start = Instant::now();
-    let authenticated = connection_context.auth_state.is_authorized();
+    let authenticated = connection_context.auth_state.is_authenticated();
     let message = match protocol::reader::read_request(authenticated, header, reader).await {
         Ok(message) => message,
         Err(error) => {

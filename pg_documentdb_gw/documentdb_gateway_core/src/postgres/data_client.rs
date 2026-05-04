@@ -424,10 +424,12 @@ pub trait PgDataClient: Send + Sync {
         Fut: Future<Output = std::result::Result<T, tokio_postgres::Error>> + Send,
     {
         let source = if let Some((session_id, _)) = connection_context.transaction.as_ref() {
+            let caller = connection_context.auth_state.principal()?;
+
             if let Some(connection) = self
                 .service_context()
                 .transaction_store()
-                .get_connection(session_id)
+                .get_connection(session_id, caller)
             {
                 ConnectionSource::Transaction(connection)
             } else {
@@ -500,15 +502,21 @@ pub trait PgDataClient: Send + Sync {
             );
 
             let request_info = request_context.info();
+            let session_id = request_info.session_id.clone();
+            let transaction_number = request_info
+                .transaction_info
+                .as_ref()
+                .map(|txn_info| txn_info.transaction_number);
 
             connection_context.add_cursor(
                 connection,
                 cursor,
-                connection_context.auth_state.username()?,
                 request_info.db()?,
                 request_info.collection()?,
                 cursor_timeout,
-                request_info.session_id.clone(),
+                session_id,
+                transaction_number,
+                connection_context.auth_state.principal()?,
             );
         }
 

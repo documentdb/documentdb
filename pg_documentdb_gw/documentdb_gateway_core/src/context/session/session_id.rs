@@ -8,8 +8,12 @@
 
 use std::fmt;
 
+use crate::context::StoreKey;
+
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SessionId(Vec<u8>);
+
+pub type SessionKey = StoreKey<SessionId>;
 
 impl SessionId {
     #[must_use]

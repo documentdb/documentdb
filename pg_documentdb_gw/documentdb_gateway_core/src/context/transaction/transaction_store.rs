@@ -8,18 +8,18 @@
 
 use dashmap::DashMap;
 use std::sync::Arc;
-use tokio::{
-    task::JoinHandle,
-    time::{Duration, Instant},
-};
+use tokio::time::Duration;
 use tokio_postgres::IsolationLevel;
 
 use crate::{
     collections::cache::{AsyncCache, CacheConfiguration, TtlCache},
     context::{
+        session::SessionKey,
         transaction::{GatewayTransaction, RequestTransactionInfo},
         TransactionNumber,
     },
+    security::principal::Principal,
+    time::EpochClock,
 };
 use crate::{
     context::{ConnectionContext, SessionId},
@@ -61,40 +61,61 @@ impl LastSeenTransaction {
     }
 }
 
-type TransactionEntry = (Instant, GatewayTransaction);
+type TransactionEntry = (u64, GatewayTransaction);
 
 #[derive(Debug)]
 pub struct TransactionStore {
-    pub transactions: Arc<DashMap<SessionId, TransactionEntry>>,
-    last_seen_transactions: Arc<TtlCache<SessionId, LastSeenTransaction>>,
-    _reaper: JoinHandle<()>,
+    pub transactions: Arc<DashMap<SessionKey, TransactionEntry>>,
+    last_seen_transactions: Arc<TtlCache<SessionKey, LastSeenTransaction>>,
+    default_ttl: Duration,
 }
 
 impl TransactionStore {
     #[must_use]
-    pub fn new(expiration: Duration) -> Self {
+    pub fn new(default_ttl: Duration) -> Self {
         let transactions = Arc::new(DashMap::new());
         let last_seen_transactions =
-            Arc::new(TtlCache::new(CacheConfiguration::with_ttl(expiration)));
+            Arc::new(TtlCache::new(CacheConfiguration::with_ttl(default_ttl)));
 
         Self {
+            default_ttl,
             transactions: Arc::clone(&transactions),
             last_seen_transactions: Arc::clone(&last_seen_transactions),
-            _reaper: tokio::spawn(async move {
-                let mut interval = tokio::time::interval(expiration / 2);
-                loop {
-                    interval.tick().await;
-                    transactions.retain(|_, (time, _)| time.elapsed() < expiration);
-                    let _ = last_seen_transactions.evict_expired_async().await;
-                }
-            }),
         }
     }
 
+    pub async fn evict_expired(&self) -> Vec<Arc<GatewayTransaction>> {
+        let mut evicted = Vec::new();
+
+        let expired_keys: Vec<SessionKey> = self
+            .transactions
+            .iter()
+            .filter_map(|entry| {
+                (EpochClock::almost_now_timestamp() >= entry.value().0).then(|| entry.key().clone())
+            })
+            .collect();
+
+        for key in expired_keys {
+            if let Some((_, (_, transaction))) = self.transactions.remove(&key) {
+                evicted.push(Arc::new(transaction));
+            }
+        }
+
+        let _ = self.last_seen_transactions.evict_expired_async().await;
+
+        evicted
+    }
+
     #[must_use]
-    pub fn get_connection(&self, session_id: &SessionId) -> Option<Arc<Connection>> {
+    pub fn get_connection(
+        &self,
+        session_id: &SessionId,
+        caller: &Principal,
+    ) -> Option<Arc<Connection>> {
+        let key = SessionKey::new(session_id.clone(), caller.clone());
+
         self.transactions
-            .get(session_id)
+            .get(&key)
             .and_then(|entry| entry.value().1.get_connection())
     }
 
@@ -111,7 +132,10 @@ impl TransactionStore {
         transaction_info: &RequestTransactionInfo,
         session_id: SessionId,
         pg_data_client: &impl PgDataClient,
+        caller: &Principal,
     ) -> Result<()> {
+        let key = SessionKey::new(session_id.clone(), caller.clone());
+
         if let Some((_, transaction_number)) = connection_context.transaction.as_ref() {
             if transaction_number > &transaction_info.transaction_number {
                 return Err(DocumentDBError::documentdb_error(
@@ -123,8 +147,7 @@ impl TransactionStore {
         }
 
         if transaction_info.start_transaction && !transaction_info.auto_commit {
-            if let Some(last_transaction) = self.last_seen_transactions.get_async(&session_id).await
-            {
+            if let Some(last_transaction) = self.last_seen_transactions.get_async(&key).await {
                 if let Some(error_message) = (last_transaction.transaction_number
                     == transaction_info.transaction_number)
                     .then(|| match last_transaction.state {
@@ -150,7 +173,7 @@ impl TransactionStore {
                 }
             }
 
-            if let Some((_, mut old_transaction)) = self.transactions.remove(&session_id) {
+            if let Some((_, mut old_transaction)) = self.transactions.remove(&key) {
                 if old_transaction.1.transaction_number == transaction_info.transaction_number {
                     return Err(DocumentDBError::documentdb_error(
                         ErrorCode::ConflictingOperationInProgress,
@@ -173,24 +196,26 @@ impl TransactionStore {
                     .isolation_level
                     .unwrap_or(IsolationLevel::ReadCommitted),
                 session_id.clone(),
+                caller.clone(),
             )
             .await?;
 
             let _ = self
                 .last_seen_transactions
                 .upsert_async(
-                    session_id.clone(),
+                    key.clone(),
                     LastSeenTransaction::started(transaction.transaction_number()),
                 )
                 .await;
 
-            self.transactions
-                .insert(session_id, (Instant::now(), transaction));
+            let expires_at = EpochClock::almost_now_timestamp() + self.default_ttl.as_secs();
+
+            self.transactions.insert(key, (expires_at, transaction));
 
             return Ok(());
         }
 
-        if let Some(transaction_entry) = self.transactions.get(&session_id) {
+        if let Some(transaction_entry) = self.transactions.get(&key) {
             let transaction = &transaction_entry.value().1;
             return if transaction.transaction_number() == transaction_info.transaction_number {
                 Ok(())
@@ -206,7 +231,7 @@ impl TransactionStore {
             };
         }
 
-        if let Some(last_seen) = self.last_seen_transactions.get_async(&session_id).await {
+        if let Some(last_seen) = self.last_seen_transactions.get_async(&key).await {
             if last_seen.transaction_number == transaction_info.transaction_number
                 && last_seen.state == TransactionState::Committed
             {
@@ -244,9 +269,11 @@ impl TransactionStore {
     pub async fn remove_transaction_by_session(
         &self,
         session_id: &SessionId,
+        caller: &Principal,
     ) -> Result<Option<(SessionId, TransactionEntry)>> {
-        let Some((deleted_session_id, mut transaction_entry)) =
-            self.transactions.remove(session_id)
+        let key = SessionKey::new(session_id.clone(), caller.clone());
+
+        let Some((deleted_session_id, mut transaction_entry)) = self.transactions.remove(&key)
         else {
             return Ok(None);
         };
@@ -261,7 +288,10 @@ impl TransactionStore {
             .upsert_async(deleted_session_id.clone(), last_seen_transaction)
             .await;
 
-        Ok(Some((deleted_session_id, transaction_entry)))
+        Ok(Some((
+            transaction_entry.1.session_id.clone(),
+            transaction_entry,
+        )))
     }
 
     /// Aborts and removes the active transaction for `session_id`.
@@ -270,8 +300,8 @@ impl TransactionStore {
     ///
     /// Returns `ErrorCode::NoSuchTransaction` when there is no active
     /// transaction for the session or when the removal fails.
-    pub async fn abort(&self, session_id: &SessionId) -> Result<()> {
-        self.remove_transaction_by_session(session_id)
+    pub async fn abort(&self, session_id: &SessionId, caller: &Principal) -> Result<()> {
+        self.remove_transaction_by_session(session_id, caller)
             .await?
             .map(|_| ())
             .ok_or_else(|| {
@@ -288,14 +318,16 @@ impl TransactionStore {
     /// # Errors
     ///
     /// Returns an error if the operation fails.
-    pub async fn commit(&self, session_id: &SessionId) -> Result<()> {
-        if let Some((_, (_, mut transaction))) = self.transactions.remove(session_id) {
+    pub async fn commit(&self, session_id: &SessionId, caller: &Principal) -> Result<()> {
+        let key = SessionKey::new(session_id.clone(), caller.clone());
+
+        if let Some((_, (_, mut transaction))) = self.transactions.remove(&key) {
             transaction.commit().await?;
 
             let _ = self
                 .last_seen_transactions
                 .upsert_async(
-                    session_id.clone(),
+                    key,
                     LastSeenTransaction::committed(transaction.transaction_number()),
                 )
                 .await;

@@ -29,6 +29,8 @@ pub async fn handle(
             return Ok(());
         }
 
+        let caller = connection_context.auth_state.principal()?;
+
         let session_id = request_info
             .session_id
             .clone()
@@ -43,6 +45,7 @@ pub async fn handle(
                 request_transaction_info,
                 session_id.clone(),
                 pg_data_client,
+                caller,
             )
             .await;
 
@@ -70,7 +73,9 @@ pub async fn handle(
 pub async fn process_commit(context: &ConnectionContext) -> Result<Response> {
     if let Some((session_id, _)) = context.transaction.as_ref() {
         let store = context.service_context.transaction_store();
-        store.commit(session_id).await?;
+        let caller = context.auth_state.principal()?;
+
+        store.commit(session_id, caller).await?;
     }
     Ok(Response::ok())
 }
@@ -83,7 +88,9 @@ pub async fn process_abort(context: &ConnectionContext) -> Result<Response> {
             "Transaction information was not populated for abort.".to_owned(),
         ))?;
 
+    let caller = context.auth_state.principal()?;
     let store = context.service_context.transaction_store();
-    store.abort(session_id).await?;
+
+    store.abort(session_id, caller).await?;
     Ok(Response::ok())
 }
