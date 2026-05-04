@@ -166,7 +166,8 @@ jobs:
             -p ${{ env.DOCUMENTDB_PORT }}:${{ env.DOCUMENTDB_PORT }} \
             documentdb-local:ci \
             --username ${{ env.DOCUMENTDB_USER }} \
-            --password ${{ env.DOCUMENTDB_PASSWORD }}
+            --password ${{ env.DOCUMENTDB_PASSWORD }} \
+            --skip-init-data
 
           echo "Waiting for DocumentDB gateway..."
           timeout 120 bash -c 'until nc -z localhost ${{ env.DOCUMENTDB_PORT }} 2>/dev/null; do sleep 2; done'
@@ -199,7 +200,7 @@ jobs:
             --engine-name documentdb \
             --connection-string "$CONNECTION_STRING" \
             -m "not no_parallel" \
-            -n 4 \
+            -n 2 \
             --json-report --json-report-file=/results/report.json \
             --junitxml=/results/results.xml \
             -v
@@ -267,7 +268,8 @@ jobs:
             -p ${{ env.DOCUMENTDB_PORT }}:${{ env.DOCUMENTDB_PORT }} \
             documentdb-local:ci \
             --username ${{ env.DOCUMENTDB_USER }} \
-            --password ${{ env.DOCUMENTDB_PASSWORD }}
+            --password ${{ env.DOCUMENTDB_PASSWORD }} \
+            --skip-init-data
 
           echo "Waiting for DocumentDB gateway..."
           timeout 120 bash -c 'until nc -z localhost ${{ env.DOCUMENTDB_PORT }} 2>/dev/null; do sleep 2; done'
@@ -293,7 +295,7 @@ jobs:
             documentdb_tests/compatibility/tests \
             --engine-name documentdb \
             --connection-string "$CONNECTION_STRING" \
-            -n 4 \
+            -n 2 \
             --json-report --json-report-file=/results/report.json \
             --junitxml=/results/results.xml \
             -v \

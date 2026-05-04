@@ -68,7 +68,7 @@ for RUN in $(seq 1 "$RUNS"); do
         --engine-name documentdb \
         --connection-string "$CONNECTION_STRING" \
         -m "not no_parallel" \
-        -n auto \
+        -n 2 \
         --json-report --json-report-file=/results/report.json \
         -v \
         || true  # Don't fail on test failures
