@@ -162,10 +162,11 @@ def summarize_gate(allowlist_path: str, report_path: str, image_path: str = "",
         report = json.load(f)
 
     tests_in_report = report.get("tests", [])
-    result.total_discovered = report.get("collectors", [{}])[0].get("collected", 0) if report.get("collectors") else 0
+    summary = report.get("summary", {})
+    # summary.collected includes all tests pytest discovered before deselection
+    result.total_discovered = summary.get("collected", 0)
     if result.total_discovered == 0:
-        # Fallback: count from summary
-        summary = report.get("summary", {})
+        # Fallback: total + deselected, or just total
         result.total_discovered = summary.get("total", 0) + summary.get("deselected", 0)
 
     # Build outcome map from report
@@ -438,17 +439,34 @@ AREA_PATTERNS = [
     ("commands/insert/", "insert"),
     ("commands/update/", "update"),
     ("commands/delete/", "delete"),
+    ("operator/expressions/", "expressions"),
+    ("operator/query/", "query"),
     ("operator/stages/", "aggregate"),
+    ("operator/accumulators/", "aggregate"),
+    ("operator/window/", "aggregate"),
+    ("operator/projection/", "projection"),
+    ("operator/system-stages/", "aggregate"),
+    ("operator/aggregation/", "aggregate"),
+    ("operator/", "operator"),
     ("aggregate/", "aggregate"),
     ("collections/", "collection_mgmt"),
     ("sessions/", "sessions"),
     ("indexes/", "index"),
-    ("admin/", "admin"),
+    ("administration/", "admin"),
+    ("diagnostic/", "diagnostic"),
+    ("security/", "security"),
     ("transactions/", "transactions"),
     ("geospatial/", "geospatial"),
     ("text_search/", "text_search"),
     ("validation/", "validation"),
     ("bson_types/", "bson_types"),
+    ("data-types/", "data_types"),
+    ("changeStreams/", "change_streams"),
+    ("cursors/", "cursors"),
+    ("collation/", "collation"),
+    ("query-planning/", "query_planning"),
+    ("query-and-write/", "query_and_write"),
+    ("auditing/", "auditing"),
 ]
 
 
