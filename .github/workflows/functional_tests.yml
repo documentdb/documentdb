@@ -8,6 +8,12 @@ concurrency:
 on:
   workflow_dispatch:
     inputs:
+      test_scope:
+        description: 'Functional test scope'
+        default: 'allowlist'
+        required: false
+        type: choice
+        options: ['allowlist', 'all']
       parallelism:
         description: 'Number of pytest-xdist workers'
         default: '4'
@@ -107,7 +113,7 @@ jobs:
     if: >
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      github.event_name == 'workflow_dispatch'
+      (github.event_name == 'workflow_dispatch' && (inputs.test_scope || 'allowlist') == 'allowlist')
     needs: [validate-config, build-documentdb-local]
     runs-on: *functional_tests_runner
     timeout-minutes: 30
@@ -215,7 +221,9 @@ jobs:
   # Job 4: Daily delta - full suite visibility report
   # -----------------------------------------------------------------------
   daily-functional-delta:
-    if: github.event_name == 'schedule'
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.test_scope == 'all')
     needs: [validate-config, build-documentdb-local]
     runs-on: *functional_tests_runner
     timeout-minutes: 120

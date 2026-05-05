@@ -119,7 +119,7 @@ Modes:
 | `single` | Run one pytest node ID for failure diagnosis. |
 | `smoke` | Run upstream smoke tests, excluding `no_parallel`. |
 | `full` | Run the full upstream suite. |
-| `daily` | Run the full upstream suite and write `daily-summary.md/json`. CI runs this on the schedule only. |
+| `daily` | Run the full upstream suite and write `daily-summary.md/json`. CI runs this on the schedule or by manual dispatch with `test_scope=all`. |
 | `bootstrap` | Generate an allowlist candidate from tests that pass every run. |
 
 Common options:
@@ -156,7 +156,7 @@ Examples:
 # Run smoke tests with the same parallelism used by CI.
 ./documentdb-local/functional-tests/scripts/run-functional-tests.sh smoke --workers 4
 
-# Run full-suite visibility locally. In CI this mode runs only from the schedule.
+# Run full-suite visibility locally. In CI this mode runs from the schedule or manual dispatch with test_scope=all.
 ./documentdb-local/functional-tests/scripts/run-functional-tests.sh daily --workers 4
 
 # Generate a candidate allowlist from tests that pass in all three runs.
@@ -181,7 +181,7 @@ the single-test repro is not enough.
 
 1. Identify which job failed:
    - PR gate: `functional-pr-gate`
-   - Scheduled daily visibility: `daily-functional-delta`
+   - Full-suite visibility: `daily-functional-delta`
    - Config-only failure: `validate-config`
 
 2. Download artifacts from the failed run:
@@ -206,7 +206,8 @@ the single-test repro is not enough.
    reproduction command. The daily summary separates allowlisted regressions
    from outside-allowlist promotion candidates and lists any allowlisted tests
    missing from the full-suite report. Daily promotion candidates come from one
-   scheduled run, so re-run or use `bootstrap --runs <n>` before promoting them.
+   scheduled or manually dispatched run, so re-run or use `bootstrap --runs <n>`
+   before promoting them.
 
 4. Inspect raw test and server details when needed:
 
