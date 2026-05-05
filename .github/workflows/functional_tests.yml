@@ -53,7 +53,6 @@ jobs:
         run: python3 documentdb-local/functional-tests/tools/functional_gate.py validate-config
 
   # -----------------------------------------------------------------------
-  # Job 2: Check for allow-list removals (PRs; no-op elsewhere)
   # -----------------------------------------------------------------------
   check-allowlist-removals:
     runs-on: *functional_tests_runner
