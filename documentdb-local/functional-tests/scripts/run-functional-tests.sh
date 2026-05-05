@@ -39,6 +39,7 @@ if [ -n "${CONNECTION_STRING+x}" ]; then
     CONNECTION_STRING_EXPLICIT=true
 fi
 CONNECTION_STRING="${CONNECTION_STRING:-$DEFAULT_CONNECTION_STRING}"
+ENGINE_NAME="${ENGINE_NAME:-documentdb}"
 WORKERS=4
 RESULTS_DIR=""
 TEST_ID=""
@@ -90,6 +91,8 @@ Examples:
 Options:
   --connection-string <url>  Override the DocumentDB connection string, including
                              the managed container connection string.
+  --engine-name <name>       Engine name passed to upstream pytest and the
+                             allowlist plugin (default: documentdb).
   --workers <n>              Number of pytest-xdist workers (default: 4).
   --results-dir <path>       Output directory (default: .test-results/functional-tests/<mode>).
   --test <nodeid>            Pytest node ID for single mode.
@@ -297,6 +300,7 @@ esac
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --connection-string) CONNECTION_STRING="$2"; CONNECTION_STRING_EXPLICIT=true; shift 2 ;;
+        --engine-name) ENGINE_NAME="$2"; shift 2 ;;
         --workers) WORKERS="$2"; shift 2 ;;
         --results-dir) RESULTS_DIR="$2"; shift 2 ;;
         --test) TEST_ID="$2"; shift 2 ;;
@@ -405,6 +409,7 @@ echo "DocumentDB functional test runner"
 echo ""
 echo "Mode:        $MODE"
 echo "Image:       $IMAGE"
+echo "Engine:      $ENGINE_NAME"
 echo "Connection:  $CONNECTION_STRING"
 echo "Workers:     $WORKERS"
 echo "Results:     $RESULTS_DIR"
@@ -439,7 +444,8 @@ case "$MODE" in
             documentdb_tests/compatibility/tests \
             -p conftest_allowlist \
             --allowlist /allowlist.yml \
-            --engine-name documentdb \
+            --engine-name "$ENGINE_NAME" \
+            --allowlist-engine-name "$ENGINE_NAME" \
             --connection-string "$CONNECTION_STRING" \
             -m "not no_parallel" \
             -n "$WORKERS" \
@@ -473,7 +479,7 @@ case "$MODE" in
             -v "$RESULTS_DIR:/results" \
             "$IMAGE" \
             "$TEST_ID" \
-            --engine-name documentdb \
+            --engine-name "$ENGINE_NAME" \
             --connection-string "$CONNECTION_STRING" \
             --json-report --json-report-file=/results/report.json \
             --junitxml=/results/results.xml \
@@ -487,7 +493,7 @@ case "$MODE" in
             -v "$RESULTS_DIR:/results" \
             "$IMAGE" \
             documentdb_tests/compatibility/tests \
-            --engine-name documentdb \
+            --engine-name "$ENGINE_NAME" \
             --connection-string "$CONNECTION_STRING" \
             -m "smoke and not no_parallel" \
             -n "$WORKERS" \
@@ -503,7 +509,7 @@ case "$MODE" in
             -v "$RESULTS_DIR:/results" \
             "$IMAGE" \
             documentdb_tests/compatibility/tests \
-            --engine-name documentdb \
+            --engine-name "$ENGINE_NAME" \
             --connection-string "$CONNECTION_STRING" \
             -n "$WORKERS" \
             --json-report --json-report-file=/results/report.json \
@@ -542,7 +548,7 @@ case "$MODE" in
                 -v "$RUN_DIR:/results" \
                 "$IMAGE" \
                 documentdb_tests/compatibility/tests \
-                --engine-name documentdb \
+                --engine-name "$ENGINE_NAME" \
                 --connection-string "$CONNECTION_STRING" \
                 -m "not no_parallel" \
                 -n "$WORKERS" \

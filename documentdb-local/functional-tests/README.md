@@ -7,6 +7,9 @@ The upstream tests are not stored in this repository. They are pulled from the
 pinned Docker image in `config/image.yml`; `config/allowlist.yml` defines the
 tests that must pass in the PR gate.
 
+For the design rationale, see the companion
+[RFC-0007 design PR](https://github.com/documentdb/documentdb/pull/601).
+
 ## Phase 1 implementation notes
 
 The draft RFC uses illustrative paths and examples. This implementation uses the
@@ -97,16 +100,6 @@ Examples:
   --keep-documentdb
 ```
 
-If you prefer the source-build path instead of the Docker image path, use:
-
-```bash
-./documentdb-local/functional-tests/scripts/start-documentdb-for-functional-tests.sh
-```
-
-That helper builds/starts DocumentDB from local scripts and prints a
-`CONNECTION_STRING=...` value when the gateway is ready. Use that value with the
-runner if it differs from the default.
-
 ## Run functional tests locally
 
 Use one entry point for all local functional-test workflows:
@@ -123,7 +116,7 @@ Modes:
 | `single` | Run one pytest node ID for failure diagnosis. |
 | `smoke` | Run upstream smoke tests, excluding `no_parallel`. |
 | `full` | Run the full upstream suite. |
-| `daily` | Run the full upstream suite and write `daily-summary.md/json`. |
+| `daily` | Run the full upstream suite and write `daily-summary.md/json`. CI runs this on the schedule only. |
 | `bootstrap` | Generate an allowlist candidate from tests that pass every run. |
 
 Common options:
@@ -131,6 +124,8 @@ Common options:
 ```bash
 --connection-string <url>  Override the DocumentDB connection string, including
                            managed-container runs
+--engine-name <name>       Engine name passed to upstream pytest and allowlist
+                           validation, default documentdb
 --workers <n>              Number of pytest-xdist workers, default 4
 --results-dir <path>       Output directory
 --test <nodeid>            Test ID for single mode
@@ -158,7 +153,7 @@ Examples:
 # Run smoke tests with the same parallelism used by CI.
 ./documentdb-local/functional-tests/scripts/run-functional-tests.sh smoke --workers 4
 
-# Run full-suite visibility locally.
+# Run full-suite visibility locally. In CI this mode runs only from the schedule.
 ./documentdb-local/functional-tests/scripts/run-functional-tests.sh daily --workers 4
 
 # Generate a candidate allowlist from tests that pass in all three runs.
@@ -183,7 +178,7 @@ the single-test repro is not enough.
 
 1. Identify which job failed:
    - PR gate: `functional-pr-gate`
-   - Daily visibility: `daily-functional-delta`
+   - Scheduled daily visibility: `daily-functional-delta`
    - Config-only failure: `validate-config` or `check-allowlist-removals`
 
 2. Download artifacts from the failed run:
@@ -207,7 +202,8 @@ the single-test repro is not enough.
    missing allowlisted test, or another non-pass outcome. It includes a local
    reproduction command. The daily summary separates allowlisted regressions
    from outside-allowlist promotion candidates and lists any allowlisted tests
-   missing from the full-suite report.
+   missing from the full-suite report. Daily promotion candidates come from one
+   scheduled run, so re-run or use `bootstrap --runs <n>` before promoting them.
 
 4. Inspect raw test and server details when needed:
 
@@ -222,8 +218,8 @@ the single-test repro is not enough.
 5. Reproduce the failing test locally:
 
    ```bash
-    ./documentdb-local/functional-tests/scripts/run-functional-tests.sh single <pytest-node-id>
-    ```
+   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh single <pytest-node-id>
+   ```
 
    If you already have a prebuilt `documentdb-local` image, reuse it to avoid a
    rebuild:

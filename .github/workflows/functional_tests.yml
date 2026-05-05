@@ -8,11 +8,6 @@ concurrency:
 on:
   workflow_dispatch:
     inputs:
-      run_daily:
-        description: 'Run daily delta report instead of PR gate'
-        default: false
-        required: false
-        type: boolean
       parallelism:
         description: 'Number of pytest-xdist workers'
         default: '4'
@@ -35,8 +30,8 @@ on:
 
 env:
   PG_VERSION: 17
+  ENGINE_NAME: documentdb
   DOCUMENTDB_USER: docdb_admin
-  DOCUMENTDB_PASSWORD: Admin100
   DOCUMENTDB_PORT: 10260
   PYTEST_WORKERS: ${{ inputs.parallelism || '4' }}
 
@@ -45,7 +40,8 @@ jobs:
   # Job 1: Validate functional test configuration
   # -----------------------------------------------------------------------
   validate-config:
-    runs-on: ubuntu-22.04
+    # Anchor the runner image here so all functional-test jobs update together.
+    runs-on: &functional_tests_runner ubuntu-22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -57,11 +53,10 @@ jobs:
         run: python3 documentdb-local/functional-tests/tools/functional_gate.py validate-config
 
   # -----------------------------------------------------------------------
-  # Job 2: Check for allow-list removals (PRs only)
+  # Job 2: Check for allow-list removals (PRs; no-op elsewhere)
   # -----------------------------------------------------------------------
   check-allowlist-removals:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-22.04
+    runs-on: *functional_tests_runner
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -73,25 +68,15 @@ jobs:
 
       - name: Check for allow-list removals
         run: |
-          BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          if git show "$BASE_SHA:documentdb-local/functional-tests/config/allowlist.yml" > /tmp/base_allowlist.yml 2>/dev/null; then
-            python3 -c "
-          import yaml, sys
-          with open('/tmp/base_allowlist.yml') as f:
-              base = set(yaml.safe_load(f).get('tests', []))
-          with open('documentdb-local/functional-tests/config/allowlist.yml') as f:
-              head = set(yaml.safe_load(f).get('tests', []))
-          removed = sorted(base - head)
-          if removed:
-              print(f'WARNING: {len(removed)} test(s) removed from allowlist.yml:')
-              for t in removed:
-                  print(f'  - {t}')
-              print()
-              print('Allow-list removals require explicit justification.')
-              sys.exit(1)
-          else:
-              print('No allow-list removals detected.')
-          "
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Not a pull request event; skipping allow-list removal check."
+            exit 0
+          fi
+
+          if git show "${{ github.event.pull_request.base.sha }}:documentdb-local/functional-tests/config/allowlist.yml" > /tmp/base_allowlist.yml 2>/dev/null; then
+            python3 documentdb-local/functional-tests/tools/check_allowlist_removals.py \
+              --base /tmp/base_allowlist.yml \
+              --head documentdb-local/functional-tests/config/allowlist.yml
           else
             echo "No base allowlist.yml found (new file). Skipping removal check."
           fi
@@ -101,6 +86,8 @@ jobs:
   #
   # Reuses the same deb-build + docker-build pattern from build_gateway.yml
   # but only builds one arch (amd64) and does not push to GHCR.
+  # Cheap config jobs above still run on draft PRs; this expensive build and
+  # downstream gate intentionally wait until the PR is ready for review.
   # -----------------------------------------------------------------------
   build-documentdb-local:
     if: >
@@ -108,7 +95,7 @@ jobs:
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule'
-    runs-on: ubuntu-22.04
+    runs-on: *functional_tests_runner
     timeout-minutes: 45
     steps:
       - name: Checkout repository
@@ -143,15 +130,15 @@ jobs:
           retention-days: 1
 
   # -----------------------------------------------------------------------
-  # Job 3: PR gate - run allow-listed tests against documentdb-local
+  # Job 4: PR gate - run allow-listed tests against documentdb-local
   # -----------------------------------------------------------------------
   functional-pr-gate:
     if: >
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch' && !inputs.run_daily)
-    needs: [validate-config, build-documentdb-local]
-    runs-on: ubuntu-22.04
+      github.event_name == 'workflow_dispatch'
+    needs: [validate-config, check-allowlist-removals, build-documentdb-local]
+    runs-on: *functional_tests_runner
     timeout-minutes: 30
     steps:
       - name: Checkout repository
@@ -166,6 +153,12 @@ jobs:
       - name: Load documentdb-local image
         run: docker load < /tmp/documentdb-local.tar.gz
 
+      - name: Generate DocumentDB password
+        run: |
+          PASSWORD=$(python3 -c 'import secrets, string; print("".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32)))')
+          echo "::add-mask::$PASSWORD"
+          echo "DOCUMENTDB_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
+
       - name: Start DocumentDB container
         run: |
           docker run -d \
@@ -173,7 +166,7 @@ jobs:
             -p ${{ env.DOCUMENTDB_PORT }}:${{ env.DOCUMENTDB_PORT }} \
             documentdb-local:ci \
             --username ${{ env.DOCUMENTDB_USER }} \
-            --password ${{ env.DOCUMENTDB_PASSWORD }} \
+            --password "$DOCUMENTDB_PASSWORD" \
             --skip-init-data
 
           echo "Waiting for DocumentDB to be fully ready..."
@@ -192,7 +185,7 @@ jobs:
 
       - name: Run allow-list gate
         run: |
-          CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${{ env.DOCUMENTDB_PASSWORD }}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
+          CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${DOCUMENTDB_PASSWORD}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
           mkdir -p .test-results/functional-tests
           chmod 777 .test-results/functional-tests
 
@@ -205,7 +198,8 @@ jobs:
             documentdb_tests/compatibility/tests \
             -p conftest_allowlist \
             --allowlist /allowlist.yml \
-            --engine-name documentdb \
+            --engine-name "${{ env.ENGINE_NAME }}" \
+            --allowlist-engine-name "${{ env.ENGINE_NAME }}" \
             --connection-string "$CONNECTION_STRING" \
             -m "not no_parallel" \
             -n ${{ env.PYTEST_WORKERS }} \
@@ -247,14 +241,12 @@ jobs:
           docker rm documentdb 2>/dev/null || true
 
   # -----------------------------------------------------------------------
-  # Job 4: Daily delta - full suite visibility report
+  # Job 5: Daily delta - full suite visibility report
   # -----------------------------------------------------------------------
   daily-functional-delta:
-    if: >
-      github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' && inputs.run_daily)
+    if: github.event_name == 'schedule'
     needs: [validate-config, build-documentdb-local]
-    runs-on: ubuntu-22.04
+    runs-on: *functional_tests_runner
     timeout-minutes: 120
     steps:
       - name: Checkout repository
@@ -269,6 +261,12 @@ jobs:
       - name: Load documentdb-local image
         run: docker load < /tmp/documentdb-local.tar.gz
 
+      - name: Generate DocumentDB password
+        run: |
+          PASSWORD=$(python3 -c 'import secrets, string; print("".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32)))')
+          echo "::add-mask::$PASSWORD"
+          echo "DOCUMENTDB_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
+
       - name: Start DocumentDB container
         run: |
           docker run -d \
@@ -276,7 +274,7 @@ jobs:
             -p ${{ env.DOCUMENTDB_PORT }}:${{ env.DOCUMENTDB_PORT }} \
             documentdb-local:ci \
             --username ${{ env.DOCUMENTDB_USER }} \
-            --password ${{ env.DOCUMENTDB_PASSWORD }} \
+            --password "$DOCUMENTDB_PASSWORD" \
             --skip-init-data
 
           echo "Waiting for DocumentDB to be fully ready..."
@@ -294,7 +292,7 @@ jobs:
 
       - name: Run daily full suite
         run: |
-          CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${{ env.DOCUMENTDB_PASSWORD }}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
+          CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${DOCUMENTDB_PASSWORD}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
           mkdir -p .test-results/functional-tests-daily
           chmod 777 .test-results/functional-tests-daily
 
@@ -302,7 +300,7 @@ jobs:
             -v "$(pwd)/.test-results/functional-tests-daily:/results" \
             ${{ env.FUNC_TEST_IMAGE }} \
             documentdb_tests/compatibility/tests \
-            --engine-name documentdb \
+            --engine-name "${{ env.ENGINE_NAME }}" \
             --connection-string "$CONNECTION_STRING" \
             -n ${{ env.PYTEST_WORKERS }} \
             --json-report --json-report-file=/results/report.json \

@@ -361,7 +361,10 @@ def summarize_daily(allowlist_path: str, report_path: str, image_path: str = "")
         area_counts[area] = area_counts.get(area, 0) + 1
 
     # Generate promotion YAML snippet
-    promotion_snippet_lines = ["# Promotion candidates from daily delta", "tests:"]
+    promotion_snippet_lines = [
+        "# Promotion candidates from one daily run; rerun/bootstrap before promoting.",
+        "tests:",
+    ]
     for nodeid in sorted(outside_passed):
         promotion_snippet_lines.append(f"  - {nodeid}")
 
@@ -403,6 +406,12 @@ def render_daily_markdown(delta: dict) -> str:
 
     if delta.get("promotion_areas"):
         lines.append("**Manual promotion candidates by area:**")
+        lines.append("")
+        lines.append(
+            "These are single-run candidates from the scheduled daily job. "
+            "Re-run or use `bootstrap --runs <n>` before promoting them into `allowlist.yml`."
+        )
+        lines.append("")
         for area, count in sorted(delta["promotion_areas"].items()):
             lines.append(f"- {area}: {count}")
         lines.append("")
@@ -498,8 +507,6 @@ def cmd_validate_config(args):
 
 def cmd_summarize_gate(args):
     result = summarize_gate(args.allowlist, args.report, args.image)
-
-
     md = render_gate_markdown(result)
 
     # Write summary to stdout
