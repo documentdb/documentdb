@@ -80,7 +80,7 @@ Allowed test
 
 Outside allow-list
   = upstream test not currently required in DocumentDB PR gate
-  = still useful signal in scheduled or on-demand promotion-candidate full-suite runs
+  = still useful signal in scheduled promotion-candidate full-suite runs
   = candidate for future promotion when maintainers are ready to review it
 ```
 
@@ -118,7 +118,7 @@ Phase 1 includes:
 3. PR CI runs only allow-listed tests from the pinned image.
 4. CI fails if any allow-listed test is missing, skipped, deselected, not executed, or not passing.
 5. Local reproduction scripts exist for running the full allow-list or one failed test.
-6. A scheduled or on-demand promotion-candidate full-suite run generates a report when the team is prepared to review newly passing tests:
+6. A scheduled promotion-candidate full-suite run generates a report when the team is prepared to review newly passing tests:
    - allow-listed tests that failed,
    - tests outside the allow-list that passed,
    - tests outside the allow-list that still do not pass.
@@ -531,7 +531,7 @@ Do all existing allow-listed tests still pass on the candidate image?
 
 ```text
 +------------------------------+
-| Scheduled/manual job checks  |
+| Scheduled image job checks   |
 | latest upstream image        |
 +--------------+---------------+
                |
@@ -659,11 +659,11 @@ Action:
 
 This automation keeps image update work out of normal product PRs while ensuring the pinned image does not silently fall behind upstream.
 
-#### 8. Scheduled or on-demand promotion-candidate full-suite report
+#### 8. Scheduled promotion-candidate full-suite report
 
 Full-suite runs provide visibility and coverage growth, but they should happen when maintainers are prepared to review and promote newly passing tests. They should not directly block normal product PRs.
 
-Cadence is a Phase 1 operational decision, not a contract. Start weekly or on demand, then move to a higher cadence only when promotion bandwidth justifies it.
+Cadence is a Phase 1 operational decision, not a contract. The implementation starts with a scheduled CI run only, so the PR workflow stays focused on the required allow-list gate. Maintainers can still run the same full-suite visibility flow locally with `run-functional-tests.sh daily` when investigating promotion candidates.
 
 The promotion-candidate report should run the broader/full upstream suite from the current pinned PR-gate image. This keeps coverage promotion tied to the same reproducible image used by PRs. The separate image freshness workflow evaluates the latest candidate image.
 
@@ -1262,7 +1262,7 @@ Dashboards, historical trend pages, and richer PR comments are useful later, but
   - pytest collection hook
   - unified local runner for allowlist, single, smoke, full, daily, and bootstrap modes
   - PR gate workflow and summary formatter
-  - scheduled or on-demand full-suite promotion report workflow
+  - scheduled full-suite promotion report workflow
 - [ ] Future PR: image freshness automation (Phase 2)
 
 ### Status updates
@@ -1271,7 +1271,7 @@ Dashboards, historical trend pages, and richer PR comments are useful later, but
 
 ### Open questions
 
-- [x] Phase 1 full-suite promotion reports are scheduled and manually runnable; cadence can be adjusted based on maintainer promotion bandwidth.
+- [x] Phase 1 full-suite promotion reports run on a schedule in CI; the same daily mode remains locally runnable for maintainer investigation.
 - [x] Phase 1 rejects allow-listed `no_parallel` tests; a sequential path is deferred to Phase 2 if needed.
 
 ---
