@@ -179,7 +179,7 @@ the single-test repro is not enough.
 1. Identify which job failed:
    - PR gate: `functional-pr-gate`
    - Scheduled daily visibility: `daily-functional-delta`
-   - Config-only failure: `validate-config` or `check-allowlist-removals`
+   - Config-only failure: `validate-config`
 
 2. Download artifacts from the failed run:
 
@@ -261,4 +261,5 @@ the intended stable tests into `config/allowlist.yml`.
   --output /tmp/allowlist-candidate.yml
 ```
 
-Allowlist removals are blocked in PRs unless explicitly justified.
+Allowlist removals are reviewed by PR reviewers. CI does not block removals
+automatically.

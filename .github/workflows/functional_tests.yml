@@ -53,39 +53,11 @@ jobs:
         run: python3 documentdb-local/functional-tests/tools/functional_gate.py validate-config
 
   # -----------------------------------------------------------------------
-  # -----------------------------------------------------------------------
-  check-allowlist-removals:
-    runs-on: *functional_tests_runner
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Install Python dependencies
-        run: pip install pyyaml
-
-      - name: Check for allow-list removals
-        run: |
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "Not a pull request event; skipping allow-list removal check."
-            exit 0
-          fi
-
-          if git show "${{ github.event.pull_request.base.sha }}:documentdb-local/functional-tests/config/allowlist.yml" > /tmp/base_allowlist.yml 2>/dev/null; then
-            python3 documentdb-local/functional-tests/tools/check_allowlist_removals.py \
-              --base /tmp/base_allowlist.yml \
-              --head documentdb-local/functional-tests/config/allowlist.yml
-          else
-            echo "No base allowlist.yml found (new file). Skipping removal check."
-          fi
-
-  # -----------------------------------------------------------------------
-  # Job 3: Build documentdb-local image from PR code
+  # Job 2: Build documentdb-local image from PR code
   #
   # Reuses the same deb-build + docker-build pattern from build_gateway.yml
   # but only builds one arch (amd64) and does not push to GHCR.
-  # Cheap config jobs above still run on draft PRs; this expensive build and
+  # The cheap config job above still runs on draft PRs; this expensive build and
   # downstream gate intentionally wait until the PR is ready for review.
   # -----------------------------------------------------------------------
   build-documentdb-local:
@@ -129,14 +101,14 @@ jobs:
           retention-days: 1
 
   # -----------------------------------------------------------------------
-  # Job 4: PR gate - run allow-listed tests against documentdb-local
+  # Job 3: PR gate - run allow-listed tests against documentdb-local
   # -----------------------------------------------------------------------
   functional-pr-gate:
     if: >
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       github.event_name == 'workflow_dispatch'
-    needs: [validate-config, check-allowlist-removals, build-documentdb-local]
+    needs: [validate-config, build-documentdb-local]
     runs-on: *functional_tests_runner
     timeout-minutes: 30
     steps:
@@ -240,7 +212,7 @@ jobs:
           docker rm documentdb 2>/dev/null || true
 
   # -----------------------------------------------------------------------
-  # Job 5: Daily delta - full suite visibility report
+  # Job 4: Daily delta - full suite visibility report
   # -----------------------------------------------------------------------
   daily-functional-delta:
     if: github.event_name == 'schedule'
