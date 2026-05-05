@@ -1,10 +1,6 @@
 name: Functional tests
 run-name: ${{ github.event.pull_request.title || '' }}
 
-concurrency:
-  group: functional-tests-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 on:
   workflow_dispatch:
     inputs:
