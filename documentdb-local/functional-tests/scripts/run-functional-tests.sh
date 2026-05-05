@@ -131,6 +131,32 @@ repo_relative_path() {
     python3 -c "import os, sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))" "$1" "$2"
 }
 
+redact_connection_string() {
+    python3 - "$1" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+try:
+    parsed = urlsplit(sys.argv[1])
+    scheme = parsed.scheme or "mongodb"
+    host = parsed.hostname
+    port = parsed.port
+except ValueError:
+    print("<redacted>")
+    raise SystemExit(0)
+
+if not host:
+    print("<redacted>")
+    raise SystemExit(0)
+
+if ":" in host and not host.startswith("["):
+    host = f"[{host}]"
+
+port_suffix = f":{port}" if port is not None else ""
+print(f"{scheme}://{host}{port_suffix}")
+PY
+}
+
 cleanup_managed_documentdb() {
     local exit_code=$?
 
@@ -410,7 +436,7 @@ echo ""
 echo "Mode:        $MODE"
 echo "Image:       $IMAGE"
 echo "Engine:      $ENGINE_NAME"
-echo "Connection:  $CONNECTION_STRING"
+echo "Connection:  $(redact_connection_string "$CONNECTION_STRING")"
 echo "Workers:     $WORKERS"
 echo "Results:     $RESULTS_DIR"
 if [ "$BUILD_DOCUMENTDB" = "true" ] || [ "$START_DOCUMENTDB" = "true" ]; then

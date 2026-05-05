@@ -58,7 +58,13 @@ raise SystemExit(f"unexpected docker invocation: {sys.argv}")
     return docker
 
 
-def run_allowlist(tmp_path: Path, *, docker_exit: int = 0, report: str = "all_pass"):
+def run_allowlist(
+    tmp_path: Path,
+    *,
+    docker_exit: int = 0,
+    report: str = "all_pass",
+    extra_args: list[str] | None = None,
+):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     write_fake_docker(fake_bin)
@@ -70,7 +76,7 @@ def run_allowlist(tmp_path: Path, *, docker_exit: int = 0, report: str = "all_pa
     env["FAKE_DOCKER_REPORT"] = report
 
     return subprocess.run(
-        [str(SCRIPT), "allowlist", "--results-dir", str(results_dir)],
+        [str(SCRIPT), "allowlist", "--results-dir", str(results_dir), *(extra_args or [])],
         cwd=REPO_ROOT,
         env=env,
         text=True,
@@ -97,3 +103,17 @@ def test_allowlist_mode_fails_when_summary_fails_even_if_pytest_succeeds(tmp_pat
 
     assert result.returncode == 1, result.stdout + result.stderr
     assert "Test run complete (exit: 1)" in result.stdout
+
+
+def test_allowlist_mode_redacts_logged_connection_string(tmp_path):
+    connection_string = "mongodb://user:secret@example.com:10260/?tls=true&token=abc"
+
+    result = run_allowlist(
+        tmp_path,
+        extra_args=["--connection-string", connection_string],
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Connection:  mongodb://example.com:10260" in result.stdout
+    assert "secret" not in result.stdout
+    assert "token=abc" not in result.stdout
