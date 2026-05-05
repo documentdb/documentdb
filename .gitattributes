@@ -6,3 +6,8 @@ pg_documentdb/src/roaring_bitmaps/*.[ch] -citus-style
 *.sh text eol=lf
 *.md text eol=lf
 *.sql text eol=lf
+
+# All Rust Files are UTF-8 and use lf instead of crlf
+*.rs       text diff=rust encoding=utf-8 eol=lf
+*.toml     text diff=toml encoding=utf-8 eol=lf
+Cargo.lock text
