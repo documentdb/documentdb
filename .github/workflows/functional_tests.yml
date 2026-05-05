@@ -101,7 +101,7 @@ jobs:
           retention-days: 1
 
   # -----------------------------------------------------------------------
-  # Job 3: PR gate - run allow-listed tests against documentdb-local
+  # Job 3: PR gate - run allowlisted tests against documentdb-local
   # -----------------------------------------------------------------------
   functional-pr-gate:
     if: >
@@ -154,7 +154,7 @@ jobs:
           docker pull "$IMAGE"
           echo "FUNC_TEST_IMAGE=$IMAGE" >> $GITHUB_ENV
 
-      - name: Run allow-list gate
+      - name: Run allowlist gate
         run: |
           CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${DOCUMENTDB_PASSWORD}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
           mkdir -p .test-results/functional-tests

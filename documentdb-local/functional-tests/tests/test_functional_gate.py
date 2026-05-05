@@ -301,7 +301,7 @@ class TestSummarizeDaily:
         ])
         delta = summarize_daily(valid_allowlist, report, valid_image)
         md = render_daily_markdown(delta)
-        assert "Allow-listed tests missing from the report" in md
+        assert "Allowlisted tests missing from the report" in md
         assert "tests/test_a.py::test_two" in md
 
     def test_summarize_daily_exits_nonzero_when_allowlisted_test_missing(

@@ -1,8 +1,8 @@
 """
-DocumentDB allow-list pytest plugin.
+DocumentDB allowlist pytest plugin.
 
 Mounts into the upstream functional-tests container to filter collected tests
-against an allow-list. Uses @pytest.hookimpl(tryfirst=True) so it sees the
+against an allowlist. Uses @pytest.hookimpl(tryfirst=True) so it sees the
 full collection before upstream hooks (e.g. no_parallel deselection) mutate
 the item list.
 
@@ -133,10 +133,10 @@ def pytest_collection_modifyitems(session, config, items):
         raise pytest.UsageError(
             f"[ALLOWLISTED_ENGINE_XFAIL] allowlist.yml contains {len(engine_xfail_ids)} tests "
             f"marked engine_xfail(engine=\"{engine_name}\"). These tests cannot satisfy "
-            f"the allow-list contract:\n  {xf_list}{suffix}"
+            f"the allowlist contract:\n  {xf_list}{suffix}"
         )
 
-    # Deselect non-allow-listed items
+    # Deselect non-allowlisted items
     if deselected:
         config.hook.pytest_deselected(items=deselected)
         items[:] = selected

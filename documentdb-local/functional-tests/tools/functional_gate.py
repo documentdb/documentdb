@@ -3,7 +3,7 @@
 DocumentDB Functional Test Gate Tooling.
 
 Provides config validation, PR gate result summarization, and daily delta
-reporting for the allow-list PR gate framework (RFC-0007).
+reporting for the allowlist PR gate framework (RFC-0007).
 """
 
 import argparse
@@ -140,7 +140,7 @@ class GateResult:
 
 
 def summarize_gate(allowlist_path: str, report_path: str, image_path: str = "") -> GateResult:
-    """Analyze pytest JSON report against the allow-list and produce a gate result."""
+    """Analyze pytest JSON report against the allowlist and produce a gate result."""
     result = GateResult()
 
     # Load image info
@@ -172,14 +172,14 @@ def summarize_gate(allowlist_path: str, report_path: str, image_path: str = "") 
         outcome = test.get("outcome", "unknown")
         outcome_map[nodeid] = {"outcome": outcome, "test": test}
 
-    # Check every allow-listed test
+    # Check every allowlisted test
     for test_id in sorted(allowed_ids):
         if test_id not in outcome_map:
             result.missing += 1
             result.errors.append({
                 "subtype": "UNKNOWN_TEST_ID",
                 "test_id": test_id,
-                "message": f"Allow-listed test not found in report: {test_id}",
+                "message": f"Allowlisted test not found in report: {test_id}",
             })
             continue
 
@@ -201,7 +201,7 @@ def summarize_gate(allowlist_path: str, report_path: str, image_path: str = "") 
                 "subtype": "NON_PASS_OUTCOME",
                 "test_id": test_id,
                 "outcome": outcome,
-                "message": f"Allow-listed test has non-pass outcome: {outcome}",
+                "message": f"Allowlisted test has non-pass outcome: {outcome}",
             })
         elif outcome == "xpass":
             result.non_pass += 1
@@ -217,7 +217,7 @@ def summarize_gate(allowlist_path: str, report_path: str, image_path: str = "") 
                 "subtype": "NON_PASS_OUTCOME",
                 "test_id": test_id,
                 "outcome": outcome,
-                "message": f"Allow-listed test was skipped",
+                "message": f"Allowlisted test was skipped",
             })
         elif outcome == "error":
             result.non_pass += 1
@@ -225,7 +225,7 @@ def summarize_gate(allowlist_path: str, report_path: str, image_path: str = "") 
                 "subtype": "NON_PASS_OUTCOME",
                 "test_id": test_id,
                 "outcome": outcome,
-                "message": f"Allow-listed test had an error",
+                "message": f"Allowlisted test had an error",
             })
         else:
             result.non_pass += 1
@@ -233,7 +233,7 @@ def summarize_gate(allowlist_path: str, report_path: str, image_path: str = "") 
                 "subtype": "NON_PASS_OUTCOME",
                 "test_id": test_id,
                 "outcome": outcome,
-                "message": f"Allow-listed test has unexpected outcome: {outcome}",
+                "message": f"Allowlisted test has unexpected outcome: {outcome}",
             })
 
     result.outside_allowlist = max(0, result.total_discovered - result.selected)
@@ -264,7 +264,7 @@ def render_gate_markdown(result: GateResult) -> str:
         lines.append(f"**Image:** `{result.image}`")
         lines.append("")
 
-    lines.append("**Allow-list:**")
+    lines.append("**Allowlist:**")
     lines.append(f"- selected: {result.selected}")
     lines.append(f"- passed: {result.passed}")
     lines.append(f"- failed: {result.failed}")
@@ -274,7 +274,7 @@ def render_gate_markdown(result: GateResult) -> str:
 
     lines.append("**Coverage boundary:**")
     lines.append(f"- upstream tests discovered in pinned image: {result.total_discovered}")
-    lines.append(f"- outside allow-list and not run in PR gate: {result.outside_allowlist}")
+    lines.append(f"- outside allowlist and not run in PR gate: {result.outside_allowlist}")
     lines.append("")
 
     if result.outcome != "PASS":
@@ -316,7 +316,7 @@ def render_gate_markdown(result: GateResult) -> str:
 # ---------------------------------------------------------------------------
 
 def summarize_daily(allowlist_path: str, report_path: str, image_path: str = "") -> dict:
-    """Analyze a full-suite pytest JSON report against the allow-list for daily delta."""
+    """Analyze a full-suite pytest JSON report against the allowlist for daily delta."""
     al_data = load_yaml(allowlist_path)
     allowed_ids = set(al_data.get("tests", []))
 
@@ -350,7 +350,7 @@ def summarize_daily(allowlist_path: str, report_path: str, image_path: str = "")
             else:
                 outside_not_passing.append(nodeid)
 
-    # Check for allow-listed tests missing from report entirely
+    # Check for allowlisted tests missing from report entirely
     reported_ids = {t.get("nodeid", "") for t in tests_in_report}
     missing_from_report = sorted(allowed_ids - reported_ids)
 
@@ -391,7 +391,7 @@ def render_daily_markdown(delta: dict) -> str:
         lines.append(f"**Image:** `{delta['image']}`")
         lines.append("")
 
-    lines.append("**Required allow-list:**")
+    lines.append("**Required allowlist:**")
     lines.append(f"- total: {delta['allowlist_total']}")
     lines.append(f"- passed: {delta['allowlisted_passed']}")
     lines.append(f"- failed/non-pass: {len(delta['allowlisted_failed'])}")
@@ -399,7 +399,7 @@ def render_daily_markdown(delta: dict) -> str:
         lines.append(f"- missing from report: {len(delta['allowlisted_missing'])}")
     lines.append("")
 
-    lines.append("**Outside allow-list:**")
+    lines.append("**Outside allowlist:**")
     lines.append(f"- passed: {delta['outside_passed']}")
     lines.append(f"- not passing: {delta['outside_not_passing']}")
     lines.append("")
@@ -417,7 +417,7 @@ def render_daily_markdown(delta: dict) -> str:
         lines.append("")
 
     if delta.get("allowlisted_failed"):
-        lines.append("**Allow-listed tests that failed:**")
+        lines.append("**Allowlisted tests that failed:**")
         for entry in delta["allowlisted_failed"][:20]:
             lines.append(f"- `{entry['test_id']}` ({entry['outcome']})")
         if len(delta["allowlisted_failed"]) > 20:
@@ -425,7 +425,7 @@ def render_daily_markdown(delta: dict) -> str:
         lines.append("")
 
     if delta.get("allowlisted_missing"):
-        lines.append("**Allow-listed tests missing from the report:**")
+        lines.append("**Allowlisted tests missing from the report:**")
         for test_id in delta["allowlisted_missing"][:20]:
             lines.append(f"- `{test_id}`")
         if len(delta["allowlisted_missing"]) > 20:

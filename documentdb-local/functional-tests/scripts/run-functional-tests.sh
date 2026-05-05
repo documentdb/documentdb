@@ -2,12 +2,12 @@
 # Run DocumentDB functional tests locally using the pinned upstream image.
 #
 # Modes:
-#   allowlist  Run the required PR-gate allow-list and summarize gate results.
+#   allowlist  Run the required PR-gate allowlist and summarize gate results.
 #   single     Run one pytest node ID. Pass the node ID positionally or with --test.
 #   smoke      Run upstream smoke tests, excluding no_parallel tests.
 #   full       Run the full upstream suite.
 #   daily      Run the full upstream suite and summarize daily delta results.
-#   bootstrap  Generate an allow-list candidate from tests that pass every run.
+#   bootstrap  Generate an allowlist candidate from tests that pass every run.
 #
 # Examples:
 #   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist
@@ -72,12 +72,12 @@ Usage:
   $0 <mode> [options] [-- <pytest args>]
 
 Modes:
-  allowlist  Run the required PR-gate allow-list and summarize gate results.
+  allowlist  Run the required PR-gate allowlist and summarize gate results.
   single     Run one pytest node ID. Pass the node ID positionally or with --test.
   smoke      Run upstream smoke tests, excluding no_parallel tests.
   full       Run the full upstream suite.
   daily      Run the full upstream suite and summarize daily delta results.
-  bootstrap  Generate an allow-list candidate from tests that pass every run.
+  bootstrap  Generate an allowlist candidate from tests that pass every run.
 
 Examples:
   $0 allowlist
