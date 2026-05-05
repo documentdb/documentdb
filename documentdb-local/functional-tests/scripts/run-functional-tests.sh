@@ -32,6 +32,8 @@ ALLOWLIST_YML="$CONFIG_DIR/allowlist.yml"
 PLUGIN="$FUNCTIONAL_TESTS_DIR/tools/conftest_allowlist.py"
 GATE_TOOL="$FUNCTIONAL_TESTS_DIR/tools/functional_gate.py"
 
+# Local-dev defaults only. Do not use these credentials for deployed environments;
+# CI generates per-run credentials in .github/workflows/functional_tests.yml.
 DEFAULT_CONNECTION_STRING="mongodb://docdb_admin:Admin100@host.docker.internal:10260/?tls=true&tlsAllowInvalidCertificates=true"
 MODE="${1:-}"
 CONNECTION_STRING_EXPLICIT=false
@@ -226,11 +228,9 @@ start_managed_documentdb() {
         fi
     fi
 
-    if docker ps -a --format '{{.Names}}' | grep -Fx "$DOCUMENTDB_CONTAINER" >/dev/null; then
-        echo "Removing existing managed DocumentDB container:"
-        echo "  $DOCUMENTDB_CONTAINER"
-        docker rm -f "$DOCUMENTDB_CONTAINER" >/dev/null
-    fi
+    echo "Removing any existing managed DocumentDB container:"
+    echo "  $DOCUMENTDB_CONTAINER"
+    docker rm -f "$DOCUMENTDB_CONTAINER" >/dev/null 2>&1 || true
 
     echo "Starting managed DocumentDB container:"
     echo "  Container: $DOCUMENTDB_CONTAINER"
@@ -392,7 +392,7 @@ if [ -z "$RESULTS_DIR" ]; then
     RESULTS_DIR="$REPO_ROOT/.test-results/functional-tests/$MODE"
 fi
 
-IMAGE=$(python3 -c "import yaml; print(yaml.safe_load(open('$IMAGE_YML'))['image'])")
+IMAGE=$(python3 -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["image"])' "$IMAGE_YML")
 mkdir -p "$RESULTS_DIR"
 chmod 777 "$RESULTS_DIR"
 trap cleanup_managed_documentdb EXIT
@@ -564,14 +564,20 @@ case "$MODE" in
                 break
             fi
 
-            RUN_PASSING=$(python3 -c "
+            RUN_PASSING=$(python3 -c '
 import json
-with open('$RUN_DIR/report.json') as f:
+import sys
+
+prefix = "documentdb_tests/"
+with open(sys.argv[1]) as f:
     report = json.load(f)
 for test in report.get('tests', []):
-    if test.get('outcome') == 'passed':
-        print(test['nodeid'].removeprefix('documentdb_tests/'))
-" | sort)
+    if test.get("outcome") == "passed":
+        nodeid = test["nodeid"]
+        if nodeid.startswith(prefix):
+            nodeid = nodeid[len(prefix):]
+        print(nodeid)
+' "$RUN_DIR/report.json" | sort)
 
             if [ "$RUN" -eq 1 ]; then
                 ALL_PASSING="$RUN_PASSING"
@@ -583,15 +589,16 @@ for test in report.get('tests', []):
         done
 
         if [ "$TEST_EXIT" -eq 0 ]; then
-            python3 -c "
+            python3 -c '
 import sys
 import yaml
 
+output_path = sys.argv[1]
 tests = sorted(line.strip() for line in sys.stdin if line.strip())
-with open('$OUTPUT', 'w') as f:
-    yaml.dump({'schema_version': 1, 'tests': tests}, f, default_flow_style=False, width=200)
-print(f'Wrote {len(tests)} tests to $OUTPUT')
-" <<< "$ALL_PASSING"
+with open(output_path, "w") as f:
+    yaml.dump({"schema_version": 1, "tests": tests}, f, default_flow_style=False, width=200)
+print(f"Wrote {len(tests)} tests to {output_path}")
+' "$OUTPUT" <<< "$ALL_PASSING"
         fi
         ;;
 esac
