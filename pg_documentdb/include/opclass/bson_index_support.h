@@ -108,6 +108,9 @@ typedef struct ReplaceExtensionFunctionContext
 	/* Whether or not the rel pathlist has streaming cursor scan filters */
 	bool hasStreamingContinuationScan;
 
+	/* whether or not the rel pathlist has dynamic streaming cursor scan filters */
+	bool hasDynamicStreamingContinuationScan;
+
 	/* Whether or not the index paths already has a primary key lookup */
 	IndexPath *primaryKeyLookupPath;
 

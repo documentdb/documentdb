@@ -12,13 +12,15 @@
 #ifndef CURSOR_PRIVATE_H
 #define CURSOR_PRIVATE_H
 
+typedef struct QueryCursorPlanResult QueryCursorPlanResult;
 bool DrainStreamingQuery(HTAB *cursorMap, Query *query, int batchSize,
 						 int32_t *numIterations, uint32_t accumulatedSize,
 						 pgbson_array_writer *arrayWriters);
 pgbson * DrainTailableQuery(HTAB *cursorMap, Query *query, int batchSize,
 							int32_t *numIterations, uint32_t accumulatedSize,
 							pgbson_array_writer *arrayWriter);
-bool CreateAndDrainPersistedQuery(const char *cursorName, Query *query,
+bool CreateAndDrainPersistedQuery(const char *cursorName,
+								  QueryCursorPlanResult *planResult,
 								  int batchSize, int32_t *numIterations, uint32_t
 								  accumulatedSize,
 								  pgbson_array_writer *arrayWriter, bool isHoldCursor,
@@ -26,7 +28,8 @@ bool CreateAndDrainPersistedQuery(const char *cursorName, Query *query,
 void CreateAndDrainSingleBatchQuery(const char *cursorName, Query *query,
 									int batchSize, int32_t *numIterations, uint32_t
 									accumulatedSize, pgbson_array_writer *arrayWriter);
-bytea * CreateAndDrainPersistedQueryWithFiles(const char *cursorName, Query *query,
+bytea * CreateAndDrainPersistedQueryWithFiles(const char *cursorName,
+											  QueryCursorPlanResult *planResult,
 											  int batchSize, int32_t *numIterations,
 											  uint32_t
 											  accumulatedSize,
@@ -44,6 +47,8 @@ void CreateAndDrainPointReadQuery(const char *cursorName, Query *query,
 								  int32_t *numIterations, uint32_t
 								  accumulatedSize,
 								  pgbson_array_writer *arrayWriter);
+
+QueryCursorPlanResult * PlanForcedPersistentQuery(Query *query, bool isHoldCursor);
 
 TupleDesc ConstructCursorResultTupleDesc(AttrNumber maxAttrNum);
 

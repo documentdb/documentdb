@@ -1205,6 +1205,13 @@ GetPrimaryKeyIndexOpt(RelOptInfo *rel)
 		return NULL;
 	}
 
+	return GetPrimaryKeyIndexOptCore(rel);
+}
+
+
+IndexOptInfo *
+GetPrimaryKeyIndexOptCore(RelOptInfo *rel)
+{
 	ListCell *cell;
 	foreach(cell, rel->indexlist)
 	{

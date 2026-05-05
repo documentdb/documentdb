@@ -18,6 +18,10 @@ bool UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo 
 												  RangeTblEntry *rte, struct
 												  ReplaceExtensionFunctionContext *context);
 
+bool UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
+												RangeTblEntry *rte, struct
+												ReplaceExtensionFunctionContext *context);
+
 void UpdatePathsToForceRumIndexScanToBitmapHeapScan(PlannerInfo *root, RelOptInfo *rel);
 
 Query * ReplaceCursorParamValues(Query *query, ParamListInfo boundParams);

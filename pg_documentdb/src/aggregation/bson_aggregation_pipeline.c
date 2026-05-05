@@ -1249,13 +1249,58 @@ MutateQueryWithPipeline(Query *query, List *aggregationStages,
 }
 
 
+inline static bool
+TryAddDynamicCursorQuery(CursorParamKind cursorParamKind, QueryData *queryData,
+						 Query *query, AggregationPipelineBuildContext *context)
+{
+	if (!IsClusterVersionAtleast(DocDB_V0, 113, 0))
+	{
+		return false;
+	}
+
+	if (cursorParamKind == CursorParamKind_Dynamic &&
+		queryData->cursorKind == QueryCursorType_Unspecified &&
+		context->allowShardBaseTable)
+	{
+		/* Before processing anything add the cursor params to the base table
+		 * if able. Dynamic cursors only work on base shard table RTEs currently.
+		 */
+		if (list_length(query->rtable) == 1)
+		{
+			RangeTblEntry *rte = linitial(query->rtable);
+			if (rte->rtekind == RTE_RELATION)
+			{
+				/* We're still on the base table (views etc haven't pushed down)
+				 * to subqueries. Add the dynamic cursor state expr.
+				 */
+				List *quals = make_ands_implicit((Expr *) query->jointree->quals);
+
+				pgbson *cursorValue = queryData->cursorStateConst != NULL ?
+									  queryData->cursorStateConst : PgbsonInitEmpty();
+				Const *cursorConst = MakeBsonConst(cursorValue);
+				FuncExpr *cursorStateExpr = makeFuncExpr(
+					ApiCursorTrackerFunctionId(), BOOLOID, list_make2(
+						MakeSimpleDocumentVar(), cursorConst),
+					InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+				quals = lappend(quals, cursorStateExpr);
+				query->jointree->quals = (Node *) make_ands_explicit(quals);
+				queryData->cursorKind = QueryCursorType_Dynamic;
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+
 /*
  * Given a query and an aggregation pipeline mutates the query
  * to match the contents of the provided aggregation pipeline.
  */
 Query *
 GenerateAggregationQuery(text *database, pgbson *aggregationSpec, QueryData *queryData,
-						 bool addCursorParams, bool setStatementTimeout)
+						 CursorParamKind cursorParamKind, bool setStatementTimeout)
 {
 	AggregationPipelineBuildContext context = { 0 };
 	context.databaseNameDatum = database;
@@ -1423,18 +1468,23 @@ GenerateAggregationQuery(text *database, pgbson *aggregationSpec, QueryData *que
 	/* Remember the base query - this will be needed since we need to update the cursor function on the base RTE */
 	Query *baseQuery = query;
 
+	if (cursorParamKind == CursorParamKind_Dynamic &&
+		!TryAddDynamicCursorQuery(cursorParamKind, queryData, query, &context))
+	{
+		/* Fall back to streaming cursor if dynamic cursor cannot be added */
+		cursorParamKind = CursorParamKind_Streaming;
+	}
+
 	query = MutateQueryWithPipeline(query, aggregationStages, &context);
 
 	if (context.requiresTailableCursor)
 	{
-		queryData->cursorKind = QueryCursorType_Tailable;
-
 		/*
 		 * change stream is the only stage that requires a tailable cursor.
 		 * Since change stream manages the continuation handling by itself,
 		 * there is no need to add cursor params to the query.
 		 */
-		addCursorParams = false;
+		queryData->cursorKind = QueryCursorType_Tailable;
 	}
 	else if (query->commandType == CMD_MERGE)
 	{
@@ -1459,22 +1509,17 @@ GenerateAggregationQuery(text *database, pgbson *aggregationSpec, QueryData *que
 	queryData->namespaceName = context.namespaceName;
 
 	/* This is validated *after* the pipeline parsing happens */
-	if (!hasCursor && !explain && addCursorParams)
+	if (!hasCursor && !explain && cursorParamKind != CursorParamKind_Persistent)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
 						errmsg(
 							"The 'cursor' option is required, except for aggregate with explain")));
 	}
 
-	if (addCursorParams)
+	if (cursorParamKind == CursorParamKind_Streaming &&
+		queryData->cursorKind == QueryCursorType_Streamable)
 	{
 		bool addCursorAsConst = false;
-		AddCursorFunctionsToQuery(query, baseQuery, queryData, &context,
-								  addCursorAsConst);
-	}
-	else if (EnableCursorsOnAggregationQueryRewrite)
-	{
-		bool addCursorAsConst = true;
 		AddCursorFunctionsToQuery(query, baseQuery, queryData, &context,
 								  addCursorAsConst);
 	}
@@ -1482,6 +1527,12 @@ GenerateAggregationQuery(text *database, pgbson *aggregationSpec, QueryData *que
 	{
 		AddQualifierForTailableQuery(query, baseQuery, queryData,
 									 &context);
+	}
+	else if (EnableCursorsOnAggregationQueryRewrite)
+	{
+		bool addCursorAsConst = true;
+		AddCursorFunctionsToQuery(query, baseQuery, queryData, &context,
+								  addCursorAsConst);
 	}
 
 	return query;
@@ -1512,8 +1563,8 @@ IsNaturalSortHint(const bson_value_t *hintValue)
  * Applies a find spec against a query and expands it into the underlying SQL AST.
  */
 Query *
-GenerateFindQuery(text *databaseDatum, pgbson *findSpec, QueryData *queryData, bool
-				  addCursorParams, bool setStatementTimeout)
+GenerateFindQuery(text *databaseDatum, pgbson *findSpec, QueryData *queryData,
+				  CursorParamKind cursorParamKind, bool setStatementTimeout)
 {
 	AggregationPipelineBuildContext context = { 0 };
 	context.databaseNameDatum = databaseDatum;
@@ -1902,6 +1953,13 @@ default_find_case:
 										  &context);
 	Query *baseQuery = query;
 
+	if (cursorParamKind == CursorParamKind_Dynamic &&
+		!TryAddDynamicCursorQuery(cursorParamKind, queryData, query, &context))
+	{
+		/* Fall back to streaming cursor if dynamic cursor cannot be added */
+		cursorParamKind = CursorParamKind_Streaming;
+	}
+
 	/* First apply match */
 	if (filter.value_type != BSON_TYPE_EOD)
 	{
@@ -1982,7 +2040,7 @@ default_find_case:
 		queryData->cursorKind = QueryCursorType_SingleBatch;
 	}
 
-	if (addCursorParams)
+	if (cursorParamKind == CursorParamKind_Streaming)
 	{
 		bool addCursorAsConst = false;
 		AddCursorFunctionsToQuery(query, baseQuery, queryData, &context,

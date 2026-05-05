@@ -20,6 +20,7 @@
 #include <commands/portalcmds.h>
 #include "metadata/collection.h"
 #include "planner/documents_custom_planner.h"
+#include "utils/version_utils.h"
 
 static bool SetPointReadQualsOnIndexScan(IndexScan *indexScan, Expr *queryQuals);
 static List * FormatProjections(List *targetEntries);
@@ -294,6 +295,12 @@ TraverseQualsAndExtract(List *quals, List **queryRuntimeClauses,
 				else if (funcExpr->funcid == BsonFullScanFunctionOid())
 				{
 					/* Strip full scan */
+					continue;
+				}
+				else if (IsClusterVersionAtleast(DocDB_V0, 113, 0) &&
+						 funcExpr->funcid == ApiCursorTrackerFunctionId())
+				{
+					/* Strip the continuation function */
 					continue;
 				}
 

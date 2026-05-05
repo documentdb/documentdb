@@ -2918,7 +2918,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_lookup", "pipeline": [{"$merge" : { "into": "coll_merge_target", "whenMatched" : "replace" }} ], "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
 ERROR:  collation is not supported with $merge yet
-CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean) line 5 at FOR over EXECUTE statement
+CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement
 -- ======================================================================
 -- SECTION 10: $in with deeply nested arrays — collection-backed find plans
 -- ======================================================================
@@ -3207,7 +3207,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 }')
 $cmd$);
 ERROR:  Collation is currently unsupported in the $bucket stage.
-CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean) line 5 at FOR over EXECUTE statement
+CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement
 -- unsupported: $geoNear
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db',
@@ -3226,7 +3226,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 }')
 $cmd$);
 ERROR:  collation is not supported in the $geoNear stage yet.
-CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean) line 5 at FOR over EXECUTE statement
+CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement
 -- unsupported: $fill
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', 
@@ -3251,7 +3251,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 }')
 $cmd$);
 ERROR:  collation is not supported in the $fill stage yet.
-CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean) line 5 at FOR over EXECUTE statement
+CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement
 -- unsupported: $group
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db',
@@ -3266,7 +3266,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 }')
 $cmd$);
 ERROR:  collation is not supported in $group stage yet.
-CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean) line 5 at FOR over EXECUTE statement
+CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement
 -- unsupported: $setWindowFields
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db',
@@ -3283,7 +3283,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 }')
 $cmd$);
 ERROR:  collation is not supported in the $setWindowFields stage yet.
-CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean) line 5 at FOR over EXECUTE statement
+CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement
 -- unsupported: $sortByCount
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db',
@@ -3302,4 +3302,4 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 }')
 $cmd$);
 ERROR:  collation is not supported in the $sortByCount stage yet.
-CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean) line 5 at FOR over EXECUTE statement
+CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement

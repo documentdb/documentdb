@@ -45,20 +45,20 @@ command_bson_get_rewritten_sql(PG_FUNCTION_ARGS)
 	StringView commandName = bson_iter_key_string_view(&iter);
 	Query *query;
 
-	bool enableCursorParams = false;
+	CursorParamKind cursorParams = CursorParamKind_Persistent;
 	bool setStatementTimeout = false;
 
 	if (StringViewEqualsCString(&commandName, "aggregate"))
 	{
 		QueryData queryData = GenerateFirstPageQueryData();
 		query = GenerateAggregationQuery(database, spec, &queryData,
-										 enableCursorParams, setStatementTimeout);
+										 cursorParams, setStatementTimeout);
 	}
 	else if (StringViewEqualsCString(&commandName, "find"))
 	{
 		QueryData queryData = GenerateFirstPageQueryData();
 		query = GenerateFindQuery(database, spec, &queryData,
-								  enableCursorParams, setStatementTimeout);
+								  cursorParams, setStatementTimeout);
 	}
 	else if (StringViewEqualsCString(&commandName, "count"))
 	{

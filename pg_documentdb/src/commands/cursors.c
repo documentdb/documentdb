@@ -109,6 +109,28 @@ typedef struct TailableCursorContinuationEntry
 
 
 /*
+ * The output of planning for a query cursor.
+ */
+typedef struct QueryCursorPlanResult
+{
+	/* queryString if applicable */
+	const char *queryString;
+
+	/* The query plan given the options */
+	PlannedStmt *queryPlan;
+
+	/* What type of cursor was planned */
+	QueryCursorType cursorType;
+
+	/* The options that were used to plan the cursor */
+	int cursorOptions;
+
+	/* The parameter list to pass to the plan */
+	ParamListInfo paramList;
+} QueryCursorPlanResult;
+
+
+/*
  * BsonStoreTupleDestReceiverBase is the base DestReceiver for forwarding tuples
  * to a BSON output target.  It holds the fields common to both the streaming
  * and persistent execution paths.  Concrete sub-types embed this struct as
@@ -552,6 +574,44 @@ DrainTailableQuery(HTAB *cursorMap, Query *query, int batchSize,
 }
 
 
+QueryCursorPlanResult *
+PlanForcedPersistentQuery(Query *query, bool isHoldCursor)
+{
+	/* Set up cursor flags */
+	int cursorOptions = CURSOR_OPT_BINARY;
+	if (isHoldCursor)
+	{
+		cursorOptions = cursorOptions | CURSOR_OPT_HOLD;
+	}
+
+	/* Deparse query text before planning since the planner may modify the query tree */
+	char *sourceText = "";
+	if (EnableDebugQueryText)
+	{
+		bool pretty = false;
+		sourceText = pg_get_querydef(query, pretty);
+	}
+
+	/* Plan the query */
+	ParamListInfo paramList = NULL;
+	PlannedStmt *queryPlan = pg_plan_query(query, NULL, cursorOptions, paramList);
+
+	if (query->commandType == CMD_MERGE)
+	{
+		/* In order to use a portal & SPI in Merge Command we need to set it to true */
+		queryPlan->hasReturning = true;
+	}
+
+	QueryCursorPlanResult *result = palloc0(sizeof(QueryCursorPlanResult));
+	result->cursorType = QueryCursorType_Persistent;
+	result->queryPlan = queryPlan;
+	result->queryString = sourceText;
+	result->cursorOptions = cursorOptions;
+	result->paramList = paramList;
+	return result;
+}
+
+
 void
 CreateAndDrainSingleBatchQuery(const char *cursorName, Query *query,
 							   int batchSize, int32_t *numIterations, uint32_t
@@ -598,7 +658,7 @@ CreateAndDrainSingleBatchQuery(const char *cursorName, Query *query,
  * true for single page cursors.
  */
 bool
-CreateAndDrainPersistedQuery(const char *cursorName, Query *query,
+CreateAndDrainPersistedQuery(const char *cursorName, QueryCursorPlanResult *result,
 							 int batchSize, int32_t *numIterations, uint32_t
 							 accumulatedSize,
 							 pgbson_array_writer *arrayWriter, bool isHoldCursor,
@@ -628,32 +688,14 @@ CreateAndDrainPersistedQuery(const char *cursorName, Query *query,
 		}
 	}
 
-	/* Set up cursor flags */
-	int cursorOptions = CURSOR_OPT_BINARY;
-	if (isHoldCursor && !closeCursor)
-	{
-		cursorOptions = cursorOptions | CURSOR_OPT_HOLD;
-	}
-
 	/* Save the context before doing SPI */
 	MemoryContext currentContext = CurrentMemoryContext;
-
-	/* Deparse query text before planning since the planner may modify the query tree */
-	char *sourceText = "";
-	if (EnableDebugQueryText)
-	{
-		bool pretty = false;
-		sourceText = pg_get_querydef(query, pretty);
-	}
-
-	/* Plan the query */
-	ParamListInfo paramList = NULL;
-	PlannedStmt *queryPlan = pg_plan_query(query, NULL, cursorOptions, paramList);
 
 	/* Add Scroll if it's explicitly supported (nodeAgg sometimes doesn't support it).
 	 * this is similar to spi's SPI_cursor_open_internal
 	 */
-	if (ExecSupportsBackwardScan(queryPlan->planTree))
+	int cursorOptions = result->cursorOptions;
+	if (ExecSupportsBackwardScan(result->queryPlan->planTree))
 	{
 		cursorOptions |= CURSOR_OPT_SCROLL;
 	}
@@ -668,12 +710,7 @@ CreateAndDrainPersistedQuery(const char *cursorName, Query *query,
 	queryPortal->visible = true;
 	queryPortal->cursorOptions = cursorOptions;
 
-	if (query->commandType == CMD_MERGE)
-	{
-		/* In order to use a portal & SPI in Merge Command we need to set it to true */
-		queryPlan->hasReturning = true;
-	}
-	else if (!closeCursor && (!EnableDelayedHoldPortal || !isHoldCursor))
+	if (!closeCursor && (!EnableDelayedHoldPortal || !isHoldCursor))
 	{
 		/* Since this could be holdable, copy the query plan to the portal context
 		 * Note that this is cleared anyway when we call HoldPortal (portal->stmts is
@@ -681,18 +718,18 @@ CreateAndDrainPersistedQuery(const char *cursorName, Query *query,
 		 * we don't hold the cursor so we need to copy the plan.
 		 */
 		MemoryContextSwitchTo(queryPortal->portalContext);
-		queryPlan = copyObject(queryPlan);
+		result->queryPlan = copyObject(result->queryPlan);
 		MemoryContextSwitchTo(currentContext);
 	}
 
 	/* Set the plan into the portal  */
-	PortalDefineQuery(queryPortal, NULL, sourceText,
+	PortalDefineQuery(queryPortal, NULL, result->queryString,
 					  CMDTAG_SELECT,
-					  list_make1(queryPlan),
+					  list_make1(result->queryPlan),
 					  NULL);
 
 	/* Start execution */
-	PortalStart(queryPortal, paramList, 0, GetActiveSnapshot());
+	PortalStart(queryPortal, result->paramList, 0, GetActiveSnapshot());
 
 	if (!closeCursor)
 	{
@@ -747,28 +784,14 @@ CreateAndDrainPersistedQuery(const char *cursorName, Query *query,
 
 
 bytea *
-CreateAndDrainPersistedQueryWithFiles(const char *cursorName, Query *query,
+CreateAndDrainPersistedQueryWithFiles(const char *cursorName,
+									  QueryCursorPlanResult *result,
 									  int batchSize, int32_t *numIterations, uint32_t
 									  accumulatedSize,
 									  pgbson_array_writer *arrayWriter, bool closeCursor)
 {
-	/* Set up cursor flags */
-	int cursorOptions = CURSOR_OPT_BINARY | CURSOR_OPT_HOLD;
-
 	/* Save the context before doing SPI */
 	MemoryContext currentContext = CurrentMemoryContext;
-
-	/* Deparse query text before planning since the planner may modify the query tree */
-	char *sourceText = "";
-	if (EnableDebugQueryText)
-	{
-		bool pretty = false;
-		sourceText = pg_get_querydef(query, pretty);
-	}
-
-	/* Plan the query */
-	ParamListInfo paramList = NULL;
-	PlannedStmt *queryPlan = pg_plan_query(query, NULL, cursorOptions, paramList);
 
 	bool isSingleResult = false;
 	PersistentTupleDestReceiver *receiver = CreatePersistentTupleDestReceiver(arrayWriter,
@@ -778,7 +801,8 @@ CreateAndDrainPersistedQueryWithFiles(const char *cursorName, Query *query,
 																			  accumulatedSize,
 																			  closeCursor,
 																			  isSingleResult);
-	DrainStatementViaExecutor(queryPlan, paramList, sourceText, (DestReceiver *) receiver,
+	DrainStatementViaExecutor(result->queryPlan, result->paramList, result->queryString,
+							  (DestReceiver *) receiver,
 							  currentContext);
 
 	/* return the continuation state */

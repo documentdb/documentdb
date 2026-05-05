@@ -58,7 +58,6 @@
 	token = pg_strtok(&length);     /* Retrieve specified field value */ \
 	local_node->fldname = strtobool(token)
 
-
 /* uint64 fields */
 #define WRITE_UINT64_FIELD(fldname) \
 	appendStringInfo(str, " :" CppAsString(fldname) " %lu", node->fldname)
@@ -66,4 +65,15 @@
 	token = pg_strtok(&length);     /* skip :fldname */ \
 	token = pg_strtok(&length);     /* Retrieve specified field value */ \
 	local_node->fldname = strtoull(token, NULL, 10)
+
+/* int32 fields */
+#define WRITE_INT32_FIELD(fldname) \
+	appendStringInfo(str, " :" CppAsString(fldname) " %d", node->fldname)
+#define READ_INT32_FIELD(fldname) \
+	token = pg_strtok(&length);     /* skip :fldname */ \
+	token = pg_strtok(&length);     /* Retrieve specified field value */ \
+	local_node->fldname = strtol(token, NULL, 10)
+
+
+IndexOptInfo * GetPrimaryKeyIndexOptCore(RelOptInfo *rel);
 #endif

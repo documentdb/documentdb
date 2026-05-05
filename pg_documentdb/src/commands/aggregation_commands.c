@@ -202,11 +202,11 @@ aggregate_cursor_first_page(text *database, pgbson *aggregationSpec,
 {
 	ReportFeatureUsage(FEATURE_COMMAND_AGG_CURSOR_FIRST_PAGE);
 
-	bool generateCursorParams = true;
+	CursorParamKind cursorParamKind = CursorParamKind_Streaming;
 	bool setStatementTimeout = true;
 	QueryData queryData = GenerateFirstPageQueryData();
 	Query *query = GenerateAggregationQuery(database, aggregationSpec, &queryData,
-											generateCursorParams, setStatementTimeout);
+											cursorParamKind, setStatementTimeout);
 
 	Datum response = HandleFirstPageRequest(aggregationSpec, cursorId, &queryData,
 											QueryKind_Aggregate, query);
@@ -237,10 +237,10 @@ find_cursor_first_page(text *database, pgbson *findSpec, int64_t cursorId)
 
 	/* Parse the find spec for the purposes of query execution */
 	QueryData queryData = GenerateFirstPageQueryData();
-	bool generateCursorParams = true;
+	CursorParamKind cursorParams = CursorParamKind_Streaming;
 	bool setStatementTimeout = true;
 	Query *query = GenerateFindQuery(database, findSpec, &queryData,
-									 generateCursorParams,
+									 cursorParams,
 									 setStatementTimeout);
 
 	Datum response = HandleFirstPageRequest(
@@ -271,10 +271,8 @@ list_collections_first_page(text *database, pgbson *listCollectionsSpec)
 	ReportFeatureUsage(FEATURE_COMMAND_LIST_COLLECTIONS_CURSOR_FIRST_PAGE);
 
 	QueryData queryData = GenerateFirstPageQueryData();
-	bool generateCursorParams = false;
 	bool setStatementTimeout = true;
 	Query *query = GenerateListCollectionsQuery(database, listCollectionsSpec, &queryData,
-												generateCursorParams,
 												setStatementTimeout);
 
 	/* TODO: Remove these restrictions */
@@ -310,10 +308,9 @@ list_indexes_first_page(text *database, pgbson *listIndexesSpec)
 	ReportFeatureUsage(FEATURE_COMMAND_LIST_INDEXES_CURSOR_FIRST_PAGE);
 
 	QueryData queryData = GenerateFirstPageQueryData();
-	bool generateCursorParams = false;
 	bool setStatementTimeout = true;
 	Query *query = GenerateListIndexesQuery(database, listIndexesSpec, &queryData,
-											generateCursorParams, setStatementTimeout);
+											setStatementTimeout);
 
 	/* TODO: Remove these restrictions */
 	queryData.cursorKind = QueryCursorType_SingleBatch;
@@ -438,7 +435,7 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 		case CursorKind_Streaming:
 		{
 			Query *query;
-			bool generateCursorParams = true;
+			CursorParamKind cursorParams = CursorParamKind_Streaming;
 
 			/* Some blank query data to pass to the generation. */
 			QueryData queryData = { 0 };
@@ -452,7 +449,7 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 					bool setStatementTimeout = false;
 					query = GenerateFindQuery(database,
 											  getMoreInfo.querySpec, &queryData,
-											  generateCursorParams,
+											  cursorParams,
 											  setStatementTimeout);
 					break;
 				}
@@ -465,7 +462,7 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 					bool setStatementTimeout = false;
 					query = GenerateAggregationQuery(database,
 													 getMoreInfo.querySpec, &queryData,
-													 generateCursorParams,
+													 cursorParams,
 													 setStatementTimeout);
 					break;
 				}
@@ -501,14 +498,18 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 		case CursorKind_Tailable:
 		{
 			Query *query;
-			bool generateCursorParams = true;
+
+			/* In a getMore the query itself is known to be tailable, we don't need to do
+			 * any cursor handling since the stage would output the fact that it's tailable as part of parsing.
+			 */
+			CursorParamKind cursorParams = CursorParamKind_Persistent;
 			QueryData queryData = { 0 };
 			queryData.timeSystemVariables = getMoreInfo.queryData.timeSystemVariables;
 
 			bool setStatementTimeout = false;
 			query = GenerateAggregationQuery(database,
 											 getMoreInfo.querySpec, &queryData,
-											 generateCursorParams, setStatementTimeout);
+											 cursorParams, setStatementTimeout);
 			HTAB *cursorMap = CreateTailableCursorHashSet();
 			BuildTailableCursorContinuationMap(cursorSpec, cursorMap);
 			int numIterations = 0;
@@ -655,7 +656,8 @@ delete_cursors(ArrayType *cursorArray)
 
 Query *
 GenerateGetMoreQuery(text *database, pgbson *getMoreSpec, pgbson *continuationSpec,
-					 QueryData *queryData, bool addCursorParams, bool setStatementTimeout)
+					 QueryData *queryData, CursorParamKind cursorParamKind, bool
+					 setStatementTimeout)
 {
 	QueryGetMoreInfo getMoreInfo = { 0 };
 	ParseGetMoreSpec(&database, getMoreSpec, continuationSpec, &getMoreInfo,
@@ -684,7 +686,7 @@ GenerateGetMoreQuery(text *database, pgbson *getMoreSpec, pgbson *continuationSp
 					queryData.cursorStateConst = workerSpec;
 					query = GenerateFindQuery(database,
 											  getMoreInfo.querySpec, &queryData,
-											  addCursorParams,
+											  cursorParamKind,
 											  setStatementTimeout);
 					break;
 				}
@@ -696,7 +698,7 @@ GenerateGetMoreQuery(text *database, pgbson *getMoreSpec, pgbson *continuationSp
 					queryData.cursorStateConst = workerSpec;
 					query = GenerateAggregationQuery(database,
 													 getMoreInfo.querySpec, &queryData,
-													 addCursorParams,
+													 cursorParamKind,
 													 setStatementTimeout);
 					break;
 				}
@@ -720,6 +722,99 @@ GenerateGetMoreQuery(text *database, pgbson *getMoreSpec, pgbson *continuationSp
 													  continuationSpec);
 		}
 	}
+}
+
+
+static pgbson *
+HandlePersistentCursorCore(int64_t *cursorId, QueryCursorPlanResult *planResult,
+						   bool *queryFullyDrained, bool *persistConnection,
+						   QueryData *queryData, pgbson_array_writer *arrayWriter,
+						   QueryKind queryKind, uint32_t accumulatedSize)
+{
+	current_cursor_count++;
+	int64_t cursorIdForBackendCursor;
+	int32_t numIterations = 0;
+
+	pgbson *continuationDoc = NULL;
+	if (*cursorId != 0)
+	{
+		cursorIdForBackendCursor = *cursorId;
+	}
+	else if (!EnableDelayedHoldPortal)
+	{
+		*cursorId = GenerateCursorId(*cursorId);
+		cursorIdForBackendCursor = *cursorId;
+	}
+	else
+	{
+		cursorIdForBackendCursor = (((int64_t) MyProcPid) << 32) |
+								   current_cursor_count;
+	}
+
+	StringInfo cursorStringInfo = makeStringInfo();
+	const char *cursorName = FormatCursorName(cursorStringInfo,
+											  cursorIdForBackendCursor);
+
+	bool isTopLevel = true;
+	bool isHoldCursor = !IsInTransactionBlock(isTopLevel);
+	*persistConnection = isHoldCursor;
+	bool closeCursor = false;
+
+	if (isHoldCursor && UseFileBasedPersistedCursors)
+	{
+		*persistConnection = false;
+		bytea *cursorFileState = CreateAndDrainPersistedQueryWithFiles(cursorName,
+																	   planResult,
+																	   queryData->
+																	   batchSize,
+																	   &numIterations,
+																	   accumulatedSize,
+																	   arrayWriter,
+																	   closeCursor);
+		*queryFullyDrained = cursorFileState == NULL;
+
+		if (!*queryFullyDrained)
+		{
+			*cursorId = GenerateCursorId(*cursorId);
+			continuationDoc = BuildPersistedFileContinuationDocument(cursorName,
+																	 *cursorId,
+																	 queryKind,
+																	 &queryData->
+																	 timeSystemVariables,
+																	 numIterations,
+																	 cursorFileState);
+		}
+		else
+		{
+			continuationDoc = NULL;
+		}
+	}
+	else
+	{
+		*queryFullyDrained = CreateAndDrainPersistedQuery(cursorName, planResult,
+														  queryData->batchSize,
+														  &numIterations,
+														  accumulatedSize,
+														  arrayWriter,
+														  isHoldCursor,
+														  closeCursor);
+		if (!*queryFullyDrained)
+		{
+			*cursorId = GenerateCursorId(*cursorId);
+			continuationDoc = BuildPersistedContinuationDocument(cursorName,
+																 *cursorId,
+																 queryKind,
+																 &queryData->
+																 timeSystemVariables,
+																 numIterations);
+		}
+		else
+		{
+			continuationDoc = NULL;
+		}
+	}
+
+	return continuationDoc;
 }
 
 
@@ -818,88 +913,15 @@ HandleFirstPageRequest(pgbson *querySpec, int64_t cursorId,
 		{
 			ReportFeatureUsage(FEATURE_CURSOR_TYPE_PERSISTENT);
 
-			current_cursor_count++;
-			int64_t cursorIdForBackendCursor;
-
-			if (cursorId != 0)
-			{
-				cursorIdForBackendCursor = cursorId;
-			}
-			else if (!EnableDelayedHoldPortal)
-			{
-				cursorId = GenerateCursorId(cursorId);
-				cursorIdForBackendCursor = cursorId;
-			}
-			else
-			{
-				cursorIdForBackendCursor = (((int64_t) MyProcPid) << 32) |
-										   current_cursor_count;
-			}
-
-			StringInfo cursorStringInfo = makeStringInfo();
-			const char *cursorName = FormatCursorName(cursorStringInfo,
-													  cursorIdForBackendCursor);
-
 			bool isTopLevel = true;
 			bool isHoldCursor = !IsInTransactionBlock(isTopLevel);
-			persistConnection = isHoldCursor;
-			bool closeCursor = false;
-
-			if (isHoldCursor && UseFileBasedPersistedCursors)
-			{
-				persistConnection = false;
-				bytea *cursorFileState = CreateAndDrainPersistedQueryWithFiles(cursorName,
-																			   query,
-																			   queryData->
-																			   batchSize,
-																			   &
-																			   numIterations,
-																			   accumulatedSize,
-																			   &
-																			   arrayWriter,
-																			   closeCursor);
-				queryFullyDrained = cursorFileState == NULL;
-
-				if (!queryFullyDrained)
-				{
-					cursorId = GenerateCursorId(cursorId);
-					continuationDoc = BuildPersistedFileContinuationDocument(cursorName,
-																			 cursorId,
-																			 queryKind,
-																			 &queryData->
-																			 timeSystemVariables,
-																			 numIterations,
-																			 cursorFileState);
-				}
-				else
-				{
-					continuationDoc = NULL;
-				}
-			}
-			else
-			{
-				queryFullyDrained = CreateAndDrainPersistedQuery(cursorName, query,
-																 queryData->batchSize,
-																 &numIterations,
-																 accumulatedSize,
-																 &arrayWriter,
-																 isHoldCursor,
-																 closeCursor);
-				if (!queryFullyDrained)
-				{
-					cursorId = GenerateCursorId(cursorId);
-					continuationDoc = BuildPersistedContinuationDocument(cursorName,
-																		 cursorId,
-																		 queryKind,
-																		 &queryData->
-																		 timeSystemVariables,
-																		 numIterations);
-				}
-				else
-				{
-					continuationDoc = NULL;
-				}
-			}
+			QueryCursorPlanResult *planResult = PlanForcedPersistentQuery(query,
+																		  isHoldCursor);
+			continuationDoc = HandlePersistentCursorCore(&cursorId, planResult,
+														 &queryFullyDrained,
+														 &persistConnection, queryData,
+														 &arrayWriter, queryKind,
+														 accumulatedSize);
 			break;
 		}
 

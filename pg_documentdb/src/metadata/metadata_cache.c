@@ -512,6 +512,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the current curor state function */
 	Oid CurrentCursorStateFunctionId;
 
+	/* Oid of the cursor tracker state function */
+	Oid CursorTrackerFunctionId;
+
 	/* OID of the $bitsAllClear function for bson */
 	Oid BsonBitsAllClearFunctionId;
 
@@ -3250,6 +3253,24 @@ ApiCurrentCursorStateFunctionId(void)
 	}
 
 	return Cache.CurrentCursorStateFunctionId;
+}
+
+
+Oid
+ApiCursorTrackerFunctionId(void)
+{
+	if (Cache.CursorTrackerFunctionId == InvalidOid)
+	{
+		List *functionNameList = list_make2(makeString(ApiInternalSchemaNameV2),
+											makeString("cursor_tracker"));
+		Oid paramOids[2] = { BsonTypeId(), BsonTypeId() };
+		bool missingOK = true;
+
+		Cache.CursorTrackerFunctionId =
+			LookupFuncName(functionNameList, 2, paramOids, missingOK);
+	}
+
+	return Cache.CursorTrackerFunctionId;
 }
 
 

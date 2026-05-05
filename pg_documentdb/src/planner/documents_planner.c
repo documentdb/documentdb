@@ -136,6 +136,7 @@ extern bool EnableIdIndexCustomCostFunction;
 extern bool EnableCompositeParallelIndexScan;
 extern bool ForceParallelScanIfAvailable;
 extern bool EnableCursorPlanBeforeRestrictionPathUpdate;
+extern bool EnableDynamicCursors;
 
 planner_hook_type ExtensionPreviousPlannerHook = NULL;
 set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook = NULL;
@@ -434,6 +435,7 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		.queryDataForVectorSearch = { 0 },
 		.hasVectorSearchQuery = false,
 		.hasStreamingContinuationScan = false,
+		.hasDynamicStreamingContinuationScan = false,
 		.primaryKeyLookupPath = NULL,
 		.inputData = {
 			.collectionId = collectionId,
@@ -475,8 +477,13 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	 * are transformed by ReplaceExtensionFunctionOperatorsInPaths.
 	 */
 	bool updatedPaths = false;
-	if (EnableCursorPlanBeforeRestrictionPathUpdate &&
-		indexContext.hasStreamingContinuationScan)
+	if (indexContext.hasDynamicStreamingContinuationScan)
+	{
+		updatedPaths = UpdatePathsWithDynamicStreamingCursorPlans(root, rel, rte,
+																  &indexContext);
+	}
+	else if (EnableCursorPlanBeforeRestrictionPathUpdate &&
+			 indexContext.hasStreamingContinuationScan)
 	{
 		updatedPaths = UpdatePathsWithExtensionStreamingCursorPlans(root, rel, rte,
 																	&indexContext);
@@ -1743,7 +1750,13 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 	pgbson *pipeline = DatumGetPgBson(aggregationConst->constvalue);
 
 	QueryData queryData = GenerateFirstPageQueryData();
-	bool enableCursorParam = false;
+	CursorParamKind cursorParams = CursorParamKind_Persistent;
+
+	if (EnableCursorsOnAggregationQueryRewrite && EnableDynamicCursors)
+	{
+		cursorParams = CursorParamKind_Dynamic;
+	}
+
 	bool setStatementTimeout = false;
 	text *databaseName = databaseConst->constisnull ? NULL : DatumGetTextPP(
 		databaseConst->constvalue);
@@ -1753,13 +1766,13 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 		finalQuery = GenerateAggregationQuery(databaseName,
 											  pipeline,
 											  &queryData,
-											  enableCursorParam, setStatementTimeout);
+											  cursorParams, setStatementTimeout);
 	}
 	else if (aggregationFunc->funcid == ApiCatalogAggregationFindFunctionId())
 	{
 		finalQuery = GenerateFindQuery(databaseName,
 									   pipeline, &queryData,
-									   enableCursorParam, setStatementTimeout);
+									   cursorParams, setStatementTimeout);
 	}
 	else if (aggregationFunc->funcid == ApiCatalogAggregationCountFunctionId())
 	{
@@ -1785,7 +1798,7 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 		finalQuery = GenerateGetMoreQuery(databaseName,
 										  pipeline, DatumGetPgBson(
 											  thirdConst->constvalue),
-										  &queryData, enableCursorParam,
+										  &queryData, cursorParams,
 										  setStatementTimeout);
 	}
 	else

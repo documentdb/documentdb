@@ -877,6 +877,11 @@ CheckRestrictionPathNodeForIndexOperation(Expr *currentExpr,
 		{
 			context->hasStreamingContinuationScan = true;
 		}
+		else if (IsClusterVersionAtleast(DocDB_V0, 113, 0) && funcExpr->funcid ==
+				 ApiCursorTrackerFunctionId())
+		{
+			context->hasDynamicStreamingContinuationScan = true;
+		}
 		else
 		{
 			const MongoQueryOperator *operator =
@@ -1214,6 +1219,7 @@ WalkPathsForIndexOperations(List *pathsList,
  *  ----------------------------------------------+----------------------------------+-------------------------------------------
  *  FuncExpr: BsonInMatchFunctionId on _id        | Runtime $in on _id               | runtimeDollarInRestrictionData
  *  FuncExpr: ApiCursorStateFunctionId            | Cursor continuation              | context->hasStreamingContinuationScan
+ *  FuncExpr: ApiCursorTrackerFunctionId          | Dynamic cursor continuation      | context->hasDynamicStreamingContinuationScan
  *  FuncExpr: BsonIndexHintFunctionId             | Index hint                       | context->forceIndexQueryOpData (IndexHint)
  *  OpExpr:   BigintEqualOperatorId on shard_key  | shard_key_value = X              | shardKeyQualExpr
  *  OpExpr:   BsonEqualOperatorId on object_id    | object_id = val                  | objectId.restrictInfo
@@ -1599,7 +1605,9 @@ static inline bool
 IsFuncExprTrimmable(const FuncExpr *funcExpr)
 {
 	return funcExpr->funcid == BsonIndexHintFunctionOid() ||
-		   funcExpr->funcid == BsonFullScanFunctionOid();
+		   funcExpr->funcid == BsonFullScanFunctionOid() ||
+		   (IsClusterVersionAtleast(DocDB_V0, 113, 0) &&
+			funcExpr->funcid == ApiCursorTrackerFunctionId());
 }
 
 

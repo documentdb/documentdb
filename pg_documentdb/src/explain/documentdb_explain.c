@@ -79,7 +79,8 @@ DocumentDBExplainStageHook explain_stage_hook = NULL;
 PG_FUNCTION_INFO_V1(documentdb_explain);
 
 ExplainInputData * ParseExplainSpec(pgbson *explainSpec);
-static Query * CreateQueryFromQuerySpec(ExplainInputData *data, bool addCursorParams,
+static Query * CreateQueryFromQuerySpec(ExplainInputData *data, CursorParamKind
+										cursorParams,
 										QueryData *queryData, ExplainKind *explainKind);
 static DocumentDBExplainState * GenerateAndExecutePlan(Query *query, QueryData *queryData,
 													   ExplainVerbosity verbosity);
@@ -105,8 +106,10 @@ documentdb_explain(PG_FUNCTION_ARGS)
 	QueryData queryData = GenerateFirstPageQueryData();
 
 	/* Next, generate the query from the spec */
+	CursorParamKind cursorParams = addCursorParams ? CursorParamKind_Streaming :
+								   CursorParamKind_Persistent;
 	ExplainKind explainKind;
-	Query *query = CreateQueryFromQuerySpec(data, addCursorParams, &queryData,
+	Query *query = CreateQueryFromQuerySpec(data, cursorParams, &queryData,
 											&explainKind);
 
 	/* Now generate & execute plan in explain mode. This is similar to what Postgres
@@ -219,7 +222,7 @@ ParseExplainSpec(pgbson *explainSpec)
 
 
 static Query *
-CreateQueryFromQuerySpec(ExplainInputData *data, bool addCursorParams,
+CreateQueryFromQuerySpec(ExplainInputData *data, CursorParamKind cursorParams,
 						 QueryData *queryData, ExplainKind *explainKind)
 {
 	/* Get the command from the explain spec first */
@@ -230,14 +233,14 @@ CreateQueryFromQuerySpec(ExplainInputData *data, bool addCursorParams,
 		/* It's a find command - generate find query */
 		*explainKind = ExplainKind_Find;
 		return GenerateFindQuery(data->databaseName, data->command, queryData,
-								 addCursorParams, setStatementTimeout);
+								 cursorParams, setStatementTimeout);
 	}
 	else if (PgbsonInitIteratorAtPath(data->command, "aggregate", &commandIter))
 	{
 		/* It's an aggregate command - generate aggregate query */
 		*explainKind = ExplainKind_Aggregate;
 		return GenerateAggregationQuery(data->databaseName, data->command, queryData,
-										addCursorParams, setStatementTimeout);
+										cursorParams, setStatementTimeout);
 	}
 	else if (PgbsonInitIteratorAtPath(data->command, "count", &commandIter))
 	{

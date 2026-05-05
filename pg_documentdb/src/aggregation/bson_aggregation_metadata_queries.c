@@ -107,8 +107,7 @@ GenerateBaseAgnosticQuery(text *databaseDatum, AggregationPipelineBuildContext *
  */
 Query *
 GenerateListCollectionsQuery(text *databaseDatum, pgbson *listCollectionsSpec,
-							 QueryData *queryData, bool addCursorParams,
-							 bool setStatementTimeout)
+							 QueryData *queryData, bool setStatementTimeout)
 {
 	AggregationPipelineBuildContext context = { 0 };
 	context.databaseNameDatum = databaseDatum;
@@ -211,8 +210,7 @@ GenerateListCollectionsQuery(text *databaseDatum, pgbson *listCollectionsSpec,
  */
 Query *
 GenerateListIndexesQuery(text *databaseDatum, pgbson *listIndexesSpec,
-						 QueryData *queryData,
-						 bool addCursorParams, bool setStatementTimeout)
+						 QueryData *queryData, bool setStatementTimeout)
 {
 	AggregationPipelineBuildContext context = { 0 };
 	context.databaseNameDatum = databaseDatum;

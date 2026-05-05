@@ -32,7 +32,7 @@ CALL documentdb_test_helpers.wait_for_background_worker();
 SELECT application_name FROM pg_stat_activity WHERE application_name = 'documentdb_bg_worker_leader';
 
 
-CREATE OR REPLACE FUNCTION documentdb_test_helpers.run_explain_and_trim(p_query text, p_ignore_heap_fetches boolean DEFAULT false)
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.run_explain_and_trim(p_query text, p_ignore_heap_fetches boolean DEFAULT false, p_normalize_window boolean DEFAULT false)
 RETURNS SETOF text
 AS $$
 DECLARE
@@ -41,6 +41,8 @@ BEGIN
   FOR v_explain_row IN EXECUTE p_query
   LOOP
     IF v_explain_row ~ '^\s+Disabled: true\s*$' THEN
+      CONTINUE;
+    ELSIF p_normalize_window AND v_explain_row ~ '^\s+Window: ' THEN
       CONTINUE;
     ELSIF v_explain_row ~ '^\s+Index Searches: [0-9]+\s*$' THEN
       CONTINUE;
@@ -55,6 +57,10 @@ BEGIN
       SELECT regexp_replace(v_explain_row, 'Sort Method: quicksort  Memory: [0-9]+kB', 'Sort Method: quicksort  Memory: xxxkB') INTO v_explain_row;
     ELSIF v_explain_row ~ 'Memory Usage: [0-9]+kB' THEN
       SELECT regexp_replace(v_explain_row, 'Memory Usage: [0-9]+kB', 'Memory Usage: xxxkB') INTO v_explain_row;
+    END IF;
+    -- Normalize PG18 window function references (OVER w1 -> OVER (?))
+    IF p_normalize_window AND v_explain_row ~ ' OVER w[0-9]+' THEN
+      SELECT regexp_replace(v_explain_row, ' OVER w[0-9]+', ' OVER (?)', 'g') INTO v_explain_row;
     END IF;
     RETURN NEXT v_explain_row;
   END LOOP;

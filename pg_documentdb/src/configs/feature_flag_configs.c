@@ -277,6 +277,10 @@ bool EnableNewWithExprAccumulators = DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS;
 bool EnableCursorPlanBeforeRestrictionPathUpdate =
 	DEFAULT_ENABLE_CURSOR_PLAN_BEFORE_RESTRICTION_PATH_UPDATE;
 
+/* Added in v113, pending stabilization, enable in v116 */
+#define DEFAULT_ENABLE_DYNAMIC_CURSORS false
+bool EnableDynamicCursors = DEFAULT_ENABLE_DYNAMIC_CURSORS;
+
 /*
  * SECTION: Aggregation & Query feature flags
  */
@@ -593,6 +597,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable running the streaming cursor plan rewrite before path replacement."),
 		NULL, &EnableCursorPlanBeforeRestrictionPathUpdate,
 		DEFAULT_ENABLE_CURSOR_PLAN_BEFORE_RESTRICTION_PATH_UPDATE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableDynamicCursors", newGucPrefix),
+		gettext_noop(
+			"Whether or not to enable dynamic cursors for aggregation query rewrites."),
+		NULL, &EnableDynamicCursors,
+		DEFAULT_ENABLE_DYNAMIC_CURSORS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
