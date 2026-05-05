@@ -24,7 +24,7 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
     paths-ignore:
       - '.devcontainer/**'
-      - '*.md'
+      - '**/*.md'
   schedule:
     - cron: '0 6 * * *'  # Daily at 06:00 UTC
 
