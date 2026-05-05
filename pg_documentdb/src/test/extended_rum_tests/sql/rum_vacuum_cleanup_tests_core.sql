@@ -26,6 +26,9 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, AN
 -- drop all the rows now
 reset documentdb.forceDisableSeqScan;
 SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ { "q": { "_id": { "$gte": 10 } }, "limit": 0 } ]}');
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 set documentdb.forceDisableSeqScan to on;
 
 -- query again (should return 10 rows with 1000 loops)
@@ -41,6 +44,9 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, AN
 reset documentdb.forceDisableSeqScan;
 SELECT COUNT(documentdb_api.insert_one('pvacuum_db', 'pclean',  FORMAT('{ "_id": %s, "a": %s }', i, i)::bson)) FROM generate_series(1001, 2000) AS i;
 SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ { "q": { "_id": { "$gte": 1010 } }, "limit": 0 } ]}');
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 set documentdb.forceDisableSeqScan to on;
 
 -- now set the guc to clean the entries
@@ -51,6 +57,9 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, AN
 reset documentdb.forceDisableSeqScan;
 SELECT COUNT(documentdb_api.insert_one('pvacuum_db', 'pclean',  FORMAT('{ "_id": %s, "a": %s }', i, i)::bson)) FROM generate_series(2001, 3000) AS i;
 SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ { "q": { "_id": { "$gte": 2010 } }, "limit": 0 } ]}');
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 set documentdb.forceDisableSeqScan to on;
 
 -- now set the guc to clean the entries
@@ -64,6 +73,9 @@ SELECT COUNT(documentdb_api.insert_one('pvacuum_db', 'pclean',  FORMAT('{ "_id":
 
 -- now delete everything includig posting tree entries.
 SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ { "q": { "_id": { "$lt": 2000 } }, "limit": 0 } ]}');
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 
 set documentdb.forceDisableSeqScan to on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
@@ -77,6 +89,9 @@ reset client_min_messages;
 -- delete one more row to ensure vacuum has a chance to clean up
 reset documentdb.forceDisableSeqScan;
 SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ { "q": { "_id": { "$lte": 2000 } }, "limit": 0 } ]}');
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 set client_min_messages to DEBUG1;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :vacuum_col) \gexec
 reset client_min_messages;
@@ -98,6 +113,9 @@ reset documentdb.forceDisableSeqScan;
 -- delete 3000 docs
 set documentdb_rum.prune_rum_empty_pages to off;
 SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ { "q": { "_id": { "$exists": true } }, "limit": 0 } ]}');
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :vacuum_col) \gexec
 
 -- we should have a lot of empty pages
@@ -139,6 +157,9 @@ SELECT * FROM r1 WHERE entry->>'flagsStr' LIKE '%DATA%' ORDER by (entry->>'flags
 
 -- now delete everything.
 SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ { "q": { "_id": { "$exists": true } }, "limit": 0 } ]}');
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 set client_min_messages to LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :vacuum_col) \gexec
 

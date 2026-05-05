@@ -74,6 +74,9 @@ SELECT documentdb_api.delete('pvacuum_split_db', '{ "delete": "pbulkdel", "delet
  ("{ ""n"" : { ""$numberInt"" : ""3000"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 -- vacuum the collection (twice to ensure we have void pages): but make sure to skip the visibility check (to ensure we get void pages)
 set documentdb_rum.skip_global_visibility_check_on_prune to on;
 set client_min_messages to LOG;
@@ -148,6 +151,9 @@ SELECT documentdb_api.delete('pvacuum_split_db', '{ "delete": "pbulkdel", "delet
  ("{ ""n"" : { ""$numberInt"" : ""8000"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 -- run a vacuum in the mode that only works on backtrack mode.
 set documentdb_rum.default_traverse_rum_page_only_on_backtrack to on;
 set client_min_messages to LOG;

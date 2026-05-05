@@ -75,6 +75,9 @@ SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ {
  ("{ ""n"" : { ""$numberInt"" : ""991"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 set documentdb.forceDisableSeqScan to on;
 -- query again (should return 10 rows with 1000 loops)
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
@@ -132,6 +135,9 @@ SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ {
  ("{ ""n"" : { ""$numberInt"" : ""991"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 set documentdb.forceDisableSeqScan to on;
 -- now set the guc to clean the entries
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :vacuum_col) \gexec
@@ -168,6 +174,9 @@ SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ {
  ("{ ""n"" : { ""$numberInt"" : ""991"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 set documentdb.forceDisableSeqScan to on;
 -- now set the guc to clean the entries
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :vacuum_col) \gexec
@@ -205,6 +214,9 @@ SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ {
  ("{ ""n"" : { ""$numberInt"" : ""3018"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 set documentdb.forceDisableSeqScan to on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
                                 run_explain_and_trim                                
@@ -231,8 +243,8 @@ set documentdb_rum.prune_rum_empty_pages to on;
 set client_min_messages to DEBUG1;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :vacuum_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_500;
-psql:sql/rum_vacuum_cleanup_tests_core.sql:74: LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=14, emptyEntries=34, emptyPostingTrees=0, prunedEntries=18, prunedPages=11,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=17, numDataPages=1, numVoidPages=0
-psql:sql/rum_vacuum_cleanup_tests_core.sql:74: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=1, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=17, numDataPages=0, numVoidPages=1
+psql:sql/rum_vacuum_cleanup_tests_core.sql:86: LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=14, emptyEntries=34, emptyPostingTrees=0, prunedEntries=18, prunedPages=11,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=17, numDataPages=1, numVoidPages=0
+psql:sql/rum_vacuum_cleanup_tests_core.sql:86: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=1, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=17, numDataPages=0, numVoidPages=1
 reset client_min_messages;
 -- delete one more row to ensure vacuum has a chance to clean up
 reset documentdb.forceDisableSeqScan;
@@ -242,10 +254,13 @@ SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ {
  ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 set client_min_messages to DEBUG1;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :vacuum_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_500;
-psql:sql/rum_vacuum_cleanup_tests_core.sql:81: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=4, numDataPages=0, numVoidPages=14
+psql:sql/rum_vacuum_cleanup_tests_core.sql:96: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=4, numDataPages=0, numVoidPages=14
 reset client_min_messages;
 set documentdb.forceDisableSeqScan to on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
@@ -307,6 +322,9 @@ SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ {
  ("{ ""n"" : { ""$numberInt"" : ""3000"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :vacuum_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_500;
 -- we should have a lot of empty pages
@@ -332,7 +350,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, AN
 reset documentdb.forceDisableSeqScan;
 -- call the repair function.
 SELECT documentdb_api_internal.rum_prune_empty_entries_on_index(('documentdb_data.documents_rum_index_' || :vacuum_index_id)::regclass);
-psql:sql/rum_vacuum_cleanup_tests_core.sql:109: INFO:  Vacuum found 20 empty pages, 20 empty entries, 0 pruned entries, 0 pruned pages, 0 pruned posting trees
+psql:sql/rum_vacuum_cleanup_tests_core.sql:127: INFO:  Vacuum found 20 empty pages, 20 empty entries, 0 pruned entries, 0 pruned pages, 0 pruned posting trees
  rum_prune_empty_entries_on_index 
 ----------------------------------
  
@@ -361,7 +379,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, AN
 reset documentdb.forceDisableSeqScan;
 set documentdb_rum.prune_rum_empty_pages to on;
 SELECT documentdb_api_internal.rum_prune_empty_entries_on_index(('documentdb_data.documents_rum_index_' || :vacuum_index_id)::regclass);
-psql:sql/rum_vacuum_cleanup_tests_core.sql:117: INFO:  Vacuum found 20 empty pages, 20 empty entries, 0 pruned entries, 18 pruned pages, 0 pruned posting trees
+psql:sql/rum_vacuum_cleanup_tests_core.sql:135: INFO:  Vacuum found 20 empty pages, 20 empty entries, 0 pruned entries, 18 pruned pages, 0 pruned posting trees
  rum_prune_empty_entries_on_index 
 ----------------------------------
  
@@ -441,11 +459,14 @@ SELECT documentdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ {
  ("{ ""n"" : { ""$numberInt"" : ""16000"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 set client_min_messages to LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :vacuum_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_500;
-psql:sql/rum_vacuum_cleanup_tests_core.sql:143: LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=5, emptyEntries=999, emptyPostingTrees=0, prunedEntries=993, prunedPages=3,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=7, numDataPages=14, numVoidPages=0
-psql:sql/rum_vacuum_cleanup_tests_core.sql:143: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=9, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=16, numDataPages=5, numVoidPages=0
+psql:sql/rum_vacuum_cleanup_tests_core.sql:164: LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=5, emptyEntries=999, emptyPostingTrees=0, prunedEntries=993, prunedPages=3,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=7, numDataPages=14, numVoidPages=0
+psql:sql/rum_vacuum_cleanup_tests_core.sql:164: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=1, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=9, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=16, numDataPages=5, numVoidPages=0
 WITH r1 AS (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page(('documentdb_data.documents_rum_index_' || :vacuum_index_id), i)) AS entry FROM generate_series(1, 21) i)
 SELECT * FROM r1 WHERE entry->>'flagsStr' LIKE '%DATA%' ORDER by (entry->>'flags')::int8, i ASC;
  i  |                                                 entry                                                 

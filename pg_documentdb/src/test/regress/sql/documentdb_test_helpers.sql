@@ -254,3 +254,63 @@ BEGIN
   GROUP BY indisprimary;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Wait until the database-wide xmin horizon advances past every transaction that
+-- committed before this call so a subsequent VACUUM is guaranteed to see prior
+-- DELETEs as fully dead and run ambulkdelete.
+--
+-- This is a procedure rather than a function because it must COMMIT between
+-- iterations: otherwise the caller's own snapshot (and any xid this routine
+-- allocates) would itself pin the horizon and the loop could never make
+-- progress. We use pg_snapshot_xmax() as the target (an upper bound on every
+-- already-committed xid) so we never have to allocate a new xid ourselves.
+CREATE OR REPLACE PROCEDURE documentdb_test_helpers.wait_for_vacuum_horizon(p_timeout_ms int default 30000)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_target xid8;
+  v_deadline timestamptz := clock_timestamp() + (p_timeout_ms || ' ms')::interval;
+  v_holders text;
+  v_slot_holders text;
+  v_horizon_ok boolean;
+BEGIN
+  v_target := pg_snapshot_xmax(pg_current_snapshot());
+  COMMIT;
+  LOOP
+    -- Check both running backends AND replication slots.
+    -- VACUUM uses GetOldestNonRemovableTransactionId() which considers
+    -- replication slot xmin in addition to running backend snapshots.
+    -- pg_snapshot_xmin() only reflects running backends, so we must
+    -- separately verify no replication slot holds back the horizon.
+    SELECT pg_snapshot_xmin(pg_current_snapshot()) >= v_target
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_replication_slots
+              WHERE xmin IS NOT NULL
+                AND xmin::text::bigint < v_target::text::bigint
+           )
+      INTO v_horizon_ok;
+
+    EXIT WHEN v_horizon_ok;
+
+    IF clock_timestamp() > v_deadline THEN
+      SELECT string_agg(format('pid=%s xmin=%s state=%s backend_type=%s',
+                               pid, backend_xmin, state, backend_type), '; ')
+        INTO v_holders
+        FROM pg_stat_activity
+       WHERE backend_xmin IS NOT NULL
+         AND pid <> pg_backend_pid();
+      SELECT string_agg(format('slot=%s xmin=%s active=%s',
+                               slot_name, xmin, active), '; ')
+        INTO v_slot_holders
+        FROM pg_replication_slots
+       WHERE xmin IS NOT NULL;
+      RAISE EXCEPTION 'wait_for_vacuum_horizon: xmin horizon did not advance to % within %ms (backends: %; slots: %)',
+        v_target, p_timeout_ms,
+        COALESCE(v_holders, '<none>'),
+        COALESCE(v_slot_holders, '<none>');
+    END IF;
+    PERFORM pg_sleep(0.05);
+    COMMIT;
+  END LOOP;
+END
+$$;
