@@ -76,7 +76,7 @@ ALLOWLIST="documentdb_gateway|documentdb_macros|documentdb_gateway_core"
     # Uses jq to parse JSON
     jq -r '.licenses[] | .used_by[] | "- \(.crate.name) (\(.crate.license))"' /tmp/licenses.json \
         | grep -vE "^- ($ALLOWLIST) " \
-        | sort -f -t'-' -k2 \
+        | LC_ALL=C sort -f -t'-' -k2 \
         | uniq
 } > "$OUTPUT_FILE"
 
