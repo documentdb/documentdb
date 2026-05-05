@@ -34,7 +34,7 @@ pub fn process_build_info(dynamic_config: &Arc<dyn DynamicConfiguration>) -> Res
         "versionArray": version.as_bson_array(),
         "bits": 64,
         "maxBsonObjectSize": protocol::MAX_BSON_OBJECT_SIZE,
-        "ok": 0.0,
+        "ok": OK_SUCCEEDED,
     }))
 }
 
@@ -678,6 +678,6 @@ pub fn list_commands() -> Response {
 
     Response::Raw(RawResponse(rawdoc! {
         "commands": commands_doc,
-        "ok": OK_SUCCEEDED,
+        "ok": 0.0,
     }))
 }
