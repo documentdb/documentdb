@@ -1912,18 +1912,35 @@ TryExtractFieldPathFromConst(Expr *expr)
 	pgbson *pathBson = DatumGetPgBson(constExpr->constvalue);
 	pgbsonelement pathElement;
 	PgbsonToSinglePgbsonElement(pathBson, &pathElement);
-	if (pathElement.bsonValue.value_type != BSON_TYPE_UTF8 ||
-		pathElement.bsonValue.value.v_utf8.len < 2 ||
-		pathElement.bsonValue.value.v_utf8.str[0] != '$' ||
-		pathElement.bsonValue.value.v_utf8.str[1] == '$')
+
+	if (pathElement.bsonValue.value_type == BSON_TYPE_UTF8)
 	{
-		/* must be "$fieldName"; reject non-field-path values and
-		 * "$$" system variables like $$NOW, $$CLUSTER_TIME, etc. */
+		if (pathElement.bsonValue.value.v_utf8.len < 2 ||
+			pathElement.bsonValue.value.v_utf8.str[0] != '$' ||
+			pathElement.bsonValue.value.v_utf8.str[1] == '$')
+		{
+			/* must be "$fieldName"; reject non-field-path values and
+			 * "$$" system variables like $$NOW, $$CLUSTER_TIME, etc. */
+			return NULL;
+		}
+
+		/* Strip off the leading '$' to get the raw field path. */
+		return pathElement.bsonValue.value.v_utf8.str + 1;
+	}
+	else if (pathElement.bsonValue.value_type == BSON_TYPE_DOCUMENT)
+	{
+		pgbsonelement docElement;
+		if (TryGetSingleFieldPathFromBsonValue(&pathElement.bsonValue,
+											   &docElement))
+		{
+			/* Strip off the leading '$' to get the raw field path. */
+			return docElement.bsonValue.value.v_utf8.str + 1;
+		}
+
 		return NULL;
 	}
 
-	/* Strip off the leading '$' to get the raw field path. */
-	return pathElement.bsonValue.value.v_utf8.str + 1;
+	return NULL;
 }
 
 

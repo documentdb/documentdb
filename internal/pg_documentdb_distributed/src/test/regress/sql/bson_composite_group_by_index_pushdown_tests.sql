@@ -55,6 +55,15 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "a": "$a" }, "count": { "$sum": 1 } } } ] }');
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b" }, "count": { "$sum": 1 } } } ] }');
 
+-- single-field document _id accumulator coverage: $push and $addToSet
+-- covered field: accumulator references field in a_1 index → Index Only Scan
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "a": "$a" }, "items": { "$push": "$a" } } } ] }');
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "a": "$a" }, "items": { "$addToSet": "$a" } } } ] }');
+
+-- uncovered accumulator field: $b is not in a_1 → Index Scan
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "a": "$a" }, "items": { "$push": "$b" } } } ] }');
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "a": "$a" }, "items": { "$addToSet": "$b" } } } ] }');
+
 -- multi-field document _id pushdown
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "count": { "$sum": 1 } } } ] }');
 
@@ -69,6 +78,17 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
 
 -- multi-field with multiple accumulators
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "count": { "$sum": 1 }, "maxA": { "$max": "$a" } } } ] }');
+
+---------------------------------------------------------------------------------------------------
+-- compound document _id accumulator coverage: $push and $addToSet
+-- covered field: all _id and accumulator fields in b_c_1 index → Index Only Scan
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "items": { "$push": "$b" } } } ] }');
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "items": { "$addToSet": "$c" } } } ] }');
+
+-- uncovered accumulator field: $push/$addToSet reference $a which is not in b_c_1;
+-- the plan should fall back to a regular Index Scan.
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "items": { "$push": "$a" } } } ] }');
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" }, "items": { "$addToSet": "$a" } } } ] }');
 
 -----------------------------------------------------------------------------------------------------
 -- EDGE CASE: no accumulators at all
@@ -112,6 +132,51 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
 
 TRUNCATE documentdb_data.documents_8601;
 SELECT COUNT(documentdb_api.insert_one('group_idx_db', 'group_push', bson_build_document('_id', i, 'a', i % 100, 'b', i % 10, 'c', i) )) FROM generate_series(1, 1000) AS i;
+
+-----------------------------------------------------------------------------------------------------
+-- Group by $_id (the document's own _id field)
+-----------------------------------------------------------------------------------------------------
+
+-- basic group by $_id with constant accumulator
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$_id", "total": { "$sum": 1 } } } ] }');
+
+-- group by $_id with field accumulator
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$_id", "total": { "$sum": "$a" } } } ] }');
+
+-- group by $_id with multiple accumulators
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$_id", "cnt": { "$sum": 1 }, "mx": { "$max": "$a" }, "mn": { "$min": "$b" } } } ] }');
+
+-----------------------------------------------------------------------------------------------------
+-- Document _id with $_id as a sub-field
+-----------------------------------------------------------------------------------------------------
+
+-- single-field document _id wrapping $_id
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "docId": "$_id" }, "count": { "$sum": 1 } } } ] }');
+
+-- composite document _id mixing $_id and another field
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "docId": "$_id", "a": "$a" }, "count": { "$sum": 1 } } } ] }');
+
+-- composite document _id mixing $_id and indexed fields
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "docId": "$_id", "b": "$b", "c": "$c" }, "total": { "$sum": "$a" } } } ] }');
+
+-----------------------------------------------------------------------------------------------------
+-- Compound index with _id as prefix: index on { _id: 1, a: 1 }
+-----------------------------------------------------------------------------------------------------
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'group_idx_db', '{ "createIndexes": "group_push", "indexes": [ { "name": "id_a_1", "key": { "_id": 1, "a": 1 } } ] }', TRUE);
+
+-- group by $_id should be able to use the _id+a compound index
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$_id", "total": { "$sum": 1 } } } ] }');
+
+-- group by $_id with accumulator on the suffix field "a"
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$_id", "total": { "$sum": "$a" } } } ] }');
+
+-- compound document _id with both fields from the _id+a index
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "docId": "$_id", "a": "$a" }, "count": { "$sum": 1 } } } ] }');
+
+-- group by $a alone — _id+a index can still help if _id prefix is covered
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$a", "count": { "$sum": 1 } } } ] }');
 
 -----------------------------------------------------------------------------------------------------
 -- shard and try again
@@ -163,5 +228,29 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db
 -- mixed: one field is $path, one is constant expression, should NOT decompose
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "constant" }, "count": { "$sum": 1 } } } ] }')$$);
+
+---------------------------------------------------------------------------------------------------
+-- sharded: group by $_id tests
+---------------------------------------------------------------------------------------------------
+
+-- sharded: scalar $_id with constant accumulator
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$_id", "total": { "$sum": 1 } } } ] }')$$);
+
+-- sharded: scalar $_id with field accumulator
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": "$_id", "total": { "$sum": "$a" } } } ] }')$$);
+
+-- sharded: single-field doc _id wrapping $_id
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "docId": "$_id" }, "count": { "$sum": 1 } } } ] }')$$);
+
+-- sharded: composite doc _id mixing $_id and another field
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": { "docId": "$_id", "a": "$a" }, "count": { "$sum": 1 } } } ] }')$$);
+
+-- sharded: $_id with $match filter
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$match": { "a": { "$lt": 5 } } }, { "$group": { "_id": "$_id", "total": { "$sum": 1 } } } ] }')$$);
 
 ROLLBACK;
