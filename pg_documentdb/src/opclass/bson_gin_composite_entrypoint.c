@@ -44,6 +44,11 @@
  #include "opclass/bson_gin_composite_private.h"
  #include "opclass/bson_gin_composite.h"
 
+#define BSON_TREE_PRIVATE
+#include "aggregation/bson_tree_private.h"
+#undef BSON_TREE_PRIVATE
+#include "aggregation/bson_tree.h"
+
 /* CodeSync: pg_documentdb_rum.h */
 #define RUM_SEARCH_MODE_ORDERED 4
 #define RUM_SEARCH_MODE_ORDERED_REVERSE 5
@@ -95,6 +100,39 @@ typedef struct CompareMetadata
 	bool isWildcardScan;
 	const char *collation;
 } CompareMetadata;
+
+
+/*
+ * Leaf subclass used by the index-only-scan projection tree. We reuse
+ * the canonical projection-tree machinery (BsonIntermediatePathNode +
+ * BsonLeafPathNode) so we don't have to reinvent dotted-path threading,
+ * sibling lists, or child iteration; the only thing we need on top of
+ * the base leaf is the index of the term this leaf corresponds to.
+ */
+typedef struct IndexProjectionLeaf
+{
+	BsonLeafPathNode base;
+	int16_t leafTermIdx;
+} IndexProjectionLeaf;
+
+
+/*
+ * Cache shared across ordering_transform calls within a single index-only
+ * scan. Stored in fcinfo->flinfo->fn_extra and torn down when the function
+ * memory context is reset (e.g. on rescan).
+ */
+typedef struct IndexProjectionCache
+{
+	/* Reused across rows; reset to empty before each reconstruction. */
+	pgbson_heap_writer *writer;
+
+	/* Root of the projection tree built once per scan. */
+	BsonIntermediatePathNode *root;
+
+	/* Number of index paths the tree was built for; sanity-checked
+	 * against the term count in the per-row index term. */
+	int numPaths;
+} IndexProjectionCache;
 
 
 #define MAX_STRATEGIES (8)
@@ -2444,6 +2482,217 @@ GetOrderByIndexPath(pgbson *queryValue, const char **indexPaths,
 }
 
 
+/*
+ * Custom leaf factory used while building the projection tree. The
+ * canonical leaf type carries a fieldData expression we don't need; we
+ * piggy-back our index-term reference via the IndexProjectionLeaf
+ * subclass and let the caller fill leafTermIdx after Traverse returns.
+ */
+static BsonLeafPathNode *
+CreateIndexProjectionLeaf(const StringView *fieldPath, const char *relativePath,
+						  void *state)
+{
+	IndexProjectionLeaf *leaf = palloc0(sizeof(IndexProjectionLeaf));
+	leaf->leafTermIdx = -1;
+	return &leaf->base;
+}
+
+
+/*
+ * Replace `existing` (an intermediate node) under `parent` with a fresh
+ * IndexProjectionLeaf carrying the same field name. Used to enforce
+ * leaf-wins when an indexed parent path arrives after one of its
+ * children: the parent's index entry already holds the entire
+ * sub-document, so any deeper nodes become redundant and the
+ * intermediate must be collapsed back into a leaf.
+ */
+static IndexProjectionLeaf *
+ReplaceIntermediateWithIndexLeaf(BsonIntermediatePathNode *parent,
+								 BsonPathNode *existing)
+{
+	BsonPathNode *prev = NULL;
+	const BsonPathNode *iter;
+	foreach_child(iter, parent)
+	{
+		if (iter == existing)
+		{
+			break;
+		}
+		prev = (BsonPathNode *) iter;
+	}
+
+	BsonLeafPathNode *base = CreateIndexProjectionLeaf(&existing->field, NULL,
+													   NULL);
+	SetBasePathNodeData(&base->baseNode, NodeType_LeafIncluded, &existing->field,
+						parent);
+	ReplaceTreeInNodeCore(prev, existing, &base->baseNode);
+	return (IndexProjectionLeaf *) base;
+}
+
+
+/*
+ * Build the projection tree once per scan, threading each indexed path
+ * one segment at a time on top of the canonical projection-tree
+ * primitives.
+ *
+ * Leaf-wins is applied inline at each step:
+ *
+ *   - If we descend into an existing leaf ("p" was inserted before
+ *     "p.q"), the new path is fully redundant and we drop it - the
+ *     parent term already covers everything below.
+ *
+ *   - If the terminal segment lands on an existing intermediate
+ *     ("p.q" was inserted before "p"), the new shorter path's term
+ *     supersedes the deeper entries and we replace the intermediate
+ *     in place with a fresh leaf.
+ */
+static void
+BuildProjectionTreeForIndex(IndexProjectionCache *cache,
+							const char *const *indexPaths,
+							const uint32_t *indexPathLengths,
+							int numPaths)
+{
+	cache->root = MakeRootNode();
+
+	for (int i = 0; i < numPaths; i++)
+	{
+		const char *currentPath = indexPaths[i];
+		uint32_t remainingPathLength = indexPathLengths[i];
+		BsonIntermediatePathNode *parent = cache->root;
+
+		while (true)
+		{
+			const char *dot = memchr(currentPath, '.', remainingPathLength);
+			bool isDottedPath = (dot != NULL);
+
+			uint32_t pathSegmentLength = isDottedPath ?
+										 (uint32_t) (dot - currentPath) :
+										 remainingPathLength;
+			StringView pathSegment = {
+				.string = currentPath, .length = pathSegmentLength
+			};
+			NodeType childType = isDottedPath ? NodeType_Intermediate :
+								 NodeType_LeafIncluded;
+			bool replaceExistingNodes = false;
+			void *nodeCreationState = NULL;
+			bool *alreadyExists = NULL;
+
+			BsonPathNode *child = GetOrAddChildNode(
+				parent, indexPaths[i], &pathSegment,
+				CreateIndexProjectionLeaf,
+				BsonDefaultCreateIntermediateNode,
+				childType,
+				replaceExistingNodes,
+				nodeCreationState,
+				alreadyExists);
+
+			if (NodeType_IsLeaf(child->nodeType) && isDottedPath)
+			{
+				/* Shorter sibling already claimed this prefix as a leaf;
+				 * the rest of this path is redundant. */
+				break;
+			}
+
+			/* If we got an intermediate node, we need to replace it with a leaf as shorter path for a common prefix should win. */
+			if (!isDottedPath)
+			{
+				IndexProjectionLeaf *leaf;
+				if (NodeType_IsLeaf(child->nodeType))
+				{
+					leaf = (IndexProjectionLeaf *) child;
+				}
+				else
+				{
+					leaf = ReplaceIntermediateWithIndexLeaf(parent, child);
+				}
+				leaf->leafTermIdx = (int16_t) i;
+				break;
+			}
+
+			parent = (BsonIntermediatePathNode *) child;
+			remainingPathLength -= pathSegmentLength + 1;
+			currentPath = dot + 1;
+		}
+	}
+}
+
+
+/*
+ * Recursively writes `node` into `parent` and returns true if anything
+ * was emitted.
+ *
+ * For intermediates we use a lazy-emit pattern: children are written
+ * into a fresh heap writer, and only if any child produced output do
+ * we append the subdocument into `parent`. This means each
+ * leaf is visited (and its undefined-check evaluated) exactly once per
+ * row; we never re-walk a subtree to decide whether to open it.
+ *
+ * For non-dotted indexes the tree has no intermediates, so the
+ * intermediate branch never executes and the row-time work is just a
+ * tight loop of leaf checks + AppendValue.
+ */
+static bool
+WriteProjectionTreeNode(pgbson_heap_writer *parent, const BsonPathNode *node,
+						SerializedCompositeTermPair *indexTerms)
+{
+	check_stack_depth();
+	CHECK_FOR_INTERRUPTS();
+
+	if (NodeType_IsLeaf(node->nodeType))
+	{
+		const IndexProjectionLeaf *leaf = (const IndexProjectionLeaf *) node;
+		if (IsTermPairValueUndefined(&indexTerms[leaf->leafTermIdx]))
+		{
+			return false;
+		}
+
+		InitializeBsonIndexTermIfNeeded(&indexTerms[leaf->leafTermIdx]);
+		PgbsonHeapWriterAppendValue(
+			parent, node->field.string, node->field.length,
+			&indexTerms[leaf->leafTermIdx].term.element.bsonValue);
+		return true;
+	}
+
+	bool isUndefined = true;
+	const BsonIntermediatePathNode *intermediate = CastAsIntermediateNode(node);
+	pgbson_heap_writer *sub = PgbsonHeapWriterInit();
+	const BsonPathNode *child;
+	foreach_child(child, intermediate)
+	{
+		if (WriteProjectionTreeNode(sub, child, indexTerms))
+		{
+			isUndefined = false;
+		}
+	}
+
+	if (!isUndefined)
+	{
+		bson_value_t value = PgbsonHeapWriterGetValue(sub);
+		PgbsonHeapWriterAppendValue(parent, node->field.string,
+									node->field.length, &value);
+	}
+
+	PgbsonHeapWriterFree(sub);
+	return !isUndefined;
+}
+
+
+/*
+ * Reconstruct the projected document by walking the cached tree and
+ * pulling per-row values out of the index term.
+ */
+static void
+WriteIndexDocumentFromCache(IndexProjectionCache *cache,
+							SerializedCompositeTermPair *indexTerms)
+{
+	const BsonPathNode *child;
+	foreach_child(child, cache->root)
+	{
+		WriteProjectionTreeNode(cache->writer, child, indexTerms);
+	}
+}
+
+
 Datum
 gin_bson_composite_ordering_transform(PG_FUNCTION_ARGS)
 {
@@ -2485,39 +2734,41 @@ gin_bson_composite_ordering_transform(PG_FUNCTION_ARGS)
 		/* Index only scan, we need to reconstruct and project the document back. */
 		case UINT16_MAX:
 		{
-			pgbson_heap_writer *writer;
+			IndexProjectionCache *cache;
 
-			/* Start over if the priorKey is not provided (handles the rescan scenario)
-			 * Note that we don't check or free the writer since the MemoryContext
-			 * is reset in between rescan scenarios.
+			/*
+			 * The cache is allocated in fn_mcxt and torn down whenever
+			 * that context is reset (rescans, end of query). On a fresh
+			 * call we build the projection tree once from the opclass
+			 * options; on subsequent calls we reuse it and only reset
+			 * the pgbson writer between rows.
 			 */
-			if (fcinfo->flinfo->fn_extra == NULL || currentKey == (Datum) 0)
+			if (fcinfo->flinfo->fn_extra == NULL)
 			{
-				writer = PgbsonHeapWriterInit();
-				fcinfo->flinfo->fn_extra = (void *) writer;
+				MemoryContext old = MemoryContextSwitchTo(fcinfo->flinfo->fn_mcxt);
+				cache = palloc0(sizeof(IndexProjectionCache));
+				cache->writer = PgbsonHeapWriterInit();
+				cache->numPaths = numPaths;
+				BuildProjectionTreeForIndex(cache, indexPaths,
+											indexPathLengths, numPaths);
+				MemoryContextSwitchTo(old);
+				fcinfo->flinfo->fn_extra = (void *) cache;
 			}
 			else
 			{
-				writer = (pgbson_heap_writer *) fcinfo->flinfo->fn_extra;
-				PgbsonHeapWriterReset(writer);
+				cache = (IndexProjectionCache *) fcinfo->flinfo->fn_extra;
+				PgbsonHeapWriterReset(cache->writer);
 			}
 
-			for (int i = 0; i < numPaths; i++)
-			{
-				InitializeBsonIndexTermIfNeeded(&compareTerms[i]);
-				BsonIndexTerm *term = &compareTerms[i].term;
+			/*
+			 * Switch to the context the heap writer is allocated on.
+			 * We then mem copy to the scanKey context, so this is safe to do.
+			 */
+			MemoryContext old = MemoryContextSwitchTo(fcinfo->flinfo->fn_mcxt);
+			WriteIndexDocumentFromCache(cache, compareTerms);
 
-				if (IsTermPairValueUndefined(&compareTerms[i]))
-				{
-					/* Skip projecting fields that are undefined, instead of literally projecting "undefined". */
-					continue;
-				}
-
-				PgbsonHeapWriterAppendValue(writer, indexPaths[i], indexPathLengths[i],
-											&term->element.bsonValue);
-			}
-
-			bson_value_t value = PgbsonHeapWriterGetValue(writer);
+			bson_value_t value = PgbsonHeapWriterGetValue(cache->writer);
+			MemoryContextSwitchTo(old);
 
 			if (currentKey == (Datum) 0)
 			{

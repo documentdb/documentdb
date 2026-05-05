@@ -409,6 +409,74 @@ set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_missing', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$match" : {"city": "Seattle"} }, { "$group" : { "_id" : "$rent", "n" : { "$sum" : 1 } } }, { "$sort" : {"_id" : 1} }], "cursor" : {}}') $$, p_ignore_heap_fetches => true);
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_missing', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$match" : {"city": "Seattle"} }, { "$group" : { "_id" : "$rent", "n" : { "$sum" : 1 } } }, { "$sort" : {"_id" : 1} }], "cursor" : {}}');
 
+-- GROUP BY (DOTTED PATHS)
+-- Verify that $group with dotted-path index keys uses index only scan and
+-- that the dotted-path reconstruction produces correct grouped results.
+SELECT documentdb_api.insert_one('iosdb_rum_dotted', 'rent_data', '{"_id": 1, "addr": {"city": "Seattle", "rent": 4000}, "sqft": 1500}');
+SELECT documentdb_api.insert_one('iosdb_rum_dotted', 'rent_data', '{"_id": 2, "addr": {"city": "Seattle", "rent": 4500}, "sqft": 1600}');
+SELECT documentdb_api.insert_one('iosdb_rum_dotted', 'rent_data', '{"_id": 3, "addr": {"city": "Seattle", "rent": 5000}, "sqft": 1700}');
+SELECT documentdb_api.insert_one('iosdb_rum_dotted', 'rent_data', '{"_id": 4, "addr": {"city": "NYC", "rent": 3000}, "sqft": 800}');
+SELECT documentdb_api.insert_one('iosdb_rum_dotted', 'rent_data', '{"_id": 5, "addr": {"city": "NYC", "rent": 3500}, "sqft": 900}');
+SELECT documentdb_api.insert_one('iosdb_rum_dotted', 'rent_data', '{"_id": 6, "addr": {"city": "Chicago", "rent": 2000}, "sqft": 1000}');
+SELECT documentdb_api.insert_one('iosdb_rum_dotted', 'rent_data', '{"_id": 7, "addr": {"city": "Chicago", "rent": 2500}, "sqft": 1100}');
+SELECT documentdb_api.insert_one('iosdb_rum_dotted', 'rent_data', '{"_id": 8, "addr": {"city": "Chicago", "rent": 2800}, "sqft": 1200}');
+-- Doc with deeper nesting (addr.geo.zip) for the 3-level dotted index test.
+SELECT documentdb_api.insert_one('iosdb_rum_dotted', 'rent_data', '{"_id": 9, "addr": {"city": "Seattle", "rent": 4200, "geo": {"zip": "98101"}}, "sqft": 1500}');
+SELECT documentdb_api.insert_one('iosdb_rum_dotted', 'rent_data', '{"_id": 10, "addr": {"city": "NYC", "rent": 3200, "geo": {"zip": "10001"}}, "sqft": 950}');
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('iosdb_rum_dotted', '{ "createIndexes": "rent_data", "indexes": [ { "key": { "addr.city": 1, "addr.rent": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "addr_city_rent_1" }] }', true);
+VACUUM (ANALYZE ON, FREEZE ON);
+
+-- D-G1: $group by dotted _id with $count, no $match. Index addr_city_rent_1
+-- covers both keys, so this should use IOS and produce one row per city.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_rent_1", "pipeline" : [{ "$group" : { "_id" : "$addr.city", "cnt" : { "$count" : {} } } }, { "$sort": {"_id": 1} }]}') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_rent_1", "pipeline" : [{ "$group" : { "_id" : "$addr.city", "cnt" : { "$count" : {} } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
+
+-- D-G2: $group by dotted _id with covered $sum/$avg/$min/$max on dotted accumulator.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_rent_1", "pipeline" : [{ "$group" : { "_id" : "$addr.city", "totalRent" : { "$sum" : "$addr.rent" }, "avgRent" : { "$avg" : "$addr.rent" }, "minRent" : { "$min" : "$addr.rent" }, "maxRent" : { "$max" : "$addr.rent" } } }, { "$sort": {"_id": 1} }]}') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_rent_1", "pipeline" : [{ "$group" : { "_id" : "$addr.city", "totalRent" : { "$sum" : "$addr.rent" }, "avgRent" : { "$avg" : "$addr.rent" }, "minRent" : { "$min" : "$addr.rent" }, "maxRent" : { "$max" : "$addr.rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
+
+-- D-G3: $match on dotted leading key + $group with covered accumulator.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"addr.city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$addr.city", "totalRent" : { "$sum" : "$addr.rent" } } }]}') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"addr.city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$addr.city", "totalRent" : { "$sum" : "$addr.rent" } } }]}');
+
+-- D-G4: $match on dotted non-leading key + $group with covered accumulator.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_rent_1", "pipeline" : [{ "$match" : {"addr.rent": {"$gt": 3000}} }, { "$group" : { "_id" : "$addr.city", "cnt" : { "$count" : {} } } }, { "$sort": {"_id": 1} }]}') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_rent_1", "pipeline" : [{ "$match" : {"addr.rent": {"$gt": 3000}} }, { "$group" : { "_id" : "$addr.city", "cnt" : { "$count" : {} } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
+
+-- D-G5: $group _id is the parent path of an index key. The index covers
+-- `addr.city`, but a projection or grouping by `addr` (the parent) needs
+-- the entire `addr` sub-document, which the index does not cover. Should
+-- NOT use IOS.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_rent_1", "pipeline" : [{ "$group" : { "_id" : "$addr", "cnt" : { "$count" : {} } } }]}') $$, p_ignore_heap_fetches => true);
+
+-- D-G6: $group with an uncovered accumulator (sqft is not in the index).
+-- Should NOT use IOS.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_rent_1", "pipeline" : [{ "$group" : { "_id" : "$addr.city", "avgSqft" : { "$avg" : "$sqft" } } }]}') $$, p_ignore_heap_fetches => true);
+
+-- D-G7: compound _id built as an object expression with two dotted fields
+-- that are both individually covered by the index. Today the IOS aggregate
+-- target push only recognises flat "$path" expressions, so the whole-object
+-- `_id` shape falls back to a regular Index Scan even though every leaf
+-- path it references is covered. Tracked as a known gap; correctness is
+-- still verified.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_rent_1", "pipeline" : [{ "$group" : { "_id" : { "city": "$addr.city", "rent": "$addr.rent" }, "cnt" : { "$count" : {} } } }, { "$sort": {"_id.city": 1, "_id.rent": 1} }]}') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_rent_1", "pipeline" : [{ "$group" : { "_id" : { "city": "$addr.city", "rent": "$addr.rent" }, "cnt" : { "$count" : {} } } }, { "$sort": {"_id.city": 1, "_id.rent": 1} }], "cursor" : {}}');
+
+-- D-G8: deep dotted index (3 levels). Same coverage rules - $group on
+-- addr.geo.zip is covered if the index has that exact path.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('iosdb_rum_dotted', '{ "createIndexes": "rent_data", "indexes": [ { "key": { "addr.city": 1, "addr.geo.zip": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "addr_city_geo_zip_1" }] }', true);
+VACUUM (ANALYZE ON, FREEZE ON);
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_geo_zip_1", "pipeline" : [{ "$match" : {"addr.city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$addr.geo.zip", "cnt" : { "$count" : {} } } }, { "$sort": {"_id": 1} }]}') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_geo_zip_1", "pipeline" : [{ "$match" : {"addr.city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$addr.geo.zip", "cnt" : { "$count" : {} } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
+
+-- D-G9: correctness parity with the covered-target IOS GUC off vs on for
+-- a dotted-path $group. Both runs must produce identical output.
+set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_rent_1", "pipeline" : [{ "$group" : { "_id" : "$addr.city", "totalRent" : { "$sum" : "$addr.rent" }, "cnt" : { "$count" : {} }, "minRent" : { "$min" : "$addr.rent" }, "maxRent" : { "$max" : "$addr.rent" }, "avgRent" : { "$avg" : "$addr.rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
+set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_rent_1", "pipeline" : [{ "$group" : { "_id" : "$addr.city", "totalRent" : { "$sum" : "$addr.rent" }, "cnt" : { "$count" : {} }, "minRent" : { "$min" : "$addr.rent" }, "maxRent" : { "$max" : "$addr.rent" }, "avgRent" : { "$avg" : "$addr.rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
+
 -- KNOWN INDEX ONLY SCAN GAPS (should work, but doesn't yet)
 -- Without a $match or hint, the planner has no reason to pick the secondary index.
 -- In the future, accumulator-only pipelines should be able to use IOS via aggregate pushdown.

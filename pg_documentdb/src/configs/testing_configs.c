@@ -124,9 +124,11 @@ bool EnableCompositeParallelIndexScan = DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_
 #define DEFAULT_SKIP_INDEX_CLEANUP_ON_FAILURE false
 bool SkipIndexCleanupOnFailure = DEFAULT_SKIP_INDEX_CLEANUP_ON_FAILURE;
 
-
 #define DEFAULT_SKIP_INDEX_CLEANUP_ON_REINDEX false
 bool SkipIndexCleanupOnReindex = DEFAULT_SKIP_INDEX_CLEANUP_ON_REINDEX;
+
+#define DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT false
+bool EnableIndexOnlyScanForFindProject = DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT;
 
 void
 InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
@@ -439,4 +441,12 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, &SkipIndexCleanupOnReindex,
 		DEFAULT_SKIP_INDEX_CLEANUP_ON_REINDEX,
 		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableIndexOnlyScanForFindProject", newGucPrefix),
+		gettext_noop(
+			"Whether or not to enable index only scan for find with project operations. Test GUC for now since we need to support this with cursors properly."),
+		NULL, &EnableIndexOnlyScanForFindProject,
+		DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT,
+		PGC_USERSET, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
 }

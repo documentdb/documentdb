@@ -224,6 +224,7 @@ extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableIndexOnlyScanForCoveredAggregateTargets;
 extern bool EnableIndexOnlyScanForRangeMatch;
+extern bool EnableIndexOnlyScanForFindProject;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -1893,9 +1894,8 @@ PlanHasAggregates(PlannerInfo *root)
 }
 
 
-/* Returns the field path from a constant BSON expression, or NULL if not applicable. */
-static const char *
-TryExtractFieldPathFromConst(Expr *expr)
+static pgbson *
+TryExtractPgbsonFromConst(Expr *expr)
 {
 	if (!IsA(expr, Const))
 	{
@@ -1909,7 +1909,20 @@ TryExtractFieldPathFromConst(Expr *expr)
 		return NULL;
 	}
 
-	pgbson *pathBson = DatumGetPgBson(constExpr->constvalue);
+	return DatumGetPgBson(constExpr->constvalue);
+}
+
+
+/* Returns the field path from a constant BSON expression, or NULL if not applicable. */
+static const char *
+TryExtractFieldPathFromConst(Expr *expr)
+{
+	pgbson *pathBson = TryExtractPgbsonFromConst(expr);
+	if (pathBson == NULL)
+	{
+		return NULL;
+	}
+
 	pgbsonelement pathElement;
 	PgbsonToSinglePgbsonElement(pathBson, &pathElement);
 
@@ -1974,22 +1987,90 @@ StripRelabels(Expr *expr)
 static const char *
 TryExtractSortPathFromConst(Expr *expr)
 {
-	if (!IsA(expr, Const))
-	{
-		return NULL;
-	}
-
-	Const *constExpr = (Const *) expr;
-	if (!(constExpr->consttype == BsonTypeId() || constExpr->consttype ==
-		  DocumentDBCoreBsonTypeId()) || constExpr->constisnull)
+	pgbson *sortBson = TryExtractPgbsonFromConst(expr);
+	if (sortBson == NULL)
 	{
 		return NULL;
 	}
 
 	/* Unlike field paths, sort paths are not prefixed with a $.*/
 	pgbsonelement sortElement;
-	PgbsonToSinglePgbsonElement(DatumGetPgBson(constExpr->constvalue), &sortElement);
+	PgbsonToSinglePgbsonElement(sortBson, &sortElement);
 	return sortElement.path;
+}
+
+
+static bool
+IsProjectionCoveredByIndex(Expr *expr, IndexPath *indexPath)
+{
+	pgbson *projectBson = TryExtractPgbsonFromConst(expr);
+	if (projectBson == NULL)
+	{
+		return false;
+	}
+
+	bool isIdProjectedByDefault = true;
+	bool checkFixedInteger = false;
+	bool hasInclusion = false;
+	bson_iter_t bsonIter;
+	PgbsonInitIterator(projectBson, &bsonIter);
+
+	while (bson_iter_next(&bsonIter))
+	{
+		const char *fieldPath = bson_iter_key(&bsonIter);
+		const bson_value_t *bsonValue = bson_iter_value(&bsonIter);
+
+		/*
+		 * Expression projections cannot be reasoned about for coverage.
+		 * TODO: projections like: {a: { b: 1 }} are completely valid, we should consider those.
+		 */
+		if (!IsBsonValue64BitInteger(bsonValue, checkFixedInteger))
+		{
+			return false;
+		}
+
+		bool isIdProjection = strcmp(fieldPath, "_id") == 0;
+		bool isExclusion = BsonValueAsInt64(bsonValue) == 0;
+
+		if (isIdProjection)
+		{
+			/* If _id: 1, we will check as part of walking the spec. If _id: 0,
+			 * it is not projected by default. */
+			isIdProjectedByDefault = false;
+
+			/* The only exclusion we can have such that an index only scan can work is _id: 0. */
+			if (isExclusion)
+			{
+				continue;
+			}
+		}
+		else if (isExclusion)
+		{
+			/* If we have a non _id exclusion we can just bail, since projection doesn't allow mixed inclusion and exclusion for non id fields. */
+			return false;
+		}
+
+		hasInclusion = true;
+
+		if (!IsFieldPathCoveredByIndex(fieldPath, indexPath))
+		{
+			return false;
+		}
+	}
+
+	/* Pure-exclusion projections (e.g { _id: 0 }) need to read every other field, which we
+	 * cannot reason about - no IOS. */
+	if (!hasInclusion)
+	{
+		return false;
+	}
+
+	if (isIdProjectedByDefault && !IsFieldPathCoveredByIndex("_id", indexPath))
+	{
+		return false;
+	}
+
+	return true;
 }
 
 
@@ -2019,12 +2100,24 @@ IsSortPathFunctionOid(Oid oid)
 }
 
 
-static bool
+inline static bool
 IsExpressionPathFunctionOid(Oid oid)
 {
 	return oid == BsonExpressionGetFunctionOid() ||
 		   oid == BsonExpressionGetWithLetFunctionOid() ||
 		   oid == BsonExpressionGetWithLetAndCollationFunctionOid();
+}
+
+
+inline static bool
+IsProjectFunctionOid(Oid oid)
+{
+	return oid == BsonDollarProjectFunctionOid() ||
+		   oid == BsonDollarProjectWithLetFunctionOid() ||
+		   oid == BsonDollarProjectWithLetAndCollationFunctionOid() ||
+		   oid == BsonDollarProjectFindFunctionOid() ||
+		   oid == BsonDollarProjectFindWithLetFunctionOid() ||
+		   oid == BsonDollarProjectFindWithLetAndCollationFunctionOid();
 }
 
 
@@ -2123,6 +2216,15 @@ CheckFieldCoverage(Node *node, void *context)
 				{
 					fieldPath = TryExtractFieldPathFromConst(secondArg);
 				}
+				else if (EnableIndexOnlyScanForFindProject &&
+						 IsProjectFunctionOid(funcExpr->funcid))
+				{
+					/* all our bson_dollar_project variants take the projection as the second argument. */
+					bool isProjectionCoveredByIndex = IsProjectionCoveredByIndex(
+						secondArg, state->indexPath);
+					state->hasUncoveredField = !isProjectionCoveredByIndex;
+					return state->hasUncoveredField;
+				}
 				else
 				{
 					/* To be safe, err on the side of not using index-only scan when the function is not recognized. */
@@ -2193,8 +2295,9 @@ AreAllTargetsCoveredByIndex(PlannerInfo *root, IndexPath *indexPath)
 static bool
 IsQueryEligibleForIndexOnlyScan(PlannerInfo *root, Index scanRti, bool *hasDocumentVar)
 {
-	if (!PlanHasAggregates(root) ||
-		root->hasJoinRTEs)
+	bool planHasAggregates = PlanHasAggregates(root);
+	if (root->hasJoinRTEs ||
+		(!planHasAggregates && !EnableIndexOnlyScanForFindProject))
 	{
 		/* Don't handle simple queries for now - only things with aggregates
 		 * Note: Things like GroupBy with no aggregates will not work here, but
@@ -2217,7 +2320,7 @@ IsQueryEligibleForIndexOnlyScan(PlannerInfo *root, Index scanRti, bool *hasDocum
 
 	if (projectionState.hasDocumentVar)
 	{
-		if (!EnableIndexOnlyScanForCoveredAggregateTargets)
+		if (!EnableIndexOnlyScanForCoveredAggregateTargets && planHasAggregates)
 		{
 			return false;
 		}
