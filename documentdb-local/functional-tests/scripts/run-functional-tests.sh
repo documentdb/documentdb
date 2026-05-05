@@ -456,13 +456,18 @@ case "$MODE" in
             || TEST_EXIT=$?
 
         if [ -f "$RESULTS_DIR/report.json" ]; then
-            python3 "$GATE_TOOL" \
+            SUMMARY_EXIT=0
+            if ! python3 "$GATE_TOOL" \
                 --image "$IMAGE_YML" \
                 --allowlist "$ALLOWLIST_YML" \
                 summarize-gate \
                 --report "$RESULTS_DIR/report.json" \
-                --output-dir "$RESULTS_DIR"
-            TEST_EXIT=$?
+                --output-dir "$RESULTS_DIR"; then
+                SUMMARY_EXIT=1
+            fi
+            if [ "$TEST_EXIT" -ne 0 ] || [ "$SUMMARY_EXIT" -ne 0 ]; then
+                TEST_EXIT=1
+            fi
         else
             echo "No report.json produced. Test execution may have failed before producing results."
             TEST_EXIT=1
