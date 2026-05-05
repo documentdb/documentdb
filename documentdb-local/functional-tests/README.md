@@ -21,6 +21,9 @@ following concrete choices:
   `compatibility/tests/...`, not `documentdb_tests/compatibility/tests/...`.
 - CI uses bounded, configurable xdist workers with a default of `4`, rather than
   unbounded `-n auto`.
+- Allowlist removals and replacements are reviewer-governed in normal PR review.
+  CI intentionally does not run a dedicated removal-blocking job because
+  legitimate coverage changes need human context.
 - Phase 1 summaries do not run a `main` causality comparison or detailed
   product-vs-infra mismatch taxonomy. Those are deferred operational polish; the
   Phase 1 gate remains strict for allowlisted tests.
@@ -261,5 +264,7 @@ the intended stable tests into `config/allowlist.yml`.
   --output /tmp/allowlist-candidate.yml
 ```
 
-Allowlist removals are reviewed by PR reviewers. CI does not block removals
-automatically.
+Allowlist additions still use the normal promotion flow. Allowlist removals or
+replacements are handled through normal PR review: explain the coverage change
+in the PR, and let reviewers decide whether it is appropriate. CI
+intentionally does not run a dedicated removal-blocking job.
