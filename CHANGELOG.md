@@ -1,4 +1,5 @@
 ### documentdb v0.113-0 (Unreleased) ###
+* Support for pruning dead index entry on ordered TTL indexes. Requires `EnableDeadIndexEntryMarkingByTTLTask` to be on. *[Perf]*
 
 ### documentdb v0.112-0 (Unreleased) ###
 * Removed feature flag `documentdb.enableUpdateBsonDocument` and dropped legacy composite-returning `bson_update_document` UDF — all callers now use the scalar `update_bson_document` UDF

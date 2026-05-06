@@ -60,6 +60,10 @@ int MaxTTLBatchSizeUnorderedIndex = DEFAULT_MAX_TTL_BATCH_SIZE_UNORDERED_INDEX;
 #define DEFAULT_ENABLE_TTL_DESC_SORT false
 bool EnableTTLDescSort = DEFAULT_ENABLE_TTL_DESC_SORT;
 
+#define DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK false
+bool EnableDeadIndexEntryMarkingByTTLTask =
+	DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK;
+
 #define DEFAULT_ENABLE_BG_WORKER true
 bool EnableBackgroundWorker = DEFAULT_ENABLE_BG_WORKER;
 
@@ -230,6 +234,17 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		NULL,
 		&EnableTTLDescSort,
 		DEFAULT_ENABLE_TTL_DESC_SORT,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableDeadIndexEntryMarkingByTTLTask", newGucPrefix),
+		gettext_noop(
+			"Whether to enable marking dead index entries during TTL task scans to avoid redundant heap fetches."),
+		NULL,
+		&EnableDeadIndexEntryMarkingByTTLTask,
+		DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

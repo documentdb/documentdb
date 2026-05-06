@@ -35,6 +35,8 @@ extern int TTLPurgerStatementTimeout;
 extern int MaxTTLDeleteBatchSize;
 extern int TTLPurgerLockTimeout;
 extern char *ApiGucPrefix;
+extern char *ApiRumGucPrefix;
+extern bool EnableDeadIndexEntryMarkingByTTLTask;
 extern int SingleTTLTaskTimeBudget;
 extern int TTLTaskMaxRunTimeInMS;
 extern bool EnableTtlJobsOnReadOnly;
@@ -741,6 +743,11 @@ DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
 	}
 
 	SetGUCLocally(psprintf("%s.forceUseIndexIfAvailable", ApiGucPrefix), "true");
+	if (EnableDeadIndexEntryMarkingByTTLTask && indexEntry->indexIsOrdered)
+	{
+		SetGUCLocally(psprintf("%s.enable_support_dead_index_items", ApiRumGucPrefix),
+					  "true");
+	}
 
 	uint64 rowsCount = ExtensionExecuteCappedStatementWithArgsViaSPI(
 		cmdStrDeleteRows->data,

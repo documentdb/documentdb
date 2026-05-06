@@ -625,3 +625,82 @@ END;
 
 -- Should have deleted all remaining expired docs (repeat was active), leaving only the 2 non-expired
 SELECT count(*) <= 172 FROM documentdb_api.collection('db', 'ttlSkipRepeat');
+
+-- 23. Test LP_DEAD benefit: delete_expired_rows() marks dead index entries during its scan.
+-- After TTL delete + VACUUM(INDEX_CLEANUP OFF), calling delete_expired_rows() again
+-- encounters stale index entries and marks them as dead (via enable_support_dead_index_items
+-- GUC set internally by SetGUCLocally). The very first read query then skips those entries.
+-- Uses a fresh database to avoid Citus Adaptive wrapping (which hides innerScanLoops metadata).
+
+SET documentdb.enableDeadIndexEntryMarkingByTTLTask to on;
+
+SELECT documentdb_api.create_collection('ttl_lpdead_db', 'ttlDeadTupleTest');
+
+SELECT collection_id AS dead_tup_col FROM documentdb_api_catalog.collections
+    WHERE database_name = 'ttl_lpdead_db' AND collection_name = 'ttlDeadTupleTest' \gset
+
+-- Disable autovacuum for predictability
+SELECT FORMAT('ALTER TABLE documentdb_data.documents_%s SET (autovacuum_enabled = off)', :dead_tup_col) \gexec
+
+-- Insert 1000 expired documents (batch 1) with distinct TTL values
+SELECT COUNT(documentdb_api.insert_one('ttl_lpdead_db', 'ttlDeadTupleTest',
+    FORMAT('{ "_id": %s, "ttl": { "$date": { "$numberLong": "%s" } } }', i, i)::documentdb_core.bson))
+FROM generate_series(1, 1000) AS i;
+
+-- Create composite TTL index
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_lpdead_db',
+    '{"createIndexes": "ttlDeadTupleTest", "indexes": [{"key": {"ttl": 1}, "name": "ttl_dead_idx", "v":1, "expireAfterSeconds": 5, "enableCompositeTerm": true}]}', true);
+
+-- Verify initial state: 1000 index entries
+SET documentdb.enableExtendedExplainPlans to on;
+SET documentdb.forceDisableSeqScan to on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ttl_lpdead_db', '{ "find": "ttlDeadTupleTest", "filter": { "ttl": { "$exists": true } } }') $cmd$);
+
+-- First TTL delete: deletes all 1000 rows (entries are live during this scan, nothing to mark yet)
+RESET documentdb.forceDisableSeqScan;
+BEGIN;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
+CALL documentdb_api_internal.delete_expired_rows(1000);
+END;
+
+SELECT count(*) as rows_after_first_delete FROM documentdb_api.collection('ttl_lpdead_db', 'ttlDeadTupleTest');
+
+-- VACUUM removes dead heap tuples but leaves index entries stale (LP_DEAD scenario)
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_%s', :dead_tup_col) \gexec
+
+-- Insert 10 more expired rows (batch 2) with distinct TTL values, so delete_expired_rows has something to scan
+SELECT COUNT(documentdb_api.insert_one('ttl_lpdead_db', 'ttlDeadTupleTest',
+    FORMAT('{ "_id": %s, "ttl": { "$date": { "$numberLong": "%s" } } }', i, i)::documentdb_core.bson))
+FROM generate_series(2001, 2010) AS i;
+
+-- Second TTL delete: scans TTL index encountering 1000 dead + 10 live entries.
+-- With enable_support_dead_index_items=true (set by SetGUCLocally in delete_expired_rows),
+-- this scan marks the 1000 dead entries as LP_DEAD in the index and deletes the 10 live rows.
+BEGIN;
+SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
+CALL documentdb_api_internal.delete_expired_rows(1000);
+END;
+
+SELECT count(*) as rows_after_second_delete FROM documentdb_api.collection('ttl_lpdead_db', 'ttlDeadTupleTest');
+
+-- VACUUM again for the 10 newly deleted rows
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_%s', :dead_tup_col) \gexec
+
+-- KEY ASSERTION: The very first query with enable_support_dead_index_items=on should
+-- already show deadEntriesOrPagesSkipped=1000, proving that delete_expired_rows() marked
+-- the dead entries during its scan. Without the SetGUCLocally in delete_expired_rows,
+-- this first query would show innerScanLoops=1010 (no entries pre-marked).
+SET documentdb.forceDisableSeqScan to on;
+SET documentdb_rum.enable_support_dead_index_items to on;
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ttl_lpdead_db', '{ "find": "ttlDeadTupleTest", "filter": { "ttl": { "$exists": true } } }') $cmd$);
+
+RESET documentdb_rum.enable_support_dead_index_items;
+RESET documentdb.forceDisableSeqScan;
+RESET documentdb.enableExtendedExplainPlans;
+RESET documentdb.enableDeadIndexEntryMarkingByTTLTask;
+SELECT documentdb_api.drop_collection('ttl_lpdead_db', 'ttlDeadTupleTest');

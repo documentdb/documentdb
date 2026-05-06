@@ -125,6 +125,7 @@ PGDLLEXPORT char *ApiCatalogSchemaName = "documentdb_api_catalog";
 PGDLLEXPORT char *ApiCatalogSchemaNameV2 = "documentdb_api_catalog";
 PGDLLEXPORT char *ApiGucPrefix = "documentdb";
 PGDLLEXPORT char *ApiGucPrefixV2 = "documentdb";
+PGDLLEXPORT char *ApiRumGucPrefix = "documentdb_rum";
 PGDLLEXPORT char *PostgisSchemaName = "public";
 PGDLLIMPORT char *ApiInternalReadWriteSchemaName = "documentdb_api_internal_readwrite";
 PGDLLIMPORT char *ApiInternalReadOnlySchemaName = "documentdb_api_internal_readonly";
