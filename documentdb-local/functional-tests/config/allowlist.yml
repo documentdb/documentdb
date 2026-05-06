@@ -330,6 +330,7 @@ tests:
   - compatibility/tests/system/diagnostic/commands/hostInfo/test_smoke_hostInfo.py::test_smoke_hostInfo
   - compatibility/tests/system/diagnostic/commands/listCommands/test_smoke_listCommands.py::test_smoke_listCommands
   - compatibility/tests/system/diagnostic/commands/ping/test_smoke_ping.py::test_smoke_ping
+  - compatibility/tests/system/diagnostic/commands/top/test_smoke_top.py::test_smoke_top
   - compatibility/tests/system/diagnostic/commands/validate/test_smoke_validate.py::test_smoke_validate
   - compatibility/tests/system/diagnostic/commands/whatsmyuri/test_smoke_whatsmyuri.py::test_smoke_whatsmyuri
   - compatibility/tests/system/security/authentication/commands/logout/test_smoke_logout.py::test_smoke_logout
