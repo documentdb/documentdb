@@ -43,6 +43,7 @@ extern char *ApiGucPrefixV2;
 extern bool EnableRbacCompliantSchemas;
 extern bool EnablePrepareUnique;
 extern bool EnablePerCollectionPlannerStatistics;
+extern bool EnablePlannerStatisticsNewCollections;
 
 /* Metadata about shard keys - this is unchanged through
  * iterating though the query for the shard key.
@@ -1457,7 +1458,8 @@ ShardCollectionCore(ShardCollectionArgs *args)
 		existingExtendedIndexesCmds = GetExtendedIndexCreationCmds(collection);
 	}
 
-	bool isCollectionStatisticsEnabled = EnablePerCollectionPlannerStatistics &&
+	bool isCollectionStatisticsEnabled = (EnablePerCollectionPlannerStatistics ||
+										  EnablePlannerStatisticsNewCollections) &&
 										 CollectionHasStatisticsEnabled(
 		collection->collectionId);
 
@@ -1496,8 +1498,8 @@ ShardCollectionCore(ShardCollectionArgs *args)
 	/* Before sharding, drop stats (they're created after) */
 	if (isCollectionStatisticsEnabled)
 	{
-		bool disableStats = false;
-		UpdateCollectionPlannerStatistics(collection->collectionId, disableStats);
+		bool enableStats = false;
+		UpdateCollectionPlannerStatistics(collection->collectionId, enableStats);
 	}
 
 	/* create a new table to reinsert the data into */

@@ -171,6 +171,7 @@ extern bool EnableCompositeReducedCorrelatedTerms;
 extern bool EnableUniqueCompositeReducedCorrelatedTerms;
 extern bool EnableCompositeShardDocumentTerms;
 extern bool EnablePerCollectionPlannerStatistics;
+extern bool EnablePlannerStatisticsNewCollections;
 extern bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath;
 
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
@@ -7070,7 +7071,9 @@ UpdateIndexStatsForPostgresIndex(uint64 collectionId, List *indexIdList)
 {
 	UpdateIndexStatsForPostgresIndexCore(collectionId, indexIdList);
 
-	if (EnablePerCollectionPlannerStatistics &&
+	bool shouldUpdatePlannerStatistics = EnablePerCollectionPlannerStatistics ||
+										 EnablePlannerStatisticsNewCollections;
+	if (shouldUpdatePlannerStatistics &&
 		IsClusterVersionAtleast(DocDB_V0, 111, 0))
 	{
 		UpdateIndexStatisticsForPlannerStatistics(collectionId, indexIdList);

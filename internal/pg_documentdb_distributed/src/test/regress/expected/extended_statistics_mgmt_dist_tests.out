@@ -180,3 +180,113 @@ SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.planner_stats", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }, "name" : "b_c_1" } }, "ok" : { "$numberDouble" : "1.0" } }
 (2 rows)
 
+---------------------------------------------------------------------
+-- Tests for documentdb.enablePlannerStatisticsNewCollections in the
+-- distributed flow.
+---------------------------------------------------------------------
+RESET documentdb.enablePerCollectionPlannerStatistics;
+RESET documentdb.enablePlannerStatisticsNewCollections;
+-- With the new GUC on, create_collection auto-enables stats.
+set documentdb.enablePlannerStatisticsNewCollections to on;
+SELECT documentdb_api.create_collection('stats_db', 'auto_dist');
+NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT collection_id AS auto_dist_id FROM documentdb_api_catalog.collections WHERE database_name = 'stats_db' AND collection_name = 'auto_dist' \gset
+-- listIndexes shows statsEnabled=true on the _id_ index.
+SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "auto_dist" }') ORDER BY 1;
+                                                                                                                   bson_dollar_unwind                                                                                                                    
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.auto_dist", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_", "statsEnabled" : true } }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Add a compound index so a stats object is materialized before sharding.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('stats_db', '{ "createIndexes": "auto_dist", "indexes": [ { "key": { "p": 1, "q": 1 }, "name": "p_q_1" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+\d documentdb_data.documents_:auto_dist_id
+          Table "documentdb_data.documents_7402"
+     Column      |  Type  | Collation | Nullable | Default 
+---------------------------------------------------------------------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_7402" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_7407" documentdb_rum (document bson_rum_single_path_ops (path=p, tl='2691'), document bson_rum_single_path_ops (path=q, tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '7402'::bigint)
+Statistics objects:
+    "documentdb_data.documents_rum_index_7407_stats" ON bson_stats_project(document, 'p'::text), bson_stats_project(document, 'q'::text) FROM documentdb_data.documents_7402
+
+-- Sharding the collection. With the new GUC still on, stats are preserved
+-- on the parent table and the new shard tables (the OR with the per-collection
+-- GUC in ShardCollectionCore lets the new GUC keep stats across sharding).
+SELECT documentdb_api.shard_collection('{ "shardCollection": "stats_db.auto_dist", "key": { "_id": "hashed" } }');
+NOTICE:  statistics object "documentdb_data.documents_rum_index_7406_stats" does not exist, skipping
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+\d documentdb_data.documents_:auto_dist_id
+          Table "documentdb_data.documents_7402"
+     Column      |  Type  | Collation | Nullable | Default 
+---------------------------------------------------------------------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_7402" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_7408" documentdb_rum (document bson_rum_single_path_ops (path=_id, tl='2699'))
+    "documents_rum_index_7409" documentdb_rum (document bson_rum_single_path_ops (path=p, tl='2691'), document bson_rum_single_path_ops (path=q, tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = get_shard_key_value('{ "_id" : "hashed" }'::bson, 7402::bigint, document))
+Statistics objects:
+    "documentdb_data.documents_rum_index_7409_stats" ON bson_stats_project(document, 'p'::text), bson_stats_project(document, 'q'::text) FROM documentdb_data.documents_7402
+
+-- listIndexes still reports statsEnabled=true after sharding.
+SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "auto_dist" }') ORDER BY 1;
+                                                                                                                      bson_dollar_unwind                                                                                                                       
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.auto_dist", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_", "statsEnabled" : true } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.auto_dist", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "1" } }, "name" : "p_q_1" } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+-- Turning the new GUC off and sharding a *different* collection that was
+-- created with the GUC off does not enable stats. Sharding here is a no-op
+-- for stats since the collection never had them enabled.
+set documentdb.enablePlannerStatisticsNewCollections to off;
+SELECT documentdb_api.create_collection('stats_db', 'no_stats_dist');
+NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "no_stats_dist" }') ORDER BY 1;
+                                                                                                          bson_dollar_unwind                                                                                                          
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.no_stats_dist", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('{ "shardCollection": "stats_db.no_stats_dist", "key": { "_id": "hashed" } }');
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "no_stats_dist" }') ORDER BY 1;
+                                                                                                          bson_dollar_unwind                                                                                                          
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.no_stats_dist", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb.enablePerCollectionPlannerStatistics;
+RESET documentdb.enablePlannerStatisticsNewCollections;

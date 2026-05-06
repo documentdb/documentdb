@@ -57,3 +57,43 @@ set citus.show_shards_for_app_name_prefixes to '*';
 \d documentdb_data.documents_7401_740004
 
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "planner_stats" }') ORDER BY 1;
+
+------------------------------------------------------------------------------
+-- Tests for documentdb.enablePlannerStatisticsNewCollections in the
+-- distributed flow.
+------------------------------------------------------------------------------
+RESET documentdb.enablePerCollectionPlannerStatistics;
+RESET documentdb.enablePlannerStatisticsNewCollections;
+
+-- With the new GUC on, create_collection auto-enables stats.
+set documentdb.enablePlannerStatisticsNewCollections to on;
+SELECT documentdb_api.create_collection('stats_db', 'auto_dist');
+SELECT collection_id AS auto_dist_id FROM documentdb_api_catalog.collections WHERE database_name = 'stats_db' AND collection_name = 'auto_dist' \gset
+
+-- listIndexes shows statsEnabled=true on the _id_ index.
+SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "auto_dist" }') ORDER BY 1;
+
+-- Add a compound index so a stats object is materialized before sharding.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('stats_db', '{ "createIndexes": "auto_dist", "indexes": [ { "key": { "p": 1, "q": 1 }, "name": "p_q_1" } ] }', TRUE);
+\d documentdb_data.documents_:auto_dist_id
+
+-- Sharding the collection. With the new GUC still on, stats are preserved
+-- on the parent table and the new shard tables (the OR with the per-collection
+-- GUC in ShardCollectionCore lets the new GUC keep stats across sharding).
+SELECT documentdb_api.shard_collection('{ "shardCollection": "stats_db.auto_dist", "key": { "_id": "hashed" } }');
+\d documentdb_data.documents_:auto_dist_id
+
+-- listIndexes still reports statsEnabled=true after sharding.
+SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "auto_dist" }') ORDER BY 1;
+
+-- Turning the new GUC off and sharding a *different* collection that was
+-- created with the GUC off does not enable stats. Sharding here is a no-op
+-- for stats since the collection never had them enabled.
+set documentdb.enablePlannerStatisticsNewCollections to off;
+SELECT documentdb_api.create_collection('stats_db', 'no_stats_dist');
+SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "no_stats_dist" }') ORDER BY 1;
+SELECT documentdb_api.shard_collection('{ "shardCollection": "stats_db.no_stats_dist", "key": { "_id": "hashed" } }');
+SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "no_stats_dist" }') ORDER BY 1;
+
+RESET documentdb.enablePerCollectionPlannerStatistics;
+RESET documentdb.enablePlannerStatisticsNewCollections;

@@ -1,9 +1,9 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
- * src/commands/create_collection_view.c
+ * src/commands/create_collection_core.c
  *
- * Implementation of view and collection creation functions.
+ * Implementation of collection creation functions.
  *
  *-------------------------------------------------------------------------
  */
@@ -17,6 +17,7 @@
 
 #include "utils/documentdb_errors.h"
 #include "metadata/collection.h"
+#include "metadata/index.h"
 #include "metadata/metadata_cache.h"
 #include "utils/error_utils.h"
 #include "utils/query_utils.h"
@@ -27,6 +28,7 @@
 extern bool EnableNativeColocation;
 extern bool EnableDataTableWithoutCreationTime;
 extern bool EnableRbacCompliantSchemas;
+extern bool EnablePlannerStatisticsNewCollections;
 
 static bool CanColocateAtDatabaseLevel(text *databaseDatum);
 static const char * CreatePostgresDataTable(uint64_t collectionId,
@@ -105,6 +107,14 @@ command_create_collection_core(PG_FUNCTION_ARGS)
 
 	ereport(NOTICE, (errmsg("creating collection")));
 	CreatePostgresDataTable(collectionId, colocateWith, shardingColumn);
+
+	if (EnablePlannerStatisticsNewCollections &&
+		IsClusterVersionAtleast(DocDB_V0, 111, 0))
+	{
+		bool enableStats = true;
+		UpdateCollectionPlannerStatistics(collectionId, enableStats);
+	}
+
 	PG_RETURN_BOOL(true);
 }
 

@@ -201,6 +201,11 @@ bool EnableCompositeWildcardSkipEmptyEntries =
 bool EnablePerCollectionPlannerStatistics =
 	DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS;
 
+/* Added in v113, Pending stabilization, enable in v120 */
+#define DEFAULT_ENABLE_PLANNER_STATISTICS_NEW_COLLECTIONS false
+bool EnablePlannerStatisticsNewCollections =
+	DEFAULT_ENABLE_PLANNER_STATISTICS_NEW_COLLECTIONS;
+
 /* Added in v111, enabled in v111, remove after v114 */
 #define DEFAULT_ENABLE_ORDERED_COMPOSITE_OPERATOR_SCAN true
 bool EnableOrderedCompositeOperatorScan = DEFAULT_ENABLE_ORDERED_COMPOSITE_OPERATOR_SCAN;
@@ -1132,6 +1137,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable per-collection planner statistics."),
 		NULL, &EnablePerCollectionPlannerStatistics,
 		DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enablePlannerStatisticsNewCollections", newGucPrefix),
+		gettext_noop(
+			"Whether to enable custom planner statistics for any new collections."),
+		NULL, &EnablePlannerStatisticsNewCollections,
+		DEFAULT_ENABLE_PLANNER_STATISTICS_NEW_COLLECTIONS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
