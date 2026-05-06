@@ -1206,4 +1206,7 @@ typedef int DocumentdbErrorEreportCode;
 
 #define ERRCODE_DOCUMENTDB_LOCATION51071 MAKE_SQLSTATE('M', '0', '0', 'F', 'C')
 
+#define ERRCODE_DOCUMENTDB_CANNOTINDEXPARALLELARRAYS \
+	MAKE_SQLSTATE('M', '0', '0', 'F', 'D')
+
 #endif

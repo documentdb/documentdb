@@ -50,6 +50,7 @@ ErrorMapping,ErrorName
 165,ViewDepthLimitExceeded
 166,CommandNotSupportedOnView
 167,OptionNotSupportedOnView
+171,CannotIndexParallelArrays
 181,AmbiguousIndexKeyPattern
 186,ClientMetadataCannotBeMutated
 197,InvalidIndexSpecificationOption

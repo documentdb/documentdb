@@ -153,9 +153,9 @@ bool UseNewUniqueHashEqualityFunction = DEFAULT_USE_NEW_UNIQUE_HASH_EQUALITY_FUN
 #define DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH true
 bool EnableCompositeUniqueHash = DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH;
 
-/* Added in v109, enabled in v109, remove after v111 */
-#define DEFAULT_RUM_USE_NEW_COMPOSITE_TERM_GENERATION true
-bool RumUseNewCompositeTermGeneration = DEFAULT_RUM_USE_NEW_COMPOSITE_TERM_GENERATION;
+/* Added in v114, Pending stabilization, enable in v120 */
+#define DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS false
+bool EnableFailureOnParallelIndexArrays = DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS;
 
 /* Added in v109, enabled in v110, remove after v113 */
 #define DEFAULT_ENABLE_COMPOSITE_WILDCARD_INDEX true
@@ -902,11 +902,11 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableRumNewCompositeTermGeneration", newGucPrefix),
+		psprintf("%s.enableFailureOnParallelIndexArrays", newGucPrefix),
 		gettext_noop(
-			"Whether to enable the new term generation for composite terms."),
-		NULL, &RumUseNewCompositeTermGeneration,
-		DEFAULT_RUM_USE_NEW_COMPOSITE_TERM_GENERATION,
+			"Whether to fail when parallel arrays are indexed in composite indexes."),
+		NULL, &EnableFailureOnParallelIndexArrays,
+		DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

@@ -164,7 +164,6 @@ PG_FUNCTION_INFO_V1(gin_bson_composite_index_term_transform);
 PG_FUNCTION_INFO_V1(gin_bson_composite_rum_config);
 
 extern bool RumHasMultiKeyPaths;
-extern bool RumUseNewCompositeTermGeneration;
 extern bool EnableCompositeWildcardIndex;
 extern int MaxWildcardIndexKeySize;
 extern bool EnableCompositeWildcardSkipEmptyEntries;
@@ -173,6 +172,7 @@ extern bool EnableOrderedCompositeOperatorScan;
 extern bool EnableBinarySearchForOrderedMove;
 extern bool EnableComparableTerms;
 extern bool EnablePartialMatchHasRecheck;
+extern bool EnableFailureOnParallelIndexArrays;
 
 static void ValidateCompositePathSpec(const char *prefix);
 static Size FillCompositePathSpec(const char *prefix, void *buffer);
@@ -4348,53 +4348,6 @@ BuildSinglePathTermsForCompositeTermsNew(pgbson *bson,
 }
 
 
-static uint32_t
-BuildSinglePathTermsForCompositeTerms(pgbson *bson, BsonGinCompositePathOptions *options,
-									  GinEntrySet *entries,
-									  bool *entryHasMultiKey, bool *entryHasTruncation,
-									  uint32_t *pathCountOut)
-{
-	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
-	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
-
-	uint32_t pathCount = (uint32_t) GetIndexPathsFromOptions(options,
-															 indexPaths, sortOrders);
-	*pathCountOut = pathCount;
-	uint32_t totalTermCount = 1;
-	for (uint32_t i = 0; i < pathCount; i++)
-	{
-		GenerateTermsContext context = { 0 };
-		GinEntryPathData pathData = { 0 };
-
-		bool allowValueOnly = false;
-		BsonGinSinglePathOptions *singlePathOptions = CreateSinglePathOptions(
-			indexPaths[i], i, pathCount, options, &allowValueOnly);
-
-		context.options = (void *) singlePathOptions;
-		context.traverseOptionsFunc = &GetSinglePathIndexTraverseOption;
-		UpdateCompositePathData(&pathData, singlePathOptions, allowValueOnly,
-								sortOrders[i]);
-		SetGenerateTermsContextFlags(&context);
-
-		bool addRootTerm = false;
-		GenerateTerms(bson, &context, &pathData, addRootTerm);
-
-		entries[i].entries = pathData.terms.entries;
-		entries[i].index = pathData.terms.index;
-		entries[i].entryCapacity = pathData.terms.entryCapacity;
-
-		*entryHasMultiKey = *entryHasMultiKey || pathData.hasArrayValues;
-		*entryHasTruncation = *entryHasTruncation || pathData.hasTruncatedTerms;
-
-		/* We will have at least 1 term */
-		totalTermCount = totalTermCount * pathData.terms.index;
-		pfree(singlePathOptions);
-	}
-
-	return totalTermCount;
-}
-
-
 static Datum *
 AddTruncationOrMultiKeyTerms(Datum *indexEntries, uint32_t totalTermCount,
 							 int32_t indexEntryCapacity, bool considerMultiTermAsMultiKey,
@@ -4486,6 +4439,17 @@ PreprocessMergedTermSet(MergedTermSet *mergedSet, GinEntrySet *entrySet,
 			/* Current path was a mismatch for recursive correlation - use global set */
 			mergedSet->numTerms[i] = entrySet[i].index;
 			mergedSet->terms[i] = entrySet[i].entries;
+
+			if (mergedSet->numTerms[i] > 1)
+			{
+				ReportFeatureUsage(FEATURE_INDEX_PARALLEL_ARRAYS_INDEXED);
+				if (EnableFailureOnParallelIndexArrays)
+				{
+					ereport(ERROR, (
+								errcode(ERRCODE_DOCUMENTDB_CANNOTINDEXPARALLELARRAYS),
+								errmsg("cannot index parallel arrays")));
+				}
+			}
 		}
 		else if (mergedSet->numTerms[i] == 0)
 		{
@@ -4542,24 +4506,13 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 	uint32_t totalTermCount;
 	uint32_t pathCount;
 	List *correlatedTerms = NIL;
-	if (RumUseNewCompositeTermGeneration)
-	{
-		totalTermCount = BuildSinglePathTermsForCompositeTermsNew(bson, options,
-																  entrySet,
-																  &termState,
-																  &entryHasMultiKey,
-																  &entryHasTruncation,
-																  &pathCount,
-																  &correlatedTerms);
-	}
-	else
-	{
-		totalTermCount = BuildSinglePathTermsForCompositeTerms(bson, options,
-															   entrySet,
-															   &entryHasMultiKey,
-															   &entryHasTruncation,
-															   &pathCount);
-	}
+	totalTermCount = BuildSinglePathTermsForCompositeTermsNew(bson, options,
+															  entrySet,
+															  &termState,
+															  &entryHasMultiKey,
+															  &entryHasTruncation,
+															  &pathCount,
+															  &correlatedTerms);
 
 	if (pathCount == 1)
 	{
@@ -4573,8 +4526,7 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 	int32_t finalEntryCapacity;
 	Datum *indexEntries;
 
-	if (RumUseNewCompositeTermGeneration &&
-		options->enableCompositeReducedCorrelatedTerms &&
+	if (options->enableCompositeReducedCorrelatedTerms &&
 		list_length(correlatedTerms) > 0)
 	{
 		ListCell *cell;
@@ -4625,6 +4577,30 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 	}
 	else
 	{
+		bool hasMultipleTerms = false;
+		for (uint32_t i = 0; i < pathCount; i++)
+		{
+			if (entrySet[i].index > 1)
+			{
+				if (hasMultipleTerms)
+				{
+					ReportFeatureUsage(FEATURE_INDEX_PARALLEL_ARRAYS_INDEXED);
+					if (EnableFailureOnParallelIndexArrays)
+					{
+						ereport(ERROR, (
+									errcode(ERRCODE_DOCUMENTDB_CANNOTINDEXPARALLELARRAYS),
+									errmsg("cannot index parallel arrays")));
+					}
+					else
+					{
+						break;
+					}
+				}
+
+				hasMultipleTerms = true;
+			}
+		}
+
 		/* Now that we have the per term counts, generate the overall terms */
 		/* Add an additional one in case we need a truncated term */
 		finalEntryCapacity = (totalTermCount + 3);
@@ -4747,24 +4723,14 @@ GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
 	bool hasTruncation = false;
 	uint32_t totalTermCount;
 	List *correlatedTerms = NIL;
-	if (RumUseNewCompositeTermGeneration)
-	{
-		totalTermCount = BuildSinglePathTermsForCompositeTermsNew(bson, options,
-																  entrySet,
-																  &termState,
-																  &hasArrayPaths,
-																  &hasTruncation,
-																  &pathCount,
-																  &correlatedTerms);
-	}
-	else
-	{
-		totalTermCount = BuildSinglePathTermsForCompositeTerms(bson, options,
-															   entrySet,
-															   &hasArrayPaths,
-															   &hasTruncation,
-															   &pathCount);
-	}
+
+	totalTermCount = BuildSinglePathTermsForCompositeTermsNew(bson, options,
+															  entrySet,
+															  &termState,
+															  &hasArrayPaths,
+															  &hasTruncation,
+															  &pathCount,
+															  &correlatedTerms);
 
 	/* Now that we have the per term counts, generate the overall terms */
 	/* Add an additional one in case we need a truncated term */

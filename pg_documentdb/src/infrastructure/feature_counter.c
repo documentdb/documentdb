@@ -366,6 +366,7 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_INDEX_AM_PREREGISTERED] = "index_am_preregistered",
 	[FEATURE_INDEX_HINT] = "index_hint",
 	[FEATURE_INDEX_DOTTED_FIELD_NAME_SKIPPED] = "index_dotted_field_name_skipped",
+	[FEATURE_INDEX_PARALLEL_ARRAYS_INDEXED] = "index_parallel_arrays_indexed",
 
 	/* Feature counter region - Top-level let support */
 	[FEATURE_LET_TOP_LEVEL] = "let_top_level",

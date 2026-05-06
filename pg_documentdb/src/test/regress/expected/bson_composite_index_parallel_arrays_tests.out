@@ -1,0 +1,318 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+SET documentdb.next_collection_id TO 25704000;
+SET documentdb.next_collection_index_id TO 25704000;
+-- helper for term generation
+CREATE SCHEMA parallel_arrays_tests;
+CREATE FUNCTION parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(documentdb_core.bson, text, int4, bool, p_wildcardIndex int4 = -1, p_reduced_correlated bool = TRUE)
+    RETURNS SETOF documentdb_core.bson LANGUAGE C IMMUTABLE PARALLEL SAFE STRICT AS '$libdir/pg_documentdb',
+$$gin_bson_get_composite_path_generated_terms$$;
+------------------------------------------------------------
+-- Section 1: Term generation with parallel arrays (flag OFF - default)
+-- When EnableFailureOnParallelIndexArrays is off (default),
+-- parallel arrays should succeed and report feature usage.
+------------------------------------------------------------
+-- independent parallel arrays at top level: "a" and "b" are both arrays
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": [1, 2], "b": [3, 4] }', '[ "a", "b" ]', 2000, false);
+         gin_bson_get_composite_path_generated_terms          
+--------------------------------------------------------------
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "3" } ] }
+ { "$" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "4" } ] }
+ { "$" : [ { "$numberInt" : "2" }, { "$numberInt" : "4" } ] }
+ { "" : [  ] }
+(5 rows)
+
+-- independent parallel arrays at nested paths
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "x": { "y": [1, 2] }, "p": { "q": [3, 4] } }', '[ "x.y", "p.q" ]', 2000, false);
+         gin_bson_get_composite_path_generated_terms          
+--------------------------------------------------------------
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "3" } ] }
+ { "$" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "4" } ] }
+ { "$" : [ { "$numberInt" : "2" }, { "$numberInt" : "4" } ] }
+ { "" : [  ] }
+(5 rows)
+
+-- parallel arrays with common parent but uncorrelated sibling paths
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": { "b": [1, 2], "c": [3, 4] } }', '[ "a.b", "a.c" ]', 2000, false);
+         gin_bson_get_composite_path_generated_terms          
+--------------------------------------------------------------
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "3" } ] }
+ { "$" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "4" } ] }
+ { "$" : [ { "$numberInt" : "2" }, { "$numberInt" : "4" } ] }
+ { "" : [  ] }
+(5 rows)
+
+-- 3-path composite with parallel arrays on two independent paths
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": [1, 2], "b": [3, 4], "c": 5 }', '[ "a", "b", "c" ]', 2000, false);
+                     gin_bson_get_composite_path_generated_terms                      
+--------------------------------------------------------------------------------------
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "3" }, { "$numberInt" : "5" } ] }
+ { "$" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "5" } ] }
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "4" }, { "$numberInt" : "5" } ] }
+ { "$" : [ { "$numberInt" : "2" }, { "$numberInt" : "4" }, { "$numberInt" : "5" } ] }
+ { "" : [  ] }
+(5 rows)
+
+-- non-parallel: only one path is an array
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": [1, 2, 3], "b": 1 }', '[ "a", "b" ]', 2000, false);
+         gin_bson_get_composite_path_generated_terms          
+--------------------------------------------------------------
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "1" } ] }
+ { "$" : [ { "$numberInt" : "2" }, { "$numberInt" : "1" } ] }
+ { "$" : [ { "$numberInt" : "3" }, { "$numberInt" : "1" } ] }
+ { "" : [  ] }
+(4 rows)
+
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": 1, "b": [1, 2, 3] }', '[ "a", "b" ]', 2000, false);
+         gin_bson_get_composite_path_generated_terms          
+--------------------------------------------------------------
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "1" } ] }
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "3" } ] }
+ { "" : [  ] }
+(4 rows)
+
+-- non-parallel: correlated arrays under common parent (elemMatch-style)
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": [{ "b": 1, "c": 10 }, { "b": 2, "c": 20 }] }', '[ "a.b", "a.c" ]', 2000, false);
+          gin_bson_get_composite_path_generated_terms          
+---------------------------------------------------------------
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "10" } ] }
+ { "$" : [ { "$numberInt" : "2" }, { "$numberInt" : "20" } ] }
+ { "" : { "$numberInt" : "1" } }
+ { "" : [  ] }
+(4 rows)
+
+-- scalars only
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": 1, "b": 2 }', '[ "a", "b" ]', 2000, false);
+         gin_bson_get_composite_path_generated_terms          
+--------------------------------------------------------------
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }
+(1 row)
+
+------------------------------------------------------------
+-- Section 2: Term generation with flag ON
+-- Parallel arrays on uncorrelated paths should error.
+-- Correlated arrays under common parent should succeed.
+------------------------------------------------------------
+SET documentdb.enableFailureOnParallelIndexArrays TO on;
+-- independent parallel arrays at top level: should error
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": [1, 2], "b": [3, 4] }', '[ "a", "b" ]', 2000, false);
+ERROR:  cannot index parallel arrays
+-- independent parallel arrays at nested paths: should error
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "x": { "y": [1, 2] }, "p": { "q": [3, 4] } }', '[ "x.y", "p.q" ]', 2000, false);
+ERROR:  cannot index parallel arrays
+-- parallel arrays with common parent but uncorrelated sibling paths: should error
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": { "b": [1, 2], "c": [3, 4] } }', '[ "a.b", "a.c" ]', 2000, false);
+ERROR:  cannot index parallel arrays
+-- 3-path composite with parallel arrays: should error
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": [1, 2], "b": [3, 4], "c": 5 }', '[ "a", "b", "c" ]', 2000, false);
+ERROR:  cannot index parallel arrays
+-- single array + scalar: should succeed (not parallel arrays)
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": [1, 2, 3], "b": 1 }', '[ "a", "b" ]', 2000, false);
+         gin_bson_get_composite_path_generated_terms          
+--------------------------------------------------------------
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "1" } ] }
+ { "$" : [ { "$numberInt" : "2" }, { "$numberInt" : "1" } ] }
+ { "$" : [ { "$numberInt" : "3" }, { "$numberInt" : "1" } ] }
+ { "" : [  ] }
+(4 rows)
+
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": 1, "b": [1, 2, 3] }', '[ "a", "b" ]', 2000, false);
+         gin_bson_get_composite_path_generated_terms          
+--------------------------------------------------------------
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "1" } ] }
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "3" } ] }
+ { "" : [  ] }
+(4 rows)
+
+-- correlated arrays under common parent - should succeed (uses correlated path)
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": [{ "b": 1, "c": 10 }, { "b": 2, "c": 20 }] }', '[ "a.b", "a.c" ]', 2000, false);
+          gin_bson_get_composite_path_generated_terms          
+---------------------------------------------------------------
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "10" } ] }
+ { "$" : [ { "$numberInt" : "2" }, { "$numberInt" : "20" } ] }
+ { "" : { "$numberInt" : "1" } }
+ { "" : [  ] }
+(4 rows)
+
+-- scalars only: should succeed (not parallel arrays)
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": 1, "b": 2 }', '[ "a", "b" ]', 2000, false);
+         gin_bson_get_composite_path_generated_terms          
+--------------------------------------------------------------
+ { "$" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }
+(1 row)
+
+-- single path composite: should succeed (no cross-path product)
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": [1, 2, 3] }', '[ "a" ]', 2000, false);
+ gin_bson_get_composite_path_generated_terms 
+---------------------------------------------
+ { "$" : { "$numberInt" : "1" } }
+ { "$" : { "$numberInt" : "2" } }
+ { "$" : { "$numberInt" : "3" } }
+ { "" : [  ] }
+(4 rows)
+
+RESET documentdb.enableFailureOnParallelIndexArrays;
+------------------------------------------------------------
+-- Section 3: Insert with parallel arrays and composite index (flag OFF)
+-- Inserts should succeed when flag is off (default).
+------------------------------------------------------------
+SELECT documentdb_api_internal.create_indexes_non_concurrently('parr_db',
+    '{ "createIndexes": "coll_noerr", "indexes": [{ "key": { "a": 1, "b": 1 }, "name": "ab_idx", "enableOrderedIndex": 1 }] }');
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- insert with parallel arrays - succeeds with flag off
+SELECT documentdb_api.insert_one('parr_db', 'coll_noerr', '{ "_id": 1, "a": [1, 2], "b": [3, 4] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- insert with single array
+SELECT documentdb_api.insert_one('parr_db', 'coll_noerr', '{ "_id": 2, "a": [1, 2], "b": 5 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('parr_db', 'coll_noerr', '{ "_id": 3, "a": 1, "b": [3, 4] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- insert with scalars only
+SELECT documentdb_api.insert_one('parr_db', 'coll_noerr', '{ "_id": 4, "a": 1, "b": 2 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- verify all docs inserted
+SELECT document FROM documentdb_api.collection('parr_db', 'coll_noerr') ORDER BY object_id;
+                                                                        document                                                                        
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ], "b" : [ { "$numberInt" : "3" }, { "$numberInt" : "4" } ] }
+ { "_id" : { "$numberInt" : "2" }, "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ], "b" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "1" }, "b" : [ { "$numberInt" : "3" }, { "$numberInt" : "4" } ] }
+ { "_id" : { "$numberInt" : "4" }, "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "2" } }
+(4 rows)
+
+------------------------------------------------------------
+-- Section 4: Insert with parallel arrays and composite index (flag ON)
+-- Inserts with parallel arrays should fail.
+------------------------------------------------------------
+SET documentdb.enableFailureOnParallelIndexArrays TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('parr_db',
+    '{ "createIndexes": "coll_err", "indexes": [{ "key": { "a": 1, "b": 1 }, "name": "ab_idx", "enableOrderedIndex": 1 }] }');
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- parallel arrays - should fail
+SELECT documentdb_api.insert_one('parr_db', 'coll_err', '{ "_id": 1, "a": [1, 2], "b": [3, 4] }');
+                                                                                                     insert_one                                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "341311517" }, "errmsg" : "cannot index parallel arrays" } ] }
+(1 row)
+
+-- different types of parallel arrays - should fail
+SELECT documentdb_api.insert_one('parr_db', 'coll_err', '{ "_id": 2, "a": [1, 2, 3], "b": [true, false] }');
+                                                                                                     insert_one                                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "341311517" }, "errmsg" : "cannot index parallel arrays" } ] }
+(1 row)
+
+-- verify no docs inserted
+SELECT document FROM documentdb_api.collection('parr_db', 'coll_err') ORDER BY object_id;
+ document 
+----------
+(0 rows)
+
+------------------------------------------------------------
+-- Section 5: Insert with nested composite index and parallel arrays (flag ON)
+------------------------------------------------------------
+SELECT documentdb_api_internal.create_indexes_non_concurrently('parr_db',
+    '{ "createIndexes": "coll_nested", "indexes": [{ "key": { "x.y": 1, "p.q": 1 }, "name": "xy_pq_idx", "enableOrderedIndex": 1 }] }');
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- parallel arrays at nested paths - should fail
+SELECT documentdb_api.insert_one('parr_db', 'coll_nested', '{ "_id": 1, "x": { "y": [1, 2] }, "p": { "q": [3, 4] } }');
+                                                                                                     insert_one                                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "341311517" }, "errmsg" : "cannot index parallel arrays" } ] }
+(1 row)
+
+-- verify no docs inserted
+SELECT document FROM documentdb_api.collection('parr_db', 'coll_nested') ORDER BY object_id;
+ document 
+----------
+(0 rows)
+
+------------------------------------------------------------
+-- Section 6: Insert correlated arrays with flag ON - should succeed
+-- Correlated arrays under common parent use the correlated term path.
+------------------------------------------------------------
+SELECT documentdb_api_internal.create_indexes_non_concurrently('parr_db',
+    '{ "createIndexes": "coll_correlated", "indexes": [{ "key": { "a.b": 1, "a.c": 1 }, "name": "ab_ac_idx", "enableOrderedIndex": 1 }] }');
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- correlated arrays under common parent "a" - should succeed
+SELECT documentdb_api.insert_one('parr_db', 'coll_correlated', '{ "_id": 1, "a": [{ "b": 1, "c": 10 }, { "b": 2, "c": 20 }] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('parr_db', 'coll_correlated', '{ "_id": 2, "a": [{ "b": 3, "c": 30 }] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- verify correlated docs inserted
+SELECT document FROM documentdb_api.collection('parr_db', 'coll_correlated') ORDER BY object_id;
+                                                                                    document                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : [ { "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "10" } }, { "b" : { "$numberInt" : "2" }, "c" : { "$numberInt" : "20" } } ] }
+ { "_id" : { "$numberInt" : "2" }, "a" : [ { "b" : { "$numberInt" : "3" }, "c" : { "$numberInt" : "30" } } ] }
+(2 rows)
+
+RESET documentdb.enableFailureOnParallelIndexArrays;
+-- cleanup
+DROP SCHEMA parallel_arrays_tests CASCADE;
+NOTICE:  drop cascades to function parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(bson,text,integer,boolean,integer,boolean)
