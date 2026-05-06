@@ -57,9 +57,9 @@ DOCUMENTDB_PORT="${DOCUMENTDB_PORT:-10260}"
 DOCUMENTDB_USER="${DOCUMENTDB_USER:-docdb_admin}"
 DOCUMENTDB_PASSWORD="${DOCUMENTDB_PASSWORD:-Admin100}"
 PG_VERSION="${PG_VERSION:-17}"
-PACKAGE_OS="deb13"
+PACKAGE_OS="deb12"
 DOCUMENTDB_BUILD_DIR="$REPO_ROOT/.test-results/functional-tests/documentdb-build"
-DOCUMENTDB_BASE_IMAGE="debian:trixie-slim"
+DOCUMENTDB_BASE_IMAGE="debian:bookworm-slim"
 DOCUMENTDB_READY_TIMEOUT=180
 MANAGED_DOCUMENTDB_STARTED=false
 PYTEST_ARGS=()
@@ -113,9 +113,9 @@ Options:
   --documentdb-user <user>   Managed DocumentDB username (default: docdb_admin).
   --documentdb-password <pw> Managed DocumentDB password (default: Admin100).
   --pg-version <ver>         PostgreSQL major version for local image builds (default: 17).
-  --package-os <os>          Package OS for local image builds (default: deb13).
+  --package-os <os>          Package OS for local image builds (default: deb12).
   --build-dir <path>         Repo-local build artifact directory.
-  --base-image <image>       Base image for documentdb-local Docker build (default: debian:trixie-slim).
+  --base-image <image>       Base image for documentdb-local Docker build (default: debian:bookworm-slim).
   --ready-timeout <seconds>  Startup readiness timeout (default: 180).
   --keep-documentdb          Leave the managed container running after tests.
   --help                     Show this help.

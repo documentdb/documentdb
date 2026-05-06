@@ -79,7 +79,7 @@ Useful managed DocumentDB options:
 --documentdb-container <name>    Container name, default documentdb-functional-tests
 --documentdb-port <port>         Host port mapped to container port 10260
 --pg-version <ver>               PostgreSQL version for package/image build, default 17
---package-os <os>                Package OS for build, default deb13
+--package-os <os>                Package OS for build, default deb12
 --build-dir <path>               Repo-local build artifact directory
 --ready-timeout <seconds>        Startup readiness timeout, default 180
 --keep-documentdb                Keep the managed container running after tests

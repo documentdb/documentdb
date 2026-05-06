@@ -35,6 +35,8 @@ env:
   ENGINE_NAME: documentdb
   DOCUMENTDB_USER: docdb_admin
   DOCUMENTDB_PORT: 10260
+  PACKAGE_OS: deb12
+  DOCUMENTDB_BASE_IMAGE: debian:bookworm-slim
   PYTEST_WORKERS: ${{ inputs.parallelism || '4' }}
 
 jobs:
@@ -74,19 +76,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      # Same deb build step as build_gateway.yml
+      # Build the local test image from the PR package. Use deb12/bookworm here
+      # to keep the functional gate aligned with the reduced PR packaging matrix;
+      # the dedicated package workflows still validate full distro coverage.
       - name: Build Debian Package
         run: |
-          ./packaging/build_packages.sh --os deb13 --pg ${{ env.PG_VERSION }} --output-dir downloaded-artifacts
+          ./packaging/build_packages.sh --os ${{ env.PACKAGE_OS }} --pg ${{ env.PG_VERSION }} --output-dir downloaded-artifacts
           ls -la downloaded-artifacts/
 
-      # Same docker build step as build_gateway.yml, single arch
+      # Same docker build pattern as build_gateway.yml, single arch.
       - name: Build documentdb-local image
         run: |
           DEB_FILE=$(ls downloaded-artifacts/ | grep -v 'dbgsym' | head -1)
           echo "Building documentdb-local image with deb: $DEB_FILE"
           docker build \
-            --build-arg BASE_IMAGE=debian:trixie-slim \
+            --build-arg BASE_IMAGE=${{ env.DOCUMENTDB_BASE_IMAGE }} \
             --build-arg POSTGRES_VERSION=${{ env.PG_VERSION }} \
             --build-arg DEB_PACKAGE_REL_PATH=downloaded-artifacts/$DEB_FILE \
             -t documentdb-local:ci \
