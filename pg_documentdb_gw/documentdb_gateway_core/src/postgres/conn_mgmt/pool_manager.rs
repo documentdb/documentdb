@@ -80,6 +80,10 @@ impl PoolManager {
         acquire_pooled_connection(&self.system_auth_pool).await
     }
 
+    pub const fn system_auth_pool(&self) -> &ConnectionPool {
+        &self.system_auth_pool
+    }
+
     /// # Errors
     /// Returns error if the operation fails.
     pub fn allocate_data_pool(

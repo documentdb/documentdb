@@ -63,14 +63,12 @@ pub trait PgDataClient: Send + Sync {
     /// Returns an error if no pool is available for this client.
     fn connection_pool(&self) -> Result<&ConnectionPool>;
 
-    fn request_options(&self) -> RequestOptions {
+    fn request_options(&self, command_timeout_ms: Option<u64>) -> RequestOptions {
         RequestOptions::new(
             self.service_context()
                 .dynamic_configuration()
                 .is_replica_cluster(),
-            self.service_context()
-                .setup_configuration()
-                .postgres_command_timeout_secs(),
+            command_timeout_ms,
         )
     }
 
@@ -448,15 +446,19 @@ pub trait PgDataClient: Send + Sync {
         };
 
         let (_, request_info, request_tracker) = request_context.get_components();
-        let max_time_ms = request_info.max_time_ms;
-        let req_opts = self.request_options();
+        let command_timeout_ms = request_info.max_time_ms.map(i64::cast_unsigned);
+        let req_opts = self.request_options(command_timeout_ms);
 
         run_request_with_retries(
             source,
             query_options,
             req_opts,
-            max_time_ms,
-            request_tracker,
+            Duration::from_secs(
+                self.service_context()
+                    .setup_configuration()
+                    .postgres_command_timeout_secs(),
+            ),
+            Some(request_tracker),
             run_func,
         )
         .await

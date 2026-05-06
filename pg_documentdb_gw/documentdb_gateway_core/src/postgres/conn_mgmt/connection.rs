@@ -113,15 +113,18 @@ impl Connection {
 #[derive(Debug, Clone, Copy)]
 pub struct RequestOptions {
     in_replica_cluster_mode: bool,
-    command_timeout: Duration,
+    command_timeout: Option<Duration>,
 }
 
 impl RequestOptions {
     #[must_use]
-    pub const fn new(in_replica_cluster_mode: bool, command_timeout_secs: u64) -> Self {
+    pub const fn new(in_replica_cluster_mode: bool, command_timeout_ms: Option<u64>) -> Self {
         Self {
             in_replica_cluster_mode,
-            command_timeout: Duration::from_secs(command_timeout_secs),
+            command_timeout: match command_timeout_ms {
+                Some(ms) => Some(Duration::from_millis(ms)),
+                None => None,
+            },
         }
     }
 
@@ -131,7 +134,7 @@ impl RequestOptions {
     }
 
     #[must_use]
-    pub const fn command_timeout(&self) -> Duration {
+    pub const fn command_timeout(&self) -> Option<Duration> {
         self.command_timeout
     }
 }

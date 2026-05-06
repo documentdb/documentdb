@@ -11,10 +11,12 @@
 #![allow(clippy::expect_used, reason = "test utility code")]
 #![allow(clippy::unwrap_used, reason = "test utility code")]
 
+use std::time::Duration;
+
 use deadpool_postgres::PoolError;
 use documentdb_gateway_core::{
     configuration::{DocumentDBSetupConfiguration, SetupConfiguration},
-    error::ErrorKind,
+    error::{ErrorCode, ErrorKind},
     postgres::{
         conn_mgmt::{
             run_request_with_retries, ConnectionPool, ConnectionSource, PgPoolSettings,
@@ -142,9 +144,9 @@ async fn run_request_with_retries_counts_deadpool_timeouts_once() {
     let error = run_request_with_retries(
         ConnectionSource::Pool(&pool),
         QueryOptions::builder().retry_request(false).build(),
-        RequestOptions::new(false, 30),
-        None,
-        &request_tracker,
+        RequestOptions::new(false, Some(30000)),
+        Duration::from_secs(30),
+        Some(&request_tracker),
         |_| async { Ok::<(), tokio_postgres::Error>(()) },
     )
     .await
@@ -190,4 +192,56 @@ async fn pool_manager_system_requests_connection_counts_deadpool_timeouts_once()
     assert_eq!(system_report.connections_created(), 0);
     assert_eq!(system_report.connection_create_time_us(), 0);
     assert_eq!(system_report.connection_timeouts(), 1);
+}
+
+#[tokio::test]
+async fn run_request_with_retries_returns_exceeded_time_limit_when_command_timeout_exceeded() {
+    let setup_config = setup_configuration_with_command_timeout(1);
+    let pool =
+        build_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 1).await;
+    // Hold the only connection so the next acquire will time out.
+    let _held = pool.acquire_connection().await.unwrap();
+    let _ = pool.report_status();
+
+    let error = run_request_with_retries(
+        ConnectionSource::Pool(&pool),
+        QueryOptions::builder().build(),
+        // command_timeout_ms of 1 means elapsed time will exceed the limit almost instantly.
+        RequestOptions::new(false, Some(1)),
+        Duration::from_secs(1),
+        None,
+        |_| async { Ok::<(), tokio_postgres::Error>(()) },
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(error.error_code_enum(), Some(ErrorCode::ExceededTimeLimit));
+}
+
+#[tokio::test]
+async fn run_request_with_retries_returns_original_error_when_no_command_timeout() {
+    let setup_config = setup_configuration_with_command_timeout(1);
+    let pool =
+        build_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 1).await;
+    // Hold the only connection so the next acquire will time out.
+    let _held = pool.acquire_connection().await.unwrap();
+    let _ = pool.report_status();
+
+    // command_timeout_ms is None (auth-related flow), so ExceededTimeLimit is
+    // never returned — the original pool error propagates instead.
+    let error = run_request_with_retries(
+        ConnectionSource::Pool(&pool),
+        QueryOptions::builder().build(),
+        RequestOptions::new(false, None),
+        Duration::from_secs(1),
+        None,
+        |_| async { Ok::<(), tokio_postgres::Error>(()) },
+    )
+    .await
+    .unwrap_err();
+
+    assert!(matches!(
+        error.kind(),
+        ErrorKind::PoolError(PoolError::Timeout(_), _)
+    ));
 }

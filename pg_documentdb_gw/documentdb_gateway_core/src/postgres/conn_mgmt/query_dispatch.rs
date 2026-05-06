@@ -213,18 +213,41 @@ fn get_retry_interval(retry: &Retry, retry_context: &mut RetryContext) -> Option
     }
 }
 
+// For auth-related requests, request_options.command_timeout() will be None
+// and the postgres client timeout is used instead.
+fn check_for_command_timeout_error(
+    request_options: &RequestOptions,
+    elapsed: Duration,
+) -> Result<()> {
+    match request_options.command_timeout() {
+        Some(command_timeout) if elapsed >= command_timeout => {
+            Err(DocumentDBError::documentdb_error(
+                ErrorCode::ExceededTimeLimit,
+                format!(
+                    "Query exceeded command timeout of {}ms",
+                    command_timeout.as_millis()
+                ),
+                0,
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Sets the `PostgreSQL` statement timeout
 ///
 /// Returns `true` if a gateway transaction was started (caller must COMMIT/ROLLBACK).
 async fn set_statement_timeout(
     connection: &Connection,
-    max_time_ms: Option<i64>,
+    max_time: Option<Duration>,
     query_options: &QueryOptions,
     in_user_transaction: bool,
-    request_tracker: &RequestTracker,
+    request_tracker: Option<&RequestTracker>,
 ) -> std::result::Result<bool, tokio_postgres::Error> {
-    let max_time_ms = match max_time_ms {
-        Some(ms) if !in_user_transaction && !query_options.supports_backend_timeout() => ms,
+    let max_time_ms = match max_time {
+        Some(d) if !in_user_transaction && !query_options.supports_backend_timeout() => {
+            d.as_millis()
+        }
         _ => return Ok(false),
     };
 
@@ -237,7 +260,9 @@ async fn set_statement_timeout(
     if use_transaction {
         let start = Instant::now();
         connection.batch_execute("BEGIN").await?;
-        request_tracker.record_duration(RequestIntervalKind::PostgresBeginTransaction, start);
+        if let Some(request_tracker) = request_tracker {
+            request_tracker.record_duration(RequestIntervalKind::PostgresBeginTransaction, start);
+        }
 
         connection.set_in_transaction(true);
     }
@@ -257,7 +282,10 @@ async fn set_statement_timeout(
         }
         return Err(e);
     }
-    request_tracker.record_duration(RequestIntervalKind::PostgresSetStatementTimeout, set_start);
+    if let Some(request_tracker) = request_tracker {
+        request_tracker
+            .record_duration(RequestIntervalKind::PostgresSetStatementTimeout, set_start);
+    }
 
     Ok(use_transaction)
 }
@@ -281,18 +309,15 @@ pub async fn run_request_with_retries<T, F, Fut>(
     source: ConnectionSource<'_>,
     query_options: QueryOptions,
     request_options: RequestOptions,
-    max_time_ms: Option<i64>,
-    request_tracker: &RequestTracker,
+    max_time: Duration,
+    request_tracker: Option<&RequestTracker>,
     run_func: F,
 ) -> Result<T>
 where
     F: Fn(Arc<Connection>) -> Fut,
     Fut: Future<Output = std::result::Result<T, tokio_postgres::Error>>,
 {
-    let command_timeout = max_time_ms.map_or_else(
-        || request_options.command_timeout(),
-        |ms| Duration::from_millis(ms.cast_unsigned()),
-    );
+    let overall_command_timeout = request_options.command_timeout().unwrap_or(max_time);
 
     let mut retry_context = RetryContext {
         stopwatch: Instant::now(),
@@ -305,8 +330,9 @@ where
 
     // Pre-compute whether set_statement_timeout can ever apply. When false
     // (the common path) we skip the function call entirely on every iteration.
-    let needs_gateway_timeout =
-        max_time_ms.is_some() && !in_transaction && !query_options.supports_backend_timeout();
+    let needs_gateway_timeout = request_options.command_timeout().is_some()
+        && !in_transaction
+        && !query_options.supports_backend_timeout();
 
     // Use the timeout pool only when session-level SET statement_timeout will
     // be issued (no transaction wrapping). SET LOCAL auto-reverts on COMMIT so
@@ -326,10 +352,12 @@ where
                     } else {
                         pool.acquire_connection().await
                     };
-                    request_tracker.record_duration(
-                        RequestIntervalKind::OpenBackendConnection,
-                        open_backend_connection_start,
-                    );
+                    if let Some(request_tracker) = request_tracker {
+                        request_tracker.record_duration(
+                            RequestIntervalKind::OpenBackendConnection,
+                            open_backend_connection_start,
+                        );
+                    }
 
                     match acquire {
                         Ok(pool_conn) => Arc::new(Connection::new(pool_conn, false)),
@@ -356,7 +384,7 @@ where
             let in_gateway_txn = if needs_gateway_timeout {
                 match set_statement_timeout(
                     &connection,
-                    max_time_ms,
+                    request_options.command_timeout(),
                     &query_options,
                     in_transaction,
                     request_tracker,
@@ -381,17 +409,22 @@ where
                 // Gateway transaction active — clone Arc because we need
                 // the connection afterwards for COMMIT/ROLLBACK.
                 let query_result = run_func(Arc::clone(&connection)).await;
-                request_tracker.record_duration(RequestIntervalKind::ProcessRequest, request_start);
+                if let Some(request_tracker) = request_tracker {
+                    request_tracker
+                        .record_duration(RequestIntervalKind::ProcessRequest, request_start);
+                }
 
                 match query_result {
                     Ok(value) => {
                         let commit_start = Instant::now();
                         match connection.batch_execute("COMMIT").await {
                             Ok(()) => {
-                                request_tracker.record_duration(
-                                    RequestIntervalKind::PostgresCommitTransaction,
-                                    commit_start,
-                                );
+                                if let Some(request_tracker) = request_tracker {
+                                    request_tracker.record_duration(
+                                        RequestIntervalKind::PostgresCommitTransaction,
+                                        commit_start,
+                                    );
+                                }
                                 Ok(value)
                             }
                             Err(e) => {
@@ -418,7 +451,10 @@ where
                 // No gateway transaction -> move the Arc directly into the
                 // closure call, avoiding an Arc::clone + drop pair.
                 let query_result = run_func(connection).await;
-                request_tracker.record_duration(RequestIntervalKind::ProcessRequest, request_start);
+                if let Some(request_tracker) = request_tracker {
+                    request_tracker
+                        .record_duration(RequestIntervalKind::ProcessRequest, request_start);
+                }
                 query_result.map_err(|e| {
                     DocumentDBError::new(ErrorKind::PostgresError(e, Backtrace::capture()))
                 })
@@ -447,7 +483,7 @@ where
                             );
                         }
                     } else if query_options.retry_request()
-                        && retry_context.stopwatch.elapsed() < command_timeout
+                        && retry_context.stopwatch.elapsed() < overall_command_timeout
                     {
                         if let Some(interval) = get_retry_interval(&retry, &mut retry_context) {
                             retry_context.retry_count += 1;
@@ -466,16 +502,10 @@ where
                     }
                 }
 
-                if retry_context.stopwatch.elapsed() >= command_timeout {
-                    return Err(DocumentDBError::documentdb_error(
-                        ErrorCode::ExceededTimeLimit,
-                        format!(
-                            "Query exceeded command timeout of {}ms",
-                            command_timeout.as_millis()
-                        ),
-                        0,
-                    ));
-                }
+                check_for_command_timeout_error(
+                    &request_options,
+                    retry_context.stopwatch.elapsed(),
+                )?;
 
                 return Err(error);
             }
@@ -496,11 +526,11 @@ mod tests {
     }
 
     fn non_replica_options() -> RequestOptions {
-        RequestOptions::new(false, 30)
+        RequestOptions::new(false, Some(30))
     }
 
     fn replica_options() -> RequestOptions {
-        RequestOptions::new(true, 30)
+        RequestOptions::new(true, Some(30))
     }
 
     // ── is_transient_io_error ──────────────────────────────────────────
@@ -863,5 +893,50 @@ mod tests {
             false,
         );
         assert_eq!(result, Retry::Short);
+    }
+
+    #[test]
+    fn test_command_timeout_error_with_timeout_disabled_returns_none() {
+        let result = check_for_command_timeout_error(
+            &RequestOptions::new(false, None),
+            Duration::from_secs(1),
+        );
+
+        result.unwrap();
+    }
+
+    #[test]
+    fn test_command_timeout_error_with_elapsed_below_timeout_returns_none() {
+        let result = check_for_command_timeout_error(
+            &RequestOptions::new(false, Some(30)),
+            Duration::from_millis(29),
+        );
+
+        result.unwrap();
+    }
+
+    #[test]
+    fn test_command_timeout_error_with_elapsed_at_timeout_returns_exceeded_time_limit() {
+        let error = check_for_command_timeout_error(
+            &RequestOptions::new(false, Some(30)),
+            Duration::from_millis(30),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.error_code_enum(), Some(ErrorCode::ExceededTimeLimit));
+        assert!(error
+            .to_string()
+            .contains("Query exceeded command timeout of 30ms"));
+    }
+
+    #[test]
+    fn test_command_timeout_error_with_zero_timeout_returns_exceeded_time_limit() {
+        let error = check_for_command_timeout_error(
+            &RequestOptions::new(false, Some(1)),
+            Duration::from_millis(1),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.error_code_enum(), Some(ErrorCode::ExceededTimeLimit));
     }
 }

@@ -23,8 +23,13 @@ use tokio_postgres::{error::SqlState, types::Type};
 
 use crate::{
     context::{ConnectionContext, RequestContext},
-    error::{DocumentDBError, ErrorCode, Result},
-    postgres::{PgDataClient, PgDocument},
+    error::{DocumentDBError, ErrorCode, ErrorKind, Result},
+    postgres::{
+        conn_mgmt::{
+            run_request_with_retries, Connection, ConnectionSource, QueryOptions, RequestOptions,
+        },
+        PgDataClient, PgDocument,
+    },
     processor,
     protocol::OK_SUCCEEDED,
     requests::{Request, RequestType},
@@ -226,6 +231,43 @@ impl AuthState {
     }
 }
 
+/// Should be only called by auth code paths.
+async fn call_run_request_with_retries<T, F, Fut>(
+    connection_context: &ConnectionContext,
+    run_func: F,
+) -> Result<T>
+where
+    F: Fn(Arc<Connection>) -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<T, tokio_postgres::Error>>,
+{
+    let pool = connection_context
+        .service_context
+        .connection_pool_manager()
+        .system_auth_pool();
+
+    let query_options = QueryOptions::builder().build();
+
+    let request_options = RequestOptions::new(
+        false, // Setting in_replica_cluster_mode to false means we will alway retry in case of SqlState::READ_ONLY_SQL_TRANSACTION.
+        None,  // Do not run any gateway-level command timeout for auth-related queries.
+    );
+
+    run_request_with_retries(
+        ConnectionSource::Pool(pool),
+        query_options,
+        request_options,
+        Duration::from_secs(
+            connection_context
+                .service_context
+                .setup_configuration()
+                .postgres_command_timeout_secs(),
+        ),
+        None,
+        run_func,
+    )
+    .await
+}
+
 /// Processes an authentication request
 ///
 /// # Errors
@@ -377,31 +419,91 @@ async fn handle_oidc(
     handle_oidc_token_authentication(connection_context, jwt_token).await
 }
 
+fn remap_oidc_auth_error(error: &DocumentDBError, connection_id: &str) -> DocumentDBError {
+    let ErrorKind::PostgresError(pg_error, _) = error.kind() else {
+        return DocumentDBError::authentication_failed_internal_error(
+            generic_internal_error_message().to_owned(),
+            &format!("Non Postgres error during authentication. error = {error}"),
+        );
+    };
+
+    if let Some(db_error) = pg_error.as_db_error() {
+        tracing::error!(
+            activity_id = connection_id, // use connection id instead of activity id here.
+            error = %db_error,
+            sub_status = %db_error.code().code(),
+            error_file_name = %db_error.file().unwrap_or("not_found"),
+            error_file_line_num = %db_error.line().unwrap_or_default(),
+            "DbError during authentication."
+        );
+
+        if let Some(extension_error_code) =
+            responses::from_known_external_error_code(db_error.code())
+        {
+            if extension_error_code == ErrorCode::CommandNotSupported as i32 {
+                return DocumentDBError::authentication_failed(
+                    "The authentication mechanism provided is not supported in the service."
+                        .to_owned(),
+                );
+            }
+        }
+
+        return match *db_error.code() {
+            SqlState::INVALID_PASSWORD => DocumentDBError::authentication_failed(
+                "The token provided is not valid.".to_owned(),
+            ),
+            SqlState::UNDEFINED_OBJECT => DocumentDBError::authentication_failed(
+                "External identity is not present in the system.".to_owned(),
+            ),
+            _ => DocumentDBError::authentication_failed_internal_error(
+                generic_internal_error_message().to_owned(),
+                &format!(
+                    "DbError during authentication: {}, code: {}, file: {}, line: {}.",
+                    db_error,
+                    db_error.code().code(),
+                    db_error.file().unwrap_or("not_found"),
+                    db_error.line().unwrap_or_default()
+                ),
+            ),
+        };
+    }
+
+    tracing::error!(
+        activity_id = connection_id,
+        error = %pg_error,
+        "Non DbError from backend during authentication. error = {{error}}"
+    );
+
+    DocumentDBError::authentication_failed_internal_error(
+        generic_internal_error_message().to_owned(),
+        &format!("Non DbError from backend during authentication. error = {pg_error}"),
+    )
+}
+
 async fn perform_oidc_authentication(
     connection_context: &ConnectionContext,
     oid: &str,
     token_string: &str,
 ) -> Result<()> {
-    match connection_context
+    let query = connection_context
         .service_context
-        .connection_pool_manager()
-        .authentication_connection()
-        .await?
-        .query(
-            connection_context
-                .service_context
-                .query_catalog()
-                .authenticate_with_token(),
-            &[Type::TEXT, Type::TEXT],
-            &[&oid, &token_string],
-        )
-        .await
-    {
-        Ok(rows) => {
-            let auth_result: String = rows
-                .first()
-                .ok_or(DocumentDBError::pg_response_empty())?
-                .try_get(0)?;
+        .query_catalog()
+        .authenticate_with_token();
+
+    let run_func = |connection: Arc<Connection>| async move {
+        let rows = connection
+            .query(query, &[Type::TEXT, Type::TEXT], &[&oid, &token_string])
+            .await?;
+        rows.first().map(|row| row.try_get(0)).transpose()
+    };
+
+    let result = call_run_request_with_retries(connection_context, run_func).await;
+    let connection_id = connection_context.connection_id.to_string();
+
+    match result {
+        Ok(maybe_auth_result) => {
+            let auth_result: String =
+                maybe_auth_result.ok_or(DocumentDBError::pg_response_empty())?;
 
             if auth_result.trim() != oid {
                 return Err(DocumentDBError::authentication_failed(
@@ -411,59 +513,7 @@ async fn perform_oidc_authentication(
 
             Ok(())
         }
-        Err(e) => {
-            if let Some(db_error) = e.as_db_error() {
-                tracing::error!(
-                    activity_id = connection_context.connection_id.to_string().as_str(),
-                    error = %db_error,
-                    sub_status = %db_error.code().code(),
-                    error_file_name = %db_error.file().unwrap_or("not_found"),
-                    error_file_line_num = %db_error.line().unwrap_or_default(),
-                    "DbError during authentication: error = {{error}}, sub_status = {{sub_status}}, file = {{error_file_name}}, line = {{error_file_line_num}}."
-                );
-
-                if let Some(extension_error_code) =
-                    responses::from_known_external_error_code(db_error.code())
-                {
-                    if extension_error_code == ErrorCode::CommandNotSupported as i32 {
-                        return Err(DocumentDBError::authentication_failed(
-                            "The authentication mechanism provided is not supported in the service.".to_owned(),
-                        ));
-                    }
-                }
-
-                return match *db_error.code() {
-                    SqlState::INVALID_PASSWORD => Err(DocumentDBError::authentication_failed(
-                        "The token provided is not valid.".to_owned(),
-                    )),
-                    SqlState::UNDEFINED_OBJECT => Err(DocumentDBError::authentication_failed(
-                        "External identity is not present in the system.".to_owned(),
-                    )),
-                    // All other errors are returned as InternalError in authentication code path.
-                    _ => Err(DocumentDBError::authentication_failed_internal_error(
-                        generic_internal_error_message().to_owned(),
-                        &format!(
-                            "DbError during authentication: {}, code: {}, file: {}, line: {}.",
-                            db_error,
-                            db_error.code().code(),
-                            db_error.file().unwrap_or("not_found"),
-                            db_error.line().unwrap_or_default()
-                        ),
-                    )),
-                };
-            }
-
-            tracing::error!(
-                activity_id = connection_context.connection_id.to_string().as_str(),
-                error = %e,
-                "Non DbError from backend during authentication. error = {{error}}"
-            );
-
-            Err(DocumentDBError::authentication_failed_internal_error(
-                generic_internal_error_message().to_owned(),
-                &format!("Non DbError from backend during authentication. error = {e}"),
-            ))
-        }
+        Err(error) => Err(remap_oidc_auth_error(&error, connection_id.as_str())),
     }
 }
 
@@ -637,29 +687,33 @@ async fn handle_sasl_continue(
             channel_binding,
             client_nonce
         );
+        let auth_message_str = auth_message.as_str();
 
-        let scram_sha256_row = connection_context
+        let query = connection_context
             .service_context
-            .connection_pool_manager()
-            .authentication_connection()
-            .await?
-            .query(
-                connection_context
-                    .service_context
-                    .query_catalog()
-                    .authenticate_with_scram_sha256(),
-                &[Type::TEXT, Type::TEXT, Type::TEXT],
-                &[&username, &auth_message, &proof],
-            )
-            .await?;
+            .query_catalog()
+            .authenticate_with_scram_sha256();
 
-        let scram_sha256_doc: PgDocument = scram_sha256_row
-            .first()
-            .ok_or(DocumentDBError::pg_response_empty())?
-            .try_get(0)?;
+        let run_func = |connection: Arc<Connection>| async move {
+            let rows = connection
+                .query(
+                    query,
+                    &[Type::TEXT, Type::TEXT, Type::TEXT],
+                    &[&username, &auth_message_str, &proof],
+                )
+                .await?;
+            let Some(row) = rows.first() else {
+                return Ok(None);
+            };
+            let doc: PgDocument = row.try_get(0)?;
+            Ok(Some(doc.0.to_raw_document_buf()))
+        };
+
+        let scram_sha256_doc = call_run_request_with_retries(connection_context, run_func)
+            .await?
+            .ok_or(DocumentDBError::pg_response_empty())?;
 
         if scram_sha256_doc
-            .0
             .get_i32("ok")
             .map_err(DocumentDBError::pg_response_invalid)?
             != 1
@@ -670,7 +724,6 @@ async fn handle_sasl_continue(
         }
 
         let server_signature = scram_sha256_doc
-            .0
             .get_str("ServerSignature")
             .map_err(DocumentDBError::pg_response_invalid)?;
 
@@ -784,27 +837,25 @@ async fn get_salt_and_iteration(
         }
     }
 
-    let results = connection_context
+    let query = connection_context
         .service_context
-        .connection_pool_manager()
-        .authentication_connection()
-        .await?
-        .query(
-            connection_context
-                .service_context
-                .query_catalog()
-                .salt_and_iterations(),
-            &[Type::TEXT],
-            &[&username],
-        )
-        .await?;
+        .query_catalog()
+        .salt_and_iterations();
 
-    let doc: PgDocument = results
-        .first()
-        .ok_or(DocumentDBError::pg_response_empty())?
-        .try_get(0)?;
+    let run_func = |connection: Arc<Connection>| async move {
+        let rows = connection.query(query, &[Type::TEXT], &[&username]).await?;
+        let Some(row) = rows.first() else {
+            return Ok(None);
+        };
+        let doc: PgDocument = row.try_get(0)?;
+        Ok(Some(doc.0.to_raw_document_buf()))
+    };
+
+    let doc = call_run_request_with_retries(connection_context, run_func)
+        .await?
+        .ok_or(DocumentDBError::pg_response_empty())?;
+
     if doc
-        .0
         .get_i32("ok")
         .map_err(|e| DocumentDBError::internal_error(e.to_string()))?
         != 1
@@ -817,11 +868,9 @@ async fn get_salt_and_iteration(
     }
 
     let iterations = doc
-        .0
         .get_i32("iterations")
         .map_err(DocumentDBError::pg_response_invalid)?;
     let salt = doc
-        .0
         .get_str("salt")
         .map_err(DocumentDBError::pg_response_invalid)?;
 
@@ -834,22 +883,20 @@ async fn get_salt_and_iteration(
 ///
 /// Returns an error if the operation fails.
 pub async fn get_user_oid(connection_context: &ConnectionContext, username: &str) -> Result<u32> {
-    let user_oid_rows = connection_context
-        .service_context
-        .connection_pool_manager()
-        .authentication_connection()
-        .await?
-        .query(
-            "SELECT oid from pg_roles WHERE rolname = $1",
-            &[Type::TEXT],
-            &[&username],
-        )
-        .await?;
+    let run_func = |connection: Arc<Connection>| async move {
+        let rows = connection
+            .query(
+                "SELECT oid from pg_roles WHERE rolname = $1",
+                &[Type::TEXT],
+                &[&username],
+            )
+            .await?;
+        rows.first()
+            .map(|row| row.try_get::<_, tokio_postgres::types::Oid>(0))
+            .transpose()
+    };
 
-    let user_oid = user_oid_rows
-        .first()
-        .ok_or(DocumentDBError::pg_response_empty())?
-        .try_get::<_, tokio_postgres::types::Oid>(0)?;
+    let user_oid_result = call_run_request_with_retries(connection_context, run_func).await?;
 
-    Ok(user_oid)
+    user_oid_result.ok_or(DocumentDBError::pg_response_empty())
 }
