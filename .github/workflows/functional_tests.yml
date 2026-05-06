@@ -1,0 +1,317 @@
+name: Functional tests
+run-name: ${{ github.event.pull_request.title || '' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_scope:
+        description: 'Functional test scope'
+        default: 'allowlist'
+        required: false
+        type: choice
+        options: ['allowlist', 'all']
+      parallelism:
+        description: 'Number of pytest-xdist workers'
+        default: '4'
+        required: false
+        type: choice
+        options: ['1', '2', '4']
+  push:
+    branches:
+      - 'main'
+    paths-ignore:
+      - '.devcontainer/**'
+      - '*.md'
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths-ignore:
+      - '.devcontainer/**'
+      - '**/*.md'
+  schedule:
+    - cron: '0 6 * * *'  # Daily at 06:00 UTC
+
+env:
+  PG_VERSION: 17
+  ENGINE_NAME: documentdb
+  DOCUMENTDB_USER: docdb_admin
+  DOCUMENTDB_PORT: 10260
+  PYTEST_WORKERS: ${{ inputs.parallelism || '4' }}
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Job 1: Validate functional test configuration
+  # -----------------------------------------------------------------------
+  validate-config:
+    # Anchor the runner image here so all functional-test jobs update together.
+    runs-on: &functional_tests_runner ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install Python dependencies
+        run: pip install pyyaml
+
+      - name: Validate functional test config
+        run: python3 documentdb-local/functional-tests/tools/functional_gate.py validate-config
+
+  # -----------------------------------------------------------------------
+  # Job 2: Build documentdb-local image from PR code
+  #
+  # Reuses the same deb-build + docker-build pattern from build_gateway.yml
+  # but only builds one arch (amd64) and does not push to GHCR.
+  # The cheap config job above still runs on draft PRs; this expensive build and
+  # downstream gate intentionally wait until the PR is ready for review.
+  # -----------------------------------------------------------------------
+  build-documentdb-local:
+    if: >
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
+    runs-on: *functional_tests_runner
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # Same deb build step as build_gateway.yml
+      - name: Build Debian Package
+        run: |
+          ./packaging/build_packages.sh --os deb13 --pg ${{ env.PG_VERSION }} --output-dir downloaded-artifacts
+          ls -la downloaded-artifacts/
+
+      # Same docker build step as build_gateway.yml, single arch
+      - name: Build documentdb-local image
+        run: |
+          DEB_FILE=$(ls downloaded-artifacts/ | grep -v 'dbgsym' | head -1)
+          echo "Building documentdb-local image with deb: $DEB_FILE"
+          docker build \
+            --build-arg BASE_IMAGE=debian:trixie-slim \
+            --build-arg POSTGRES_VERSION=${{ env.PG_VERSION }} \
+            --build-arg DEB_PACKAGE_REL_PATH=downloaded-artifacts/$DEB_FILE \
+            -t documentdb-local:ci \
+            -f packaging/gateway/docker/Dockerfile_documentdb_local .
+
+      - name: Save image as artifact
+        run: docker save documentdb-local:ci | gzip > /tmp/documentdb-local.tar.gz
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentdb-local-image
+          path: /tmp/documentdb-local.tar.gz
+          retention-days: 1
+
+  # -----------------------------------------------------------------------
+  # Job 3: PR gate - run allowlisted tests against documentdb-local
+  # -----------------------------------------------------------------------
+  functional-pr-gate:
+    if: >
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.test_scope || 'allowlist') == 'allowlist')
+    needs: [validate-config, build-documentdb-local]
+    runs-on: *functional_tests_runner
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download documentdb-local image
+        uses: actions/download-artifact@v4
+        with:
+          name: documentdb-local-image
+          path: /tmp
+
+      - name: Load documentdb-local image
+        run: docker load < /tmp/documentdb-local.tar.gz
+
+      - name: Generate DocumentDB password
+        run: |
+          PASSWORD=$(python3 -c 'import secrets, string; print("".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32)))')
+          echo "::add-mask::$PASSWORD"
+          echo "DOCUMENTDB_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Start DocumentDB container
+        run: |
+          docker run -d \
+            --name documentdb \
+            -p ${{ env.DOCUMENTDB_PORT }}:${{ env.DOCUMENTDB_PORT }} \
+            documentdb-local:ci \
+            --username ${{ env.DOCUMENTDB_USER }} \
+            --password "$DOCUMENTDB_PASSWORD" \
+            --skip-init-data
+
+          echo "Waiting for DocumentDB to be fully ready..."
+          timeout 180 bash -c 'until docker logs documentdb 2>&1 | grep -q "=== DocumentDB is ready ==="; do sleep 2; done'
+          echo "DocumentDB is ready on port ${{ env.DOCUMENTDB_PORT }}"
+
+      - name: Install Python dependencies
+        run: pip install pyyaml
+
+      - name: Pull functional-tests image
+        run: |
+          IMAGE=$(python3 -c "import yaml; print(yaml.safe_load(open('documentdb-local/functional-tests/config/image.yml'))['image'])")
+          echo "Pulling $IMAGE"
+          docker pull "$IMAGE"
+          echo "FUNC_TEST_IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Run allowlist gate
+        run: |
+          CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${DOCUMENTDB_PASSWORD}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
+          mkdir -p .test-results/functional-tests
+          chmod 777 .test-results/functional-tests
+
+          docker run --rm --network host \
+            -v "$(pwd)/documentdb-local/functional-tests/config/allowlist.yml:/allowlist.yml:ro" \
+            -v "$(pwd)/documentdb-local/functional-tests/tools/conftest_allowlist.py:/extra/conftest_allowlist.py:ro" \
+            -v "$(pwd)/.test-results/functional-tests:/results" \
+            -e "PYTHONPATH=/extra" \
+            ${{ env.FUNC_TEST_IMAGE }} \
+            documentdb_tests/compatibility/tests \
+            -p conftest_allowlist \
+            --allowlist /allowlist.yml \
+            --engine-name "${{ env.ENGINE_NAME }}" \
+            --allowlist-engine-name "${{ env.ENGINE_NAME }}" \
+            --connection-string "$CONNECTION_STRING" \
+            -m "not no_parallel" \
+            -n ${{ env.PYTEST_WORKERS }} \
+            --json-report --json-report-file=/results/report.json \
+            --junitxml=/results/results.xml \
+            -v
+
+      - name: Summarize gate results
+        if: always()
+        run: |
+          if [ -f .test-results/functional-tests/report.json ]; then
+            python3 documentdb-local/functional-tests/tools/functional_gate.py \
+              --image documentdb-local/functional-tests/config/image.yml \
+              --allowlist documentdb-local/functional-tests/config/allowlist.yml \
+              summarize-gate \
+              --report .test-results/functional-tests/report.json \
+              --output-dir .test-results/functional-tests
+          else
+            echo "::error::No report.json produced. Test execution may have failed."
+            exit 1
+          fi
+
+      - name: Collect DocumentDB logs
+        if: always()
+        run: docker logs documentdb > .test-results/functional-tests/documentdb.log 2>&1 || true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-test-results
+          overwrite: true
+          path: .test-results/functional-tests/
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop documentdb 2>/dev/null || true
+          docker rm documentdb 2>/dev/null || true
+
+  # -----------------------------------------------------------------------
+  # Job 4: Daily delta - full suite visibility report
+  # -----------------------------------------------------------------------
+  daily-functional-delta:
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.test_scope == 'all')
+    needs: [validate-config, build-documentdb-local]
+    runs-on: *functional_tests_runner
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download documentdb-local image
+        uses: actions/download-artifact@v4
+        with:
+          name: documentdb-local-image
+          path: /tmp
+
+      - name: Load documentdb-local image
+        run: docker load < /tmp/documentdb-local.tar.gz
+
+      - name: Generate DocumentDB password
+        run: |
+          PASSWORD=$(python3 -c 'import secrets, string; print("".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32)))')
+          echo "::add-mask::$PASSWORD"
+          echo "DOCUMENTDB_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Start DocumentDB container
+        run: |
+          docker run -d \
+            --name documentdb \
+            -p ${{ env.DOCUMENTDB_PORT }}:${{ env.DOCUMENTDB_PORT }} \
+            documentdb-local:ci \
+            --username ${{ env.DOCUMENTDB_USER }} \
+            --password "$DOCUMENTDB_PASSWORD" \
+            --skip-init-data
+
+          echo "Waiting for DocumentDB to be fully ready..."
+          timeout 180 bash -c 'until docker logs documentdb 2>&1 | grep -q "=== DocumentDB is ready ==="; do sleep 2; done'
+          echo "DocumentDB is ready"
+
+      - name: Install Python dependencies
+        run: pip install pyyaml
+
+      - name: Pull functional-tests image
+        run: |
+          IMAGE=$(python3 -c "import yaml; print(yaml.safe_load(open('documentdb-local/functional-tests/config/image.yml'))['image'])")
+          docker pull "$IMAGE"
+          echo "FUNC_TEST_IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Run daily full suite
+        run: |
+          CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${DOCUMENTDB_PASSWORD}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
+          mkdir -p .test-results/functional-tests-daily
+          chmod 777 .test-results/functional-tests-daily
+
+          docker run --rm --network host \
+            -v "$(pwd)/.test-results/functional-tests-daily:/results" \
+            ${{ env.FUNC_TEST_IMAGE }} \
+            documentdb_tests/compatibility/tests \
+            --engine-name "${{ env.ENGINE_NAME }}" \
+            --connection-string "$CONNECTION_STRING" \
+            -n ${{ env.PYTEST_WORKERS }} \
+            --json-report --json-report-file=/results/report.json \
+            --junitxml=/results/results.xml \
+            -v \
+            || true  # Don't fail on test failures; we analyze the report
+
+      - name: Summarize daily delta
+        if: always()
+        run: |
+          if [ -f .test-results/functional-tests-daily/report.json ]; then
+            python3 documentdb-local/functional-tests/tools/functional_gate.py \
+              --image documentdb-local/functional-tests/config/image.yml \
+              --allowlist documentdb-local/functional-tests/config/allowlist.yml \
+              summarize-daily \
+              --report .test-results/functional-tests-daily/report.json \
+              --output-dir .test-results/functional-tests-daily
+          else
+            echo "::error::No report.json produced. Daily functional test execution may have failed before producing results."
+            exit 1
+          fi
+
+      - name: Collect DocumentDB logs
+        if: always()
+        run: docker logs documentdb > .test-results/functional-tests-daily/documentdb.log 2>&1 || true
+
+      - name: Upload daily results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-functional-test-results
+          overwrite: true
+          path: .test-results/functional-tests-daily/
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop documentdb 2>/dev/null || true
+          docker rm documentdb 2>/dev/null || true
