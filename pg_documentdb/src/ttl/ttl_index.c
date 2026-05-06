@@ -603,6 +603,10 @@ DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
 							  budget, bool *isTaskTimeBudgetExceeded,
 							  void *ttlMetricsContext)
 {
+	/* Per-batch timer for TTL deletion */
+	instr_time batchStart;
+	INSTR_TIME_SET_CURRENT(batchStart);
+
 	int32 defaultBatchSize = (SkipRepeatDeleteForUnOrderedIndex &&
 							  !indexEntry->indexIsOrdered) ?
 							 MaxTTLBatchSizeUnorderedIndex : MaxTTLDeleteBatchSize;
@@ -747,7 +751,6 @@ DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
 		SPI_OK_DELETE,
 		TTLPurgerStatementTimeout, TTLPurgerLockTimeout);
 
-
 	double saturationRatio = 0.0;
 	double batchDeleteElapsedTime = 0.0;
 
@@ -790,6 +793,11 @@ DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
 		}
 	}
 
+	instr_time batchEnd;
+	INSTR_TIME_SET_CURRENT(batchEnd);
+	INSTR_TIME_SUBTRACT(batchEnd, batchStart);
+	double batchDurationMs = INSTR_TIME_GET_MILLISEC(batchEnd);
+
 	if (*isTaskTimeBudgetExceeded || LogTTLProgressActivity)
 	{
 		elog_unredacted(
@@ -797,20 +805,23 @@ DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
 			"batch_size=%d, expiry_cutoff=%ld, "
 			"LogTTLProgressActivity=%d, "
 			"has_pfe=%d, isTaskTimeBudgetExceeded=%d, "
-			"duration= %.2f, saturation_ratio=%.2f, "
+			"duration= %.2f, batch_duration=%.2f, saturation_ratio=%.2f, "
 			"statement_timeout=%d, lock_timeout=%d, used_hints=%d, "
 			"index_is_ordered=%d, use_desc_sort=%d",
 			(int64) rowsCount, indexEntry->collectionId,
 			shardId, indexEntry->indexId, ttlDeleteBatchSize,
 			currentTime - indexExpiryMilliseconds, LogTTLProgressActivity,
 			indexPfe != NULL, *isTaskTimeBudgetExceeded,
-			batchDeleteElapsedTime, saturationRatio,
+			batchDeleteElapsedTime, batchDurationMs, saturationRatio,
 			TTLPurgerStatementTimeout, TTLPurgerLockTimeout,
 			useIndexHintsForTTLQuery,
 			indexEntry->indexIsOrdered, useDescendingSort);
 	}
 
-	/* Record TTL metric via the hook if metrics context is provided */
+	/* Record TTL metric via the hook if metrics context is provided.
+	 * Pass the per-batch duration (batchDurationMs) rather than the
+	 * cumulative elapsed time so that aggregated metrics (avg/max
+	 * duration) reflect the cost of individual DELETE batches. */
 	if (ttlMetricsContext != NULL)
 	{
 		RecordTtlMetric(ttlMetricsContext,
@@ -819,7 +830,7 @@ DeleteExpiredRowsForIndexCore(char *tableName, TtlIndexEntry *indexEntry, int64
 						shardId,
 						indexEntry->indexName,
 						saturationRatio,
-						batchDeleteElapsedTime,
+						batchDurationMs,
 						rowsCount);
 	}
 
