@@ -59,14 +59,48 @@ impl PgConfigurationInner {
             Err(e) => tracing::warn!("Host Config file not able to be loaded: {e}"),
         }
 
-        let pg_config_rows = self
-            .pool_manager
-            .system_requests_connection()
-            .await?
-            .query(self.pool_manager.query_catalog().pg_settings(), &[], &[])
-            .await?;
+        let pg_config_rows = match self.pool_manager.system_requests_connection().await {
+            Ok(conn) => conn
+                .query(self.pool_manager.query_catalog().pg_settings(), &[], &[])
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Failed to query pg_settings: {e}");
+                    Vec::new()
+                }),
+            Err(e) => {
+                tracing::warn!("Failed to get connection for pg_settings: {e}");
+                Vec::new()
+            }
+        };
 
-        for pg_config in pg_config_rows {
+        // Then, fetch most up-to-date switch-related values from pg_file_settings for settings that are set there. pg_settings may have stale
+        // values if pg_reload_conf() failed or if 030-user-supplied-server-parameters.conf was updated after the gateway started. Then
+        // upsert them into the HashSet. This ensures that we have the most accurate settings without relying on pg_reload_conf() succeeding.
+        let pg_file_settings_query = self.pool_manager.query_catalog().pg_file_settings();
+        let pg_file_settings_rows = if pg_file_settings_query.is_empty() {
+            Vec::new()
+        } else {
+            match self.pool_manager.system_requests_connection().await {
+                Ok(conn) => conn
+                    .query(pg_file_settings_query, &[], &[])
+                    .await
+                    .unwrap_or_else(|e| {
+                        tracing::warn!("Failed to query pg_file_settings: {e}");
+                        Vec::new()
+                    }),
+                Err(e) => {
+                    tracing::warn!("Failed to get connection for pg_file_settings: {e}");
+                    Vec::new()
+                }
+            }
+        };
+
+        let all_config_rows: Vec<_> = pg_config_rows
+            .into_iter()
+            .chain(pg_file_settings_rows)
+            .collect();
+
+        for pg_config in all_config_rows {
             let mut key = pg_config.get::<_, String>(0);
 
             for settings_prefix in &self.settings_prefixes {
@@ -77,24 +111,31 @@ impl PgConfigurationInner {
             }
 
             let mut value: String = pg_config.get(1);
-            if value == "on" {
+            if value == "on" || value.eq_ignore_ascii_case("true") {
                 "true".clone_into(&mut value);
-            } else if value == "off" {
+            } else if value == "off" || value.eq_ignore_ascii_case("false") {
                 "false".clone_into(&mut value);
             }
             configs.insert(key.clone(), value);
         }
 
-        let pg_is_in_recovery_row = self
-            .pool_manager
-            .system_requests_connection()
-            .await?
-            .query(
-                self.pool_manager.query_catalog().pg_is_in_recovery(),
-                &[],
-                &[],
-            )
-            .await?;
+        let pg_is_in_recovery_row = match self.pool_manager.system_requests_connection().await {
+            Ok(conn) => conn
+                .query(
+                    self.pool_manager.query_catalog().pg_is_in_recovery(),
+                    &[],
+                    &[],
+                )
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Failed to query pg_is_in_recovery: {e}");
+                    Vec::new()
+                }),
+            Err(e) => {
+                tracing::warn!("Failed to get connection for pg_is_in_recovery: {e}");
+                Vec::new()
+            }
+        };
 
         let in_recovery: bool = pg_is_in_recovery_row.first().is_some_and(|row| row.get(0));
         configs.insert(POSTGRES_RECOVERY_KEY.to_owned(), in_recovery.to_string());

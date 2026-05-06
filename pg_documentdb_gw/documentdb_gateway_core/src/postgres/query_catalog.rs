@@ -22,6 +22,7 @@ pub struct QueryCatalog {
 
     // pg_configuration.rs
     pub pg_settings: String,
+    pub pg_file_settings: String,
     pub pg_is_in_recovery: String,
     pub extension_versions: String,
     pub startup_validation_probe: String,
@@ -155,6 +156,11 @@ impl QueryCatalog {
     #[must_use]
     pub fn pg_settings(&self) -> &str {
         &self.pg_settings
+    }
+
+    #[must_use]
+    pub fn pg_file_settings(&self) -> &str {
+        &self.pg_file_settings
     }
 
     #[must_use]
