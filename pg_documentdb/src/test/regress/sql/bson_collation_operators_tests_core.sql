@@ -1011,6 +1011,252 @@ SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "de_locale",
 -- ======================================================================
 -- CLEANUP
 -- ======================================================================
+-- ======================================================================
+-- Section 35: $in — collation index pushdown (comprehensive)
+-- 35.6: $in with mixed case — "aPpLe" matches apple/Apple at strength=1
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "a": { "$in": ["aPpLe"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 35.7: Case variants all equivalent — "cherry", "Cherry", "CHERRY" all match ids 5,6
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "a": { "$in": ["cherry"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "a": { "$in": ["Cherry"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "a": { "$in": ["CHERRY"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 35.8: Redundant case variants in array — same as single element
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "a": { "$in": ["apple", "APPLE", "Apple"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 35.13: $in value not in collection — empty result
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "a": { "$in": ["zebra", "mango"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 35.24: $in "ALPHA" at s1 — matches Alpha(1) and alpha(2)
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "multi_coll", "filter": { "a": { "$in": ["ALPHA"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 35.25: $in "ALPHA" at s3 — not stored, returns empty
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "multi_coll", "filter": { "a": { "$in": ["ALPHA"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }');
+
+-- 35.29: $in combined with $lt — narrowing the range
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$in": ["apple", "banana", "cherry", "date"] } }, { "a": { "$lt": "cherry" } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 35.33: $in "ABC" on multikey — case-insensitive
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "multikey_coll", "filter": { "tags": { "$in": ["ABC"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 35.44: $in on es_locale — ["ñapa", "opal"] matches ñapa(2), Ñapa(4), opal(5)
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "es_locale", "filter": { "a": { "$in": ["ñapa", "opal"] } }, "sort": { "_id": 1 }, "collation": { "locale": "es", "strength": 1 } }');
+
+-- 35.47: $in on de_locale — "strasse" same result (ss==ß)
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "de_locale", "filter": { "a": { "$in": ["strasse"] } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
+
+-- 35.48: $in on de_locale — "STRASSE" case-insensitive + ß==ss
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "de_locale", "filter": { "a": { "$in": ["STRASSE"] } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
+
+-- ======================================================================
+-- Section 36: $nin — collation index pushdown (comprehensive)
+-- 36.5: $nin "bAnAnA" mixed case — excludes BANANA(3), banana(4)
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "a": { "$nin": ["bAnAnA"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 36.7: $nin "zebra" — not in collection, nothing excluded
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "a": { "$nin": ["zebra"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 36.8: $nin redundant case variants — same as $nin: ["apple"]
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "a": { "$nin": ["apple", "APPLE", "Apple"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 36.10: $nin with empty string
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "a": { "$nin": [""] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 36.11: $nin single element — equivalent to $ne
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "a": { "$nin": ["cherry"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 36.18: $nin "DOG" UPPERCASE — excludes DOG(1) and dog(2)
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "compound_field", "filter": { "a": { "$nin": ["DOG"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 36.21: $nin "ALPHA" at s3 — not stored, nothing excluded
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "multi_coll", "filter": { "a": { "$nin": ["ALPHA"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }');
+
+-- 36.23: $nin combined with $eq — contradictory if value overlaps → empty
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$eq": "apple" } }, { "a": { "$nin": ["apple"] } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 36.28: $nin "ABC" on multikey — case-insensitive exclusion
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "multikey_coll", "filter": { "tags": { "$nin": ["ABC"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 36.32: $nin boolean on insensitive_ops — excludes true(7)
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "insensitive_ops", "filter": { "a": { "$nin": [true] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- ======================================================================
+-- Section 37: $in/$nin — feature flag disabled
+-- ======================================================================
+-- Section 38: $in/$nin — data distribution on mixed_types (20 docs)
+-- 38.4: $nin "cherry" at s3 — only excludes cherry(6) = 19 docs returned
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "mixed_types", "filter": { "a": { "$nin": ["cherry"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }');
+
+-- 38.5: $in multiple groups — apple×3 + banana×2 = 5 docs
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "mixed_types", "filter": { "a": { "$in": ["apple", "banana"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 38.6: $nin multiple groups — excludes apple×3 + banana×2 = 15 docs returned
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "mixed_types", "filter": { "a": { "$nin": ["apple", "banana"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 38.7: $in null — matches null(18) + missing(19,20) = 3 docs
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "mixed_types", "filter": { "a": { "$in": [null] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 38.8: $nin null — excludes null + missing = 17 docs returned
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "mixed_types", "filter": { "a": { "$nin": [null] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 38.9: $in mixed types — "apple" + 42 + true at s1 → apple×3 + 42(15) + true(17) = 5 docs
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "mixed_types", "filter": { "a": { "$in": ["apple", 42, true] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 38.10: $nin everything — returns only null(18), 7(16), missing(19,20) = 4 docs
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "mixed_types", "filter": { "a": { "$nin": ["apple", "banana", "cherry", "date", "elderberry", "fig", "grape", "honeydew", "kiwi", 42, true] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+
+-- ======================================================================
+-- Section 39: $in/$nin — accent collection (café vs cafe)
+-- 39.2: $in "café" at en/s1 — accent ignored at strength=1, matches all cafe-equivalents = 4 docs
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "accent_coll", "filter": { "a": { "$in": ["café"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 39.3: $in ["cafe", "café"] at en/s1 — both groups
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "accent_coll", "filter": { "a": { "$in": ["cafe", "café"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 39.5: $nin ["cafe", "café"] at en/s1 — excludes both groups
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "accent_coll", "filter": { "a": { "$nin": ["cafe", "café"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+
+-- ======================================================================
+-- Section 40: $in/$nin — three-key composite index
+-- 40.3: $in on middle key
+-- a = "cherry", b: $in ["red", "green"], c = "y"
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "three_key", "filter": { "a": "cherry", "b": { "$in": ["red", "green"] }, "c": "y" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 40.4: $in case-insensitive on three-key — "CHERRY" at s1 matches all cherry variants
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "three_key", "filter": { "a": { "$in": ["CHERRY"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+
+-- ======================================================================
+-- Section 41: $in/$nin — write-path coverage (delete with collation)
+
+SELECT documentdb_api.insert_one('coll_op_db','write_in_coll', '{"_id": 1, "a": "apple", "v": 1}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','write_in_coll', '{"_id": 2, "a": "Apple", "v": 1}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','write_in_coll', '{"_id": 3, "a": "BANANA", "v": 1}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','write_in_coll', '{"_id": 4, "a": "banana", "v": 1}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','write_in_coll', '{"_id": 5, "a": "cherry", "v": 1}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','write_in_coll', '{"_id": 6, "a": "Cherry", "v": 1}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','write_in_coll', '{"_id": 7, "a": "date",   "v": 1}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','write_in_coll', '{"_id": 8, "a": "Date",   "v": 1}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','write_in_coll', '{"_id": 9, "a": 42,       "v": 1}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','write_in_coll', '{"_id":10, "a": null,     "v": 1}', NULL);
+
+-- 41.1: delete_one with $nin + matching collation (en s1) — removes one non-fruit doc (id 9 or 10)
+SELECT documentdb_api.delete('coll_op_db', '{ "delete": "write_in_coll", "deletes": [ { "q": { "a": { "$nin": ["apple", "banana", "cherry", "date"] } }, "limit": 1, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT count(*) FROM documentdb_api.collection('coll_op_db', 'write_in_coll');
+
+-- 41.2: delete_many with $in (matching collation) — removes BOTH date variants (ids 7,8)
+SELECT documentdb_api.delete('coll_op_db', '{ "delete": "write_in_coll", "deletes": [ { "q": { "a": { "$in": ["DATE"] } }, "limit": 0, "collation": { "locale": "en", "strength": 1 } } ] }');
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "write_in_coll", "filter": { "a": { "$in": ["date", "Date"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 41.3: delete_many with $in + mismatched collation (de/s2 vs idx en/s1) — index NOT used; at de/s2 case is still ignored, so deletes BOTH cherry and Cherry
+SELECT documentdb_api.delete('coll_op_db', '{ "delete": "write_in_coll", "deletes": [ { "q": { "a": { "$in": ["cherry"] } }, "limit": 0, "collation": { "locale": "de", "strength": 2 } } ] }');
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "write_in_coll", "filter": { "a": { "$in": ["cherry", "Cherry"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 41.4: delete with $in all-non-string + mismatched collation — index path still valid (non-string bypass)
+SELECT documentdb_api.delete('coll_op_db', '{ "delete": "write_in_coll", "deletes": [ { "q": { "a": { "$in": [42] } }, "limit": 0, "collation": { "locale": "de", "strength": 2 } } ] }');
+
+-- 41.5: Final state after all deletes
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "write_in_coll", "filter": {}, "sort": { "_id": 1 } }');
+
+
+-- ======================================================================
+-- Section 42: $in/$nin nested under $or / $and / $nor
+-- 42.4: $and with $in + $nin — case-insensitive intersection then exclusion
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "$and": [ { "a": { "$in": ["APPLE", "BANANA", "CHERRY"] } }, { "a": { "$nin": ["banana"] } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 42.6: Nested $or inside $and — ($in OR $eq) AND $exists
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "$and": [ { "$or": [ { "a": { "$in": ["APPLE"] } }, { "a": "cherry" } ] }, { "a": { "$exists": true } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 42.7: $or with mismatched-collation $in leg + matching-collation $in leg
+-- Behavior probe: query-level collation should apply uniformly. The
+-- "mismatched" leg test uses an alternate locale only to ensure the planner
+-- doesn't crash on mixed-shape predicates inside $or.
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "$or": [ { "a": { "$in": ["APPLE"] } }, { "a": { "$in": ["DATE"] } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 2 } }');
+
+-- 42.9: $and on multikey ($in inside conjunction with another $in)
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "multikey_coll", "filter": { "$and": [ { "tags": { "$in": ["RED"] } }, { "tags": { "$in": ["GREEN"] } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 42.10: Three-level nesting — $and [ $or, $nor ]
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "$and": [ { "$or": [ { "a": { "$in": ["APPLE", "BANANA"] } }, { "a": { "$in": ["DATE"] } } ] }, { "$nor": [ { "a": { "$eq": "Apple" } } ] } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+
+-- ======================================================================
+-- Section 43: $in/$nin — large arrays (planner threshold behavior)
+-- ======================================================================
+-- Section 44: $in/$nin — degenerate arrays
+-- 44.3: $in: [] without collation — must still match nothing
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "a": { "$in": [] } }, "sort": { "_id": 1 } }');
+
+-- 44.5: $in:[null, ""] — null OR empty string (both non-collation-aware in null-leg, collation-aware in empty-string leg)
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "a": { "$in": [null, ""] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 44.6: $nin:[null, ""] — exclude null + empty string from collated set
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "single_field", "filter": { "a": { "$nin": [null, ""] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+
+-- ======================================================================
+-- Section 45: $in/$nin — index hint
+-- ======================================================================
+-- Section 46: $in/$nin — nested field path with collation index
+
+SELECT documentdb_api.insert_one('coll_op_db','nested_path_coll', '{"_id": 1, "a": {"b": "apple"}}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','nested_path_coll', '{"_id": 2, "a": {"b": "Apple"}}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','nested_path_coll', '{"_id": 3, "a": {"b": "BANANA"}}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','nested_path_coll', '{"_id": 4, "a": {"b": "banana"}}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','nested_path_coll', '{"_id": 5, "a": {"b": "cherry"}}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','nested_path_coll', '{"_id": 6, "a": {"b": "Cherry"}}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','nested_path_coll', '{"_id": 7, "a": {"b": null}}',    NULL);
+SELECT documentdb_api.insert_one('coll_op_db','nested_path_coll', '{"_id": 8, "a": {}}',             NULL);
+SELECT documentdb_api.insert_one('coll_op_db','nested_path_coll', '{"_id": 9}',                       NULL);
+
+-- 46.2: $in on nested path — no collation — only exact "apple", "banana" → ids 1, 4
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "nested_path_coll", "filter": { "a.b": { "$in": ["apple", "banana"] } }, "sort": { "_id": 1 } }');
+
+-- 46.4: $nin on nested path — matching collation — excludes apple+banana variants
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "nested_path_coll", "filter": { "a.b": { "$nin": ["APPLE", "BANANA"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 46.5: $in:[null] on nested — matches doc with explicit null AND missing field/missing parent
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "nested_path_coll", "filter": { "a.b": { "$in": [null] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- ======================================================================
+-- Section 47: $in/$nin — BSON type variety in array (non-string bypass)
+
+SELECT documentdb_api.insert_one('coll_op_db','bson_types_coll', '{"_id": 1, "a": "apple"}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','bson_types_coll', '{"_id": 2, "a": "Apple"}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','bson_types_coll', '{"_id": 3, "a": {"$date": "2024-01-15T00:00:00Z"}}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','bson_types_coll', '{"_id": 4, "a": {"$date": "2025-06-20T12:00:00Z"}}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','bson_types_coll', '{"_id": 5, "a": {"$oid": "507f1f77bcf86cd799439011"}}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','bson_types_coll', '{"_id": 6, "a": {"$oid": "507f1f77bcf86cd799439022"}}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','bson_types_coll', '{"_id": 7, "a": {"$numberDecimal": "3.14"}}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','bson_types_coll', '{"_id": 8, "a": {"$numberDecimal": "9.99"}}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','bson_types_coll', '{"_id": 9, "a": {"$binary": {"base64": "AAEC", "subType": "00"}}}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','bson_types_coll', '{"_id":10, "a": {"$binary": {"base64": "AwQF", "subType": "00"}}}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','bson_types_coll', '{"_id":11, "a": null}', NULL);
+
+-- 47.2: multi-element $in ObjectId mismatched collation — index NOT used
+--       (array forces collation check, even though all elements are non-string)
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "bson_types_coll", "filter": { "a": { "$in": [ {"$oid": "507f1f77bcf86cd799439011"}, {"$oid": "507f1f77bcf86cd799439022"} ] } }, "sort": { "_id": 1 }, "collation": { "locale": "fr", "strength": 1 } }');
+
+-- 47.3: single-element $in [Decimal128] mismatched collation — index IS used (decomposed to $eq)
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "bson_types_coll", "filter": { "a": { "$in": [ {"$numberDecimal": "3.14"} ] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }');
+
+-- 47.4: single-element $in [Binary] mismatched collation — index IS used (decomposed to $eq)
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "bson_types_coll", "filter": { "a": { "$in": [ {"$binary": {"base64": "AAEC", "subType": "00"}} ] } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
+
+-- 47.6: $in [string, Date] matching collation (en/s1 = idx) — index used; at s1 case is ignored so APPLE matches apple+Apple = 3 rows
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "bson_types_coll", "filter": { "a": { "$in": [ "APPLE", {"$date": "2024-01-15T00:00:00Z"} ] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 47.7: $in [string, Date] mismatched collation (en/s3 vs idx en/s1) — index NOT used; at s3 case is sensitive so "Apple" matches Apple only = 2 rows
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "bson_types_coll", "filter": { "a": { "$in": [ "Apple", {"$date": "2024-01-15T00:00:00Z"} ] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }');
+
+-- 47.8: multi-element $nin ObjectId mismatched collation — index NOT used (array path)
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "bson_types_coll", "filter": { "a": { "$nin": [ {"$oid": "507f1f77bcf86cd799439011"}, {"$oid": "507f1f77bcf86cd799439022"} ] } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 2 } }');
+
+SELECT documentdb_api.drop_collection('coll_op_db', 'write_in_coll');
+SELECT documentdb_api.drop_collection('coll_op_db', 'nested_path_coll');
+SELECT documentdb_api.drop_collection('coll_op_db', 'bson_types_coll');
 SELECT documentdb_api.drop_collection('coll_op_db', 'accent_coll');
 SELECT documentdb_api.drop_collection('coll_op_db', 'compound_field');
 SELECT documentdb_api.drop_collection('coll_op_db', 'de_locale');

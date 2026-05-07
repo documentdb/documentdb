@@ -1688,6 +1688,8 @@ IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_GTE:
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_LT:
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_LTE:
+		case BSON_INDEX_STRATEGY_DOLLAR_IN:
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_IN:
 		{
 			if (!IsBsonTypeCollationAware(queryValueType))
 			{
@@ -1716,8 +1718,6 @@ IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 		}
 
 		/* TODO (COLLATION): To be supported */
-		case BSON_INDEX_STRATEGY_DOLLAR_IN:
-		case BSON_INDEX_STRATEGY_DOLLAR_NOT_IN:
 		case BSON_INDEX_STRATEGY_DOLLAR_ELEMMATCH:
 		case BSON_INDEX_STRATEGY_DOLLAR_RANGE:
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY:

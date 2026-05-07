@@ -5314,6 +5314,256 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 (5 rows)
 
 RESET documentdb.max_non_ordered_term_scan_threshold;
+-- =============================================================================
+-- Section 28: $in/$nin — ordered scan NOT supported with collation
+-- =============================================================================
+-- $in and $nin should use the collation index for filtering but NOT for
+-- providing sort order. EXPLAIN should show scanType: regular (not an ordered
+-- scan) on the Custom Scan node when sorting by the collated field.
+-- 28.1: $in with sort on collated field "a" ascending — no ordered scan
+-- Index used for filtering, separate Sort node for ordering
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "banana", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                      document                       
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "APPLE" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "banana" }
+ { "_id" : { "$numberInt" : "7" }, "a" : "Banana" }
+ { "_id" : { "$numberInt" : "8" }, "a" : "BANANA" }
+ { "_id" : { "$numberInt" : "11" }, "a" : "cherry" }
+ { "_id" : { "$numberInt" : "12" }, "a" : "Cherry" }
+ { "_id" : { "$numberInt" : "13" }, "a" : "CHERRY" }
+(9 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "banana", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                             run_explain_and_trim                                                                             
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=9 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=9 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_not_intervals
+         indexName: idx_intervals_en_strength1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["apple", "apple"]], ["a": ["banana", "banana"]], ["a": ["cherry", "cherry"]]
+         innerScanLoops: 9 loops
+         scanType: regular
+         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3), (isInequality: false, estimatedEntryCount: 3), (isInequality: false, estimatedEntryCount: 3)]
+         ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=9 loops=1)
+               Index Cond: (document @*= '{ "a" : [ "apple", "banana", "cherry" ], "collation" : "en-u-ks-level1" }'::bson)
+(14 rows)
+
+-- 28.2: $in with sort on collated field descending — no ordered scan
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "date"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+                     document                      
+---------------------------------------------------
+ { "_id" : { "$numberInt" : "15" }, "a" : "date" }
+ { "_id" : { "$numberInt" : "16" }, "a" : "Date" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "APPLE" }
+(5 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "date"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                 run_explain_and_trim                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=5 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_not_intervals
+         indexName: idx_intervals_en_strength1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["apple", "apple"]], ["a": ["date", "date"]]
+         innerScanLoops: 5 loops
+         scanType: regular
+         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3), (isInequality: false, estimatedEntryCount: 2)]
+         ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=5 loops=1)
+               Index Cond: (document @*= '{ "a" : [ "apple", "date" ], "collation" : "en-u-ks-level1" }'::bson)
+(14 rows)
+
+-- 28.3: $nin with sort on collated field ascending — no ordered scan
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["apple", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "27" } }
+ { "_id" : { "$numberInt" : "26" }, "a" : null }
+ { "_id" : { "$numberInt" : "24" }, "a" : { "$numberInt" : "42" } }
+ { "_id" : { "$numberInt" : "4" }, "a" : "apricot" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "avocado" }
+ { "_id" : { "$numberInt" : "8" }, "a" : "BANANA" }
+ { "_id" : { "$numberInt" : "7" }, "a" : "Banana" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "banana" }
+ { "_id" : { "$numberInt" : "9" }, "a" : "blueberry" }
+ { "_id" : { "$numberInt" : "10" }, "a" : "cantaloupe" }
+ { "_id" : { "$numberInt" : "14" }, "a" : "cranberry" }
+ { "_id" : { "$numberInt" : "15" }, "a" : "date" }
+ { "_id" : { "$numberInt" : "16" }, "a" : "Date" }
+ { "_id" : { "$numberInt" : "17" }, "a" : "elderberry" }
+ { "_id" : { "$numberInt" : "18" }, "a" : "fig" }
+ { "_id" : { "$numberInt" : "19" }, "a" : "grape" }
+ { "_id" : { "$numberInt" : "20" }, "a" : "honeydew" }
+ { "_id" : { "$numberInt" : "21" }, "a" : "kiwi" }
+ { "_id" : { "$numberInt" : "22" }, "a" : "lemon" }
+ { "_id" : { "$numberInt" : "23" }, "a" : "mango" }
+ { "_id" : { "$numberInt" : "25" }, "a" : true }
+(21 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["apple", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                 run_explain_and_trim                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=21 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=21 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_not_intervals
+         indexName: idx_intervals_en_strength1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
+         innerScanLoops: 27 loops
+         scanType: regular
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 24), (isInequality: true, estimatedEntryCount: 24)]
+         ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=21 loops=1)
+               Index Cond: (document @!*= '{ "a" : [ "apple", "cherry" ], "collation" : "en-u-ks-level1" }'::bson)
+               Rows Removed by Index Recheck: 6
+(15 rows)
+
+-- 28.4: $nin with sort on collated field descending — no ordered scan
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["banana"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "25" }, "a" : true }
+ { "_id" : { "$numberInt" : "23" }, "a" : "mango" }
+ { "_id" : { "$numberInt" : "22" }, "a" : "lemon" }
+ { "_id" : { "$numberInt" : "21" }, "a" : "kiwi" }
+ { "_id" : { "$numberInt" : "20" }, "a" : "honeydew" }
+ { "_id" : { "$numberInt" : "19" }, "a" : "grape" }
+ { "_id" : { "$numberInt" : "18" }, "a" : "fig" }
+ { "_id" : { "$numberInt" : "17" }, "a" : "elderberry" }
+ { "_id" : { "$numberInt" : "15" }, "a" : "date" }
+ { "_id" : { "$numberInt" : "16" }, "a" : "Date" }
+ { "_id" : { "$numberInt" : "14" }, "a" : "cranberry" }
+ { "_id" : { "$numberInt" : "13" }, "a" : "CHERRY" }
+ { "_id" : { "$numberInt" : "11" }, "a" : "cherry" }
+ { "_id" : { "$numberInt" : "12" }, "a" : "Cherry" }
+ { "_id" : { "$numberInt" : "10" }, "a" : "cantaloupe" }
+ { "_id" : { "$numberInt" : "9" }, "a" : "blueberry" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "avocado" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "apricot" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "APPLE" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
+ { "_id" : { "$numberInt" : "24" }, "a" : { "$numberInt" : "42" } }
+ { "_id" : { "$numberInt" : "26" }, "a" : null }
+ { "_id" : { "$numberInt" : "27" } }
+(24 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["banana"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                 run_explain_and_trim                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=24 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=24 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_not_intervals
+         indexName: idx_intervals_en_strength1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey]]
+         innerScanLoops: 20 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 24)]
+         ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=24 loops=1)
+               Index Cond: (document @!= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
+(14 rows)
+
+-- 28.5: $in on compound with sort on both keys — no ordered scan
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$in": ["apple", "cherry"] } }, "sort": { "a": 1, "b": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                      document                                      
+------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "20" }, "a" : "APPLE", "b" : "GREEN" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "apple", "b" : "green" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple", "b" : "red" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "apple", "b" : "yellow" }
+ { "_id" : { "$numberInt" : "24" }, "a" : "cherry" }
+ { "_id" : { "$numberInt" : "22" }, "a" : "cherry", "b" : null }
+ { "_id" : { "$numberInt" : "21" }, "a" : "cherry", "b" : { "$numberInt" : "99" } }
+ { "_id" : { "$numberInt" : "10" }, "a" : "cherry", "b" : "blue" }
+ { "_id" : { "$numberInt" : "16" }, "a" : "Cherry", "b" : "Green" }
+ { "_id" : { "$numberInt" : "8" }, "a" : "cherry", "b" : "green" }
+ { "_id" : { "$numberInt" : "17" }, "a" : "CHERRY", "b" : "RED" }
+ { "_id" : { "$numberInt" : "7" }, "a" : "cherry", "b" : "red" }
+ { "_id" : { "$numberInt" : "15" }, "a" : "Cherry", "b" : "Red" }
+ { "_id" : { "$numberInt" : "9" }, "a" : "cherry", "b" : "yellow" }
+ { "_id" : { "$numberInt" : "18" }, "a" : "CHERRY", "b" : "YELLOW" }
+(15 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$in": ["apple", "cherry"] } }, "sort": { "a": 1, "b": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                                                                      run_explain_and_trim                                                                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=15 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST, (documentdb_api_internal.bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=15 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
+         indexName: idx_comp_ab_mixed_s1
+         indexKey: {"a": 1,"b": -1}
+         isMultiKey: false
+         indexBounds: ["a": ["apple", "apple"], "b": DESC(MinKey, MaxKey)], ["a": ["cherry", "cherry"], "b": DESC(MinKey, MaxKey)]
+         innerScanLoops: 15 loops
+         scanType: regular
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4), (isInequality: true, estimatedEntryCount: 11)]
+         ->  Index Scan using idx_comp_ab_mixed_s1 on documents_8116 collection (actual rows=15 loops=1)
+               Index Cond: (document @*= '{ "a" : [ "apple", "cherry" ], "collation" : "en-u-ks-level1" }'::bson)
+(14 rows)
+
+-- 28.6: $in with sort on _id (non-collated) — should work normally
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "banana"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "APPLE" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "banana" }
+ { "_id" : { "$numberInt" : "7" }, "a" : "Banana" }
+ { "_id" : { "$numberInt" : "8" }, "a" : "BANANA" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "banana"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=6 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_not_intervals
+         indexName: idx_intervals_en_strength1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["apple", "apple"]], ["a": ["banana", "banana"]]
+         innerScanLoops: 6 loops
+         scanType: regular
+         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3), (isInequality: false, estimatedEntryCount: 3)]
+         ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=6 loops=1)
+               Index Cond: (document @*= '{ "a" : [ "apple", "banana" ], "collation" : "en-u-ks-level1" }'::bson)
+(14 rows)
+
 RESET documentdb.enableExtendedExplainPlans;
 RESET enable_seqscan;
 DROP SCHEMA collation_ordered_test_schema CASCADE;

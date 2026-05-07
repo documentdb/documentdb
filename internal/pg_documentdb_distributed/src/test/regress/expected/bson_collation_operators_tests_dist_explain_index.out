@@ -526,6 +526,87 @@ $cmd$);
 
 END;
 -- ======================================================================
+-- SECTION 10: $in/$nin — sharded collation index pushdown
+-- ======================================================================
+-- $in with matching collation — results span shards correctly
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "single_field_d", "filter": { "a": { "$in": ["apple", "CHERRY"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                                                                  QUERY PLAN                                                                                   
+---------------------------------------------------------------------
+ Sort
+   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   ->  Custom Scan (Citus Adaptive)
+         Task Count: 8
+         Tasks Shown: One of 8
+         ->  Task
+               Node: host=localhost port=58070 dbname=regression
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     indexName: idx_a_en_s1
+                     indexKey: {"a": 1}
+                     isMultiKey: false
+                     indexBounds: ["a": ["apple", "apple"]], ["a": ["CHERRY", "CHERRY"]]
+                     ->  Index Scan using idx_a_en_s1 on documents_95211_95210004 collection
+                           Index Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "a" : [ "apple", "CHERRY" ], "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(14 rows)
+
+END;
+-- $nin with matching collation — results span shards correctly
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "single_field_d", "filter": { "a": { "$nin": ["apple", "banana"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                                                                   QUERY PLAN                                                                                   
+---------------------------------------------------------------------
+ Sort
+   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   ->  Custom Scan (Citus Adaptive)
+         Task Count: 8
+         Tasks Shown: One of 8
+         ->  Task
+               Node: host=localhost port=58070 dbname=regression
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     indexName: idx_a_en_s1
+                     indexKey: {"a": 1}
+                     isMultiKey: false
+                     indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
+                     ->  Index Scan using idx_a_en_s1 on documents_95211_95210004 collection
+                           Index Cond: (document OPERATOR(documentdb_api_catalog.@!*=) '{ "a" : [ "apple", "banana" ], "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(14 rows)
+
+END;
+-- $in on compound — matching collation
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "compound_d", "filter": { "a": { "$in": ["dog", "cat"] }, "b": { "$gt": 20 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                                                                                                                                       QUERY PLAN                                                                                                                                                        
+---------------------------------------------------------------------
+ Sort
+   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   ->  Custom Scan (Citus Adaptive)
+         Task Count: 8
+         Tasks Shown: One of 8
+         ->  Task
+               Node: host=localhost port=58070 dbname=regression
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     indexName: idx_ab_en_s1_d
+                     indexKey: {"a": 1,"b": 1}
+                     isMultiKey: false
+                     indexBounds: ["a": ["dog", "dog"], "b": (20, Infinity]], ["a": ["cat", "cat"], "b": (20, Infinity]]
+                     ->  Index Scan using idx_ab_en_s1_d on documents_95212_95210014 collection
+                           Index Cond: ((document OPERATOR(documentdb_api_catalog.@*=) '{ "a" : [ "dog", "cat" ], "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>) '{ "b" : { "$numberInt" : "20" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson))
+(14 rows)
+
+END;
+-- ======================================================================
 -- Cleanup
 -- ======================================================================
 RESET documentdb_api.forceUseIndexIfAvailable;

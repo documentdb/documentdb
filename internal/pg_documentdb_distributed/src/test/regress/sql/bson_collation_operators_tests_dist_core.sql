@@ -179,6 +179,58 @@ SET LOCAL enable_seqscan TO OFF;
 SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "compound_d", "filter": { "a": { "$not": { "$gt": "cat" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 END;
 
+-- ======================================================================
+-- SECTION 10: $in/$nin on sharded collection with collation
+-- ======================================================================
+
+-- $in matching collation — case-insensitive across shards
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "single_field_d", "filter": { "a": { "$in": ["apple", "CHERRY"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+END;
+
+-- $nin matching collation — excludes case-equivalents
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "single_field_d", "filter": { "a": { "$nin": ["apple", "banana"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+END;
+
+-- $in with no collation — exact-case match only
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "single_field_d", "filter": { "a": { "$in": ["apple", "cherry"] } }, "sort": { "_id": 1 } }');
+END;
+
+-- $in with null — non-string element matches null doc
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "single_field_d", "filter": { "a": { "$in": [null, 42] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+END;
+
+-- delete with $nin + matching collation on sharded collection
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT documentdb_api.delete('coll_op_dist_db', '{ "delete": "single_field_d", "deletes": [{ "q": { "a": { "$nin": ["apple", "banana", "cherry"] } }, "limit": 0, "collation": { "locale": "en", "strength": 1 } }] }');
+SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "single_field_d", "filter": {}, "sort": { "_id": 1 } }');
+END;
+
+-- $in on compound — matching collation
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "compound_d", "filter": { "a": { "$in": ["dog", "cat"] }, "b": { "$gt": 20 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+END;
+
 RESET documentdb_api.forceUseIndexIfAvailable;
 RESET documentdb.defaultUseCompositeOpClass;
 

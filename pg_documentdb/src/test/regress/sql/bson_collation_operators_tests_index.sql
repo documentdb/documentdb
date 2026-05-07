@@ -237,6 +237,53 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('coll_op_db', '{"listIndexes": "de_locale"}');
 
 
+SELECT documentdb_api.drop_collection('coll_op_db', 'write_in_coll');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_op_db',
+  '{
+    "createIndexes": "write_in_coll",
+    "indexes": [{
+      "key": {"a": 1},
+      "name": "idx_a_en_s1",
+      "collation": {"locale": "en", "strength": 1}
+    }]
+  }',
+  TRUE
+);
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('coll_op_db', '{"listIndexes": "write_in_coll"}');
+
+
+SELECT documentdb_api.drop_collection('coll_op_db', 'nested_path_coll');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_op_db',
+  '{
+    "createIndexes": "nested_path_coll",
+    "indexes": [{
+      "key": {"a.b": 1},
+      "name": "idx_ab_en_s1",
+      "collation": {"locale": "en", "strength": 1}
+    }]
+  }',
+  TRUE
+);
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('coll_op_db', '{"listIndexes": "nested_path_coll"}');
+
+
+SELECT documentdb_api.drop_collection('coll_op_db', 'bson_types_coll');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_op_db',
+  '{
+    "createIndexes": "bson_types_coll",
+    "indexes": [{
+      "key": {"a": 1},
+      "name": "idx_a_en_s1",
+      "collation": {"locale": "en", "strength": 1}
+    }]
+  }',
+  TRUE
+);
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('coll_op_db', '{"listIndexes": "bson_types_coll"}');
+
 -- ======================================================================
 -- Run operator-strategy queries with indexes in place.
 -- ======================================================================

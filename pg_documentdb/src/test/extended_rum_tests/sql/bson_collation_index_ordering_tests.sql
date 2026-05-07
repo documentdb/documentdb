@@ -1726,6 +1726,52 @@ $cmd$);
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_array_coll", "filter": { "$and": [ { "a": { "$not": { "$gt": "cherry" } } }, { "a": { "$not": { "$lt": "banana" } } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 
 RESET documentdb.max_non_ordered_term_scan_threshold;
+
+
+-- =============================================================================
+-- Section 28: $in/$nin — ordered scan NOT supported with collation
+-- =============================================================================
+-- $in and $nin should use the collation index for filtering but NOT for
+-- providing sort order. EXPLAIN should show scanType: regular (not an ordered
+-- scan) on the Custom Scan node when sorting by the collated field.
+
+-- 28.1: $in with sort on collated field "a" ascending — no ordered scan
+-- Index used for filtering, separate Sort node for ordering
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "banana", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "banana", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28.2: $in with sort on collated field descending — no ordered scan
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "date"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "date"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28.3: $nin with sort on collated field ascending — no ordered scan
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["apple", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["apple", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28.4: $nin with sort on collated field descending — no ordered scan
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["banana"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["banana"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28.5: $in on compound with sort on both keys — no ordered scan
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$in": ["apple", "cherry"] } }, "sort": { "a": 1, "b": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$in": ["apple", "cherry"] } }, "sort": { "a": 1, "b": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28.6: $in with sort on _id (non-collated) — should work normally
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "banana"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "banana"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
 RESET documentdb.enableExtendedExplainPlans;
 RESET enable_seqscan;
 

@@ -1,4 +1,5 @@
 ### documentdb v0.113-0 (Unreleased) ###
+* Support collation with non-unique ordered indexes with `$in` and `$nin` but not with ordered scans. Requires `documentdb.EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
 * Support for pruning dead index entry on ordered TTL indexes. Requires `EnableDeadIndexEntryMarkingByTTLTask` to be on. *[Perf]*
 
 ### documentdb v0.112-0 (Unreleased) ###
