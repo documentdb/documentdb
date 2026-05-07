@@ -43,7 +43,7 @@ mongodb = { version = "3.6.0", default-features = false, features = [
     "compat-3-0-0",
 ] }
 once_cell = "1.21.4"
-openssl = "0.10.78"
+openssl = "0.10.79"
 opentelemetry = { version = "0.30", features = ["metrics"] }
 opentelemetry-otlp = { version = "0.30", features = ["grpc-tonic", "metrics"] }
 opentelemetry_sdk = { version = "0.30", features = ["rt-tokio", "metrics"] }
