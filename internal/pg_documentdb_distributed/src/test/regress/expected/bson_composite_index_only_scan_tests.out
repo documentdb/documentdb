@@ -742,7 +742,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 -- range match on an uncovered field: country is in the index but provider is not;
 -- hint forces country_1 and the provider range becomes a residual Filter. IOS must be rejected.
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "hint" : "country_1", "pipeline" : [{ "$match" : {"country": {"$eq": "USA"}, "provider": {"$gt": "A", "$lt": "Z"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
-                                                          run_explain_and_trim                                                          
+                                                          run_explain_and_trim                                                           
 ---------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, bsoncount(1))
@@ -759,6 +759,8 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                Filter: ((collection.document @> '{ "provider" : "A" }'::bson) AND (collection.document @< '{ "provider" : "Z" }'::bson))
 (13 rows)
 
+-- Ensure visibility map is up-to-date so IOS is available
+VACUUM documentdb_data.documents_69001;
 -- if we project something out it shouldn't do index only scan
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$gte": "Mexico"}} }, { "$group" : { "_id" : "$country", "n" : { "$sum" : 1 } } }]}')$$, p_ignore_heap_fetches => true);
                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                       
@@ -774,7 +776,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          indexBounds: ["country": ["Mexico", { })]
          innerScanLoops: 3 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 9)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 8)]
          ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=8 loops=1)
                Output: document
                Index Cond: (collection.document @>= '{ "country" : "Mexico" }'::bson)
@@ -812,7 +814,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          indexBounds: ["country": [MinKey, MaxKey]]
          innerScanLoops: 7 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 13)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 12)]
          ->  Index Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=12 loops=1)
                Index Cond: (collection.document @!= '{ "country" : "Mexico" }'::bson)
 (12 rows)
@@ -829,7 +831,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          indexBounds: ["country": ["", { })]
          innerScanLoops: 7 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 17)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 16)]
          ->  Index Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=16 loops=1)
                Index Cond: (collection.document @# '{ "country" : "string" }'::bson)
 (12 rows)
@@ -846,7 +848,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          indexBounds: ["country": [MinKey, MaxKey]]
          innerScanLoops: 7 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 17)]
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 16)]
          ->  Index Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=0 loops=1)
                Index Cond: (collection.document @@# '{ "country" : { "$numberInt" : "2" } }'::bson)
                Rows Removed by Index Recheck: 16
@@ -916,9 +918,9 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          indexKey: {"country": 1}
          isMultiKey: false
          indexBounds: ["country": ["USA", "USA"]], ["country": (MinKey, null]]
-         innerScanLoops: 4 loops
+         innerScanLoops: 3 loops
          scanType: regular
-         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 4), (isInequality: true, estimatedEntryCount: 0)]
+         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3), (isInequality: true, estimatedEntryCount: 0)]
          ->  Index Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=3 loops=1)
                Index Cond: (collection.document @*= '{ "country" : [ "USA", null ] }'::bson)
 (12 rows)
@@ -933,9 +935,9 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          indexKey: {"country": 1}
          isMultiKey: false
          indexBounds: ["country": ["USA", "USA"]], ["country": [[  ], [  ]]], ["country": (MinKey, null]]
-         innerScanLoops: 4 loops
+         innerScanLoops: 3 loops
          scanType: regular
-         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 4), (isInequality: false, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0)]
+         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3), (isInequality: false, estimatedEntryCount: 0), (isInequality: true, estimatedEntryCount: 0)]
          ->  Index Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=3 loops=1)
                Index Cond: (collection.document @*= '{ "country" : [ "USA", [  ] ] }'::bson)
 (12 rows)
@@ -1046,9 +1048,10 @@ SELECT documentdb_api.delete('idx_only_scan_db', '{ "delete": "idx_only_scan_col
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
+CALL documentdb_distributed_test_helpers.wait_for_vacuum_horizon();
 set client_min_messages to DEBUG1;
 VACUUM (FREEZE ON) documentdb_data.documents_69001;
-LOG:  Vacuum[index=21573,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=0, numVoidPages=0
+LOG:  Vacuum[index=21640,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=0, numVoidPages=0
 reset client_min_messages;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$eq": "Mexico"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
                                                    run_explain_and_trim                                                   
