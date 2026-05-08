@@ -553,3 +553,4 @@ OrdinalPosition,ErrorName
 552,NotARetryableWriteCommand
 553,Location51071
 554,CannotIndexParallelArrays
+555,QueryPlanKilled

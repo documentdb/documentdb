@@ -85,3 +85,5 @@ CheckSqlLatestVersionMatchesLatestFile pg_documentdb_gw
 
 # Ensure no header collisions
 $repoScriptDir/validate_headers.sh
+
+$repoScriptDir/validate_documentdb_error_codes_match_in_gw_be.sh

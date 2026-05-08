@@ -171,6 +171,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of hte <bigint> > <bigint> operator */
 	Oid BigIntGreaterOperatorId;
 
+	/* OID of the <bigint> >= <bigint> operator */
+	Oid BigIntGreaterEqualOperatorId;
+
 	/* OID of the <text> OPERATOR(pg_catalog.=) <text> operator */
 	Oid TextEqualOperatorId;
 
@@ -1544,6 +1547,24 @@ BigIntGreaterOperatorId(void)
 	}
 
 	return Cache.BigIntGreaterOperatorId;
+}
+
+
+Oid
+BigIntGreaterEqualOperatorId(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (Cache.BigIntGreaterEqualOperatorId == InvalidOid)
+	{
+		List *operatorNameList = list_make2(makeString("pg_catalog"),
+											makeString(">="));
+
+		Cache.BigIntGreaterEqualOperatorId =
+			OpernameGetOprid(operatorNameList, INT8OID, INT8OID);
+	}
+
+	return Cache.BigIntGreaterEqualOperatorId;
 }
 
 

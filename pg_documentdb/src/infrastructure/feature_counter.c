@@ -349,6 +349,8 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 		"create_unique_index_with_term_truncation",
 
 	/* Feature Mapping region - Cursor types */
+	[FEATURE_CURSOR_TYPE_DYNAMIC_STREAMING] = "cursor_type_dynamic_streaming",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_PERSISTENT] = "cursor_type_dynamic_persistent",
 	[FEATURE_CURSOR_TYPE_PERSISTENT] = "cursor_type_persistent",
 	[FEATURE_CURSOR_TYPE_POINT_READ] = "cursor_type_point_read",
 	[FEATURE_CURSOR_TYPE_SINGLE_BATCH] = "cursor_type_single_batch",

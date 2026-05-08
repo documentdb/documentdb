@@ -37,6 +37,7 @@
 #include "commands/commands_common.h"
 #include "planner/documents_custom_planner.h"
 #include "infrastructure/cursor_store.h"
+#include "customscan/bson_custom_scan.h"
 
 
 /*
@@ -176,6 +177,28 @@ typedef struct StreamingTupleDestReceiver
 
 
 /*
+ * DynamicStreamingTupleDestReceiver handles the dynamic streaming execution
+ * path where rows arrive as destination data tuples and
+ * are written into the array writer. On batch size or iteration limits being
+ * reached, the receiver stops accepting rows and captures a continuation
+ * document that can be used to resume the query on the next getMore.
+ */
+typedef struct DynamicStreamingTupleDestReceiver
+{
+	/* Must be first for casting to BsonStoreTupleDestReceiverBase / DestReceiver. */
+	BsonStoreTupleDestReceiverBase base;
+
+	/* Reason the receiver stopped accepting rows. */
+	TerminationReason terminationReason;
+
+	pgbson *continuationDocument;
+
+	/* The custom scan used for the core execution of the query */
+	CustomScanState *queryCustomScan;
+} DynamicStreamingTupleDestReceiver;
+
+
+/*
  * PersistentTupleDestReceiver handles the persistent-cursor and single-result
  * execution paths.  Rows are single-column BSON values written into the array
  * writer (or captured as a standalone pgbson for single-result queries).
@@ -218,6 +241,8 @@ typedef struct PersistentTupleDestReceiver
 	 */
 	bytea *continuationState;
 } PersistentTupleDestReceiver;
+
+typedef void (*UpdateCustomScanState)(PlanState *, DestReceiver *);
 
 static void HoldPortal(Portal portal);
 static uint32 CursorHashEntryHashFunc(const void *obj, size_t objsize);
@@ -267,6 +292,14 @@ static pgbson * ProcessCursorResultRowContinuationAttribute(HTAB *cursorMap,
 static void AppendLastContinuationTokenToCursor(pgbson_writer *writer,
 												pgbson *continuationDoc);
 
+static DynamicStreamingTupleDestReceiver * CreateDynamicStreamingTupleDestReceiver(
+	pgbson_array_writer *arrayWriter,
+	MemoryContext
+	writerContext,
+	int32_t
+	batchSize,
+	uint32_t
+	accumulatedSize);
 static StreamingTupleDestReceiver * CreateStreamingTupleDestReceiver(
 	pgbson_array_writer *arrayWriter,
 	MemoryContext
@@ -288,7 +321,8 @@ static PersistentTupleDestReceiver * CreatePersistentTupleDestReceiver(
 	bool isSingleResult);
 static void DrainStatementViaExecutor(PlannedStmt *queryPlan, ParamListInfo paramList,
 									  const char *sourceText, DestReceiver *destReceiver,
-									  MemoryContext currentContext);
+									  MemoryContext currentContext,
+									  UpdateCustomScanState updateFunc);
 
 const char NodeId[] = "nodeId";
 uint32_t NodeIdLength = 7;
@@ -330,8 +364,9 @@ DrainSingleResultQuery(Query *query)
 		arrayWriter, currentContext, batchSize, cursorName,
 		accumulatedSize, closeCursor, isSingleResult);
 
+	UpdateCustomScanState stateFunc = NULL;
 	DrainStatementViaExecutor(queryPlan, paramListInfo, sourceText,
-							  (DestReceiver *) receiver, currentContext);
+							  (DestReceiver *) receiver, currentContext, stateFunc);
 
 	return receiver->singleResult;
 }
@@ -477,8 +512,9 @@ DrainStreamingQuery(HTAB *cursorMap, Query *query, int batchSize,
 			accumulatedSize, cursorMap);
 		receiver->base.numRowsFetched = accumulatedRows;
 
+		UpdateCustomScanState stateFunc = NULL;
 		DrainStatementViaExecutor(queryPlan, paramListInfo, sourceText,
-								  (DestReceiver *) receiver, currentContext);
+								  (DestReceiver *) receiver, currentContext, stateFunc);
 
 		/* Extract scalar results before freeing the iteration context. */
 		TerminationReason reason = receiver->terminationReason;
@@ -520,6 +556,92 @@ DrainStreamingQuery(HTAB *cursorMap, Query *query, int batchSize,
 	}
 
 	return queryFullyDrained;
+}
+
+
+QueryCursorPlanResult *
+PlanDynamicQueryAndDetermineCursorType(Query *query, bool *isDynamicStreamable)
+{
+	/* Deparse query text before planning since the planner may modify the query tree */
+	char *sourceText = "";
+	int cursorOptions = CURSOR_OPT_BINARY;
+	if (EnableDebugQueryText)
+	{
+		bool pretty = false;
+		sourceText = pg_get_querydef(query, pretty);
+	}
+
+	/* Plan the query */
+	ParamListInfo paramList = NULL;
+	PlannedStmt *queryPlan = pg_plan_query(query, NULL, cursorOptions, paramList);
+
+	Plan *outerPlan = queryPlan->planTree;
+	*isDynamicStreamable = IsDynamicCustomScanPath(outerPlan);
+
+	QueryCursorPlanResult *result = palloc0(sizeof(QueryCursorPlanResult));
+	result->cursorType = *isDynamicStreamable ? QueryCursorType_Dynamic :
+						 QueryCursorType_Persistent;
+	result->queryPlan = queryPlan;
+	result->queryString = sourceText;
+	result->cursorOptions = cursorOptions;
+	result->paramList = paramList;
+	return result;
+}
+
+
+static void
+UpdateQueryDescriptionForDynamicCursor(PlanState *planState, DestReceiver *destReceiver)
+{
+	DynamicStreamingTupleDestReceiver *receiver =
+		(DynamicStreamingTupleDestReceiver *) destReceiver;
+	receiver->queryCustomScan = (CustomScanState *) planState;
+}
+
+
+pgbson *
+DrainDynamicStreamingCursor(QueryCursorPlanResult *planResult,
+							int batchSize, pgbson *inputContinuation,
+							pgbson_array_writer *arrayWriter,
+							uint32_t accumulatedSize)
+{
+	/* batchSize=0 means no documents should be returned; skip executor startup. */
+	if (batchSize == 0)
+	{
+		return inputContinuation;
+	}
+
+	Plan *topLevelPlan = planResult->queryPlan->planTree;
+	if (!IsA(topLevelPlan, CustomScan))
+	{
+		ereport(ERROR, (errmsg("Could not find top level custom scan for continuation")));
+	}
+
+	DynamicStreamingTupleDestReceiver *receiver = CreateDynamicStreamingTupleDestReceiver(
+		arrayWriter, CurrentMemoryContext, batchSize,
+		accumulatedSize);
+	UpdateCustomScanState stateFunc = UpdateQueryDescriptionForDynamicCursor;
+	DrainStatementViaExecutor(planResult->queryPlan, NULL, planResult->queryString,
+							  (DestReceiver *) receiver, CurrentMemoryContext, stateFunc);
+
+	switch (receiver->terminationReason)
+	{
+		case TerminationReason_CursorCompletion:
+		{
+			return NULL;
+		}
+
+		case TerminationReason_BatchItemLimit:
+		case TerminationReason_BatchSizeLimit:
+		{
+			return receiver->continuationDocument;
+		}
+
+		default:
+		{
+			ereport(ERROR, (errmsg("Unexpected termination reason: %d",
+								   receiver->terminationReason)));
+		}
+	}
 }
 
 
@@ -644,8 +766,9 @@ CreateAndDrainSingleBatchQuery(const char *cursorName, Query *query,
 		accumulatedSize,
 		closeCursor,
 		isSingleResult);
+	UpdateCustomScanState stateFunc = NULL;
 	DrainStatementViaExecutor(queryPlan, paramList, sourceText, (DestReceiver *) receiver,
-							  currentContext);
+							  currentContext, stateFunc);
 }
 
 
@@ -801,9 +924,10 @@ CreateAndDrainPersistedQueryWithFiles(const char *cursorName,
 																			  accumulatedSize,
 																			  closeCursor,
 																			  isSingleResult);
+	UpdateCustomScanState stateFunc = NULL;
 	DrainStatementViaExecutor(result->queryPlan, result->paramList, result->queryString,
 							  (DestReceiver *) receiver,
-							  currentContext);
+							  currentContext, stateFunc);
 
 	/* return the continuation state */
 	return receiver->continuationState;
@@ -855,8 +979,9 @@ CreateAndDrainPointReadQuery(const char *cursorName, Query *query,
 		accumulatedSize,
 		closeCursor,
 		isSingleResult);
+	UpdateCustomScanState stateFunc = NULL;
 	DrainStatementViaExecutor(queryPlan, paramList, sourceText,
-							  (DestReceiver *) receiver, currentContext);
+							  (DestReceiver *) receiver, currentContext, stateFunc);
 }
 
 
@@ -960,6 +1085,97 @@ StreamingDestReceiverShutdown(DestReceiver *destReceiver)
 
 static void
 StreamingDestReceiverDestroy(DestReceiver *destReceiver)
+{
+	/* nothing to do */
+}
+
+
+/*
+ * ---- Dynamic Streaming DestReceiver callbacks ----
+ */
+static void
+DynamicStreamingDestReceiverStartup(DestReceiver *destReceiver, int operation,
+									TupleDesc inputTupleDesc)
+{
+	/* Nothing to do at the moment */
+}
+
+
+static bool
+DynamicStreamingDestReceiverReceive(TupleTableSlot *slot,
+									DestReceiver *destReceiver)
+{
+	DynamicStreamingTupleDestReceiver *receiver =
+		(DynamicStreamingTupleDestReceiver *) destReceiver;
+	BsonStoreTupleDestReceiverBase *base = &receiver->base;
+
+	bool isNull = false;
+	Datum result = slot_getattr(slot, 1, &isNull);
+	if (isNull)
+	{
+		/*
+		 * For streaming receivers: NULL data rows are skipped.
+		 * Return true (continue) so the executor keeps sending rows.
+		 */
+		return true;
+	}
+
+	pgbson *documentValue = DatumGetPgBsonPacked(result);
+	uint32_t datumSize = VARSIZE_ANY_EXHDR(documentValue);
+
+	if (datumSize > BSON_MAX_ALLOWED_SIZE)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BSONOBJECTTOOLARGE),
+						errmsg("Size %u is larger than MaxDocumentSize %u",
+							   datumSize, BSON_MAX_ALLOWED_SIZE)));
+	}
+
+	int64_t totalSize = base->currentAccumulatedSize + datumSize +
+						PER_DOC_OVERHEAD;
+
+	MemoryContext oldContext;
+	bool sizeLimitReached = (totalSize >= BSON_MAX_ALLOWED_SIZE &&
+							 base->numRowsFetched > 0);
+
+	/*
+	 * When batch limits are reached, capture the continuation BEFORE writing
+	 * the current tuple. This means the continuation points to a tuple that
+	 * was fetched but NOT emitted. On resume, SkipWithUserContinuation uses
+	 * returnOnEquality=true so that the exact-match tuple is re-yielded
+	 * instead of skipped.
+	 */
+	if (sizeLimitReached ||
+		base->numRowsFetched >= (uint32_t) base->batchSize)
+	{
+		oldContext = MemoryContextSwitchTo(base->writerContext);
+		receiver->continuationDocument = GetContinuationFromCustomScan(
+			receiver->queryCustomScan);
+		MemoryContextSwitchTo(oldContext);
+		receiver->terminationReason = sizeLimitReached ?
+									  TerminationReason_BatchSizeLimit :
+									  TerminationReason_BatchItemLimit;
+		return false;
+	}
+
+	oldContext = MemoryContextSwitchTo(base->writerContext);
+	PgbsonArrayWriterWriteDocument(base->writer, documentValue);
+	MemoryContextSwitchTo(oldContext);
+
+	base->numRowsFetched++;
+	base->currentAccumulatedSize += (datumSize + PER_DOC_OVERHEAD);
+	return true;
+}
+
+
+static void
+DynamicStreamingDestReceiverShutdown(DestReceiver *destReceiver)
+{
+	/* Nothing to do for dynamic streaming receivers. */
+}
+
+
+static void
+DynamicStreamingDestReceiverDestroy(DestReceiver *destReceiver)
 {
 	/* nothing to do */
 }
@@ -1141,6 +1357,31 @@ CreateStreamingTupleDestReceiver(pgbson_array_writer *arrayWriter,
 }
 
 
+static DynamicStreamingTupleDestReceiver *
+CreateDynamicStreamingTupleDestReceiver(pgbson_array_writer *arrayWriter,
+										MemoryContext writerContext,
+										int32_t batchSize,
+										uint32_t accumulatedSize)
+{
+	DynamicStreamingTupleDestReceiver *receiver =
+		(DynamicStreamingTupleDestReceiver *) palloc0(
+			sizeof(DynamicStreamingTupleDestReceiver));
+
+	receiver->base.pub.rStartup = DynamicStreamingDestReceiverStartup;
+	receiver->base.pub.receiveSlot = DynamicStreamingDestReceiverReceive;
+	receiver->base.pub.rShutdown = DynamicStreamingDestReceiverShutdown;
+	receiver->base.pub.rDestroy = DynamicStreamingDestReceiverDestroy;
+	receiver->base.currentAccumulatedSize = accumulatedSize;
+	receiver->base.writerContext = writerContext;
+	receiver->base.batchSize = batchSize;
+	receiver->base.writer = arrayWriter;
+	receiver->continuationDocument = NULL;
+	receiver->terminationReason = TerminationReason_CursorCompletion;
+
+	return receiver;
+}
+
+
 static PersistentTupleDestReceiver *
 CreatePersistentTupleDestReceiver(pgbson_array_writer *arrayWriter,
 								  MemoryContext writerContext,
@@ -1188,7 +1429,8 @@ CreatePersistentTupleDestReceiver(pgbson_array_writer *arrayWriter,
 static void
 DrainStatementViaExecutor(PlannedStmt *queryPlan, ParamListInfo paramList, const
 						  char *sourceText,
-						  DestReceiver *destReceiver, MemoryContext currentContext)
+						  DestReceiver *destReceiver, MemoryContext currentContext,
+						  UpdateCustomScanState updateFunc)
 {
 	ScanDirection scanDirection = ForwardScanDirection;
 	QueryEnvironment *queryEnv = create_queryEnv();
@@ -1206,6 +1448,11 @@ DrainStatementViaExecutor(PlannedStmt *queryPlan, ParamListInfo paramList, const
 										   queryEnv, 0);
 
 	ExecutorStart(queryDesc, eflags);
+	if (updateFunc)
+	{
+		updateFunc(queryDesc->planstate, destReceiver);
+	}
+
 	ExecutorRun_Compat(queryDesc, scanDirection, 0L, true);
 	ExecutorFinish(queryDesc);
 	ExecutorEnd(queryDesc);

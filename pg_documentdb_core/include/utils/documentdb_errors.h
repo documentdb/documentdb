@@ -1209,4 +1209,6 @@ typedef int DocumentdbErrorEreportCode;
 #define ERRCODE_DOCUMENTDB_CANNOTINDEXPARALLELARRAYS \
 	MAKE_SQLSTATE('M', '0', '0', 'F', 'D')
 
+#define ERRCODE_DOCUMENTDB_QUERYPLANKILLED MAKE_SQLSTATE('M', '0', '0', 'F', 'E')
+
 #endif

@@ -50,6 +50,14 @@ void CreateAndDrainPointReadQuery(const char *cursorName, Query *query,
 
 QueryCursorPlanResult * PlanForcedPersistentQuery(Query *query, bool isHoldCursor);
 
+
+QueryCursorPlanResult * PlanDynamicQueryAndDetermineCursorType(Query *query,
+															   bool *isDynamicStreamable);
+pgbson * DrainDynamicStreamingCursor(QueryCursorPlanResult *planResult,
+									 int batchSize, pgbson *inputContinuation,
+									 pgbson_array_writer *arrayWriter,
+									 uint32_t accumulatedSize);
+
 TupleDesc ConstructCursorResultTupleDesc(AttrNumber maxAttrNum);
 
 Datum PostProcessCursorPage(pgbson_writer *cursorDoc,

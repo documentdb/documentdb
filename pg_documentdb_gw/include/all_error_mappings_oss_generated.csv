@@ -51,6 +51,8 @@ DurationOverflow,M000X,159
 ViewDepthLimitExceeded,M000Y,165
 CommandNotSupportedOnView,M000Z,166
 OptionNotSupportedOnView,M0010,167
+CannotIndexParallelArrays,M00FD,171
+QueryPlanKilled,M00FE,176
 AmbiguousIndexKeyPattern,M0011,181
 ClientMetadataCannotBeMutated,M00F3,186
 InvalidIndexSpecificationOption,M0012,197

@@ -29,4 +29,8 @@ Query * ReplaceCursorParamValues(Query *query, ParamListInfo boundParams);
 void ValidateCursorCustomScanPlan(Plan *plan);
 
 PathTarget * BuildBaseRelPathTarget(Relation tableRel, Index relIdIndex);
+
+/* Dynamic scan methods */
+bool IsDynamicCustomScanPath(Plan *plan);
+pgbson * GetContinuationFromCustomScan(CustomScanState *scan);
 #endif

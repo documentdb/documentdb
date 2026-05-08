@@ -51,12 +51,12 @@ SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
 -- Scenario 1: Simple find with no filter (streamable)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll" }');
-                                     QUERY PLAN                                     
-------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiCursorScan) on documentdb_data.documents_2601 collection
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan)
    Output: document
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-         Output: document
+         Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
 (5 rows)
 
@@ -75,12 +75,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 -- Scenario 2: Find with equality filter (streamable)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": 1 } }');
-                                     QUERY PLAN                                     
-------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiCursorScan) on documentdb_data.documents_2601 collection
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan)
    Output: document
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-         Output: document
+         Output: shard_key_value, object_id, document
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
 (5 rows)
 
@@ -99,12 +99,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 -- Scenario 3: Find with range filter on indexed field (streamable)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": { "$gt": 1 } } }');
-                                     QUERY PLAN                                     
-------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiCursorScan) on documentdb_data.documents_2601 collection
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan)
    Output: document
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-         Output: document
+         Output: shard_key_value, object_id, document
          Filter: (collection.document @> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (5 rows)
 
@@ -123,12 +123,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 -- Scenario 4: Find with projection (streamable)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "projection": { "a": 1 } }');
-                                                                                                QUERY PLAN                                                                                                
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                             QUERY PLAN                                                                                             
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
-   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
 (5 rows)
 
@@ -147,12 +147,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 -- Scenario 5: Find with filter and projection (streamable)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": 1 }, "projection": { "b": 1 } }');
-                                                                                                              QUERY PLAN                                                                                                               
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                           QUERY PLAN                                                                                                            
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
-   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "b" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "b" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "b" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         Output: shard_key_value, object_id, document
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
 (5 rows)
 
@@ -400,12 +400,12 @@ SELECT documentdb_api.insert_one('dyncurdb', 'lookup_coll', '{ "_id": 2, "x": 2 
 -- Stage: $match (streamable - RequiresPersistentCursorFalse)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": 1 } }], "cursor": {} }');
-                                     QUERY PLAN                                     
-------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiCursorScan) on documentdb_data.documents_2601 collection
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan)
    Output: document
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-         Output: document
+         Output: shard_key_value, object_id, document
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
 (5 rows)
 
@@ -424,12 +424,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Stage: $addFields (streamable - RequiresPersistentCursorFalse)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$addFields": { "c": 1 } }], "cursor": {} }');
-                                                                                        QUERY PLAN                                                                                         
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                     QUERY PLAN                                                                                      
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
-   Output: (documentdb_api_internal.bson_dollar_add_fields(document, '{ "c" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: documentdb_api_internal.bson_dollar_add_fields(document, '{ "c" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_dollar_add_fields(document, '{ "c" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
 (5 rows)
 
@@ -448,12 +448,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Stage: $project (streamable - RequiresPersistentCursorFalse)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$project": { "a": 1 } }], "cursor": {} }');
-                                                                                       QUERY PLAN                                                                                       
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                    QUERY PLAN                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
-   Output: (documentdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: documentdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
 (5 rows)
 
@@ -472,12 +472,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Stage: $set (streamable - RequiresPersistentCursorFalse, same as $addFields)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$set": { "d": "val" } }], "cursor": {} }');
-                                                                                QUERY PLAN                                                                                
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                             QUERY PLAN                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
-   Output: (documentdb_api_internal.bson_dollar_add_fields(document, '{ "d" : "val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: documentdb_api_internal.bson_dollar_add_fields(document, '{ "d" : "val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_dollar_add_fields(document, '{ "d" : "val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
 (5 rows)
 
@@ -496,12 +496,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Stage: $unset (streamable - RequiresPersistentCursorFalse)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$unset": "b" }], "cursor": {} }');
-                                       QUERY PLAN                                        
------------------------------------------------------------------------------------------
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
-   Output: (bson_dollar_project(document, '{ "b" : { "$numberInt" : "0" } }'::bson))
+   Output: bson_dollar_project(document, '{ "b" : { "$numberInt" : "0" } }'::bson)
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-         Output: bson_dollar_project(document, '{ "b" : { "$numberInt" : "0" } }'::bson)
+         Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
 (5 rows)
 
@@ -520,12 +520,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Stage: $replaceRoot (streamable - RequiresPersistentCursorFalse)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$replaceRoot": { "newRoot": { "val": "$a" } } }], "cursor": {} }');
-                                                                                         QUERY PLAN                                                                                          
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                      QUERY PLAN                                                                                       
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
-   Output: (documentdb_api_internal.bson_dollar_replace_root(document, '{ "newRoot" : { "val" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: documentdb_api_internal.bson_dollar_replace_root(document, '{ "newRoot" : { "val" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_dollar_replace_root(document, '{ "newRoot" : { "val" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
 (5 rows)
 
@@ -544,12 +544,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Stage: $replaceWith (streamable - RequiresPersistentCursorFalse)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$replaceWith": { "val": "$a" } }], "cursor": {} }');
-                                                                                         QUERY PLAN                                                                                          
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                      QUERY PLAN                                                                                       
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
-   Output: (documentdb_api_internal.bson_dollar_replace_root(document, '{ "newRoot" : { "val" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: documentdb_api_internal.bson_dollar_replace_root(document, '{ "newRoot" : { "val" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_dollar_replace_root(document, '{ "newRoot" : { "val" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
 (5 rows)
 
@@ -571,14 +571,14 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- that the dynamic cursor path can handle directly.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$limit": 1 }], "cursor": {} }');
-                                        QUERY PLAN                                        
-------------------------------------------------------------------------------------------
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
  Limit
    Output: document
-   ->  Custom Scan (DocumentDBApiCursorScan) on documentdb_data.documents_2601 collection
+   ->  Custom Scan (DocumentDBApiCursorScan)
          Output: document
          ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-               Output: document
+               Output: shard_key_value, object_id, document
                Filter: (collection.shard_key_value = '2601'::bigint)
 (7 rows)
 
@@ -616,12 +616,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Stage: $skip with skip=0 (streamable - RequiresPersistentCursorSkip returns false for skip=0)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$skip": 0 }], "cursor": {} }');
-                                     QUERY PLAN                                     
-------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiCursorScan) on documentdb_data.documents_2601 collection
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan)
    Output: document
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-         Output: document
+         Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
 (5 rows)
 
@@ -900,12 +900,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- cursor path is missing the equivalent DocumentDBApiScan wrapper.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$redact": "$$KEEP" }], "cursor": {} }');
-                                                                                QUERY PLAN                                                                                
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                             QUERY PLAN                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
-   Output: (documentdb_api_internal.bson_dollar_redact(document, '{ }'::bson, '$$KEEP'::text, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: documentdb_api_internal.bson_dollar_redact(document, '{ }'::bson, '$$KEEP'::text, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_dollar_redact(document, '{ }'::bson, '$$KEEP'::text, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
 (5 rows)
 
@@ -1219,12 +1219,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Combined: $match + $addFields (both streamable, pipeline should remain streamable)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": 1 } }, { "$addFields": { "c": "new" } }], "cursor": {} }');
-                                                                                QUERY PLAN                                                                                
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                             QUERY PLAN                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
-   Output: (documentdb_api_internal.bson_dollar_add_fields(document, '{ "c" : "new" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: documentdb_api_internal.bson_dollar_add_fields(document, '{ "c" : "new" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_dollar_add_fields(document, '{ "c" : "new" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         Output: shard_key_value, object_id, document
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
 (5 rows)
 
@@ -1293,12 +1293,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Combined: $project + $unset (both streamable, pipeline should remain streamable)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$project": { "a": 1, "b": 1 } }, { "$unset": "b" }], "cursor": {} }');
-                                                                                                                                     QUERY PLAN                                                                                                                                      
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                  QUERY PLAN                                                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
-   Output: (bson_dollar_project(documentdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "b" : { "$numberInt" : "0" } }'::bson))
+   Output: bson_dollar_project(documentdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "b" : { "$numberInt" : "0" } }'::bson)
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
-         Output: bson_dollar_project(documentdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "b" : { "$numberInt" : "0" } }'::bson)
+         Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
 (5 rows)
 

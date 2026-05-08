@@ -76,4 +76,19 @@
 
 
 IndexOptInfo * GetPrimaryKeyIndexOptCore(RelOptInfo *rel);
+
+
+IndexPath * GetPrimaryKeyContinuationIndexPath(PlannerInfo *root, RelOptInfo *rel,
+											   Datum *primaryKeyDatums, bool
+											   rowCompareIsInclusive);
+IndexPath * AddRowCompareToExistingPrimaryKeyPath(PlannerInfo *root,
+												  RelOptInfo *rel,
+												  IndexPath *existingPath,
+												  Datum *primaryKeyDatums, bool
+												  rowCompareIsInclusive);
+
+TupleTableSlot * SkipWithUserContinuation(ScanState *innerScanState,
+										  ItemPointer userContinuation,
+										  bool returnOnEquality,
+										  bool *shouldContinue);
 #endif

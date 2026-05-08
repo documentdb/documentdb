@@ -553,3 +553,4 @@ Location15948,M00FA,551
 NotARetryableWriteCommand,M00FB,552
 Location51071,M00FC,553
 CannotIndexParallelArrays,M00FD,554
+QueryPlanKilled,M00FE,555

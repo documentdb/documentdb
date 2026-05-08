@@ -1499,7 +1499,8 @@ GenerateAggregationQuery(text *database, pgbson *aggregationSpec, QueryData *que
 			QueryCursorType_Persistent : QueryCursorType_Streamable;
 	}
 
-	if (queryData->cursorKind == QueryCursorType_Streamable &&
+	if ((queryData->cursorKind == QueryCursorType_Streamable ||
+		 queryData->cursorKind == QueryCursorType_Dynamic) &&
 		context.isSingleRowResult && EnableConversionStreamableToSingleBatch &&
 		queryData->batchSize >= 1)
 	{
@@ -2033,7 +2034,8 @@ default_find_case:
 		queryData->cursorKind = QueryCursorType_PointRead;
 	}
 
-	if (queryData->cursorKind == QueryCursorType_Streamable &&
+	if ((queryData->cursorKind == QueryCursorType_Streamable ||
+		 queryData->cursorKind == QueryCursorType_Dynamic) &&
 		context.isSingleRowResult && EnableConversionStreamableToSingleBatch &&
 		queryData->batchSize >= 1)
 	{

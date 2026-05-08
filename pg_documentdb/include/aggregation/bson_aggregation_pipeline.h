@@ -122,8 +122,7 @@ Query * GenerateFindQuery(text *database, pgbson *findSpec, QueryData *queryData
 						  CursorParamKind cursorParamKind, bool setStatementTimeout);
 Query * GenerateGetMoreQuery(text *database, pgbson *getMoreSpec,
 							 pgbson *continuationSpec,
-							 QueryData *queryData, CursorParamKind cursorParamKind, bool
-							 setStatementTimeout);
+							 QueryData *queryData, bool setStatementTimeout);
 Query * BuildAggregationCursorGetMoreQuery(text *database, pgbson *getMoreSpec,
 										   pgbson *continuationSpec);
 Query * GenerateCountQuery(text *database, pgbson *countSpec, bool setStatementTimeout);

@@ -31,6 +31,7 @@
 
 extern bool UseFileBasedPersistedCursors;
 extern bool EnableDelayedHoldPortal;
+extern bool EnableDynamicCursors;
 
 /* --------------------------------------------------------- */
 /* Data types */
@@ -59,7 +60,13 @@ typedef enum CursorKind
 	/*
 	 * The cursor is a tailable cursor.
 	 */
-	CursorKind_Tailable = 3
+	CursorKind_Tailable = 3,
+
+	/*
+	 * The cursor was a dynamic query that was determined to be
+	 * streaming capable.
+	 */
+	CursorKind_DynamicStreaming = 4,
 } CursorKind;
 
 
@@ -130,6 +137,11 @@ typedef struct
 	 * file based persisted cursors.
 	 */
 	bytea *cursorFileState;
+
+	/*
+	 * cursor state for dynamic streaming cursors
+	 */
+	pgbson *dynamicCursorState;
 } QueryGetMoreInfo;
 
 /* --------------------------------------------------------- */
@@ -145,6 +157,14 @@ static pgbson * BuildStreamingContinuationDocument(HTAB *cursorMap, pgbson *quer
 												   timeSystemVariables,
 												   int numIterations, bool
 												   isTailableCursor);
+
+static pgbson * BuildDynamicStreamingContinuationDocument(int64_t cursorId, QueryKind
+														  queryKind,
+														  pgbson *querySpec, int
+														  numIterations,
+														  pgbson *continuationDoc,
+														  TimeSystemVariables *
+														  timeSystemVariables);
 
 static pgbson * BuildPersistedContinuationDocument(const char *cursorName, int64_t
 												   cursorId, QueryKind queryKind,
@@ -237,7 +257,8 @@ find_cursor_first_page(text *database, pgbson *findSpec, int64_t cursorId)
 
 	/* Parse the find spec for the purposes of query execution */
 	QueryData queryData = GenerateFirstPageQueryData();
-	CursorParamKind cursorParams = CursorParamKind_Streaming;
+	CursorParamKind cursorParams = EnableDynamicCursors ? CursorParamKind_Dynamic :
+								   CursorParamKind_Streaming;
 	bool setStatementTimeout = true;
 	Query *query = GenerateFindQuery(database, findSpec, &queryData,
 									 cursorParams,
@@ -495,6 +516,80 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 			break;
 		}
 
+		case CursorKind_DynamicStreaming:
+		{
+			Query *query;
+			CursorParamKind cursorParamKind = CursorParamKind_Dynamic;
+
+			/* Some blank query data to pass to the generation. */
+			QueryData queryData = { 0 };
+			queryData.timeSystemVariables =
+				getMoreInfo.queryData.timeSystemVariables;
+			queryData.cursorStateConst = getMoreInfo.dynamicCursorState;
+			switch (getMoreInfo.queryKind)
+			{
+				case QueryKind_Find:
+				{
+					bool setStatementTimeout = false;
+					query = GenerateFindQuery(database,
+											  getMoreInfo.querySpec, &queryData,
+											  cursorParamKind,
+											  setStatementTimeout);
+					break;
+				}
+
+				case QueryKind_Aggregate:
+				{
+					bool setStatementTimeout = false;
+					query = GenerateAggregationQuery(database,
+													 getMoreInfo.querySpec, &queryData,
+													 cursorParamKind,
+													 setStatementTimeout);
+					break;
+				}
+
+				default:
+				{
+					Assert(false);
+					pg_unreachable();
+				}
+			}
+
+			bool isDynamicStreaming = false;
+			QueryCursorPlanResult *planResult = PlanDynamicQueryAndDetermineCursorType(
+				query, &isDynamicStreaming);
+			if (!isDynamicStreaming)
+			{
+				ereport(ERROR, (errmsg(
+									"Query started as a streaming, but became persistent. This is unexpected")));
+			}
+
+			ReportFeatureUsage(FEATURE_CURSOR_TYPE_DYNAMIC_STREAMING);
+			pgbson *sourceDoc = getMoreInfo.dynamicCursorState;
+			pgbson *innerDoc = DrainDynamicStreamingCursor(planResult,
+														   getMoreInfo.queryData.batchSize,
+														   sourceDoc, &arrayWriter,
+														   accumulatedSize);
+
+			if (innerDoc == NULL)
+			{
+				queryFullyDrained = true;
+				continuationDoc = NULL;
+			}
+			else
+			{
+				queryFullyDrained = false;
+				continuationDoc = BuildDynamicStreamingContinuationDocument(
+					getMoreInfo.cursorId,
+					getMoreInfo.queryKind,
+					getMoreInfo.querySpec,
+					1,
+					innerDoc,
+					&getMoreInfo.queryData.timeSystemVariables);
+			}
+			break;
+		}
+
 		case CursorKind_Tailable:
 		{
 			Query *query;
@@ -656,8 +751,7 @@ delete_cursors(ArrayType *cursorArray)
 
 Query *
 GenerateGetMoreQuery(text *database, pgbson *getMoreSpec, pgbson *continuationSpec,
-					 QueryData *queryData, CursorParamKind cursorParamKind, bool
-					 setStatementTimeout)
+					 QueryData *queryData, bool setStatementTimeout)
 {
 	QueryGetMoreInfo getMoreInfo = { 0 };
 	ParseGetMoreSpec(&database, getMoreSpec, continuationSpec, &getMoreInfo,
@@ -666,14 +760,31 @@ GenerateGetMoreQuery(text *database, pgbson *getMoreSpec, pgbson *continuationSp
 	switch (getMoreInfo.cursorKind)
 	{
 		case CursorKind_Streaming:
+		case CursorKind_DynamicStreaming:
 		{
 			Query *query;
+			pgbson *workerSpec;
+			CursorParamKind cursorParamKind;
+			if (getMoreInfo.cursorKind == CursorKind_Streaming)
+			{
+				HTAB *cursorMap = CreateCursorHashSet();
+				BuildContinuationMap(continuationSpec, cursorMap);
+				workerSpec = SerializeContinuationForWorker(cursorMap,
+															getMoreInfo.queryData.
+															batchSize, false);
+				cursorParamKind = CursorParamKind_Streaming;
+			}
+			else
+			{
+				workerSpec = getMoreInfo.dynamicCursorState;
+				cursorParamKind = CursorParamKind_Dynamic;
 
-			HTAB *cursorMap = CreateCursorHashSet();
-			BuildContinuationMap(continuationSpec, cursorMap);
-			pgbson *workerSpec = SerializeContinuationForWorker(cursorMap,
-																getMoreInfo.queryData.
-																batchSize, false);
+				if (workerSpec == NULL)
+				{
+					ereport(ERROR, (errmsg(
+										"Dynamic getMore cursor state has no resume continuation state")));
+				}
+			}
 
 			/* Some blank query data to pass to the generation. */
 			QueryData queryData = { 0 };
@@ -948,6 +1059,58 @@ HandleFirstPageRequest(pgbson *querySpec, int64_t cursorId,
 			break;
 		}
 
+		case QueryCursorType_Dynamic:
+		{
+			/* For dynamic queries, we first need to determine whether the query can be
+			 * served as a streaming query or a persistent query.
+			 * To do this, we first plan the query and get the streaming state.
+			 */
+			bool isDynamicStreaming = false;
+			QueryCursorPlanResult *planResult = PlanDynamicQueryAndDetermineCursorType(
+				query, &isDynamicStreaming);
+
+			if (isDynamicStreaming)
+			{
+				ReportFeatureUsage(FEATURE_CURSOR_TYPE_DYNAMIC_STREAMING);
+				persistConnection = false;
+				pgbson *sourceDoc = PgbsonInitEmpty();
+				pgbson *innerDoc = DrainDynamicStreamingCursor(planResult,
+															   queryData->batchSize,
+															   sourceDoc, &arrayWriter,
+															   accumulatedSize);
+
+				if (innerDoc == NULL)
+				{
+					queryFullyDrained = true;
+					continuationDoc = NULL;
+				}
+				else
+				{
+					numIterations++;
+					queryFullyDrained = false;
+					cursorId = GenerateCursorId(cursorId);
+					continuationDoc = BuildDynamicStreamingContinuationDocument(cursorId,
+																				queryKind,
+																				querySpec,
+																				numIterations,
+																				innerDoc,
+																				&queryData
+																				->
+																				timeSystemVariables);
+				}
+			}
+			else
+			{
+				ReportFeatureUsage(FEATURE_CURSOR_TYPE_DYNAMIC_PERSISTENT);
+				continuationDoc = HandlePersistentCursorCore(&cursorId, planResult,
+															 &queryFullyDrained,
+															 &persistConnection,
+															 queryData, &arrayWriter,
+															 queryKind, accumulatedSize);
+			}
+			break;
+		}
+
 		default:
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
@@ -1003,6 +1166,39 @@ BuildStreamingContinuationDocument(HTAB *cursorMap, pgbson *querySpec, int64_t c
 	{
 		SerializeContinuationsToWriter(&writer, cursorMap);
 	}
+
+	/* In the response add the number of iterations (used in tests) */
+	PgbsonWriterAppendInt32(&writer, "numIters", 8, numIterations);
+
+	/* Add time system variables accordingly */
+	if (timeSystemVariables != NULL && timeSystemVariables->nowValue.value_type !=
+		BSON_TYPE_EOD)
+	{
+		PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
+	}
+
+	return PgbsonWriterGetPgbson(&writer);
+}
+
+
+static pgbson *
+BuildDynamicStreamingContinuationDocument(int64_t cursorId, QueryKind queryKind,
+										  pgbson *querySpec, int numIterations,
+										  pgbson *continuationDoc,
+										  TimeSystemVariables *timeSystemVariables)
+{
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	PgbsonWriterAppendInt64(&writer, "qi", 2, cursorId);
+	PgbsonWriterAppendBool(&writer, "qp", 2, false);
+
+	PgbsonWriterAppendInt32(&writer, "qk", 2, (int) queryKind);
+
+	/* Add the original query spec so that getMore can reuse it */
+	/* For dynamic streaming cursor, save the query with "qd" key. */
+	PgbsonWriterAppendDocument(&writer, "qd", 2, querySpec);
+
+	PgbsonWriterAppendDocument(&writer, "dc", 2, continuationDoc);
 
 	/* In the response add the number of iterations (used in tests) */
 	PgbsonWriterAppendInt32(&writer, "numIters", 8, numIterations);
@@ -1117,6 +1313,17 @@ ParseCursorInputSpec(pgbson *cursorSpec, QueryGetMoreInfo *getMoreInfo)
 						continue;
 					}
 
+					/* Dynamic streaming command */
+					case 'd':
+					{
+						/* This is the query command */
+						Assert(pathKey[2] == '\0');
+						getMoreInfo->querySpec = PgbsonInitFromDocumentBsonValue(
+							bson_iter_value(&cursorSpecIter));
+						getMoreInfo->cursorKind = CursorKind_DynamicStreaming;
+						continue;
+					}
+
 					/* Query tailable */
 					case 't':
 					{
@@ -1173,6 +1380,22 @@ ParseCursorInputSpec(pgbson *cursorSpec, QueryGetMoreInfo *getMoreInfo)
 					/* Continuation persistence - ignored */
 					case 'p':
 					{
+						continue;
+					}
+				}
+
+				continue;
+			}
+
+			case 'd':
+			{
+				switch (pathKey[1])
+				{
+					case 'c':
+					{
+						Assert(pathKey[2] == '\0');
+						getMoreInfo->dynamicCursorState = PgbsonInitFromDocumentBsonValue(
+							bson_iter_value(&cursorSpecIter));
 						continue;
 					}
 				}
