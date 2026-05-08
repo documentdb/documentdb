@@ -449,6 +449,11 @@ bool EnableOnlyCollectionCacheInvalidateOnCollectionChanges =
 bool EnableStreamingCursorDrainViaDestReceiver =
 	DEFAULT_ENABLE_STREAMING_CURSOR_DRAIN_VIA_DESTRECEIVER;
 
+/* Added in v112, Pending stabilization, enable in v113 */
+#define DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION false
+bool EnableNewNamespaceValidation =
+	DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION;
+
 /*
  * SECTION: Changestream feature flags
  */
@@ -1186,5 +1191,13 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable fix for duplicate fields in addToSet."),
 		NULL, &EnableDuplicateFieldFix,
 		DEFAULT_ENABLE_DUPLICATE_FIELD_FIX,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableNewNamespaceValidation", newGucPrefix),
+		gettext_noop(
+			"Whether to enable new namespace validation."),
+		NULL, &EnableNewNamespaceValidation,
+		DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }

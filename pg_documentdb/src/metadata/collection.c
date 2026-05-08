@@ -109,6 +109,7 @@ extern bool ForceLocalExecutionShardQueries;
 extern bool EnableSchemaValidation;
 extern int MaxSchemaValidatorSize;
 extern bool EnableOnlyCollectionCacheInvalidateOnCollectionChanges;
+extern bool EnableNewNamespaceValidation;
 
 /* user-defined functions */
 PG_FUNCTION_INFO_V1(command_collection_table);
@@ -140,6 +141,7 @@ static void UpdateCollectionOptions(MongoCollection *collection, const
 									pgbson *updateSpec);
 static void RemoveCollectionOptions(MongoCollection *collection, const
 									pgbson *removeSpec);
+static void ValidateSystemNamespace(const char *databaseName, const char *collectionName);
 
 
 /*
@@ -1334,12 +1336,12 @@ void
 ValidateCollectionNameForValidSystemNamespace(StringView *collectionView,
 											  Datum databaseNameDatum)
 {
+	char *collectionName = CreateStringFromStringView(collectionView);
 	if (StringViewStartsWithStringView(collectionView, &SystemPrefix))
 	{
 		bool found = false;
 		for (int i = 0; i < ValidSystemCollectionNamesLength; i++)
 		{
-			char *collectionName = CreateStringFromStringView(collectionView);
 			if (strcmp(collectionName, ValidSystemCollectionNames[i]) == 0)
 			{
 				found = true;
@@ -1359,6 +1361,50 @@ ValidateCollectionNameForValidSystemNamespace(StringView *collectionView,
 							errmsg("System namespace provided is invalid: %.*s.%.*s",
 								   databaseView.length, databaseView.string,
 								   collectionView->length, collectionView->string)));
+		}
+	}
+
+	if (EnableNewNamespaceValidation)
+	{
+		ValidateSystemNamespace(text_to_cstring(DatumGetTextP(databaseNameDatum)),
+								collectionName);
+	}
+}
+
+
+static int
+CompareStringPointers(const void *a, const void *b)
+{
+	const char *key = *(const char **) a;
+	const char *elem = *(const char **) b;
+	return strcmp(key, elem);
+}
+
+
+/*
+ * this function restricts the usage of certain namespaces that are reserved for internal use.
+ * For example, we reserve the 'config' database for internal use and disallow users from creating collections with certain names in that database.
+ * TODO : add restrictions for 'admin' and 'local' database
+ */
+static void
+ValidateSystemNamespace(const char *databaseName, const char *collectionName)
+{
+	/* restrict limited collection in 'config' db (sorted for bsearch) */
+	const char *limitedConfigCollections[] = {
+		"_shards", "chunks", "collections", "databases", "settings", "shards", "version"
+	};
+	const int limitedConfigCollectionsLength = sizeof(limitedConfigCollections) /
+											   sizeof(char *);
+	if (strcmp(databaseName, "config") == 0)
+	{
+		if (bsearch(&collectionName, limitedConfigCollections,
+					limitedConfigCollectionsLength, sizeof(const char *),
+					CompareStringPointers) != NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ILLEGALOPERATION),
+							errmsg(
+								"The namespace %s.%s is reserved and cannot be used",
+								databaseName, collectionName)));
 		}
 	}
 }

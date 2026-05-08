@@ -26,6 +26,8 @@
 #include "commands/parse_error.h"
 #include "commands/rename_collection.h"
 
+extern bool EnableNewNamespaceValidation;
+
 static void DropMongoCollection(char *, char *);
 static void UpdateMongoCollectionName(char *, char *, char *);
 
@@ -138,6 +140,12 @@ ExecuteRenameCollection(char *databaseName, char *sourceCollectionName,
 	Datum database_datum = CStringGetTextDatum(databaseName);
 	Datum collection_datum = CStringGetTextDatum(sourceCollectionName);
 	Datum new_collection_datum = CStringGetTextDatum(targetCollectionName);
+
+	if (EnableNewNamespaceValidation)
+	{
+		StringView collectionView = CreateStringViewFromString(sourceCollectionName);
+		ValidateCollectionNameForValidSystemNamespace(&collectionView, database_datum);
+	}
 
 	/*
 	 * Check if the collection to be updated exists. if not, throw an error.

@@ -32,6 +32,8 @@
 
 #include "api_hooks.h"
 
+extern bool EnableNewNamespaceValidation;
+
 static char * ConstructDropCommandCstr(char *databaseName, char *collectionName,
 									   pgbson *writeConcern, char *uuid, bool
 									   trackChanges);
@@ -55,6 +57,15 @@ command_drop_collection(PG_FUNCTION_ARGS)
 	Datum databaseNameDatum = PG_GETARG_DATUM(0);
 	Datum collectionNameDatum = PG_GETARG_DATUM(1);
 
+	char *databaseName = TextDatumGetCString(databaseNameDatum);
+	char *collectionName = TextDatumGetCString(collectionNameDatum);
+
+	if (EnableNewNamespaceValidation)
+	{
+		StringView collectionView = CreateStringViewFromString(collectionName);
+		ValidateCollectionNameForValidSystemNamespace(&collectionView, databaseNameDatum);
+	}
+
 	MongoCollection *collection =
 		GetMongoCollectionOrViewByNameDatum(databaseNameDatum,
 											collectionNameDatum,
@@ -66,8 +77,6 @@ command_drop_collection(PG_FUNCTION_ARGS)
 		PG_RETURN_BOOL(false);
 	}
 
-	char *databaseName = TextDatumGetCString(databaseNameDatum);
-	char *collectionName = TextDatumGetCString(collectionNameDatum);
 	if (strncmp(collectionName, "system.", 7) == 0 &&
 		strcmp(collectionName, "system.dbSentinel") != 0)
 	{

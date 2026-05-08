@@ -36,4 +36,5 @@ test: commands_create_role
 test: commands_roles_info
 test: commands_drop_role
 test: commands_killop
+test: commands_admin_config_db_validation
 test: bson_mem_vtable_palloc_test collection_cache_validity_test
