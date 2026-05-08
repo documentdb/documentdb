@@ -40,6 +40,7 @@ extern bool RumEnableNewBulkDelete;
 extern bool RumVacuumSkipPrunePostingTreePages;
 extern bool RumTraversePageOnlyOnBackTrack;
 extern bool RumSkipGlobalVisibilityCheckOnPrune;
+extern bool RumEnableOverwriteEntryTupleOnVacuum;
 
 typedef struct
 {
@@ -104,6 +105,7 @@ IsCurrentVacuumCycleId(RumVacuumState *gvs, Page page)
  * if it's needed. In case of *cleaned!=NULL caller is responsible to
  * have allocated enough space. *cleaned and items may point to the same
  * memory address.
+ * Returns the number of alive items.
  */
 static OffsetNumber
 rumVacuumPostingList(RumVacuumState *gvs, OffsetNumber attnum, Pointer src,
@@ -111,7 +113,7 @@ rumVacuumPostingList(RumVacuumState *gvs, OffsetNumber attnum, Pointer src,
 					 Size size, Size *newSize)
 {
 	OffsetNumber i,
-				 j = 0;
+				 nAliveItems = 0;
 	RumItem item;
 	ItemPointerData prevIptr;
 	Pointer dst = NULL,
@@ -147,21 +149,21 @@ rumVacuumPostingList(RumVacuumState *gvs, OffsetNumber attnum, Pointer src,
 		else
 		{
 			gvs->result->num_index_tuples += 1;
-			if (i != j)
+			if (i != nAliveItems)
 			{
 				dst = rumPlaceToDataPageLeaf(dst, attnum, &item,
 											 &prevIptr, &gvs->rumstate);
 			}
-			j++;
+			nAliveItems++;
 			prevIptr = item.iptr;
 		}
 	}
 
-	if (i != j)
+	if (i != nAliveItems)
 	{
 		*newSize = dst - *cleaned;
 	}
-	return j;
+	return nAliveItems;
 }
 
 
@@ -1176,7 +1178,7 @@ rumVacuumEntryPage(RumVacuumState *gvs, Buffer buffer, BlockNumber *roots,
 {
 	Page origpage = BufferGetPage(buffer),
 		 tmppage;
-	OffsetNumber i,
+	OffsetNumber entryOffset,
 				 maxoff = PageGetMaxOffsetNumber(origpage);
 	bool hasEmptyEntries = false;
 	*isEmptyPage = true;
@@ -1184,9 +1186,10 @@ rumVacuumEntryPage(RumVacuumState *gvs, Buffer buffer, BlockNumber *roots,
 
 	*nroot = 0;
 
-	for (i = FirstOffsetNumber; i <= maxoff; i++)
+	for (entryOffset = FirstOffsetNumber; entryOffset <= maxoff; entryOffset++)
 	{
-		IndexTuple itup = (IndexTuple) PageGetItem(tmppage, PageGetItemId(tmppage, i));
+		IndexTuple itup = (IndexTuple) PageGetItem(tmppage, PageGetItemId(tmppage,
+																		  entryOffset));
 
 		if (RumIsPostingTree(itup))
 		{
@@ -1235,23 +1238,51 @@ rumVacuumEntryPage(RumVacuumState *gvs, Buffer buffer, BlockNumber *roots,
 					tmppage = PageGetTempPageCopy(origpage);
 
 					/* set itup pointer to new page */
-					itup = (IndexTuple) PageGetItem(tmppage, PageGetItemId(tmppage, i));
+					itup = (IndexTuple) PageGetItem(tmppage, PageGetItemId(tmppage,
+																		   entryOffset));
 				}
 
 				attnum = rumtuple_get_attrnum(&gvs->rumstate, itup);
 				key = rumtuple_get_key(&gvs->rumstate, itup, &category);
 
-				/* FIXME */
+				Size oldTupleSize = IndexTupleSize(itup);
+
 				itup = RumVacFormTuple(&gvs->rumstate, attnum, key, category,
 									   cleaned, cleanedSize, newN, true);
-				pfree(cleaned);
-				PageIndexTupleDelete(tmppage, i);
+				Size newTupleSize = IndexTupleSize(itup);
 
-				if (PageAddItem(tmppage, (Item) itup, IndexTupleSize(itup), i, false,
-								false) != i)
+				pfree(cleaned);
+
+				if (RumEnableOverwriteEntryTupleOnVacuum && MAXALIGN(newTupleSize) <=
+					MAXALIGN(oldTupleSize))
 				{
-					elog(ERROR, "failed to add item to index page in \"%s\"",
-						 RelationGetRelationName(gvs->index));
+					/* overwrite the existing tuple in place instead of deleting and readding it */
+					if (!PageIndexTupleOverwrite(tmppage, entryOffset, (Item) itup,
+												 newTupleSize))
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_INTERNAL_ERROR),
+								 errmsg(
+									 "failed to overwrite item in index page in \"%s\"",
+									 RelationGetRelationName(gvs->index)),
+								 errdetail("Block number: %u, entry offset: %u",
+										   BufferGetBlockNumber(buffer), entryOffset)));
+					}
+				}
+				else
+				{
+					PageIndexTupleDelete(tmppage, entryOffset);
+
+					if (PageAddItem(tmppage, (Item) itup, newTupleSize,
+									entryOffset, false, false) != entryOffset)
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_INTERNAL_ERROR),
+								 errmsg("failed to add item in index page in \"%s\"",
+										RelationGetRelationName(gvs->index)),
+								 errdetail("Block number: %u, entry offset: %u",
+										   BufferGetBlockNumber(buffer), entryOffset)));
+					}
 				}
 
 				pfree(itup);

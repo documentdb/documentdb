@@ -99,6 +99,11 @@ PGDLLEXPORT bool RumTraversePageOnlyOnBackTrack =
 PGDLLEXPORT bool RumSkipGlobalVisibilityCheckOnPrune =
 	RUM_DEFAULT_SKIP_GLOBAL_VISIBILITY_CHECK_ON_PRUNE;
 
+/* Enabled in v113, remove after v115 */
+#define RUM_DEFAULT_ENABLE_OVERWRITE_ENTRY_TUPLE_ON_VACUUM true
+PGDLLEXPORT bool RumEnableOverwriteEntryTupleOnVacuum =
+	RUM_DEFAULT_ENABLE_OVERWRITE_ENTRY_TUPLE_ON_VACUUM;
+
 /* rumget.c */
 #define RUM_DEFAULT_ENABLE_SUPPORT_DEAD_INDEX_ITEMS false
 PGDLLEXPORT bool RumEnableSupportDeadIndexItems =
@@ -294,6 +299,15 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumSkipGlobalVisibilityCheckOnPrune,
 		RUM_DEFAULT_TRAVERSE_PAGE_ONLY_ON_BACKTRACK,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_overwrite_entry_tuple_on_vacuum", documentDBRumGucPrefix),
+		"Sets whether or not to overwrite entry tuples during vacuum, as opposed to deleting and readding them",
+		NULL,
+		&RumEnableOverwriteEntryTupleOnVacuum,
+		RUM_DEFAULT_ENABLE_OVERWRITE_ENTRY_TUPLE_ON_VACUUM,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 	DefineCustomBoolVariable(
