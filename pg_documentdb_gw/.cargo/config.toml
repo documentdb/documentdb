@@ -1,2 +1,19 @@
+# +avx2 is implied by v3 but kept explicit because scc requires it for its
+# SIMD lookup path (https://docs.rs/scc/latest/scc/#features).
 [target.'cfg(target_arch = "x86_64")']
-rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "force-frame-pointers=yes", "-C", "target_feature=+avx2"]
+rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "target_feature=+avx2"]
+
+# Specify a common set of rustflags for all targets.
+[target.'cfg(all())']
+rustflags = [
+  # Disable FPO to get full call stack as the '--call-graph=dwarf' option
+  # is not working well.
+  "-Cforce-frame-pointers=yes",
+
+  # Enable v0 symbols to get better output from `perf` and related tools.
+  "-Csymbol-mangling-version=v0",
+
+  # in order to collect task data from Tokio
+  "--cfg",
+  "tokio_unstable",
+]
