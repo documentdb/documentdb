@@ -1603,6 +1603,9 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 	/* set to default value in case it's unset */
 	indexDef->version = 2;
 
+	/* default textIndexVersion to the only value we actually support */
+	indexDef->textIndexVersion = 2;
+
 	/* Set to 0 to denote sphere index not present */
 	indexDef->sphereIndexVersion = 0;
 
@@ -1768,7 +1771,13 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 		}
 		else if (strcmp(indexDefDocKey, "textIndexVersion") == 0)
 		{
-			/* We only support version 2 (Diacritic sensitive, case insensitive) */
+			/*
+			 * Capture the requested textIndexVersion. We deliberately do NOT
+			 * reject unsupported versions here: createIndexes against an
+			 * existing equivalent text index is treated as a no-op regardless
+			 * of textIndexVersion, so we defer validation until we know we'd
+			 * actually be creating a new index (see CheckForConflictsAndPruneExistingIndexes).
+			 */
 			const bson_value_t *value = bson_iter_value(&indexDefDocIter);
 			if (!BsonValueIsNumber(value))
 			{
@@ -1778,17 +1787,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 									BsonTypeName(value->value_type))));
 			}
 
-			int version = BsonValueAsInt32(value);
-			if (version != 2)
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-								errmsg(
-									"Currently only textIndexVersion 2 is supported, not %d",
-									version),
-								errdetail_log(
-									"Currently only textIndexVersion 2 is supported, not %d",
-									version)));
-			}
+			indexDef->textIndexVersion = BsonValueAsInt32(value);
 		}
 		else if (strcmp(indexDefDocKey, "background") == 0)
 		{
@@ -4242,8 +4241,26 @@ CheckForConflictsAndPruneExistingIndexes(uint64 collectionId, List *indexDefList
 	 */
 	for (int i = 0; i < list_length(prunedIndexDefList); i++)
 	{
-		const IndexSpec latterIndexSpec =
-			MakeIndexSpecForIndexDef(list_nth(prunedIndexDefList, i));
+		IndexDef *latterIndexDef = list_nth(prunedIndexDefList, i);
+		const IndexSpec latterIndexSpec = MakeIndexSpecForIndexDef(latterIndexDef);
+
+		/*
+		 * This index survived pruning, so we are about to actually create it.
+		 * For text indexes, validate the requested textIndexVersion now (we
+		 * deferred this check at parse time so that idempotent createIndexes
+		 * calls referencing an existing equivalent text index succeed
+		 * regardless of textIndexVersion).
+		 */
+		if (IsTextIndex(latterIndexDef) && latterIndexDef->textIndexVersion != 2)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+							errmsg(
+								"Currently only textIndexVersion 2 is supported, not %d",
+								latterIndexDef->textIndexVersion),
+							errdetail_log(
+								"Currently only textIndexVersion 2 is supported, not %d",
+								latterIndexDef->textIndexVersion)));
+		}
 
 		for (int j = 0; j < i; j++)
 		{
