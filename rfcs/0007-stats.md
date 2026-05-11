@@ -211,7 +211,7 @@ Examples:
 - `documentdb_track_connections`
 - `documentdb_track_collections`
 
-Default value: `true` (see Open Questions — whether to default to `true` or `false` is unresolved).
+Default value: chosen by the contributor based on the cost/value of the statistic. As a rule of thumb, default to `true` for low-overhead, broadly useful statistics (so they are discoverable out of the box) and to `false` for statistics whose collection is expensive or whose results are only meaningful in targeted investigations (matching the precedent set by `pg_stat_statements`).
 
 These parameters should be configurable via `postgresql.conf` and/or runtime configuration where supported.
 
@@ -271,7 +271,7 @@ This RFC is purely additive and applies only to **new** statistics. Pre-existing
 When adding a new statistic under this RFC, a contributor should:
 
 1. **Pick a scope name.** Lowercase, singular-or-plural noun matching the category (e.g., `queries`, `connections`). Confirm it does not collide with an existing `documentdb_stat_*` view or with PostgreSQL's `pg_stat_*` namespace.
-2. **Register the GUC.** Add `documentdb.track_<scope>` (default per the Open Questions decision) in the C code that registers extension GUCs, and reference it from the collection path so disabling the flag halts collection.
+2. **Register the GUC.** Add `documentdb.track_<scope>` (default chosen per the rule of thumb in "Configuration Changes") in the C code that registers extension GUCs, and reference it from the collection path so disabling the flag halts collection.
 3. **Add the SQL definitions** under `pg_documentdb/sql/udfs/stats/`:
    - Update `stats--latest.sql` with the view, optional helper(s), and optional reset function.
    - Add a `stats--<from>-<to>.sql` upgrade script for the version bump.
@@ -295,8 +295,7 @@ NA
 
 ### Open Questions
 
-- **Default value of `documentdb_track_<scope>`.** This RFC currently proposes `true` for discoverability, but that conflicts with the "minimal overhead" framing in the Problem section and diverges from `pg_stat_statements`-style extensions that default to off. Decide before moving Draft → Proposed.
-- **Tracking issue and discussion links.** `issue` is currently a `TBD` placeholder; file a tracking issue and update the frontmatter before moving Draft → Proposed.
+NA
 
 ### Implementation Notes
 
