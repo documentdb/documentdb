@@ -1880,8 +1880,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeli
 ERROR:  numeric argument to $sampleRate must be in [0, 1]
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": false } }, { "$limit": 1 }, {"$count": "count"} ], "cursor": {} }');
 ERROR:  The operator $sampleRate requires an argument of numeric data type.
--- turn off using new count aggregates
-set documentdb.enableNewCountAggregates to off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": 1 } }, {"$count": "count"} ], "cursor": {} }');
                 document                
 ---------------------------------------------------------------------
@@ -1900,46 +1898,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
  { "d" : { "$numberInt" : "5" } }
 (1 row)
 
-EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$unwind": "$a.b" }, { "$count": "d" }, { "$addFields": { "e": "$d" } }], "cursor": {} }');
-                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                                                                                                   
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
-   Output: remote_scan.document
-   Task Count: 1
-   Tuple data received from nodes: 19 bytes
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_add_fields(document, '{ "e" : "$d" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM (SELECT documentdb_core.bson_repath_and_build('d'::text, documentdb_api_catalog.bsonsum('{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson)) AS document FROM (SELECT agg_stage_1_1.document FROM (SELECT documentdb_api_catalog.bson_dollar_unwind(collection.document, '$a.b'::text) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)) agg_stage_1_1) agg_stage_1) agg_stage_2
-         Tuple data received from node: 19 bytes
-         Node: host=localhost port=58070 dbname=regression
-         ->  Subquery Scan on agg_stage_2 (actual rows=1 loops=1)
-               Output: documentdb_api_internal.bson_dollar_add_fields(agg_stage_2.document, '{ "e" : "$d" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
-               ->  Aggregate (actual rows=1 loops=1)
-                     Output: documentdb_core.bson_repath_and_build('d'::text, documentdb_api_catalog.bsonsum('{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson))
-                     ->  ProjectSet (actual rows=5 loops=1)
-                           Output: documentdb_api_catalog.bson_dollar_unwind(collection.document, '$a.b'::text)
-                           ->  Seq Scan on documentdb_data.documents_4110_411001 collection (actual rows=5 loops=1)
-                                 Output: collection.shard_key_value, collection.object_id, collection.document
-(17 rows)
-
-EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$count": "d" }], "cursor": {} }');
-                                                                                                                                                                        QUERY PLAN                                                                                                                                                                        
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
-   Output: remote_scan.document
-   Task Count: 1
-   Tuple data received from nodes: 12 bytes
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build('d'::text, documentdb_api_catalog.bsonsum('{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson)) AS document FROM (SELECT collection.document FROM documentdb_data.documents_4110_411001 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)) agg_stage_0
-         Tuple data received from node: 12 bytes
-         Node: host=localhost port=58070 dbname=regression
-         ->  Aggregate (actual rows=1 loops=1)
-               Output: documentdb_core.bson_repath_and_build('d'::text, documentdb_api_catalog.bsonsum('{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson))
-               ->  Seq Scan on documentdb_data.documents_4110_411001 collection (actual rows=5 loops=1)
-                     Output: collection.shard_key_value, collection.object_id, collection.document
-(13 rows)
-
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": null, "count": { "$sum": 1 } } }], "cursor": {} }');
                       document                      
 ---------------------------------------------------------------------
@@ -1952,89 +1910,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
  { "_id" : null, "count" : { "$numberInt" : "0" } }
 (1 row)
 
-EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": null, "count": { "$sum": 1 } } }], "cursor": {} }');
-                                                                                                                                                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                           
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
-   Output: remote_scan.document
-   Task Count: 1
-   Tuple data received from nodes: 21 bytes
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_api_internal.bson_expression_get('{ }'::documentdb_core.bson, '{ "" : null }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'count'::text, documentdb_api_catalog.bsonsum(documentdb_api_internal.bson_expression_get('{ }'::documentdb_core.bson, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) GROUP BY (documentdb_api_internal.bson_expression_get('{ }'::documentdb_core.bson, '{ "" : null }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-         Tuple data received from node: 21 bytes
-         Node: host=localhost port=58070 dbname=regression
-         ->  GroupAggregate (actual rows=1 loops=1)
-               Output: documentdb_core.bson_repath_and_build('_id'::text, '{ "" : null }'::documentdb_core.bson, 'count'::text, documentdb_api_catalog.bsonsum('{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson)), '{ "" : null }'::documentdb_core.bson
-               ->  Seq Scan on documentdb_data.documents_4110_411001 collection (actual rows=5 loops=1)
-                     Output: shard_key_value, object_id, document
-(13 rows)
-
-EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": null, "count": { "$sum": {} } } }], "cursor": {} }');
-                                                                                                                                                                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                  
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
-   Output: remote_scan.document
-   Task Count: 1
-   Tuple data received from nodes: 21 bytes
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_api_internal.bson_expression_get('{ }'::documentdb_core.bson, '{ "" : null }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'count'::text, documentdb_api_catalog.bsonsum(documentdb_api_internal.bson_expression_get('{ }'::documentdb_core.bson, '{ "" : {  } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) GROUP BY (documentdb_api_internal.bson_expression_get('{ }'::documentdb_core.bson, '{ "" : null }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-         Tuple data received from node: 21 bytes
-         Node: host=localhost port=58070 dbname=regression
-         ->  GroupAggregate (actual rows=1 loops=1)
-               Output: documentdb_core.bson_repath_and_build('_id'::text, '{ "" : null }'::documentdb_core.bson, 'count'::text, documentdb_api_catalog.bsonsum('{ "" : {  } }'::documentdb_core.bson)), '{ "" : null }'::documentdb_core.bson
-               ->  Seq Scan on documentdb_data.documents_4110_411001 collection (actual rows=5 loops=1)
-                     Output: shard_key_value, object_id, document
-(13 rows)
-
-EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": "$a", "count": { "$sum": 1 } } }], "cursor": {} }');
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive) (actual rows=4 loops=1)
-   Output: remote_scan.document
-   Task Count: 1
-   Tuple data received from nodes: 155 bytes
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'count'::text, documentdb_api_catalog.bsonsum(documentdb_api_internal.bson_expression_get('{ }'::documentdb_core.bson, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)) GROUP BY (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-         Tuple data received from node: 155 bytes
-         Node: host=localhost port=58070 dbname=regression
-         ->  GroupAggregate (actual rows=4 loops=1)
-               Output: documentdb_core.bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'count'::text, documentdb_api_catalog.bsonsum('{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-               Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-               ->  Sort (actual rows=5 loops=1)
-                     Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), document
-                     Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                     Sort Method: quicksort  Memory: 25kB
-                     ->  Seq Scan on documentdb_data.documents_4110_411001 collection (actual rows=5 loops=1)
-                           Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), document
-(18 rows)
-
-EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": "$a", "count": { "$sum": 5 } } }], "cursor": {} }');
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive) (actual rows=4 loops=1)
-   Output: remote_scan.document
-   Task Count: 1
-   Tuple data received from nodes: 155 bytes
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'count'::text, documentdb_api_catalog.bsonsum(documentdb_api_internal.bson_expression_get('{ }'::documentdb_core.bson, '{ "" : { "$numberInt" : "5" } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)) GROUP BY (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-         Tuple data received from node: 155 bytes
-         Node: host=localhost port=58070 dbname=regression
-         ->  GroupAggregate (actual rows=4 loops=1)
-               Output: documentdb_core.bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'count'::text, documentdb_api_catalog.bsonsum('{ "" : { "$numberInt" : "5" } }'::documentdb_core.bson)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-               Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-               ->  Sort (actual rows=5 loops=1)
-                     Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), document
-                     Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                     Sort Method: quicksort  Memory: 25kB
-                     ->  Seq Scan on documentdb_data.documents_4110_411001 collection (actual rows=5 loops=1)
-                           Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), document
-(18 rows)
-
-set documentdb.enableNewCountAggregates to on;
 -- Pipeline directly push to shards if all stages refer to same collection and that is not sharded and is present on the same node as coordinator.
 SELECT documentdb_api.insert_one('pipelineDB','agg_pipeline_optimizations','{ "_id": 1, "a": "RANDOM_A", "b": {"c": ["SAMPLE1", "SAMPLE2"], "d": [[1,2], [3, 4]]} }', NULL);
 NOTICE:  creating collection

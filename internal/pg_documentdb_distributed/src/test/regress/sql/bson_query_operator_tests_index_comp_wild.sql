@@ -7,5 +7,4 @@ SET documentdb.next_collection_index_id TO 1100;
 BEGIN;
 set local enable_seqscan TO off;
 set local documentdb.forceUseIndexIfAvailable to on;
-set local documentdb.enableCompositeWildcardIndex to on;
 \i sql/bson_query_operator_tests_core.sql

@@ -132,7 +132,6 @@ extern bool EnableExplainScanIndexCosts;
 extern bool EnableLogRelationIndexesOrder;
 extern bool EnableIndexOnlyScan;
 extern bool EnableCursorsOnAggregationQueryRewrite;
-extern bool EnableIdIndexCustomCostFunction;
 extern bool EnableCompositeParallelIndexScan;
 extern bool ForceParallelScanIfAvailable;
 extern bool EnableCursorPlanBeforeRestrictionPathUpdate;
@@ -784,7 +783,7 @@ ExtensionGetRelationInfoHookCore(PlannerInfo *root, Oid relationObjectId,
 		foreach(cell, rel->indexlist)
 		{
 			IndexOptInfo *firstIndex = lfirst(cell);
-			if (EnableIdIndexCustomCostFunction && firstIndex->relam == BTREE_AM_OID)
+			if (firstIndex->relam == BTREE_AM_OID)
 			{
 				firstIndex->amcostestimate = documentdb_btcostestimate;
 			}

@@ -167,25 +167,6 @@ DEBUG:  executing "SELECT array_agg((index_spec).index_name ORDER BY index_id) F
 (1 row)
 
 ROLLBACK;
-set documentdb.enableNewCountAggregates to off;
-SELECT document FROM bson_aggregation_count('countdb', '{ "count": "countcoll", "query": {"value": {"$gt": 20}, "value": {"$lt": 150} } }');
-                                document                                
----------------------------------------------------------------------
- { "n" : { "$numberInt" : "129" }, "ok" : { "$numberDouble" : "1.0" } }
-(1 row)
-
-EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_count('countdb', '{ "count": "countcoll", "query": {"value": {"$gt": 20}, "value": {"$lt": 150} } }');
-                                                                                    QUERY PLAN                                                                                    
----------------------------------------------------------------------
- Aggregate (actual rows=1 loops=1)
-   Output: bson_dollar_merge_documents(bson_repath_and_build('n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), '{ "ok" : { "$numberDouble" : "1.0" } }'::bson, false)
-   ->  Seq Scan on documentdb_data.documents_58001_58000002 collection (actual rows=129 loops=1)
-         Output: collection.shard_key_value, collection.object_id, collection.document
-         Filter: ((collection.document @> '{ "value" : { "$numberInt" : "20" } }'::bson) AND (collection.document @< '{ "value" : { "$numberInt" : "150" } }'::bson))
-         Rows Removed by Filter: 71
-(6 rows)
-
-set documentdb.enableNewCountAggregates to on;
 SELECT document FROM bson_aggregation_count('countdb', '{ "count": "countcoll", "query": {"value": {"$gt": 20}, "value": {"$lt": 150} } }');
                                 document                                
 ---------------------------------------------------------------------

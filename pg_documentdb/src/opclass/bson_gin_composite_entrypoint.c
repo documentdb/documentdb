@@ -164,9 +164,7 @@ PG_FUNCTION_INFO_V1(gin_bson_composite_index_term_transform);
 PG_FUNCTION_INFO_V1(gin_bson_composite_rum_config);
 
 extern bool RumHasMultiKeyPaths;
-extern bool EnableCompositeWildcardIndex;
 extern int MaxWildcardIndexKeySize;
-extern bool EnableCompositeWildcardSkipEmptyEntries;
 extern int MaxNonOrderedTermScanThreshold;
 extern bool EnableOrderedCompositeOperatorScan;
 extern bool EnableBinarySearchForOrderedMove;
@@ -414,8 +412,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 							   indexCollation, indexCollationLength);
 	metaInfo->collation = indexCollation;
 
-	metaInfo->wildcardPathIndex = EnableCompositeWildcardIndex ?
-								  options->wildcardPathIndex : -1;
+	metaInfo->wildcardPathIndex = options->wildcardPathIndex;
 
 	/* Default to assuming array paths (we can do better if told otherwise) */
 	bool hasArrayPaths = true;
@@ -2431,10 +2428,7 @@ Datum
 gin_bson_composite_rum_config(PG_FUNCTION_ARGS)
 {
 	RumConfig *config = (RumConfig *) PG_GETARG_POINTER(0);
-	if (EnableCompositeWildcardSkipEmptyEntries)
-	{
-		config->skipGenerateEmptyEntries = true;
-	}
+	config->skipGenerateEmptyEntries = true;
 
 	if (EnablePartialMatchHasRecheck)
 	{
@@ -3066,7 +3060,7 @@ GetCompositeOpClassColumnNumber(const char *currentPath, void *contextOptions,
 		indexPaths, indexPathsLengths, sortOrders);
 	for (int32_t i = 0; i < numPaths; i++)
 	{
-		if (EnableCompositeWildcardIndex && (i == options->wildcardPathIndex))
+		if (i == options->wildcardPathIndex)
 		{
 			if (IsCompositePathWildcardMatch(currentPath, indexPaths[i],
 											 indexPathsLengths[i]))
@@ -3217,7 +3211,7 @@ GetCompositeTraverseOptionWildCard(BsonGinCompositePathOptions *options, BsonInd
 		indexPaths, indexPathLengths, sortOrders);
 	for (int32_t i = 0; i < numPaths; i++)
 	{
-		if (EnableCompositeWildcardIndex && (i == options->wildcardPathIndex))
+		if (i == options->wildcardPathIndex)
 		{
 			if (IsCompositePathWildcardMatch(currentPath, indexPaths[i],
 											 indexPathLengths[i]))
@@ -3282,11 +3276,6 @@ GetCompositePathIndexTraverseOption(BsonIndexStrategy strategy, void *contextOpt
 	}
 	else
 	{
-		if (!EnableCompositeWildcardIndex)
-		{
-			return IndexTraverse_Invalid;
-		}
-
 		return GetCompositeTraverseOptionWildCard(options, strategy, currentPath,
 												  currentPathLength, bsonValue,
 												  compositeIndexCol);
@@ -4224,8 +4213,8 @@ CreateSinglePathOptions(const char *indexPath, int32_t pathIndex, int32_t pathCo
 		GetSinglePathTermCreateMetadata(compositeOptions, (int32_t) pathCount);
 
 	singlePathOptions->base.indexTermTruncateLimit = subMetadata.indexTermSizeLimit;
-	singlePathOptions->isWildcard = EnableCompositeWildcardIndex &&
-									pathIndex == compositeOptions->wildcardPathIndex;
+	singlePathOptions->isWildcard =
+		pathIndex == compositeOptions->wildcardPathIndex;
 	singlePathOptions->useReducedWildcardTerms = singlePathOptions->isWildcard;
 	singlePathOptions->generateNotFoundTerm = true;
 	singlePathOptions->base.wildcardIndexTruncatedPathLimit =
@@ -4500,8 +4489,7 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 	GinEntrySet entrySet[INDEX_MAX_KEYS] = { 0 };
 	bool entryHasMultiKey = false;
 	bool entryHasTruncation = false;
-	bool considerMultiTermAsMultiKey = options->wildcardPathIndex < 0 ||
-									   !EnableCompositeWildcardIndex;
+	bool considerMultiTermAsMultiKey = options->wildcardPathIndex < 0;
 	IndexTermCreateMetadata overallMetadata = GetCompositeIndexTermMetadata(options);
 	uint32_t totalTermCount;
 	uint32_t pathCount;

@@ -10,26 +10,6 @@ $$gin_bson_get_composite_path_generated_terms$$;
 
 SELECT documentdb_api.create_collection('compdb', 'compwildcard');
 
--- Simple failure paths:
-set documentdb.enableCompositeWildcardIndex to off;
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "a.$**": 1 }, "name": "a_1", "enableOrderedIndex": true }]}', TRUE);
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "$**": 1 }, "name": "$**_1", "enableOrderedIndex": true }]}', TRUE);
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "$**": -1 }, "name": "$**_-1", "enableOrderedIndex": true }]}', TRUE);
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "a.$**": -1 }, "name": "a_-1", "enableOrderedIndex": true }]}', TRUE);
-
--- with unique
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "a.$**": 1 }, "name": "a_1", "enableOrderedIndex": true, "unique": true }]}', TRUE);
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "$**": 1 }, "name": "$**_1", "enableOrderedIndex": true, "unique": true }]}', TRUE);
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "$**": -1 }, "name": "$**_-1", "enableOrderedIndex": true, "unique": true }]}', TRUE);
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "a.$**": -1 }, "name": "a_-1", "enableOrderedIndex": true, "unique": true }]}', TRUE);
-
--- with composite
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "a.$**": 1, "b": 1 }, "name": "a_1", "enableOrderedIndex": true }]}', TRUE);
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "a.$**": 1, "b.$**": 1 }, "name": "a_1", "enableOrderedIndex": true }]}', TRUE);
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "$**": 1, "b": 1 }, "name": "a_1", "enableOrderedIndex": true }]}', TRUE);
-SELECT documentdb_api_internal.create_indexes_non_concurrently('compdb', '{ "createIndexes": "compwildcard", "indexes": [ { "key": { "$**": 1, "b.$**": 1 }, "name": "a_1", "enableOrderedIndex": true }]}', TRUE);
-
-set documentdb.enableCompositeWildcardIndex to on;
 set documentdb.enableExtendedExplainPlans to on;
 
 -- now we can create the ones that are valid - invalid cases still fail
