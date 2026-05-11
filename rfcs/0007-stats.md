@@ -3,11 +3,7 @@ rfc: 0007
 title: "Guidance for Onboarding Statistics"
 status: Draft
 owner: "@WentingWu666666"
-issue: NA
-discussion: NA
-version-target: NA
-implementations: NA
-
+issue: "https://github.com/documentdb/documentdb/issues/TBD"
 ---
 
 # RFC-0007: Guidance for Onboarding Statistics
@@ -74,8 +70,8 @@ The goal is to provide a predictable and maintainable pattern that aligns with f
 
 ### API Changes
 
-### Views
-Statistcs will be exposed through views.
+#### Views
+Statistics will be exposed through views.
 
 **View naming pattern**
 ```
@@ -98,7 +94,7 @@ Where `<scope>` describes the category of statistics being exposed. Examples inc
 
 - Columns representing **dimensions** (e.g., name, database, collection, user) should **not** use a suffix.
 
-- `stats_reset` column is required if the view contains cumulative counters. This column indicates the timestamp of the last reset.
+- Metadata columns that carry a timestamp are exempt from the unit-suffix rule. Specifically, `stats_reset` is required if the view contains cumulative counters and indicates the timestamp of the last reset. Other timestamp-typed metadata columns (e.g., `last_updated`, `first_seen`) are likewise exempt.
 
 **Example** (for illustration purposes only, not an actual view):
 ```sql
@@ -125,18 +121,25 @@ All statistical views must be defined in the following location:
 pg_documentdb/sql/stats/stats--<version>.sql
 ```
 
-### Helper Functions
-If a view is backed by one or more helper functions, those functions must follow this naming pattern:
-```
-__API_CATALOG_SCHEMA__.documentdb_stat_get_<scope>
-```
+#### Helper Functions
+If a view is backed by helper functions, those functions must follow this naming pattern:
+
+- Single helper per scope:
+  ```
+  __API_CATALOG_SCHEMA__.documentdb_stat_get_<scope>
+  ```
+- Multiple helpers per scope (when the view is composed from several functions): add an `<aspect>` suffix:
+  ```
+  __API_CATALOG_SCHEMA__.documentdb_stat_get_<scope>_<aspect>
+  ```
+  Examples: `documentdb_stat_get_queries_summary`, `documentdb_stat_get_queries_per_collection`.
 
 By default, helper functions must be executable by all users:
 ```
 GRANT EXECUTE ON FUNCTION __API_CATALOG_SCHEMA__.documentdb_stat_get_<scope>() TO PUBLIC;
 ```
 
-#### Reset functions (for cumulative counters)
+##### Reset functions (for cumulative counters)
 
 If a view contains cumulative counters that may need to be reset, a reset function must be provided.
 
@@ -144,14 +147,25 @@ If a view contains cumulative counters that may need to be reset, a reset functi
 ```
 __API_CATALOG_SCHEMA__.documentdb_stat_reset_<scope>
 ```
-By default, this function is restricted to superusers:
+
+**Signatures**
+- The canonical signature is the no-argument form, which resets all counters for the scope:
+  ```
+  __API_CATALOG_SCHEMA__.documentdb_stat_reset_<scope>()
+  ```
+- Targeted variants may be added with parameters that match the dimension columns of the view, for example:
+  ```
+  __API_CATALOG_SCHEMA__.documentdb_stat_reset_<scope>(database text, collection text)
+  ```
+
+By default, EXECUTE on reset functions is revoked from `PUBLIC`:
 ```
-REVOKE EXECUTE ON FUNCTION __API_CATALOG_SCHEMA__.documentdb_stat_reset_<scope>() FROM public;
+REVOKE EXECUTE ON FUNCTION __API_CATALOG_SCHEMA__.documentdb_stat_reset_<scope>() FROM PUBLIC;
 ```
-Other roles may be explicitly granted permission as needed.
+Superusers can always execute these functions (they bypass ACLs); any non-superuser role that needs reset capability must be explicitly granted EXECUTE.
 
 
-### Configuration Changes
+#### Configuration Changes
 
 Since collecting statistics introduces overhead, each category of statistical data should be gated behind a configuration flag.
 
@@ -166,16 +180,16 @@ Examples:
 - `documentdb_track_connections`
 - `documentdb_track_collections`
 
-Default value: `true`
+Default value: `true` (see Open Questions — whether to default to `true` or `false` is unresolved).
 
 These parameters should be configurable via `postgresql.conf` and/or runtime configuration where supported.
 
 When the flag is set to `false`:
-- Statistics collection should stop
-- The corresponding view should return empty or zeroed data (not fail)
+- Statistics collection should stop.
+- The corresponding view should return an **empty result set** (not fail, and not return zeroed rows). An empty set is unambiguous in dashboards and alerting; zeroed rows can be misread as "the system is healthy."
 
 
-### Documentation Updates
+#### Documentation Updates
 
 The following documentation must be updated when new statistics are added:
 
@@ -198,6 +212,29 @@ Each new statistic must include:
 - Related configuration parameters
 - Reset functions (if applicable)
 
+### Database Schema Changes
+
+This RFC does not introduce data tables. It does add objects to the extension's catalog schema (`__API_CATALOG_SCHEMA__`):
+
+- One view per scope (`documentdb_stat_<scope>`).
+- Optional helper functions (`documentdb_stat_get_<scope>[_<aspect>]`).
+- Optional reset functions (`documentdb_stat_reset_<scope>`).
+
+Each new statistic is delivered as part of a versioned extension upgrade script under `pg_documentdb/sql/stats/stats--<version>.sql`.
+
+### Testing Strategy
+
+Each new statistic added under this RFC should include:
+
+- Unit/regression tests that verify the view's columns, types, and naming conventions.
+- A test that exercises the `documentdb_track_<scope>` flag in both states and asserts the view returns an empty set when the flag is `false`.
+- For views with cumulative counters: a test that exercises the reset function and asserts `stats_reset` advances.
+- A permissions test that asserts `SELECT` on the view succeeds for an unprivileged role and `EXECUTE` on the reset function fails for an unprivileged role.
+
+### Migration Path
+
+This RFC is purely additive and applies only to **new** statistics. Pre-existing statistics in DocumentDB are not retroactively required to follow these conventions; they may be migrated opportunistically when touched. No user-visible upgrade or rollback steps are required by this RFC itself.
+
 ---
 
 ## Implementation Tracking
@@ -210,7 +247,8 @@ NA
 
 ### Open Questions
 
-NA
+- **Default value of `documentdb_track_<scope>`.** This RFC currently proposes `true` for discoverability, but that conflicts with the "minimal overhead" framing in the Problem section and diverges from `pg_stat_statements`-style extensions that default to off. Decide before moving Draft → Proposed.
+- **Tracking issue and discussion links.** `issue` is currently a `TBD` placeholder; file a tracking issue and update the frontmatter before moving Draft → Proposed.
 
 ### Implementation Notes
 
