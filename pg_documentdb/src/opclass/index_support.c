@@ -368,9 +368,7 @@ static const ForceIndexSupportFuncs ForceIndexOperatorSupport[] =
 extern bool EnableVectorForceIndexPushdown;
 extern bool EnableGeonearForceIndexPushdown;
 extern bool EnableExprLookupIndexPushdown;
-extern bool EnableUnifyPfeOnIndexInfo;
 extern bool ForceIndexOnlyScanIfAvailable;
-extern bool EnableIdIndexCustomCostFunction;
 extern bool EnableIndexOnlyScan;
 extern bool EnableIndexOnlyScanOnCostFunction;
 extern bool EnableOrderByIdOnCostFunction;
@@ -2432,8 +2430,7 @@ ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 
 		if (IsBtreePrimaryKeyIndex(indexPath->indexinfo))
 		{
-			if (hasDocumentVar || (EnableIdIndexCustomCostFunction &&
-								   !ForceIndexOnlyScanIfAvailable))
+			if (hasDocumentVar || !ForceIndexOnlyScanIfAvailable)
 			{
 				continue;
 			}
@@ -2608,14 +2605,14 @@ documentdb_btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 {
 	bool convertedToIndexOnlyScan = false;
 
-	if (EnableOrderByIdOnCostFunction && EnableIdIndexCustomCostFunction &&
+	if (EnableOrderByIdOnCostFunction &&
 		list_length(root->query_pathkeys) == 1)
 	{
 		ConsiderBtreeOrderByPushdown(root, path);
 	}
 
 	bool hasDocumentVar = false;
-	if (EnableIdIndexCustomCostFunction && enable_indexonlyscan && EnableIndexOnlyScan &&
+	if (enable_indexonlyscan && EnableIndexOnlyScan &&
 		IsQueryEligibleForIndexOnlyScan(root, path->path.parent->relid,
 										&hasDocumentVar) &&
 		!hasDocumentVar)
@@ -3615,8 +3612,7 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 		}
 	}
 
-	if (EnableUnifyPfeOnIndexInfo &&
-		indexPath->indexinfo->indpred != NIL)
+	if (indexPath->indexinfo->indpred != NIL)
 	{
 		if (ProcessCompositePartialFilter(
 				indexPath->indexinfo->indpred,
@@ -4805,42 +4801,39 @@ OptimizeIndexPathForFilters(IndexPath *indexPath,
 		ReplaceExtensionFunctionOperatorsInRestrictionPaths(
 			indexPath->indexinfo->indrestrictinfo, context);
 
-	if (EnableUnifyPfeOnIndexInfo)
+	/*
+	 * If there's a consideration of a bitmap path,
+	 * then the PFE can get added as a bitmap qual.
+	 * In order to ensure we don't get extra runtime filters,
+	 * ensure the structure of the filters on the indexOptInfo
+	 * is the same as the one in the index quals.
+	 * Do this on a copy of the indexoptinfo to not modify the
+	 * one on the base index (in case there's other index paths etc
+	 * depending on it).
+	 */
+	IndexOptInfo *copiedInfo = palloc(sizeof(IndexOptInfo));
+	memcpy(copiedInfo, indexPath->indexinfo, sizeof(IndexOptInfo));
+	List *processedPred = NIL;
+	ListCell *singleCell;
+	foreach(singleCell, copiedInfo->indpred)
 	{
-		/*
-		 * If there's a consideration of a bitmap path,
-		 * then the PFE can get added as a bitmap qual.
-		 * In order to ensure we don't get extra runtime filters,
-		 * ensure the structure of the filters on the indexOptInfo
-		 * is the same as the one in the index quals.
-		 * Do this on a copy of the indexoptinfo to not modify the
-		 * one on the base index (in case there's other index paths etc
-		 * depending on it).
-		 */
-		IndexOptInfo *copiedInfo = palloc(sizeof(IndexOptInfo));
-		memcpy(copiedInfo, indexPath->indexinfo, sizeof(IndexOptInfo));
-		List *processedPred = NIL;
-		ListCell *singleCell;
-		foreach(singleCell, copiedInfo->indpred)
+		Expr *predExpr = (Expr *) lfirst(singleCell);
+		if (!IsA(predExpr, OpExpr))
 		{
-			Expr *predExpr = (Expr *) lfirst(singleCell);
-			if (!IsA(predExpr, OpExpr))
-			{
-				predExpr = copyObject(predExpr);
-			}
-
-			bool trimClauses = true;
-			Expr *expr = ProcessRestrictionInfoAndRewriteFuncExpr(predExpr,
-																  context, trimClauses);
-			if (expr != NULL)
-			{
-				processedPred = lappend(processedPred, expr);
-			}
+			predExpr = copyObject(predExpr);
 		}
 
-		copiedInfo->indpred = processedPred;
-		indexPath->indexinfo = copiedInfo;
+		bool trimClauses = true;
+		Expr *expr = ProcessRestrictionInfoAndRewriteFuncExpr(predExpr,
+															  context, trimClauses);
+		if (expr != NULL)
+		{
+			processedPred = lappend(processedPred, expr);
+		}
 	}
+
+	copiedInfo->indpred = processedPred;
+	indexPath->indexinfo = copiedInfo;
 
 	return indexPath;
 }

@@ -130,6 +130,12 @@ bool SkipIndexCleanupOnReindex = DEFAULT_SKIP_INDEX_CLEANUP_ON_REINDEX;
 #define DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT false
 bool EnableIndexOnlyScanForFindProject = DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT;
 
+#define DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS true
+bool EnableExplainScanIndexCosts = DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS;
+
+#define DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME true
+bool EnableExplainScanNamespaceName = DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME;
+
 void
 InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 {
@@ -449,4 +455,20 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, &EnableIndexOnlyScanForFindProject,
 		DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT,
 		PGC_USERSET, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableExplainScanIndexCosts", newGucPrefix),
+		gettext_noop(
+			"Whether to include index costs in explain output for index scans. requires enableextendedexplainplans"),
+		NULL, &EnableExplainScanIndexCosts,
+		DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableExplainScanNamespaceName", newGucPrefix),
+		gettext_noop(
+			"Whether to include namespace name in explain output for index scans. requires enableextendedexplainplans"),
+		NULL, &EnableExplainScanNamespaceName,
+		DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME,
+		PGC_USERSET, 0, NULL, NULL, NULL);
 }

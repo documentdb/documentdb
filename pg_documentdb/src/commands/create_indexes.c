@@ -165,7 +165,6 @@ extern int MaxWildcardIndexKeySize;
 extern bool DefaultEnableLargeUniqueIndexKeys;
 extern bool ForceWildcardReducedTerm;
 extern bool EnableCompositeUniqueHash;
-extern bool EnableCompositeWildcardIndex;
 extern bool CreateTTLIndexAsCompositeByDefault;
 extern bool EnableCompositeReducedCorrelatedTerms;
 extern bool EnableUniqueCompositeReducedCorrelatedTerms;
@@ -2259,28 +2258,15 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 
 		if (indexDef->key->isWildcard)
 		{
-			if (EnableCompositeWildcardIndex)
-			{
-				/* We don't yet support wildcard projection */
-				if (indexDef->wildcardProjectionTree)
-				{
-					indexDef->key->canSupportCompositeTerm = false;
-					if (shouldError)
-					{
-						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
-										errmsg(
-											"enableOrderedIndex is not supported with wildcard indexes with wildcardProjectionTree.")));
-					}
-				}
-			}
-			else
+			/* We don't yet support wildcard projection */
+			if (indexDef->wildcardProjectionTree)
 			{
 				indexDef->key->canSupportCompositeTerm = false;
 				if (shouldError)
 				{
 					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 									errmsg(
-										"enableOrderedIndex is not supported with wildcard indexes.")));
+										"enableOrderedIndex is not supported with wildcard indexes with wildcardProjectionTree.")));
 				}
 			}
 		}
@@ -2298,18 +2284,6 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 									errmsg(
 										"enableOrderedIndex is only supported with regular indexes.")));
-				}
-			}
-
-			if (keyPath->isWildcard && !EnableCompositeWildcardIndex)
-			{
-				indexDef->key->canSupportCompositeTerm = false;
-
-				if (shouldError)
-				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
-									errmsg(
-										"enableOrderedIndex is not supported with wildcard indexes.")));
 				}
 			}
 		}
@@ -2930,13 +2904,6 @@ ParseIndexDefKeyDocument(const bson_iter_t *indexDefDocIter)
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 								errmsg(
 									"Index key pattern values are not allowed to be zero.")));
-			}
-
-			if (isWildcardKeyPath && (doubleValue < 0) && !EnableCompositeWildcardIndex)
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
-								errmsg(
-									"A numeric value in a $** index key pattern must be positive.")));
 			}
 
 			sortOrder = doubleValue < 0 ? -1 : 1;
@@ -6030,14 +5997,6 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 				{
 					case MongoIndexKind_Regular:
 					{
-						if (indexKeyPath->isWildcard && !EnableCompositeWildcardIndex)
-						{
-							ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-												"unexpectedly got wildcard path for a "
-												"non-wildcard index or a non-root "
-												"wildcard index")));
-						}
-
 						if (indexKeyPath->sortDirection == 1)
 						{
 							PgbsonArrayWriterWriteUtf8(&arrayWriter, keyPath);
