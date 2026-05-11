@@ -2282,6 +2282,47 @@ UpdateChangeStreamPreAndPostImages(MongoCollection *collection,
 }
 
 
+/*
+ * UpdateEnableUpdateDescription stores or removes the enableUpdateDescription
+ * option in the collection's options column. Unlike changeStreamPreAndPostImages,
+ * this is a plain boolean value (not a nested document).
+ */
+void
+UpdateEnableUpdateDescription(MongoCollection *collection, bool enabled)
+{
+	if (collection == NULL)
+	{
+		return;
+	}
+
+	pgbson_writer optionWriter;
+	PgbsonWriterInit(&optionWriter);
+	if (enabled)
+	{
+		PgbsonWriterAppendBool(&optionWriter,
+							   "enableUpdateDescription",
+							   strlen("enableUpdateDescription"),
+							   enabled);
+	}
+	else
+	{
+		/* Create the bson_dollar_unset spec to remove the option. */
+		PgbsonWriterAppendUtf8(&optionWriter,
+							   "", 0, "enableUpdateDescription");
+	}
+	pgbson *optionBson = PgbsonWriterGetPgbson(&optionWriter);
+
+	if (enabled)
+	{
+		UpdateCollectionOptions(collection, optionBson);
+	}
+	else
+	{
+		RemoveCollectionOptions(collection, optionBson);
+	}
+}
+
+
 static void
 UpdateCollectionOptions(MongoCollection *collection, const pgbson *updateSpec)
 {
@@ -2402,6 +2443,16 @@ CopyCollectionOptions(const pgbson *options, MongoCollection *collection)
 			 * so we can infer that pre and post images are enabled.
 			 */
 			collection->options.changeStreamPreAndPostImagesEnabled = true;
+		}
+		else if (strcmp(key, "enableUpdateDescription") == 0)
+		{
+			/*
+			 * enableUpdateDescription is a plain boolean in the options column.
+			 * Its presence with value true means update descriptions are enabled
+			 * for this collection.
+			 */
+			collection->options.updateDescriptionEnabled =
+				BsonValueAsBool(bson_iter_value(&optionsIter));
 		}
 	}
 }

@@ -335,7 +335,8 @@ static bool SelectUpdateCandidate(MongoCollection *collection, int64
 								  bool getOriginalDocument, bool *hasOnlyObjectIdFilter);
 static void ExtractUpdateCandidateFromSPI(UpdateOneParams *updateOneParams,
 										  UpdateCandidate *updateCandidate,
-										  bool getOriginalDocument);
+										  bool getOriginalDocument,
+										  MongoCollection *collection);
 static bool UpdateDocumentByTID(uint64 collectionId, const char *shardTableName, int64
 								shardKeyHash,
 								ItemPointer tid, pgbson *updatedDocument);
@@ -708,7 +709,7 @@ DoInsertForUpdate(MongoCollection *collection, uint64_t shardKeyHash, pgbson *ob
 {
 	if (hasOnlyObjectIdFilter)
 	{
-		InsertOrReplaceDocument(collection->collectionId, collection->shardTableName,
+		InsertOrReplaceDocument(collection, collection->shardTableName,
 								shardKeyHash, objectId, newDocument, updateSpecValue);
 	}
 	else
@@ -1882,8 +1883,9 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 	int validationLevelArgIndex = -1;
 
 	uint64 preparedQueryKey = 0;
-	const char *additionalArgs = "";
-	if (IsClusterVersionAtleast(DocDB_V0, 111, 0))
+	char *additionalArgs = "";
+	if (IsClusterVersionAtleast(DocDB_V0, 111, 0) &&
+		collection->options.updateDescriptionEnabled)
 	{
 		additionalArgs = ", ctid, tableoid";
 	}
@@ -3603,7 +3605,7 @@ SelectUpdateCandidate(MongoCollection *collection, int64 shardKeyHash,
 	if (foundDocument && updateCandidate != NULL)
 	{
 		ExtractUpdateCandidateFromSPI(updateOneParams, updateCandidate,
-									  getOriginalDocument);
+									  getOriginalDocument, collection);
 	}
 
 	SPI_finish();
@@ -3621,7 +3623,8 @@ SelectUpdateCandidate(MongoCollection *collection, int64 shardKeyHash,
 static void
 ExtractUpdateCandidateFromSPI(UpdateOneParams *updateOneParams,
 							  UpdateCandidate *updateCandidate,
-							  bool getOriginalDocument)
+							  bool getOriginalDocument,
+							  MongoCollection *collection)
 {
 	int rowIndex = 0;
 
@@ -3665,12 +3668,25 @@ ExtractUpdateCandidateFromSPI(UpdateOneParams *updateOneParams,
 
 	/* Do this inside the SPI context so that the memory gets cleaned up once we close the SPI session. */
 	pgbson *originalDoc = DatumGetPgBson(originalDocumentDatum);
-	pgbson *updatedDocument =
-		BsonUpdateDocumentWithSource(originalDoc, updateOneParams->update,
-									 updateOneParams->query,
-									 updateOneParams->arrayFilters,
-									 updateOneParams->variableSpec,
-									 updateCandidate->tid, updateCandidate->tableOid);
+	pgbson *updatedDocument;
+	if (collection->options.updateDescriptionEnabled)
+	{
+		updatedDocument =
+			BsonUpdateDocumentWithSource(originalDoc, updateOneParams->update,
+										 updateOneParams->query,
+										 updateOneParams->arrayFilters,
+										 updateOneParams->variableSpec,
+										 updateCandidate->tid,
+										 updateCandidate->tableOid);
+	}
+	else
+	{
+		updatedDocument =
+			BsonUpdateDocument(originalDoc, updateOneParams->update,
+							   updateOneParams->query,
+							   updateOneParams->arrayFilters,
+							   updateOneParams->variableSpec);
+	}
 
 	if (updatedDocument != NULL)
 	{

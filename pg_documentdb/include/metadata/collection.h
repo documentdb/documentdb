@@ -87,6 +87,9 @@ typedef struct MongoCollectionOptions
 {
 	/* Whether changeStreamPreAndPostImages is enabled for this collection */
 	bool changeStreamPreAndPostImagesEnabled;
+
+	/* Whether updateDescription is enabled for this collection */
+	bool updateDescriptionEnabled;
 } MongoCollectionOptions;
 
 
@@ -270,4 +273,5 @@ bool CheckRelNameValidity(const char *relName, uint64_t *collectionId,
 bool ParseChangeStreamPreAndPostImageOption(const bson_value_t *optionValue,
 											const char *commandPrefix);
 void UpdateChangeStreamPreAndPostImages(MongoCollection *collection, bool enabled);
+void UpdateEnableUpdateDescription(MongoCollection *collection, bool enabled);
 #endif

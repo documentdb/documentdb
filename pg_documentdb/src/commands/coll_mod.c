@@ -89,6 +89,9 @@ typedef struct
 	bool changeStreamPreAndPostImagesEnabled;
 	bson_value_t plannerStatistics;
 
+	/* Whether enableUpdateDescription is enabled */
+	bool enableUpdateDescription;
+
 	/* TODO: Add more options when they are supported e.g.: Validators etc */
 } CollModOptions;
 
@@ -121,6 +124,9 @@ typedef enum CollModSpecFlags
 
 	/* change stream pre and post images option */
 	HAS_CHANGE_STREAM_PRE_AND_POST_IMAGES = 1 << 12,
+
+	/* change stream enable update description option */
+	HAS_ENABLE_UPDATE_DESCRIPTION = 1 << 13,
 
 	/* TODO: More OPTIONS to follow */
 } CollModSpecFlags;
@@ -345,6 +351,20 @@ command_coll_mod(PG_FUNCTION_ARGS)
 			collModOptions.changeStreamPreAndPostImagesEnabled);
 	}
 
+	if (specFlags & HAS_ENABLE_UPDATE_DESCRIPTION)
+	{
+		if (collection->viewDefinition != NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
+							errmsg(
+								"Cannot specify enableUpdateDescription on a view")));
+		}
+
+		UpdateEnableUpdateDescription(
+			collection,
+			collModOptions.enableUpdateDescription);
+	}
+
 	PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
 }
 
@@ -455,6 +475,13 @@ ParseSpecSetCollModOptions(const pgbson *collModSpec,
 														   "collMod.changeStreamPreAndPostImages");
 				specFlags |= HAS_CHANGE_STREAM_PRE_AND_POST_IMAGES;
 			}
+		}
+		else if (strcmp(key, "enableUpdateDescription") == 0)
+		{
+			EnsureTopLevelFieldIsBooleanLike("collMod.enableUpdateDescription",
+											 &iter);
+			collModOptions->enableUpdateDescription = BsonValueAsBool(value);
+			specFlags |= HAS_ENABLE_UPDATE_DESCRIPTION;
 		}
 		else if (strcmp(key, "$db") == 0)
 		{

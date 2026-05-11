@@ -1345,7 +1345,7 @@ InsertDocument(uint64 collectionId, const char *shardTableName,
  * with the _id index, reapplies the update on the conflicting document (Similar to upsert behavior)
  */
 bool
-InsertOrReplaceDocument(uint64 collectionId, const char *shardTableName, int64
+InsertOrReplaceDocument(MongoCollection *collection, const char *shardTableName, int64
 						shardKeyValue,
 						pgbson *objectId, pgbson *document,
 						const bson_value_t *updateSpecValue)
@@ -1370,7 +1370,7 @@ InsertOrReplaceDocument(uint64 collectionId, const char *shardTableName, int64
 	}
 	else
 	{
-		appendStringInfo(&query, "documents_" UINT64_FORMAT, collectionId);
+		appendStringInfo(&query, "documents_" UINT64_FORMAT, collection->collectionId);
 	}
 
 	appendStringInfo(&query, " (shard_key_value, object_id, document) "
@@ -1381,7 +1381,8 @@ InsertOrReplaceDocument(uint64 collectionId, const char *shardTableName, int64
 	planId = QUERY_ID_INSERT_OR_REPLACE;
 
 	const char *additionalArgs = "";
-	if (IsClusterVersionAtleast(DocDB_V0, 111, 0))
+	if (IsClusterVersionAtleast(DocDB_V0, 111, 0) &&
+		collection->options.updateDescriptionEnabled)
 	{
 		additionalArgs = ", ctid, tableoid";
 	}
@@ -1410,11 +1411,11 @@ InsertOrReplaceDocument(uint64 collectionId, const char *shardTableName, int64
 						 " COALESCE(%s.update_bson_document(%s.documents_"UINT64_FORMAT
 						 ".document, %s.bson_from_bytea($4), '{}'::%s.bson, NULL::%s.bson, NULL::%s.bson, NULL::TEXT%s),"
 						 " %s.documents_"UINT64_FORMAT ".document)",
-						 collectionId, ApiInternalSchemaNameV2, ApiDataSchemaName,
-						 collectionId,
+						 collection->collectionId, ApiInternalSchemaNameV2,
+						 ApiDataSchemaName, collection->collectionId,
 						 CoreSchemaName, CoreSchemaName, CoreSchemaName,
 						 CoreSchemaName, additionalArgs,
-						 ApiDataSchemaName, collectionId);
+						 ApiDataSchemaName, collection->collectionId);
 	}
 
 	argTypes[0] = INT8OID;
@@ -1426,7 +1427,8 @@ InsertOrReplaceDocument(uint64 collectionId, const char *shardTableName, int64
 	argTypes[3] = BYTEAOID;
 	argValues[3] = PointerGetDatum(CastPgbsonToBytea(updateSpecDoc));
 
-	SPIPlanPtr plan = GetSPIQueryPlanWithLocalShard(collectionId, shardTableName,
+	SPIPlanPtr plan = GetSPIQueryPlanWithLocalShard(collection->collectionId,
+													shardTableName,
 													planId, query.data, argTypes,
 													argCount);
 

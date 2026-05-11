@@ -60,6 +60,9 @@ typedef struct CreateSpec
 
 	/* enable or disable change stream pre and post images */
 	bool changeStreamPreAndPostImageEnabled;
+
+	/* enable or disable change stream update descriptions */
+	bool enableUpdateDescription;
 } CreateSpec;
 
 static const StringView SystemPrefix = { .string = "system.", .length = 7 };
@@ -146,6 +149,17 @@ command_create_collection_view(PG_FUNCTION_ARGS)
 			UpdateChangeStreamPreAndPostImages(collection,
 											   createDefinition->
 											   changeStreamPreAndPostImageEnabled);
+		}
+
+		if (createDefinition->enableUpdateDescription)
+		{
+			if (collection == NULL)
+			{
+				collection = GetMongoCollectionOrViewByNameDatum(
+					databaseDatum, createDatum, AccessShareLock);
+			}
+			UpdateEnableUpdateDescription(collection,
+										  createDefinition->enableUpdateDescription);
 		}
 	}
 
@@ -350,6 +364,12 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 					"create.changeStreamPreAndPostImages");
 				spec->changeStreamPreAndPostImageEnabled = enabled;
 			}
+		}
+		else if (strcmp(key, "enableUpdateDescription") == 0)
+		{
+			EnsureTopLevelFieldIsBooleanLike("create.enableUpdateDescription",
+											 &createIter);
+			spec->enableUpdateDescription = bson_iter_as_bool(&createIter);
 		}
 		else if (strcmp(key, "autoIndexId") == 0)
 		{
