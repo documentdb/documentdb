@@ -110,6 +110,11 @@ typedef struct IndexDef
 	/* represents value of "v" field */
 	int version;
 
+	/*
+	 * Requested textIndexVersion for text indexes.
+	 */
+	int textIndexVersion;
+
 	/* Indicates the version of the sphere index */
 	int sphereIndexVersion;
 
