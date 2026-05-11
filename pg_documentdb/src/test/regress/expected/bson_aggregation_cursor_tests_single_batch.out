@@ -412,52 +412,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
                      Index Cond: (collection.shard_key_value = '602'::bigint)
 (10 rows)
 
--- becomes streamable with guc off
-set documentdb.enableConversionStreamableToSingleBatch to off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('sb_db', '{ "aggregate": "sb_get_aggregation_cursor_smalldoc_test", "pipeline": [ { "$match": { "a": 1 }}, { "$limit": 1 } ] }');
-                                                                              QUERY PLAN                                                                              
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Limit
-   Output: document, (documentdb_api_internal.current_cursor_state(document))
-   ->  Custom Scan (DocumentDBApiScan)
-         Output: document, documentdb_api_internal.current_cursor_state(document)
-         ->  Bitmap Heap Scan on documentdb_data.documents_602 collection
-               Output: shard_key_value, object_id, document
-               Recheck Cond: (collection.shard_key_value = '602'::bigint)
-               Filter: ((collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND documentdb_api_internal.cursor_state(collection.document, '{ }'::bson))
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '602'::bigint)
-(10 rows)
-
--- still not streamable
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('sb_db', '{ "aggregate": "sb_get_aggregation_cursor_smalldoc_test", "pipeline": [ { "$limit": 1 }, { "$match": { "a": 1 }}] }');
-                                    QUERY PLAN                                     
------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_1
-   Output: agg_stage_1.document
-   Filter: (agg_stage_1.document #= '{ "a" : { "$numberInt" : "1" } }'::bsonquery)
-   ->  Limit
-         Output: collection.document
-         ->  Seq Scan on documentdb_data.documents_602 collection
-               Output: collection.document
-(7 rows)
-
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('sb_db', '{ "aggregate": "sb_get_aggregation_cursor_smalldoc_test", "pipeline": [ { "$match": { "a": 1 }}, { "$limit": 1 }, { "$limit": 2 } ] }');
-                                       QUERY PLAN                                        
------------------------------------------------------------------------------------------
- Limit
-   Output: collection.document
-   ->  Limit
-         Output: collection.document
-         ->  Bitmap Heap Scan on documentdb_data.documents_602 collection
-               Output: collection.document
-               Recheck Cond: (collection.shard_key_value = '602'::bigint)
-               Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '602'::bigint)
-(10 rows)
-
-reset documentdb.enableConversionStreamableToSingleBatch;
 -- should be singlebatch
 set client_min_messages to DEBUG1;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('sb_db', '{ "aggregate": "sb_get_aggregation_cursor_smalldoc_test", "pipeline": [ { "$match": { "a": 1 }}, { "$limit": 1 } ] }');

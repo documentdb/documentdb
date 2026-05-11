@@ -143,7 +143,6 @@ static const ExtensibleNodeMethods InputQueryStateMethods =
 	ReadUnsupportedExtensionQueryScanNode
 };
 
-extern bool EnableExtendedExplainOnAnalyzeOff;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableExplainScanNamespaceName;
 
@@ -497,17 +496,14 @@ ExplainIndexScanState(IndexScanDesc indexScan, Oid indexOid, List *indexQuals,
 	ExplainPropertyText("indexName", indexName, es);
 	if (indexScan == NULL)
 	{
-		if (EnableExtendedExplainOnAnalyzeOff)
+		/* Explain without analyze, try to explain based on the quals and orderby */
+		Relation index_rel = index_open(indexOid, NoLock);
+		if (IsCompositeOpClass(index_rel))
 		{
-			/* Explain without analyze, try to explain based on the quals and orderby */
-			Relation index_rel = index_open(indexOid, NoLock);
-			if (IsCompositeOpClass(index_rel))
-			{
-				ExplainRawCompositeScan(index_rel, indexQuals, indexOrderBy, indexScanDir,
-										es);
-			}
-			index_close(index_rel, NoLock);
+			ExplainRawCompositeScan(index_rel, indexQuals, indexOrderBy, indexScanDir,
+									es);
 		}
+		index_close(index_rel, NoLock);
 	}
 	else
 	{
