@@ -1,3 +1,5 @@
+### documentdb v0.114-0 (Unreleased) ###
+
 ### documentdb v0.113-0 (Unreleased) ###
 * Use in-place tuple overwrite instead of delete-and-reinsert when vacuuming RUM entry page posting lists *[Perf]*
 * Support collation with non-unique ordered indexes with `$in` and `$nin` but not with ordered scans. Requires `documentdb.EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
