@@ -116,9 +116,16 @@ By default, all statistical views are readable by all users:
 GRANT SELECT ON __API_CATALOG_SCHEMA__.documentdb_stat_<scope> TO PUBLIC;
 ```
 
-All statistical views must be defined in the following location:
+All statistical views must be defined under `pg_documentdb/sql/`, following the extension's existing versioned-SQL convention used elsewhere in the tree (see `pg_documentdb/sql/udfs/...` for examples):
+
+- A `stats--latest.sql` file containing the current definition.
+- One `stats--<from>-<to>.sql` upgrade script per version bump that adds or modifies a stat (for example `stats--0.110-0--0.111-0.sql`).
+
+Recommended location:
+
 ```
-pg_documentdb/sql/stats/stats--<version>.sql
+pg_documentdb/sql/udfs/stats/stats--latest.sql
+pg_documentdb/sql/udfs/stats/stats--<from>-<to>.sql
 ```
 
 #### Helper Functions
@@ -126,18 +133,35 @@ If a view is backed by helper functions, those functions must follow this naming
 
 - Single helper per scope:
   ```
-  __API_CATALOG_SCHEMA__.documentdb_stat_get_<scope>
+  __API_SCHEMA_INTERNAL__.documentdb_stat_get_<scope>
   ```
 - Multiple helpers per scope (when the view is composed from several functions): add an `<aspect>` suffix:
   ```
-  __API_CATALOG_SCHEMA__.documentdb_stat_get_<scope>_<aspect>
+  __API_SCHEMA_INTERNAL__.documentdb_stat_get_<scope>_<aspect>
   ```
   Examples: `documentdb_stat_get_queries_summary`, `documentdb_stat_get_queries_per_collection`.
 
-By default, helper functions must be executable by all users:
+Helper functions live in `__API_SCHEMA_INTERNAL__` because they are implementation details of the view, not part of the public stats API. The view (in `__API_CATALOG_SCHEMA__`) is the documented surface; clients should always go through it.
+
+**Permissions for helpers**
+
+By default, helper functions are **not** granted to `PUBLIC`. The view is the policy boundary, and the view's owner has the privileges needed to call the helper. Two reasons to keep helpers private:
+
+1. The helper signature is not part of the public stats API; granting EXECUTE to PUBLIC would freeze it as ABI.
+2. Any row filtering or redaction performed by the view (for example, hiding query text from non-privileged roles, mirroring `pg_stat_activity`) is bypassable if callers can reach the helper directly.
+
+Where a helper must read state the caller cannot reach (for example, a shared-memory hash table holding per-query timings), declare it as `SECURITY DEFINER` so it executes with the function owner's privileges, and **always pin the search path** to defeat search-path attacks:
+
+```sql
+CREATE FUNCTION __API_SCHEMA_INTERNAL__.documentdb_stat_get_<scope>(...)
+RETURNS SETOF ...
+LANGUAGE c
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS '$libdir/pg_documentdb', 'documentdb_stat_get_<scope>';
 ```
-GRANT EXECUTE ON FUNCTION __API_CATALOG_SCHEMA__.documentdb_stat_get_<scope>() TO PUBLIC;
-```
+
+`SECURITY DEFINER` functions must not interpolate user-controlled strings into SQL.
 
 ##### Reset functions (for cumulative counters)
 
@@ -158,11 +182,18 @@ __API_CATALOG_SCHEMA__.documentdb_stat_reset_<scope>
   __API_CATALOG_SCHEMA__.documentdb_stat_reset_<scope>(database text, collection text)
   ```
 
-By default, EXECUTE on reset functions is revoked from `PUBLIC`:
-```
+**Permissions for reset functions**
+
+EXECUTE is revoked from `PUBLIC` and granted to the existing extension admin role, mirroring the pattern in `pg_documentdb/sql/rbac/extension_admin_setup--0.10-0.sql`:
+
+```sql
 REVOKE EXECUTE ON FUNCTION __API_CATALOG_SCHEMA__.documentdb_stat_reset_<scope>() FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION __API_CATALOG_SCHEMA__.documentdb_stat_reset_<scope>() TO __API_ADMIN_ROLE__;
 ```
-Superusers can always execute these functions (they bypass ACLs); any non-superuser role that needs reset capability must be explicitly granted EXECUTE.
+
+Superusers always bypass ACLs and can call any reset function. Non-superuser operators who need reset capability must be granted membership in `__API_ADMIN_ROLE__` (or be granted EXECUTE explicitly on a per-function basis if more granular control is desired).
+
+This model — public SELECT on the view, no PUBLIC EXECUTE on helpers, named-role EXECUTE on reset — matches how `pg_stat_statements` and Citus's `citus_stat_*` family expose statistics. Any deviation (for example, a stat that genuinely needs PUBLIC EXECUTE on its helper) must be explicitly justified in the contributing PR.
 
 
 #### Configuration Changes
@@ -214,13 +245,13 @@ Each new statistic must include:
 
 ### Database Schema Changes
 
-This RFC does not introduce data tables. It does add objects to the extension's catalog schema (`__API_CATALOG_SCHEMA__`):
+This RFC does not introduce data tables. It does add objects across two extension schemas:
 
-- One view per scope (`documentdb_stat_<scope>`).
-- Optional helper functions (`documentdb_stat_get_<scope>[_<aspect>]`).
-- Optional reset functions (`documentdb_stat_reset_<scope>`).
+- One view per scope in `__API_CATALOG_SCHEMA__` (`documentdb_stat_<scope>`).
+- Optional helper functions in `__API_SCHEMA_INTERNAL__` (`documentdb_stat_get_<scope>[_<aspect>]`).
+- Optional reset functions in `__API_CATALOG_SCHEMA__` (`documentdb_stat_reset_<scope>`).
 
-Each new statistic is delivered as part of a versioned extension upgrade script under `pg_documentdb/sql/stats/stats--<version>.sql`.
+Each new statistic is delivered following the extension's existing versioned-SQL convention: a `stats--latest.sql` plus one `stats--<from>-<to>.sql` upgrade script per version bump, located under `pg_documentdb/sql/udfs/stats/`.
 
 ### Testing Strategy
 
@@ -234,6 +265,23 @@ Each new statistic added under this RFC should include:
 ### Migration Path
 
 This RFC is purely additive and applies only to **new** statistics. Pre-existing statistics in DocumentDB are not retroactively required to follow these conventions; they may be migrated opportunistically when touched. No user-visible upgrade or rollback steps are required by this RFC itself.
+
+### Contributor Checklist: How to add a new statistic
+
+When adding a new statistic under this RFC, a contributor should:
+
+1. **Pick a scope name.** Lowercase, singular-or-plural noun matching the category (e.g., `queries`, `connections`). Confirm it does not collide with an existing `documentdb_stat_*` view or with PostgreSQL's `pg_stat_*` namespace.
+2. **Register the GUC.** Add `documentdb.track_<scope>` (default per the Open Questions decision) in the C code that registers extension GUCs, and reference it from the collection path so disabling the flag halts collection.
+3. **Add the SQL definitions** under `pg_documentdb/sql/udfs/stats/`:
+   - Update `stats--latest.sql` with the view, optional helper(s), and optional reset function.
+   - Add a `stats--<from>-<to>.sql` upgrade script for the version bump.
+4. **Apply the canonical grants** (see "Permissions for helpers" and "Permissions for reset functions"):
+   - `GRANT SELECT ON ... TO PUBLIC;` for the view.
+   - No grant to `PUBLIC` on helper functions; use `SECURITY DEFINER` with `SET search_path = pg_catalog, pg_temp` if the helper needs privileged state.
+   - `REVOKE EXECUTE ... FROM PUBLIC;` and `GRANT EXECUTE ... TO __API_ADMIN_ROLE__;` for any reset function.
+5. **Add tests** as listed in the Testing Strategy section above (column shape, flag-off behavior, reset behavior, permissions).
+6. **Update documentation.** Open a companion PR against `https://github.com/documentdb/documentdb.github.io` adding an entry to `/articles/postgresql/stats.md` with description, column definitions and units, an example query and output, related configuration parameters, and reset functions (if applicable).
+7. **Justify any deviation from the canonical permission/path conventions** in the PR description so reviewers can evaluate it explicitly.
 
 ---
 
