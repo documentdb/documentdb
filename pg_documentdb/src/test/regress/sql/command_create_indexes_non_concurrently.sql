@@ -434,3 +434,39 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('wp_test',
     }'
 );
 SELECT documentdb_test_helpers.documentdb_index_get_pg_def('wp_test', 'no_path_collision_4', 'idx_1');
+------------------------------------------------------------------------------
+-- textIndexVersion / index version compatibility scenarios
+--
+-- These regressions ensure that:
+--   * index "v" (indexVersion) is ignored when checking equivalence so that
+--     re-issuing createIndexes is idempotent across v:1 / v:2.
+--   * "textIndexVersion" is validated lazily: a no-op recreate against an
+--     existing equivalent text index succeeds for any textIndexVersion, but
+--     creating a *new* text index still requires the supported version (2).
+------------------------------------------------------------------------------
+
+SELECT documentdb_api.create_collection('db', 'create_indexes_v_compat');
+
+-- v:1 plain index -> recreate without v (driver default v:2) should be a no-op.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
+  '{ "createIndexes": "create_indexes_v_compat", "indexes": [ { "v": 1, "key": {"a": 1}, "name": "a_1" } ] }', true);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
+  '{ "createIndexes": "create_indexes_v_compat", "indexes": [ { "key": {"a": 1}, "name": "a_1" } ] }', true);
+
+-- Recreating an existing text index with an unsupported textIndexVersion must
+-- still succeed as a no-op.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
+  '{ "createIndexes": "create_indexes_v_compat", "indexes": [ { "key": {"title": "text"}, "name": "t" } ] }', true);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
+  '{ "createIndexes": "create_indexes_v_compat", "indexes": [ { "key": {"title": "text"}, "name": "t", "textIndexVersion": 3 } ] }', true);
+
+-- Creating a brand-new text index in a fresh collection with an unsupported
+-- textIndexVersion must error.
+SELECT documentdb_api.create_collection('db', 'create_indexes_v_compat_2');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
+  '{ "createIndexes": "create_indexes_v_compat_2", "indexes": [ { "key": {"x": "text"}, "name": "x_text", "textIndexVersion": 3 } ] }', true);
+
+-- A textIndexVersion field on a non-text index spec is ignored (no validation
+-- happens because IsTextIndex() is false).
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
+  '{ "createIndexes": "create_indexes_v_compat_2", "indexes": [ { "key": {"y": 1}, "name": "y_1", "textIndexVersion": 3 } ] }', true);
