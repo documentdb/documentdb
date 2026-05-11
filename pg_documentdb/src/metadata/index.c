@@ -362,11 +362,6 @@ IndexOptionsEquivalency
 IndexSpecOptionsAreEquivalent(const IndexSpec *leftIndexSpec,
 							  const IndexSpec *rightIndexSpec)
 {
-	if (leftIndexSpec->indexVersion != rightIndexSpec->indexVersion)
-	{
-		return IndexOptionsEquivalency_NotEquivalent;
-	}
-
 	bool sparseMatches = (leftIndexSpec->indexSparse == BoolIndexOption_True) ==
 						 (rightIndexSpec->indexSparse == BoolIndexOption_True);
 	if (!sparseMatches)
@@ -380,6 +375,16 @@ IndexSpecOptionsAreEquivalent(const IndexSpec *leftIndexSpec,
 	{
 		return IndexOptionsEquivalency_NotEquivalent;
 	}
+
+	/*
+	 * We intentionally do NOT compare indexVersion ("v") here. Indexes with
+	 * different `v` values are treated as equivalent for the purpose of
+	 * conflict / idempotency checks (including for text indexes); the version
+	 * is a server-internal representation detail. Comparing it strictly caused
+	 * spurious IndexKeySpecsConflict errors when re-issuing createIndexes with
+	 * the driver default `v` against an existing index that was created with a
+	 * different `v` (e.g. v:1 vs v:2).
+	 */
 
 	IndexOptionsEquivalency equivalency = IndexKeyDocumentEquivalent(
 		leftIndexSpec->indexKeyDocument,
