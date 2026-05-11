@@ -1093,66 +1093,9 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                Rows Removed by Filter: 15
 (14 rows)
 
--- count with legacy count aggregates
-set documentdb.enableNewCountAggregates to off;
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$eq": "Mexico"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
-                                                   run_explain_and_trim                                                   
----------------------------------------------------------------------
- Aggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson))
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
-         indexName: country_1
-         indexKey: {"country": 1}
-         isMultiKey: false
-         indexBounds: ["country": ["Mexico", "Mexico"]]
-         innerScanLoops: 2 loops
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 5)]
-         ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=5 loops=1)
-               Index Cond: (collection.document @= '{ "country" : "Mexico" }'::bson)
-               Heap Fetches: xxx
-(13 rows)
-
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$gte": "Brazil"}} }, { "$group" : { "_id" : "1", "n" : { "$sum" : 1 } } }]}')$$, p_ignore_heap_fetches => true);
-                                                                 run_explain_and_trim                                                                  
----------------------------------------------------------------------
- GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, '{ "" : "1" }'::bson, 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), '{ "" : "1" }'::bson
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
-         indexName: country_1
-         indexKey: {"country": 1}
-         isMultiKey: false
-         indexBounds: ["country": ["Brazil", { })]
-         innerScanLoops: 8 loops
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 17)]
-         ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=17 loops=1)
-               Index Cond: (collection.document @>= '{ "country" : "Brazil" }'::bson)
-               Heap Fetches: xxx
-(13 rows)
-
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$gte": "Brazil"}} }, { "$group" : { "_id" : null, "n" : { "$sum" : 1 } } }]}')$$, p_ignore_heap_fetches => true);
-                                                                  run_explain_and_trim                                                                   
----------------------------------------------------------------------
- GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), '{ "" : null }'::bson
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
-         indexName: country_1
-         indexKey: {"country": 1}
-         isMultiKey: false
-         indexBounds: ["country": ["Brazil", { })]
-         innerScanLoops: 8 loops
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 17)]
-         ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=17 loops=1)
-               Index Cond: (collection.document @>= '{ "country" : "Brazil" }'::bson)
-               Heap Fetches: xxx
-(13 rows)
-
-set documentdb.enableNewCountAggregates to on;
 -- Sharded collections can't be supported with a shard key filter because in RUM indexes the shard_key_value becomes a runtime filter and for index only scans everything needs to be satisfied by the index. 
 SELECT COUNT(documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_sharded', bson_build_document('_id'::text, i, 'shardKey'::text, i % 10, 'value'::text, i))) FROM generate_series(1, 1000) i;
-psql:sql/bson_composite_index_only_scan_tests.sql:204: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:196: NOTICE:  creating collection
  count 
 ---------------------------------------------------------------------
   1000
@@ -1219,7 +1162,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 ROLLBACK;
 -- test index only scan is not enabled for wildcard indexes
 SELECT documentdb_api.insert_one('idx_only_scan_db', 'compwildcard2', '{ "a": { "b": 1, "c": 5 }}');
-psql:sql/bson_composite_index_only_scan_tests.sql:223: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:215: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1277,7 +1220,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 RESET documentdb.forceIndexOnlyScanIfAvailable;
 -- test $sum/$avg on numeric field with ordered index (future index-only scan optimization candidate)
 SELECT documentdb_api.create_collection('idx_only_scan_db', 'idx_only_scan_numeric');
-psql:sql/bson_composite_index_only_scan_tests.sql:236: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:228: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
@@ -1521,7 +1464,7 @@ SET documentdb.enableNewWithExprAccumulators TO off;
 -- Sharded collection: verify index-only scan with covered $group accumulators pushes down to shard workers
 ---------------------------------------------------------------------
 SELECT documentdb_api.create_collection('idx_only_scan_db', 'ios_sharded_accum');
-psql:sql/bson_composite_index_only_scan_tests.sql:279: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:271: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t

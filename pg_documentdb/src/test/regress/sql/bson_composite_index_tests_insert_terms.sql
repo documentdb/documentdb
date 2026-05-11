@@ -74,13 +74,6 @@ SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_term
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "comp_index", "key": { "a": 1, "b": -1 } } ] }', TRUE);
 
--- does not work
-set documentdb.enableCompositeWildcardIndex to off;
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-    'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "comp_index2", "key": { "$**": 1 }, "enableCompositeTerm": true } ] }', TRUE);
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-    'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "comp_index3", "key": { "a.$**": 1 }, "enableCompositeTerm": true } ] }', TRUE);
-
 -- create an index
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "comp_index1", "key": { "a": 1, "b": 1 } } ] }', TRUE);

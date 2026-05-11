@@ -106,10 +106,6 @@ bool DefaultUseCompositeOpClass = DEFAULT_USE_NEW_COMPOSITE_INDEX_OPCLASS;
 #define DEFAULT_ENABLE_COMPOSITE_INDEX_PLANNER false
 bool EnableCompositeIndexPlanner = DEFAULT_ENABLE_COMPOSITE_INDEX_PLANNER;
 
-/* Added in v110, enabled in v110, remove after v112 */
-#define DEFAULT_ENABLE_ORDERED_COST_ESTIMATOR true
-bool EnableOrderedCostEstimator = DEFAULT_ENABLE_ORDERED_COST_ESTIMATOR;
-
 /* We can enable by default once we stabilize by moving it's creation to the cost estimate. */
 /* Added in v107, enabled in v111, remove after v113. */
 #define DEFAULT_ENABLE_INDEX_ONLY_SCAN true
@@ -129,10 +125,6 @@ bool EnableIndexOnlyScanForCoveredAggregateTargets =
 bool EnableIndexOnlyScanForRangeMatch =
 	DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_RANGE_MATCH;
 
-/* Added in v109, enabled in v109, remove after v111 */
-#define DEFAULT_ENABLE_ID_INDEX_CUSTOM_COST_FUNCTION true
-bool EnableIdIndexCustomCostFunction = DEFAULT_ENABLE_ID_INDEX_CUSTOM_COST_FUNCTION;
-
 /* Added in v109, Pending stabilization, enable in v125 */
 #define DEFAULT_ENABLE_ORDER_BY_ID_ON_COST false
 bool EnableOrderByIdOnCostFunction = DEFAULT_ENABLE_ORDER_BY_ID_ON_COST;
@@ -145,21 +137,17 @@ bool EnableOrderByIdOnCostFunction = DEFAULT_ENABLE_ORDER_BY_ID_ON_COST;
 #define DEFAULT_ENABLE_VALUE_ONLY_INDEX_TERMS true
 bool EnableValueOnlyIndexTerms = DEFAULT_ENABLE_VALUE_ONLY_INDEX_TERMS;
 
-/* Added in v109, enabled in v109, remove after v111 */
+/* Added in v109, enabled in v109, remove after v114 */
 #define DEFAULT_USE_NEW_UNIQUE_HASH_EQUALITY_FUNCTION true
 bool UseNewUniqueHashEqualityFunction = DEFAULT_USE_NEW_UNIQUE_HASH_EQUALITY_FUNCTION;
 
-/* Added in v109, enabled in v109, remove after v111 */
+/* Added in v109, enabled in v109, remove after v114 */
 #define DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH true
 bool EnableCompositeUniqueHash = DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH;
 
 /* Added in v114, Pending stabilization, enable in v120 */
 #define DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS false
 bool EnableFailureOnParallelIndexArrays = DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS;
-
-/* Added in v109, enabled in v110, remove after v113 */
-#define DEFAULT_ENABLE_COMPOSITE_WILDCARD_INDEX true
-bool EnableCompositeWildcardIndex = DEFAULT_ENABLE_COMPOSITE_WILDCARD_INDEX;
 
 /* Added in v110, enabled in v110, remove after v113 */
 #define DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE true
@@ -190,11 +178,6 @@ bool EnableCompositeReducedCorrelatedPrefixTrim =
 /* Added in v109, enabled in v109, remove after v999 */
 #define DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS true
 bool EnableCompositeShardDocumentTerms = DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS;
-
-/* Added in v110, enabled in v110, remove after v113 */
-#define DEFAULT_ENABLE_COMPOSITE_WILDCARD_SKIP_EMPTY_ENTRIES true
-bool EnableCompositeWildcardSkipEmptyEntries =
-	DEFAULT_ENABLE_COMPOSITE_WILDCARD_SKIP_EMPTY_ENTRIES;
 
 /* Added in v111, Pending stabilization, enable in v115 */
 #define DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS false
@@ -247,27 +230,6 @@ bool EnableSkipDottedFieldIndexTerms = DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TE
 #define DEFAULT_ENABLE_EXPR_LOOKUP_INDEX_PUSHDOWN true
 bool EnableExprLookupIndexPushdown = DEFAULT_ENABLE_EXPR_LOOKUP_INDEX_PUSHDOWN;
 
-/* Added in v109, enabled in v109, remove after v111 */
-#define DEFAULT_ENABLE_UNIFY_PFE_ON_INDEXINFO true
-bool EnableUnifyPfeOnIndexInfo = DEFAULT_ENABLE_UNIFY_PFE_ON_INDEXINFO;
-
-/* Added in v108, enabled in v109, remove after v111 */
-#define DEFAULT_ENABLE_NEW_COUNT_AGGREGATES true
-bool EnableNewCountAggregates = DEFAULT_ENABLE_NEW_COUNT_AGGREGATES;
-
-/* Added in v109, enabled in v109, remove after v111 */
-#define DEFAULT_ENABLE_EXTENDED_EXPLAIN_ON_ANALYZEOFF true
-bool EnableExtendedExplainOnAnalyzeOff = DEFAULT_ENABLE_EXTENDED_EXPLAIN_ON_ANALYZEOFF;
-
-/* Left here temporarily for stabilization. Move to test config and remove once all test output is updated */
-/* Added in v110, enabled in v110, remove after v112 */
-#define DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS true
-bool EnableExplainScanIndexCosts = DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS;
-
-/* Left here temporarily for stabilization. Move to test config and remove once all test output is updated */
-/* Added in v110, enabled in v110, remove after v112 */
-#define DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME true
-bool EnableExplainScanNamespaceName = DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME;
 
 /* Added in v110, Pending stabilization. Superseded by EnableNewWithExprAccumulators in v111, enable in v113 */
 #define DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS false
@@ -307,16 +269,7 @@ bool UseFileBasedPersistedCursors = DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS;
 bool FailOnGroupIdDuplicate =
 	DEFAULT_FAIL_ON_GROUP_ID_DUPLICATE;
 
-/* Added in v109, enabled in v109, remove after v111 */
-#define DEFAULT_ENABLE_CONVERSION_STREAMABLE_SINGLE_BATCH true
-bool EnableConversionStreamableToSingleBatch =
-	DEFAULT_ENABLE_CONVERSION_STREAMABLE_SINGLE_BATCH;
-
-/* Added in v109, enabled in v109, remove after v111 */
-#define DEFAULT_ENABLE_FIND_PROJECTION_AFTER_OFFSET true
-bool EnableFindProjectionAfterOffset = DEFAULT_ENABLE_FIND_PROJECTION_AFTER_OFFSET;
-
-/* Added in v108, enabled in v109, remove after v111 */
+/* Added in v108, enabled in v109, remove after v114 */
 #define DEFAULT_ENABLE_DELAYED_HOLD_PORTAL true
 bool EnableDelayedHoldPortal = DEFAULT_ENABLE_DELAYED_HOLD_PORTAL;
 
@@ -664,29 +617,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableOrderedCostEstimator", newGucPrefix),
-		gettext_noop(
-			"Whether to enable the new ordered cost estimator for composite indexes. Requires enableCompositeIndexPlanner"),
-		NULL, &EnableOrderedCostEstimator, DEFAULT_ENABLE_ORDERED_COST_ESTIMATOR,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableConversionStreamableToSingleBatch", newGucPrefix),
-		gettext_noop(
-			"Whether to enable conversion streamable to single batch queries."),
-		NULL, &EnableConversionStreamableToSingleBatch,
-		DEFAULT_ENABLE_CONVERSION_STREAMABLE_SINGLE_BATCH,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableFindProjectionAfterOffset", newGucPrefix),
-		gettext_noop(
-			"Whether to enable pushing projection as a subquery after offset."),
-		NULL, &EnableFindProjectionAfterOffset,
-		DEFAULT_ENABLE_FIND_PROJECTION_AFTER_OFFSET,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enableRoleCrud", newGucPrefix),
 		gettext_noop(
 			"Enables role crud through the data plane."),
@@ -779,13 +709,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.unifyPfeOnIndexInfo", newGucPrefix),
-		gettext_noop(
-			"Whether to unify partial filter expressions on index expressions."),
-		NULL, &EnableUnifyPfeOnIndexInfo, DEFAULT_ENABLE_UNIFY_PFE_ON_INDEXINFO,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enableUsersAdminDBCheck", newGucPrefix),
 		gettext_noop(
 			"Enables db admin requirement for user CRUD APIs through the data plane."),
@@ -797,14 +720,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Enables db admin requirement for role CRUD APIs through the data plane."),
 		NULL, &EnableRolesAdminDBCheck, DEFAULT_ENABLE_ROLES_ADMIN_DB_CHECK,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableIdIndexCustomCostFunction", newGucPrefix),
-		gettext_noop(
-			"Whether to enable index terms that are value only."),
-		NULL, &EnableIdIndexCustomCostFunction,
-		DEFAULT_ENABLE_ID_INDEX_CUSTOM_COST_FUNCTION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -842,12 +757,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL, &EnableUniqueReindex, DEFAULT_ENABLE_UNIQUE_REINDEX,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
-	DefineCustomBoolVariable(
-		psprintf("%s.enableNewCountAggregates", newGucPrefix),
-		gettext_noop(
-			"Whether to enable new count aggregate optimizations."),
-		NULL, &EnableNewCountAggregates, DEFAULT_ENABLE_NEW_COUNT_AGGREGATES,
-		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.failOnNonEmptyGroupCountArg", newGucPrefix),
@@ -880,14 +789,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableExtendedExplainOnAnalyzeOff", newGucPrefix),
-		gettext_noop(
-			"Whether to enable logging extended explain on explain with analyze off."),
-		NULL, &EnableExtendedExplainOnAnalyzeOff,
-		DEFAULT_ENABLE_EXTENDED_EXPLAIN_ON_ANALYZEOFF,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enableGroupSubqueryElimination", newGucPrefix),
 		gettext_noop(
 			"Whether to eliminate the subquery migration in $group by inlining bson_repath_and_build."),
@@ -917,13 +818,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to fail when parallel arrays are indexed in composite indexes."),
 		NULL, &EnableFailureOnParallelIndexArrays,
 		DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableCompositeWildcardIndex", newGucPrefix),
-		gettext_noop(
-			"Whether to enable composite wildcard index support"),
-		NULL, &EnableCompositeWildcardIndex, DEFAULT_ENABLE_COMPOSITE_WILDCARD_INDEX,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -966,14 +860,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableCompositeWildcardSkipEmptyEntries", newGucPrefix),
-		gettext_noop(
-			"Whether to enable skipping empty entries for composite wildcard indexes."),
-		NULL, &EnableCompositeWildcardSkipEmptyEntries,
-		DEFAULT_ENABLE_COMPOSITE_WILDCARD_SKIP_EMPTY_ENTRIES,
-		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableOrderedCompositeOperatorScan", newGucPrefix),
@@ -1094,22 +980,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to always create TTL indexes as composite indexes by default."),
 		NULL, &CreateTTLIndexAsCompositeByDefault,
 		DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableExplainScanIndexCosts", newGucPrefix),
-		gettext_noop(
-			"Whether to include index costs in explain output for index scans. requires enableextendedexplainplans"),
-		NULL, &EnableExplainScanIndexCosts,
-		DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableExplainScanNamespaceName", newGucPrefix),
-		gettext_noop(
-			"Whether to include namespace name in explain output for index scans. requires enableextendedexplainplans"),
-		NULL, &EnableExplainScanNamespaceName,
-		DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

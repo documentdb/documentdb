@@ -63,7 +63,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('exrumdb', '{ "cr
 (1 row)
 
 -- create a wildcard index
-set documentdb.enableCompositeWildcardIndex to on;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('exrumdb', '{ "createIndexes": "index_creation_tests", "indexes": [ { "key": { "b.$**": 1 }, "name": "b_wildcard", "enableOrderedIndex": false } ] }', TRUE);
                                                                                                    create_indexes_non_concurrently                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

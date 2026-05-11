@@ -45,7 +45,6 @@
 
 extern bool ForceUseIndexIfAvailable;
 extern bool DisableExtendedRumExplainPlans;
-extern bool EnableOrderedCostEstimator;
 extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
@@ -713,7 +712,7 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 		}
 	}
 
-	if (enableCompositePlannerCosts && EnableOrderedCostEstimator &&
+	if (enableCompositePlannerCosts &&
 		orderedCostEstimateCoreFunc != NULL && isCompositeOpFamily)
 	{
 		orderedCostEstimateCoreFunc(root, path, loop_count, indexStartupCost,

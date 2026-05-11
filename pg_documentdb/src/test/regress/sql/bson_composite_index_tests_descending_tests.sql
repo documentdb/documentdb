@@ -22,13 +22,6 @@ SELECT * FROM documentdb_test_helpers.gin_bson_get_descending_composite_path_gen
 
 -- create a table and insert some data.
 
--- does not work
-set documentdb.enableCompositeWildcardIndex to off;
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-    'comp_db', '{ "createIndexes": "comp_collection_desc", "indexes": [ { "name": "comp_index", "key": { "$**": 1 }, "enableCompositeTerm": true } ] }');
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-    'comp_db', '{ "createIndexes": "comp_collection_desc", "indexes": [ { "name": "comp_index", "key": { "a.$**": 1 }, "enableCompositeTerm": true } ] }');
-
 -- create a regular index
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'comp_db', '{ "createIndexes": "comp_collection_desc", "indexes": [ { "name": "comp_index", "key": { "a": -1, "b": -1 } } ] }');

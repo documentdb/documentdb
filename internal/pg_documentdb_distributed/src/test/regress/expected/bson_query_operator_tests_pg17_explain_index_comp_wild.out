@@ -5,7 +5,6 @@ SET citus.next_shard_id TO 1100000;
 SET documentdb.next_collection_id TO 1100;
 SET documentdb.next_collection_index_id TO 1100;
 set documentdb.enableExtendedExplainPlans to on;
-set documentdb.enableCompositeWildcardIndex to on;
 SELECT documentdb_api.drop_collection('db', 'queryoperator') IS NOT NULL;
  ?column? 
 ---------------------------------------------------------------------
@@ -13,7 +12,7 @@ SELECT documentdb_api.drop_collection('db', 'queryoperator') IS NOT NULL;
 (1 row)
 
 SELECT documentdb_api.create_collection('db', 'queryoperator');
-psql:sql/bson_query_operator_tests_explain_index_comp_wild.sql:10: NOTICE:  creating collection
+psql:sql/bson_query_operator_tests_explain_index_comp_wild.sql:9: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
@@ -26,7 +25,7 @@ SELECT documentdb_api.drop_collection('db', 'queryoperatorIn') IS NOT NULL;
 (1 row)
 
 SELECT documentdb_api.create_collection('db', 'queryoperatorIn');
-psql:sql/bson_query_operator_tests_explain_index_comp_wild.sql:13: NOTICE:  creating collection
+psql:sql/bson_query_operator_tests_explain_index_comp_wild.sql:12: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
@@ -39,7 +38,7 @@ SELECT documentdb_api.drop_collection('db', 'nullfield') IS NOT NULL;
 (1 row)
 
 SELECT documentdb_api.create_collection('db', 'nullfield');
-psql:sql/bson_query_operator_tests_explain_index_comp_wild.sql:16: NOTICE:  creating collection
+psql:sql/bson_query_operator_tests_explain_index_comp_wild.sql:15: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
@@ -52,7 +51,7 @@ SELECT documentdb_api.drop_collection('db', 'singlepathindexexists') IS NOT NULL
 (1 row)
 
 SELECT documentdb_api.create_collection('db', 'singlepathindexexists');
-psql:sql/bson_query_operator_tests_explain_index_comp_wild.sql:19: NOTICE:  creating collection
+psql:sql/bson_query_operator_tests_explain_index_comp_wild.sql:18: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
@@ -115,7 +114,6 @@ Check constraints:
 BEGIN;
 SET LOCAL citus.enable_local_execution TO OFF;
 set local documentdb.useLocalExecutionShardQueries to off;
-set local documentdb.enableCompositeWildcardIndex to on;
 -- avoid sequential scan (likely to be preferred on small tables)
 set local enable_seqscan TO off;
 set local documentdb.forceUseIndexIfAvailable to on;
