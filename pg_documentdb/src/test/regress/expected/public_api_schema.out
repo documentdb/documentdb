@@ -109,6 +109,7 @@
  documentdb_api_catalog | bson_dollar_project_find                | documentdb_core.bson       | document documentdb_core.bson, pathspec documentdb_core.bson, queryspec documentdb_core.bson DEFAULT NULL::documentdb_core.bson | func
  documentdb_api_catalog | bson_dollar_project_geonear             | documentdb_core.bson       | documentdb_core.bson, documentdb_core.bson                                                                                      | func
  documentdb_api_catalog | bson_dollar_regex                       | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
+ documentdb_api_catalog | bson_dollar_regex                       | boolean                    | documentdb_core.bson, documentdb_core.bson, documentdb_core.bsonquery                                                           | func
  documentdb_api_catalog | bson_dollar_replace_root                | documentdb_core.bson       | document documentdb_core.bson, pathspec documentdb_core.bson                                                                    | func
  documentdb_api_catalog | bson_dollar_set                         | documentdb_core.bson       | document documentdb_core.bson, pathspec documentdb_core.bson                                                                    | func
  documentdb_api_catalog | bson_dollar_size                        | boolean                    | documentdb_core.bson, documentdb_core.bson                                                                                      | func
@@ -187,7 +188,7 @@
  documentdb_api_catalog | gin_bson_wildcard_project_extract_value | internal                   | documentdb_core.bson, internal                                                                                                  | func
  documentdb_api_catalog | gin_bson_wildcard_project_options       | void                       | internal                                                                                                                        | func
  documentdb_api_catalog | query_match_support                     | internal                   | internal                                                                                                                        | func
-(129 rows)
+(130 rows)
 
 \df documentdb_api_internal.*
                                                                                                                                                                                                                                                                                                                               List of functions
