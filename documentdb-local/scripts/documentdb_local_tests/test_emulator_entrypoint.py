@@ -176,6 +176,18 @@ json.dump(data, sys.stdout)
         config = self._read_config()
         self.assertEqual(config["TlsMode"], "requireTLS")
 
+    def test_system_postgres_log_defaults_to_runtime_pg_version(self):
+        result = self._run_entrypoint(
+            "--password",
+            "mypassword",
+            extra_env={"PG_VERSION_USED": "18", "SYSTEM_POSTGRES_LOG": ""},
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn(
+            "System PostgreSQL logs (/var/log/postgresql/postgresql-18-main.log)",
+            result.stdout,
+        )
+
     def test_invalid_tlsMode_value_fails_fast(self):
         result = self._run_entrypoint(
             "--password",
