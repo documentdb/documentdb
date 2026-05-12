@@ -16,7 +16,7 @@ Supported DEB/Ubuntu distributions:
 - ubuntu22.04 — Ubuntu 22.04 (jammy)
 - ubuntu24.04 — Ubuntu 24.04 (noble)
 
-Supported PG versions: 15, 16, 17
+Supported PG versions: 15, 16, 17, 18
 
 ## Building RPM Packages
 
@@ -30,7 +30,7 @@ Supported RPM distributions:
 - rhel8 (Red Hat Enterprise Linux 8 compatible)
 - rhel9 (Red Hat Enterprise Linux 9 compatible)
 
-Supported PG versions: 15, 16, 17
+Supported PG versions: 15, 16, 17, 18
 
 ### RPM Build Prerequisites
 

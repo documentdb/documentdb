@@ -31,12 +31,16 @@ RUN install -d -m 0755 /etc/apt/keyrings; \
     echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main ${POSTGRES_VERSION}" \
         > /etc/apt/sources.list.d/pgdg.list; \
     apt-get update; \
+    RUM_PKG=""; \
+    if [ "${POSTGRES_VERSION}" -lt 18 ]; then \
+        RUM_PKG="postgresql-${POSTGRES_VERSION}-rum"; \
+    fi; \
     apt-get install -y --no-install-recommends \
         postgresql-${POSTGRES_VERSION} \
         postgresql-${POSTGRES_VERSION}-cron \
         postgresql-${POSTGRES_VERSION}-pgvector \
         postgresql-${POSTGRES_VERSION}-postgis-3 \
-        postgresql-${POSTGRES_VERSION}-rum \
+        $RUM_PKG \
     ; \
     rm -rf /var/lib/apt/lists/*
 

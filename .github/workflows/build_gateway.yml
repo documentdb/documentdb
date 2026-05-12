@@ -37,6 +37,7 @@ jobs:
   build-and-push:
     name: Build and Push Images
     strategy:
+      fail-fast: false
       matrix:
         arch: [amd64, arm64]
         include:
@@ -50,6 +51,7 @@ jobs:
           - 15
           - 16
           - 17
+          - 18
     runs-on: ${{ matrix.runner }}
     outputs:
       documentdb_version: ${{ steps.extract_version.outputs.documentdb_version }}
@@ -86,6 +88,7 @@ jobs:
         IMAGE=ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:$TAG
         CONTAINER_NAME=documentdb-local-smoke-pg${{ matrix.pg_version }}-${{ matrix.arch }}
         SMOKE_DIR=$(mktemp -d)
+        chmod 755 "$SMOKE_DIR"
         dump_logs=true
         cleanup() {
           if [ "$dump_logs" = "true" ]; then
@@ -146,13 +149,14 @@ jobs:
           - 15
           - 16
           - 17
+          - 18
     runs-on: ubuntu-22.04
     needs: build-and-push
     steps:
     - name: Login to GHCR
       run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
     - name: Show version
-      run: echo "Using DOCUMENTDB_VERSION=${{ needs.prepare.outputs.documentdb_version }}"
+      run: echo "Using DOCUMENTDB_VERSION=${{ needs.build-and-push.outputs.documentdb_version }}"
     - name: Set Default Values
       run: |
         echo "MANIFEST_TAG=pg${{ matrix.pg_version }}-${{ needs.build-and-push.outputs.documentdb_version }}" >> $GITHUB_ENV
@@ -192,6 +196,7 @@ jobs:
         echo "MANIFEST_TAG=latest" >> $GITHUB_ENV
     - name: Create and Push Manifest
       run: |
+        # Keep the floating latest tag on PG17 for compatibility; PG18 is published via explicit pg18-* tags.
         docker manifest create ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.MANIFEST_TAG }} \
           --amend ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-pg17-amd64 \
           --amend ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-pg17-arm64
