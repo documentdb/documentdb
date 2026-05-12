@@ -248,7 +248,8 @@ export DISABLE_EXTENDED_RUM=${DISABLE_EXTENDED_RUM:-false}
 export TLS_MODE=${TLS_MODE:-allowTLS}
 export GATEWAY_HOME=${GATEWAY_HOME:-/home/documentdb/gateway}
 export DOCUMENTDB_LOG_DIR=${DOCUMENTDB_LOG_DIR:-/var/log/documentdb}
-export SYSTEM_POSTGRES_LOG=${SYSTEM_POSTGRES_LOG:-/var/log/postgresql/postgresql-17-main.log}
+export POSTGRES_LOG_VERSION=${PG_VERSION_USED:-17}
+export SYSTEM_POSTGRES_LOG=${SYSTEM_POSTGRES_LOG:-/var/log/postgresql/postgresql-${POSTGRES_LOG_VERSION}-main.log}
 export DOCUMENTDB_RUNTIME_USER=${DOCUMENTDB_RUNTIME_USER:-documentdb}
 export DOCUMENTDB_RUNTIME_GROUP=${DOCUMENTDB_RUNTIME_GROUP:-$DOCUMENTDB_RUNTIME_USER}
 
@@ -589,7 +590,7 @@ echo ""
 echo "=== DocumentDB is ready ==="
 echo "All logs are being streamed to docker logs with prefixes:"
 echo "  [POSTGRES] - PostgreSQL database logs ($PG_LOG_FILE)"
-echo "  [POSTGRES-SYSTEM] - System PostgreSQL logs (/var/log/postgresql/postgresql-17-main.log)"
+echo "  [POSTGRES-SYSTEM] - System PostgreSQL logs ($SYSTEM_POSTGRES_LOG)"
 echo "  [OSS-SERVER] - OSS server logs ($OSS_SERVER_LOG)"
 echo "  [ENTRYPOINT] - Entrypoint script logs ($ENTRYPOINT_LOG)"
 echo "  [GATEWAY] - Gateway application logs (live output via tee)"

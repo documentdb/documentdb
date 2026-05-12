@@ -14,7 +14,7 @@ function show_help {
     echo ""
     echo "Mandatory Arguments:"
     echo "  --os                 OS to build packages for. Possible values: [deb11, deb12, deb13, ubuntu22.04, ubuntu24.04, rhel8, rhel9]"
-    echo "  --pg                 PG version to build packages for. Possible values: [15, 16, 17]"
+    echo "  --pg                 PG version to build packages for. Possible values: [15, 16, 17, 18]"
     echo ""
     echo "Optional Arguments:"
     echo "  --version            The version of documentdb to build. Examples: [0.100.0, 0.101.0]"
@@ -172,6 +172,7 @@ if [[ $TEST_CLEAN_INSTALL == true ]]; then
         # Build the Docker image while showing the output to the console
         docker build -t documentdb-test-gateway-packages:latest -f "${script_dir}/packaging/gateway/test/Dockerfile_deb_gateway_test" \
             --build-arg BASE_IMAGE="$TEST_DOCKER_IMAGE" \
+            --build-arg POSTGRES_VERSION="$PG" \
             --build-arg DEB_PACKAGE_REL_PATH="$deb_package_rel_path" \
             --build-arg GATEWAY_PACKAGE_PATH="$gateway_package_rel_path" "$script_dir"
         # Run the Docker container to test the packages
