@@ -362,11 +362,11 @@ EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF)
 
 -- multiple _id
 EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('agg_db', '{ "find": "aggregation_find_point_read", "filter": { "$and": [ { "_id": "2" }, { "_id": { "$regex": "^\\d+" } } ] } }');
-                                                                   QUERY PLAN                                                                   
+                                                                                      QUERY PLAN                                                                                       
 ---------------------------------------------------------------------
  Index Scan using _id_ on documentdb_data.documents_4232_423018 collection  (cost=123123.00..1231230.00 rows=1 width=0) (actual rows=1 loops=1)
    Output: document
    Index Cond: ((collection.shard_key_value = '4232'::bigint) AND (collection.object_id = '{ "" : "2" }'::bson))
-   Filter: bson_dollar_regex(collection.document, '{ "_id" : { "$regularExpression" : { "pattern" : "^\\d+", "options" : "" } } }'::bson)
+   Filter: documentdb_api_catalog.bson_dollar_regex(collection.document, collection.object_id, '{ "_id" : { "$regularExpression" : { "pattern" : "^\\d+", "options" : "" } } }'::bson)
 (4 rows)
 

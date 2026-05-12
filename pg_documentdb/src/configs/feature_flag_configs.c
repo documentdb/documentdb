@@ -327,6 +327,10 @@ bool EnableSortPushToAccumulator = DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR;
 #define DEFAULT_ENABLE_DUPLICATE_FIELD_FIX true
 bool EnableDuplicateFieldFix = DEFAULT_ENABLE_DUPLICATE_FIELD_FIX;
 
+/* Added in v114, enabled in v114, remove after v117 */
+#define DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVERSION true
+bool EnableObjectIdFuncExprConversion = DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVERSION;
+
 /*
  * SECTION: Let support feature flags
  */
@@ -1069,5 +1073,13 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable new namespace validation."),
 		NULL, &EnableNewNamespaceValidation,
 		DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableObjectIdFuncExprConversion", newGucPrefix),
+		gettext_noop(
+			"Whether to enable conversion of ObjectId function expressions."),
+		NULL, &EnableObjectIdFuncExprConversion,
+		DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVERSION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }
