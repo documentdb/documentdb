@@ -225,6 +225,7 @@ extern bool EnableOrderByIndexTerm;
 extern bool EnableIndexOnlyScanForCoveredAggregateTargets;
 extern bool EnableIndexOnlyScanForRangeMatch;
 extern bool EnableIndexOnlyScanForFindProject;
+extern bool EnableObjectIdFuncExprConversion;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -263,6 +264,11 @@ static OpExpr * CreateExistsTrueOpExpr(Expr *documentExpr, const char *sourcePat
 static List * GetSortDetails(PlannerInfo *root, Index rti,
 							 bool *hasOrderBy, bool *hasGroupby, bool *isOrderById);
 static bool IsValidIndexPathForIdOrderBy(IndexPath *indexPath, List *sortDetails);
+
+static Expr * HandleSupportRequestForBtreeObjectIdCondition(
+	SupportRequestIndexCondition *req);
+static Expr * HandleSupportRequestForRegularObjectIdCondition(
+	SupportRequestIndexCondition *req);
 
 /*-------------------------------*/
 /* Force index support functions */
@@ -497,13 +503,31 @@ dollar_support_object_id(PG_FUNCTION_ARGS)
 		 */
 		req->lossy = false;
 
+		Expr *finalNode = NULL;
 		if (req->index->relam == BTREE_AM_OID)
 		{
-			ereport(NOTICE, errmsg("bson_dollar_support_object_id for BTREE_AM_OID."));
+			finalNode = HandleSupportRequestForBtreeObjectIdCondition(req);
 		}
-		else
+		else if (IsBsonRegularIndexAm(req->index->relam))
 		{
-			ereport(NOTICE, errmsg("bson_dollar_support_object_id for RUM."));
+			finalNode = HandleSupportRequestForRegularObjectIdCondition(req);
+		}
+
+		if (finalNode != NULL)
+		{
+			if (IsA(finalNode, BoolExpr))
+			{
+				BoolExpr *boolExpr = (BoolExpr *) finalNode;
+				responsePointer = (Pointer) boolExpr->args;
+			}
+			else if (IsA(finalNode, List))
+			{
+				responsePointer = (Pointer) finalNode;
+			}
+			else
+			{
+				responsePointer = (Pointer) list_make1(finalNode);
+			}
 		}
 	}
 
@@ -695,7 +719,8 @@ OpExprForAggregationStageSupportFunction(Node *supportRequest)
 	}
 
 	OpExpr *finalExpression = GetOpExprClauseFromIndexOperator(operator,
-															   funcExpr->args,
+															   linitial(funcExpr->args),
+															   lsecond(funcExpr->args),
 															   options);
 	return (Expr *) finalExpression;
 }
@@ -3887,7 +3912,8 @@ HandleSupportRequestCondition(SupportRequestIndexCondition *req)
 		}
 
 		Expr *finalExpression =
-			(Expr *) GetOpExprClauseFromIndexOperator(operator, args, options);
+			(Expr *) GetOpExprClauseFromIndexOperator(operator, linitial(args),
+													  (Expr *) operand, options);
 		return finalExpression;
 	}
 
@@ -3915,7 +3941,8 @@ HandleSupportRequestCondition(SupportRequestIndexCondition *req)
 		}
 
 		Expr *finalExpression =
-			(Expr *) GetOpExprClauseFromIndexOperator(operator, args, options);
+			(Expr *) GetOpExprClauseFromIndexOperator(operator, linitial(args),
+													  (Expr *) operand, options);
 		return finalExpression;
 	}
 
@@ -4546,9 +4573,9 @@ ProcessRestrictionInfoAndRewriteFuncExpr(Expr *clause,
 				 * e.g. ORDER BY object_id.
 				 */
 				context->inputData.isRuntimeTextScan = true;
-				OpExpr *expr = GetOpExprClauseFromIndexOperator(operator, args,
-																textIndexData->
-																indexOptions);
+				OpExpr *expr = GetOpExprClauseFromIndexOperator(
+					operator, linitial(args), lsecond(args),
+					textIndexData->indexOptions);
 				Expr *finalExpr = (Expr *) GetFuncExprForTextWithIndexOptions(
 					expr->args, textIndexData->indexOptions,
 					context->inputData.isRuntimeTextScan,
@@ -4561,8 +4588,10 @@ ProcessRestrictionInfoAndRewriteFuncExpr(Expr *clause,
 		}
 		else if (operator->indexStrategy != BSON_INDEX_STRATEGY_INVALID)
 		{
-			return (Expr *) GetOpExprClauseFromIndexOperator(operator, args,
-															 NULL);
+			return (Expr *)
+				   GetOpExprClauseFromIndexOperator(operator, linitial(args), lsecond(
+														args),
+													NULL);
 		}
 		else if (IsA(clause, FuncExpr))
 		{
@@ -4589,6 +4618,22 @@ ProcessRestrictionInfoAndRewriteFuncExpr(Expr *clause,
 				return CreateKnownFullScanExpr(
 					secondConst->constvalue,
 					firstArg, querySortDirection);
+			}
+
+			/* TODO(object_id_funcs): Make this more generalizable
+			 * Also TODO: Int he indexrestrictinfo of the btree index, leave the funcExpr as is
+			 * so that it can evaluate on object_id to support things like IX only SCAN
+			 */
+			if (IsClusterVersionAtleast(DocDB_V0, 114, 0) &&
+				EnableObjectIdFuncExprConversion &&
+				funcExpr->funcid == BsonRegexObjectIdMatchFunctionId())
+			{
+				operator = GetMongoIndexOperatorInfoByPostgresFuncId(
+					BsonRegexMatchFunctionId());
+				return (Expr *)
+					   GetOpExprClauseFromIndexOperator(operator, linitial(args), lthird(
+															args),
+														NULL);
 			}
 		}
 	}
@@ -4653,7 +4698,8 @@ ProcessRestrictionInfoAndRewriteFuncExpr(Expr *clause,
  * appropriate TSQuery.
  */
 OpExpr *
-GetOpExprClauseFromIndexOperator(const MongoIndexOperatorInfo *operator, List *args,
+GetOpExprClauseFromIndexOperator(const MongoIndexOperatorInfo *operator,
+								 Expr *firstArgExpr, Expr *secondArg,
 								 bytea *indexOptions)
 {
 	/* the index is valid for this qualifier - convert to opexpr */
@@ -4667,8 +4713,8 @@ GetOpExprClauseFromIndexOperator(const MongoIndexOperatorInfo *operator, List *a
 	if (operator->indexStrategy == BSON_INDEX_STRATEGY_DOLLAR_TEXT)
 	{
 		/* for $text, we convert the input query into a 'tsvector' @@ 'tsquery' */
-		Node *firstArg = (Node *) linitial(args);
-		Node *bsonOperand = (Node *) lsecond(args);
+		Node *firstArg = (Node *) firstArgExpr;
+		Node *bsonOperand = (Node *) secondArg;
 
 		if (!IsA(bsonOperand, Const))
 		{
@@ -4692,8 +4738,8 @@ GetOpExprClauseFromIndexOperator(const MongoIndexOperatorInfo *operator, List *a
 	else
 	{
 		/* construct document <operator> <value> expression */
-		Node *firstArg = (Node *) linitial(args);
-		Node *operand = (Node *) lsecond(args);
+		Node *firstArg = (Node *) firstArgExpr;
+		Node *operand = (Node *) secondArg;
 
 		Expr *operandExpr;
 		if (IsA(operand, Const))
@@ -5999,4 +6045,168 @@ CreateKnownFullScanExpr(Datum queryValue, Expr *documentExpr, int sortDirection)
 
 	return (Expr *) CreateFullScanOpExpr(documentExpr, sourceElement.path,
 										 sourceElement.pathLength, sortDirection);
+}
+
+
+static bool
+ExtractExprsForObjectIdFunction(FuncExpr *expr, pgbsonelement *queryElement,
+								Var **objectIdVar,
+								Var **documentVar, Datum *queryValue)
+{
+	if (list_length(expr->args) != 3)
+	{
+		return false;
+	}
+
+	Expr *documentExpr = linitial(expr->args);
+	Expr *objectIdExpr = lsecond(expr->args);
+	Expr *filterExpr = lthird(expr->args);
+	if (!IsA(filterExpr, Const) || !IsA(objectIdExpr, Var) || !IsA(documentExpr, Var))
+	{
+		return false;
+	}
+
+	Const *exprConst = (Const *) filterExpr;
+	*objectIdVar = (Var *) objectIdExpr;
+	*documentVar = (Var *) documentExpr;
+	if (exprConst->constisnull)
+	{
+		return false;
+	}
+
+	pgbson *queryBson = DatumGetPgBson(exprConst->constvalue);
+	const char *collation = PgbsonToSinglePgbsonElementWithCollation(queryBson,
+																	 queryElement);
+	if (IsCollationApplicable(collation))
+	{
+		return false;
+	}
+
+	if (queryElement->pathLength != 3 || strncmp(queryElement->path, "_id", 3) != 0)
+	{
+		return false;
+	}
+
+	*queryValue = exprConst->constvalue;
+	return true;
+}
+
+
+static Expr *
+HandleRegexBtreeIdPushdown(SupportRequestIndexCondition *req)
+{
+	/* A regex match on _id: regex bounds as needed */
+	FuncExpr *regexFuncExpr = (FuncExpr *) req->node;
+
+	pgbsonelement queryElement;
+	Var *objectIdVar, *documentVar;
+	Datum queryValue;
+	if (!ExtractExprsForObjectIdFunction(regexFuncExpr, &queryElement, &objectIdVar,
+										 &documentVar, &queryValue))
+	{
+		return NULL;
+	}
+
+	const char *regex, *options;
+	if (queryElement.bsonValue.value_type == BSON_TYPE_REGEX)
+	{
+		regex = queryElement.bsonValue.value.v_regex.regex;
+		options = queryElement.bsonValue.value.v_regex.options;
+	}
+	else if (queryElement.bsonValue.value_type == BSON_TYPE_UTF8)
+	{
+		regex = queryElement.bsonValue.value.v_utf8.str;
+		options = "";
+	}
+	else
+	{
+		return NULL;
+	}
+
+	/* Per commands_common.c _id cannot be a $regex type. consequently,
+	 * We can simply have the bounds be string values and not worry about equality
+	 * on regex.
+	 */
+	bson_value_t lowerBound = { 0 }, upperBound = { 0 };
+	bool lowerBoundInclusive = false, upperBoundInclusive = false;
+	GetBoundsForRegex(regex, options, &lowerBound, &lowerBoundInclusive, &upperBound,
+					  &upperBoundInclusive);
+
+	Expr *lowerBoundExpr = MakeSimpleIdExpr(&lowerBound, objectIdVar->varno,
+											lowerBoundInclusive ?
+											BsonGreaterThanEqualOperatorId() :
+											BsonGreaterThanOperatorId());
+	Expr *upperBoundExpr = MakeSimpleIdExpr(&upperBound, objectIdVar->varno,
+											upperBoundInclusive ?
+											BsonLessThanEqualOperatorId() :
+											BsonLessThanOperatorId());
+
+	/* Now inject clauses for the regex operator based on the bounds formed */
+	req->lossy = true;
+	return (Expr *) list_make2(lowerBoundExpr, upperBoundExpr);
+}
+
+
+static Expr *
+HandleSupportRequestForBtreeObjectIdCondition(SupportRequestIndexCondition *req)
+{
+	/* TODO(object_id_funcs): Make this more general purpose */
+	if (IsClusterVersionAtleast(DocDB_V0, 114, 0) &&
+		req->funcid == BsonRegexObjectIdMatchFunctionId())
+	{
+		return HandleRegexBtreeIdPushdown(req);
+	}
+
+	ereport(NOTICE, errmsg("bson_dollar_support_object_id for BTREE_AM_OID."));
+	return NULL;
+}
+
+
+static Expr *
+HandleSupportRequestForRegularObjectIdCondition(SupportRequestIndexCondition *req)
+{
+	/* TODO(object_id_funcs): Make this more general purpose */
+	bytea *options = req->index->opclassoptions[req->indexcol];
+	if (options == NULL)
+	{
+		return NULL;
+	}
+
+	if (!IsA(req->node, FuncExpr))
+	{
+		return NULL;
+	}
+
+	pgbsonelement queryElement;
+	Var *objectIdVar, *documentVar;
+	Datum queryValue;
+	FuncExpr *funcExpr = (FuncExpr *) req->node;
+	if (!ExtractExprsForObjectIdFunction(funcExpr,
+										 &queryElement, &objectIdVar, &documentVar,
+										 &queryValue))
+	{
+		return NULL;
+	}
+
+	if (IsClusterVersionAtleast(DocDB_V0, 114, 0) &&
+		req->funcid == BsonRegexObjectIdMatchFunctionId())
+	{
+		/* Check if the index is valid for the function */
+		const MongoIndexOperatorInfo *operator =
+			GetMongoIndexOperatorInfoByPostgresFuncId(BsonRegexMatchFunctionId());
+		if (!ValidateIndexForQualifierValue(options, queryValue,
+											operator->indexStrategy))
+		{
+			return NULL;
+		}
+
+		Expr *filterConst = lthird(funcExpr->args);
+		Expr *finalExpression =
+			(Expr *) GetOpExprClauseFromIndexOperator(operator, (Expr *) documentVar,
+													  (Expr *) filterConst, options);
+		return finalExpression;
+	}
+
+	ereport(NOTICE, errmsg("bson_dollar_support_object_id for RUM."));
+	return NULL;
 }

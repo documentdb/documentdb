@@ -357,8 +357,10 @@ static bool CompareBsonAgainstQuery(const pgbson *element,
 									IsQueryFilterNullFunc isQueryFilterNull);
 static bool IsExistPositiveMatch(pgbson *filter);
 static pgbsonelement PopulateRegexState(PG_FUNCTION_ARGS,
-										TraverseRegexValidateState *state);
-static void PopulateRegexFromQuery(RegexData *regexState, pgbsonelement *filterElement);
+										TraverseRegexValidateState *state,
+										bool hasObjectIdArg);
+static void PopulateRegexFromQuery(RegexData *regexState, pgbsonelement *filterElement,
+								   bool hasObjectIdArg);
 static Datum BsonDollarInCore(PG_FUNCTION_ARGS, bool hasObjectIdArg);
 static void PopulateDollarInValidationState(PG_FUNCTION_ARGS,
 											TraverseInValidateState *state,
@@ -569,6 +571,7 @@ PG_FUNCTION_INFO_V1(bson_dollar_bits_any_clear);
 PG_FUNCTION_INFO_V1(bson_dollar_bits_all_set);
 PG_FUNCTION_INFO_V1(bson_dollar_bits_any_set);
 PG_FUNCTION_INFO_V1(bson_dollar_regex);
+PG_FUNCTION_INFO_V1(bson_dollar_regex_object_id);
 PG_FUNCTION_INFO_V1(bson_dollar_mod);
 PG_FUNCTION_INFO_V1(bson_dollar_expr);
 PG_FUNCTION_INFO_V1(bson_dollar_text);
@@ -988,11 +991,40 @@ bson_dollar_regex(PG_FUNCTION_ARGS)
 		{ 0 }, { 0 }
 	};
 
-	pgbsonelement filterElement = PopulateRegexState(fcinfo, &state);
+	bool hasObjectIdArg = false;
+	pgbsonelement filterElement = PopulateRegexState(fcinfo, &state, hasObjectIdArg);
 	PgbsonInitIterator(document, &documentIterator);
 	TraverseBson(&documentIterator, filterElement.path, &state.traverseState,
 				 &CompareExecutionFuncs);
 	PG_RETURN_BOOL(state.traverseState.compareResult == CompareResult_Match);
+}
+
+
+Datum
+bson_dollar_regex_object_id(PG_FUNCTION_ARGS)
+{
+	TraverseRegexValidateState state = {
+		{ 0 }, { 0 }
+	};
+
+	bool hasObjectIdArg = true;
+	PopulateRegexState(fcinfo, &state, hasObjectIdArg);
+
+	/* Given that we have object_id, and object_ids tend to be < 2 KB, it's better to run the
+	 * query on the object_id value rather than the document which may be large and may need to
+	 * be detoasted.
+	 */
+	pgbson *objectIdValue = PG_GETARG_PGBSON(1);
+	pgbsonelement documentElement;
+	PgbsonToSinglePgbsonElement(objectIdValue, &documentElement);
+
+	documentElement.path = "_id";
+	documentElement.pathLength = 3;
+
+	bool isArrayInnerTerm = false;
+	bool isMatch = state.traverseState.matchFunc(&documentElement, &state.traverseState,
+												 isArrayInnerTerm);
+	PG_RETURN_BOOL(isMatch);
 }
 
 
@@ -1009,7 +1041,8 @@ bson_value_dollar_regex(PG_FUNCTION_ARGS)
 		{ 0 }, { 0 }
 	};
 
-	pgbsonelement filterElement = PopulateRegexState(fcinfo, &state);
+	bool hasObjectIdArg = false;
+	pgbsonelement filterElement = PopulateRegexState(fcinfo, &state, hasObjectIdArg);
 
 	IsQueryFilterNullFunc isNullFilterEquality = NULL;
 	PG_RETURN_BOOL(CompareBsonValueAgainstQueryCore(element, &filterElement,
@@ -3511,9 +3544,11 @@ IsExistPositiveMatch(pgbson *filter)
  * regex, populates the data inside the validation state.
  */
 static pgbsonelement
-PopulateRegexState(PG_FUNCTION_ARGS, TraverseRegexValidateState *state)
+PopulateRegexState(PG_FUNCTION_ARGS, TraverseRegexValidateState *state, bool
+				   hasObjectIdArg)
 {
-	pgbson *filter = PG_GETARG_PGBSON(1);
+	int argPosition = hasObjectIdArg ? 2 : 1;
+	pgbson *filter = PG_GETARG_PGBSON(argPosition);
 	const RegexData *regexState;
 	pgbsonelement filterElement;
 
@@ -3521,12 +3556,12 @@ PopulateRegexState(PG_FUNCTION_ARGS, TraverseRegexValidateState *state)
 	PgbsonToSinglePgbsonElement(filter, &filterElement);
 
 	/* State populated if and only if cached state is unusable */
-	SetCachedFunctionState(regexState, RegexData, 1, PopulateRegexFromQuery,
-						   &filterElement);
+	SetCachedFunctionState(regexState, RegexData, argPosition, PopulateRegexFromQuery,
+						   &filterElement, hasObjectIdArg);
 	if (regexState == NULL)
 	{
 		/* Cache not available */
-		PopulateRegexFromQuery(&state->regexData, &filterElement);
+		PopulateRegexFromQuery(&state->regexData, &filterElement, hasObjectIdArg);
 	}
 	else
 	{
@@ -3544,7 +3579,8 @@ PopulateRegexState(PG_FUNCTION_ARGS, TraverseRegexValidateState *state)
  * $regex matches.
  */
 static void
-PopulateRegexFromQuery(RegexData *regexState, pgbsonelement *filterElement)
+PopulateRegexFromQuery(RegexData *regexState, pgbsonelement *filterElement, bool
+					   hasObjectIdArg)
 {
 	if (filterElement->bsonValue.value_type != BSON_TYPE_UTF8 &&
 		filterElement->bsonValue.value_type != BSON_TYPE_REGEX)
@@ -3563,6 +3599,13 @@ PopulateRegexFromQuery(RegexData *regexState, pgbsonelement *filterElement)
 	{
 		regexState->regex = filterElement->bsonValue.value.v_utf8.str;
 		regexState->options = "";
+	}
+
+	if (hasObjectIdArg &&
+		(filterElement->pathLength != 3 || strncmp(filterElement->path, "_id", 3) != 0))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR), errmsg(
+							"$regex with ObjectId argument must be created with _id filter path")));
 	}
 
 	regexState->pcreData = RegexCompile(regexState->regex,

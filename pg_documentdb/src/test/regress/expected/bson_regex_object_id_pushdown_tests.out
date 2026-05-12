@@ -1,0 +1,1108 @@
+SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_api_internal,documentdb_core;
+SET documentdb.next_collection_id TO 86100;
+SET documentdb.next_collection_index_id TO 86100;
+SET documentdb.forceDisableSeqScan TO on;
+-- Insert test data with string _id values for regex testing
+SELECT COUNT(*) FROM (
+    SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_coll',
+        FORMAT('{ "_id": "str_%s", "a": %s }', g, g)::bson)
+    FROM generate_series(1, 20) g
+) i;
+NOTICE:  creating collection
+ count 
+-------
+    20
+(1 row)
+
+-- Also insert some non-string _id values to verify type filtering
+SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_coll', '{ "_id": 100, "a": 100 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_coll', '{ "_id": true, "a": 200 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Also insert some specific string _ids for pattern matching
+SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_coll', '{ "_id": "abc_one", "a": 21 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_coll', '{ "_id": "abc_two", "a": 22 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_coll', '{ "_id": "abd_three", "a": 23 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_coll', '{ "_id": "xyz_four", "a": 24 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Insert documents where _id is itself a BSON regex type.
+-- These all fail because _id cannot be a regex type.
+-- NOTE: If this contract ever changes to allow regex _id values, the btree and RUM
+-- index pushdown logic for $regex on _id must be updated accordingly, since it
+-- currently assumes _id values are never regex types when computing index bounds.
+-- These regex _ids match patterns used in test queries
+SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_coll',
+    '{ "_id": { "$regularExpression": { "pattern": "^abc", "options": "" } }, "a": 30 }');
+                                                                                                               insert_one                                                                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "16777245" }, "errmsg" : "The '_id' field value must not be a type of regex" } ] }
+(1 row)
+
+SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_coll',
+    '{ "_id": { "$regularExpression": { "pattern": "str_1", "options": "i" } }, "a": 31 }');
+                                                                                                               insert_one                                                                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "16777245" }, "errmsg" : "The '_id' field value must not be a type of regex" } ] }
+(1 row)
+
+SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_coll',
+    '{ "_id": { "$regularExpression": { "pattern": "xyz", "options": "" } }, "a": 32 }');
+                                                                                                               insert_one                                                                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "16777245" }, "errmsg" : "The '_id' field value must not be a type of regex" } ] }
+(1 row)
+
+-- These regex _ids do NOT match patterns used in test queries
+SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_coll',
+    '{ "_id": { "$regularExpression": { "pattern": "^zzz", "options": "" } }, "a": 33 }');
+                                                                                                               insert_one                                                                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "16777245" }, "errmsg" : "The '_id' field value must not be a type of regex" } ] }
+(1 row)
+
+SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_coll',
+    '{ "_id": { "$regularExpression": { "pattern": "nomatch", "options": "s" } }, "a": 34 }');
+                                                                                                               insert_one                                                                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" }, "writeErrors" : [ { "index" : { "$numberInt" : "0" }, "code" : { "$numberInt" : "16777245" }, "errmsg" : "The '_id' field value must not be a type of regex" } ] }
+(1 row)
+
+-- =============================================
+-- Section 1: Result verification - anchored prefix regex on _id
+-- =============================================
+-- ^str_ should match all str_* _ids
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^str_" } }, "sort": { "_id": 1 } }');
+                      document                       
+-----------------------------------------------------
+ { "_id" : "str_1", "a" : { "$numberInt" : "1" } }
+ { "_id" : "str_10", "a" : { "$numberInt" : "10" } }
+ { "_id" : "str_11", "a" : { "$numberInt" : "11" } }
+ { "_id" : "str_12", "a" : { "$numberInt" : "12" } }
+ { "_id" : "str_13", "a" : { "$numberInt" : "13" } }
+ { "_id" : "str_14", "a" : { "$numberInt" : "14" } }
+ { "_id" : "str_15", "a" : { "$numberInt" : "15" } }
+ { "_id" : "str_16", "a" : { "$numberInt" : "16" } }
+ { "_id" : "str_17", "a" : { "$numberInt" : "17" } }
+ { "_id" : "str_18", "a" : { "$numberInt" : "18" } }
+ { "_id" : "str_19", "a" : { "$numberInt" : "19" } }
+ { "_id" : "str_2", "a" : { "$numberInt" : "2" } }
+ { "_id" : "str_20", "a" : { "$numberInt" : "20" } }
+ { "_id" : "str_3", "a" : { "$numberInt" : "3" } }
+ { "_id" : "str_4", "a" : { "$numberInt" : "4" } }
+ { "_id" : "str_5", "a" : { "$numberInt" : "5" } }
+ { "_id" : "str_6", "a" : { "$numberInt" : "6" } }
+ { "_id" : "str_7", "a" : { "$numberInt" : "7" } }
+ { "_id" : "str_8", "a" : { "$numberInt" : "8" } }
+ { "_id" : "str_9", "a" : { "$numberInt" : "9" } }
+(20 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^str_" } } }');
+                                                                                QUERY PLAN                                                                                 
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "str_" }'::bson) AND (collection.object_id < '{ "" : "str`" }'::bson))
+   Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^str_", "options" : "" } } }'::bson)
+(4 rows)
+
+-- ^abc should match abc_one, abc_two
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" } }, "sort": { "_id": 1 } }');
+                       document                       
+------------------------------------------------------
+ { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
+ { "_id" : "abc_two", "a" : { "$numberInt" : "22" } }
+(2 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" } } }');
+                                                                               QUERY PLAN                                                                                
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "abc" }'::bson) AND (collection.object_id < '{ "" : "abd" }'::bson))
+   Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
+(4 rows)
+
+-- ^abc_ should match abc_one, abc_two (but not abd_three)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc_" } }, "sort": { "_id": 1 } }');
+                       document                       
+------------------------------------------------------
+ { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
+ { "_id" : "abc_two", "a" : { "$numberInt" : "22" } }
+(2 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc_" } } }');
+                                                                                QUERY PLAN                                                                                 
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "abc_" }'::bson) AND (collection.object_id < '{ "" : "abc`" }'::bson))
+   Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc_", "options" : "" } } }'::bson)
+(4 rows)
+
+-- ^xyz should match xyz_four
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^xyz" } }, "sort": { "_id": 1 } }');
+                       document                        
+-------------------------------------------------------
+ { "_id" : "xyz_four", "a" : { "$numberInt" : "24" } }
+(1 row)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^xyz" } } }');
+                                                                               QUERY PLAN                                                                                
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "xyz" }'::bson) AND (collection.object_id < '{ "" : "xy{" }'::bson))
+   Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^xyz", "options" : "" } } }'::bson)
+(4 rows)
+
+-- =============================================
+-- Section 2: Result verification - non-anchored regex on _id
+-- =============================================
+-- non-anchored: "one" should match abc_one
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "one" } }, "sort": { "_id": 1 } }');
+                       document                       
+------------------------------------------------------
+ { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
+(1 row)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "one" } } }');
+                                                                             QUERY PLAN                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "" }'::bson) AND (collection.object_id < '{ "" : {  } }'::bson))
+   Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "one", "options" : "" } } }'::bson)
+(4 rows)
+
+-- non-anchored: "str" should match all str_* ids
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "str" } }, "sort": { "_id": 1 } }');
+                      document                       
+-----------------------------------------------------
+ { "_id" : "str_1", "a" : { "$numberInt" : "1" } }
+ { "_id" : "str_10", "a" : { "$numberInt" : "10" } }
+ { "_id" : "str_11", "a" : { "$numberInt" : "11" } }
+ { "_id" : "str_12", "a" : { "$numberInt" : "12" } }
+ { "_id" : "str_13", "a" : { "$numberInt" : "13" } }
+ { "_id" : "str_14", "a" : { "$numberInt" : "14" } }
+ { "_id" : "str_15", "a" : { "$numberInt" : "15" } }
+ { "_id" : "str_16", "a" : { "$numberInt" : "16" } }
+ { "_id" : "str_17", "a" : { "$numberInt" : "17" } }
+ { "_id" : "str_18", "a" : { "$numberInt" : "18" } }
+ { "_id" : "str_19", "a" : { "$numberInt" : "19" } }
+ { "_id" : "str_2", "a" : { "$numberInt" : "2" } }
+ { "_id" : "str_20", "a" : { "$numberInt" : "20" } }
+ { "_id" : "str_3", "a" : { "$numberInt" : "3" } }
+ { "_id" : "str_4", "a" : { "$numberInt" : "4" } }
+ { "_id" : "str_5", "a" : { "$numberInt" : "5" } }
+ { "_id" : "str_6", "a" : { "$numberInt" : "6" } }
+ { "_id" : "str_7", "a" : { "$numberInt" : "7" } }
+ { "_id" : "str_8", "a" : { "$numberInt" : "8" } }
+ { "_id" : "str_9", "a" : { "$numberInt" : "9" } }
+(20 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "str" } } }');
+                                                                             QUERY PLAN                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "" }'::bson) AND (collection.object_id < '{ "" : {  } }'::bson))
+   Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "str", "options" : "" } } }'::bson)
+(4 rows)
+
+-- =============================================
+-- Section 3: Result verification - regex via $regularExpression (regex type)
+-- =============================================
+-- Regex type (BSON regex) with anchored prefix
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regularExpression": { "pattern": "^abc", "options": "" } } }, "sort": { "_id": 1 } }');
+                       document                       
+------------------------------------------------------
+ { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
+ { "_id" : "abc_two", "a" : { "$numberInt" : "22" } }
+(2 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regularExpression": { "pattern": "^abc", "options": "" } } } }');
+                                                                               QUERY PLAN                                                                                
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "abc" }'::bson) AND (collection.object_id < '{ "" : "abd" }'::bson))
+   Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
+(4 rows)
+
+-- Regex type without anchor
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regularExpression": { "pattern": "four", "options": "" } } }, "sort": { "_id": 1 } }');
+                       document                        
+-------------------------------------------------------
+ { "_id" : "xyz_four", "a" : { "$numberInt" : "24" } }
+(1 row)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regularExpression": { "pattern": "four", "options": "" } } } }');
+                                                                             QUERY PLAN                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "" }'::bson) AND (collection.object_id < '{ "" : {  } }'::bson))
+   Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "four", "options" : "" } } }'::bson)
+(4 rows)
+
+-- Regex type with case-insensitive option
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regularExpression": { "pattern": "^ABC", "options": "i" } } }, "sort": { "_id": 1 } }');
+                       document                       
+------------------------------------------------------
+ { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
+ { "_id" : "abc_two", "a" : { "$numberInt" : "22" } }
+(2 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regularExpression": { "pattern": "^ABC", "options": "i" } } } }');
+                                                                             QUERY PLAN                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "" }'::bson) AND (collection.object_id < '{ "" : {  } }'::bson))
+   Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^ABC", "options" : "i" } } }'::bson)
+(4 rows)
+
+-- =============================================
+-- Section 4: Result verification - regex via bson_build_document ($regex operator form)
+-- =============================================
+-- Using bson_build_document to construct $regex operator with anchored prefix
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    bson_build_document('find', 'regex_id_coll'::text,
+        'filter', bson_build_document('_id',
+            bson_build_document('$regex', '^abc'::text))::bson,
+        'sort', '{ "_id": 1 }'::bson)::bson);
+                       document                       
+------------------------------------------------------
+ { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
+ { "_id" : "abc_two", "a" : { "$numberInt" : "22" } }
+(2 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    bson_build_document('find', 'regex_id_coll'::text,
+        'filter', bson_build_document('_id',
+            bson_build_document('$regex', '^abc'::text))::bson)::bson);
+                                                                               QUERY PLAN                                                                                
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "abc" }'::bson) AND (collection.object_id < '{ "" : "abd" }'::bson))
+   Filter: (collection.document @~ '{ "_id" : "^abc" }'::bson)
+(4 rows)
+
+-- Using bson_build_document to construct $regex operator without anchor
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    bson_build_document('find', 'regex_id_coll'::text,
+        'filter', bson_build_document('_id',
+            bson_build_document('$regex', 'three'::text))::bson,
+        'sort', '{ "_id": 1 }'::bson)::bson);
+                        document                        
+--------------------------------------------------------
+ { "_id" : "abd_three", "a" : { "$numberInt" : "23" } }
+(1 row)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    bson_build_document('find', 'regex_id_coll'::text,
+        'filter', bson_build_document('_id',
+            bson_build_document('$regex', 'three'::text))::bson)::bson);
+                                                                             QUERY PLAN                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "" }'::bson) AND (collection.object_id < '{ "" : {  } }'::bson))
+   Filter: (collection.document @~ '{ "_id" : "three" }'::bson)
+(4 rows)
+
+-- =============================================
+-- Section 5: Combined regex on _id with other filters
+-- =============================================
+-- regex on _id combined with equality on another field
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" }, "a": 21 }, "sort": { "_id": 1 } }');
+                       document                       
+------------------------------------------------------
+ { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
+(1 row)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" }, "a": 21 } }');
+                                                                                            QUERY PLAN                                                                                             
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "abc" }'::bson) AND (collection.object_id < '{ "" : "abd" }'::bson))
+   Filter: ((collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson) AND (collection.document @= '{ "a" : { "$numberInt" : "21" } }'::bson))
+(4 rows)
+
+-- regex on _id combined with $gt on another field
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^str_1" }, "a": { "$gt": 15 } }, "sort": { "_id": 1 } }');
+                      document                       
+-----------------------------------------------------
+ { "_id" : "str_16", "a" : { "$numberInt" : "16" } }
+ { "_id" : "str_17", "a" : { "$numberInt" : "17" } }
+ { "_id" : "str_18", "a" : { "$numberInt" : "18" } }
+ { "_id" : "str_19", "a" : { "$numberInt" : "19" } }
+(4 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^str_1" }, "a": { "$gt": 15 } } }');
+                                                                                             QUERY PLAN                                                                                              
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "str_1" }'::bson) AND (collection.object_id < '{ "" : "str_2" }'::bson))
+   Filter: ((collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^str_1", "options" : "" } } }'::bson) AND (collection.document @> '{ "a" : { "$numberInt" : "15" } }'::bson))
+(4 rows)
+
+-- =============================================
+-- Section 6: EXPLAIN plans - Btree pushdown verification
+-- The btree index on (shard_key_value, object_id) should show
+-- regex bounds pushed to btree index scans
+-- =============================================
+SET documentdb.enableExtendedExplainPlans TO on;
+-- Disable bitmap scans for btree EXPLAIN stability across PG versions (PG18 may prefer bitmap)
+BEGIN;
+SET LOCAL enable_bitmapscan TO off;
+-- Anchored prefix: should show btree pushdown with range bounds
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" } } }')
+$cmd$);
+                                                          run_explain_and_trim                                                          
+----------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_86101 collection (actual rows=2 loops=1)
+   Index Cond: ((shard_key_value = '86101'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))
+   Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
+(3 rows)
+
+-- Non-anchored: should still pushdown (with wider bounds)
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "one" } } }')
+$cmd$);
+                                                        run_explain_and_trim                                                        
+------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_86101 collection (actual rows=1 loops=1)
+   Index Cond: ((shard_key_value = '86101'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))
+   Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "one", "options" : "" } } }'::bson)
+   Rows Removed by Filter: 23
+(4 rows)
+
+-- Anchored prefix with metacharacter: ^str[io] should extract prefix "str"
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^str[io]" } } }')
+$cmd$);
+                                                          run_explain_and_trim                                                          
+----------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_86101 collection (actual rows=0 loops=1)
+   Index Cond: ((shard_key_value = '86101'::bigint) AND (object_id >= '{ "" : "str" }'::bson) AND (object_id < '{ "" : "sts" }'::bson))
+   Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^str[io]", "options" : "" } } }'::bson)
+   Rows Removed by Filter: 20
+(4 rows)
+
+-- Regex type (BSON regex) with anchored prefix - btree pushdown
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regularExpression": { "pattern": "^abc", "options": "" } } } }')
+$cmd$);
+                                                          run_explain_and_trim                                                          
+----------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_86101 collection (actual rows=2 loops=1)
+   Index Cond: ((shard_key_value = '86101'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))
+   Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
+(3 rows)
+
+-- Regex type without anchor - btree pushdown
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regularExpression": { "pattern": "one", "options": "" } } } }')
+$cmd$);
+                                                        run_explain_and_trim                                                        
+------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_86101 collection (actual rows=1 loops=1)
+   Index Cond: ((shard_key_value = '86101'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))
+   Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "one", "options" : "" } } }'::bson)
+   Rows Removed by Filter: 23
+(4 rows)
+
+-- Regex type with options "i" (case-insensitive) - should show wider bounds (no prefix optimization)
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regularExpression": { "pattern": "^ABC", "options": "i" } } } }')
+$cmd$);
+                                                        run_explain_and_trim                                                        
+------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_86101 collection (actual rows=2 loops=1)
+   Index Cond: ((shard_key_value = '86101'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))
+   Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^ABC", "options" : "i" } } }'::bson)
+   Rows Removed by Filter: 22
+(4 rows)
+
+-- Regex with option "s" (dotAll) - "s" does not affect prefix extraction, so pushdown
+-- should still produce narrow bounds like the no-options case
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regularExpression": { "pattern": "^abc", "options": "s" } } } }')
+$cmd$);
+                                                          run_explain_and_trim                                                          
+----------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_86101 collection (actual rows=2 loops=1)
+   Index Cond: ((shard_key_value = '86101'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))
+   Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "s" } } }'::bson)
+(3 rows)
+
+-- Regex with options "si" (dotAll + case-insensitive) - "i" prevents prefix optimization
+-- so bounds should be wide despite the anchor, same as "i" alone
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regularExpression": { "pattern": "^abc", "options": "si" } } } }')
+$cmd$);
+                                                        run_explain_and_trim                                                        
+------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_86101 collection (actual rows=2 loops=1)
+   Index Cond: ((shard_key_value = '86101'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))
+   Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "is" } } }'::bson)
+   Rows Removed by Filter: 22
+(4 rows)
+
+ROLLBACK;
+-- =============================================
+-- Section 7: EXPLAIN plans - RUM index pushdown verification
+-- Create a secondary RUM index and check regex pushdown
+-- =============================================
+SELECT documentdb_api_internal.create_indexes_non_concurrently('regexIdDb',
+    '{ "createIndexes": "regex_id_coll", "indexes": [ { "key": { "a": 1, "_id": 1 }, "name": "idx_a_id" } ]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Combined _id regex and a field filter to exercise both index paths
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" }, "a": { "$gt": 20 } } }')
+$cmd$);
+                                                                                                       run_explain_and_trim                                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: regexIdDb.regex_id_coll
+   indexName: idx_a_id
+   indexKey: {"a": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["a": (20, Infinity], "_id": ["abc", "abd")], ["a": (20, Infinity], "_id": [{ "$regularExpression" : { "pattern" : "^abc", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc", "options" : "" } }]]
+   ->  Index Scan using idx_a_id on documents_86101 collection (actual rows=2 loops=1)
+         Index Cond: ((document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson) AND (document @> '{ "a" : { "$numberInt" : "20" } }'::bson))
+(8 rows)
+
+-- =============================================
+-- Section 8: Composite RUM index with _id for regex pushdown
+-- Create a collection with a composite RUM index containing _id
+-- =============================================
+SELECT documentdb_api_internal.create_indexes_non_concurrently('regexIdDb',
+    '{ "createIndexes": "regex_id_rum_coll", "indexes": [ { "key": { "b": 1, "_id": 1 }, "name": "idx_b_id_rum" } ]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT COUNT(*) FROM (
+    SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_rum_coll',
+        FORMAT('{ "_id": "rum_%s", "b": %s }', g, g)::bson)
+    FROM generate_series(1, 10) g
+) i;
+ count 
+-------
+    10
+(1 row)
+
+SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_rum_coll', '{ "_id": "abc_one", "b": 11 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_rum_coll', '{ "_id": "abc_two", "b": 12 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_rum_coll', '{ "_id": "abd_three", "b": 13 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Result verification with RUM-indexed collection using hint to force RUM index
+-- Without hint, _id-only regex queries prefer the btree _id_ index.
+-- Use hint to verify regex pushdown works on the composite RUM index.
+-- Disable bitmap scans for EXPLAIN stability across PG versions (PG18 may prefer bitmap)
+BEGIN;
+SET LOCAL enable_bitmapscan TO off;
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_rum_coll", "filter": { "_id": { "$regex": "^abc" } }, "sort": { "_id": 1 }, "hint": "idx_b_id_rum" }');
+                       document                       
+------------------------------------------------------
+ { "_id" : "abc_one", "b" : { "$numberInt" : "11" } }
+ { "_id" : "abc_two", "b" : { "$numberInt" : "12" } }
+(2 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_rum_coll", "filter": { "_id": { "$regex": "^abc" } }, "hint": "idx_b_id_rum" }');
+                                                                                                              QUERY PLAN                                                                                                               
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: regexIdDb.regex_id_rum_coll
+   indexName: idx_b_id_rum
+   indexKey: {"b": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["b": (MinKey, MaxKey), "_id": ["abc", "abd")], ["b": (MinKey, MaxKey), "_id": [{ "$regularExpression" : { "pattern" : "^abc", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc", "options" : "" } }]]
+   ->  Index Scan using idx_b_id_rum on documentdb_data.documents_86102 collection
+         Output: document
+         Index Cond: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
+(10 rows)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_rum_coll", "filter": { "_id": { "$regex": "^rum_" } }, "sort": { "_id": 1 }, "hint": "idx_b_id_rum" }');
+                      document                       
+-----------------------------------------------------
+ { "_id" : "rum_1", "b" : { "$numberInt" : "1" } }
+ { "_id" : "rum_10", "b" : { "$numberInt" : "10" } }
+ { "_id" : "rum_2", "b" : { "$numberInt" : "2" } }
+ { "_id" : "rum_3", "b" : { "$numberInt" : "3" } }
+ { "_id" : "rum_4", "b" : { "$numberInt" : "4" } }
+ { "_id" : "rum_5", "b" : { "$numberInt" : "5" } }
+ { "_id" : "rum_6", "b" : { "$numberInt" : "6" } }
+ { "_id" : "rum_7", "b" : { "$numberInt" : "7" } }
+ { "_id" : "rum_8", "b" : { "$numberInt" : "8" } }
+ { "_id" : "rum_9", "b" : { "$numberInt" : "9" } }
+(10 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_rum_coll", "filter": { "_id": { "$regex": "^rum_" } }, "hint": "idx_b_id_rum" }');
+                                                                                                                QUERY PLAN                                                                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: regexIdDb.regex_id_rum_coll
+   indexName: idx_b_id_rum
+   indexKey: {"b": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["b": (MinKey, MaxKey), "_id": ["rum_", "rum`")], ["b": (MinKey, MaxKey), "_id": [{ "$regularExpression" : { "pattern" : "^rum_", "options" : "" } }, { "$regularExpression" : { "pattern" : "^rum_", "options" : "" } }]]
+   ->  Index Scan using idx_b_id_rum on documentdb_data.documents_86102 collection
+         Output: document
+         Index Cond: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^rum_", "options" : "" } } }'::bson)
+(10 rows)
+
+-- Combined b + _id regex to exercise the composite RUM index { b: 1, _id: 1 }
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_rum_coll", "filter": { "b": { "$gt": 10 }, "_id": { "$regex": "^abc" } }, "sort": { "_id": 1 } }');
+                       document                       
+------------------------------------------------------
+ { "_id" : "abc_one", "b" : { "$numberInt" : "11" } }
+ { "_id" : "abc_two", "b" : { "$numberInt" : "12" } }
+(2 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_rum_coll", "filter": { "b": { "$gt": 10 }, "_id": { "$regex": "^abc" } } }');
+                                                                                                            QUERY PLAN                                                                                                             
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: regexIdDb.regex_id_rum_coll
+   indexName: idx_b_id_rum
+   indexKey: {"b": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["b": (10, Infinity], "_id": ["abc", "abd")], ["b": (10, Infinity], "_id": [{ "$regularExpression" : { "pattern" : "^abc", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc", "options" : "" } }]]
+   ->  Index Scan using idx_b_id_rum on documentdb_data.documents_86102 collection
+         Output: document
+         Index Cond: ((collection.document @> '{ "b" : { "$numberInt" : "10" } }'::bson) AND (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson))
+(10 rows)
+
+-- Combined b + _id regex with $regularExpression type on composite RUM
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_rum_coll", "filter": { "b": { "$gte": 1 }, "_id": { "$regularExpression": { "pattern": "^rum_", "options": "" } } }, "sort": { "_id": 1 } }');
+                      document                       
+-----------------------------------------------------
+ { "_id" : "rum_1", "b" : { "$numberInt" : "1" } }
+ { "_id" : "rum_10", "b" : { "$numberInt" : "10" } }
+ { "_id" : "rum_2", "b" : { "$numberInt" : "2" } }
+ { "_id" : "rum_3", "b" : { "$numberInt" : "3" } }
+ { "_id" : "rum_4", "b" : { "$numberInt" : "4" } }
+ { "_id" : "rum_5", "b" : { "$numberInt" : "5" } }
+ { "_id" : "rum_6", "b" : { "$numberInt" : "6" } }
+ { "_id" : "rum_7", "b" : { "$numberInt" : "7" } }
+ { "_id" : "rum_8", "b" : { "$numberInt" : "8" } }
+ { "_id" : "rum_9", "b" : { "$numberInt" : "9" } }
+(10 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_rum_coll", "filter": { "b": { "$gte": 1 }, "_id": { "$regularExpression": { "pattern": "^rum_", "options": "" } } } }');
+                                                                                                             QUERY PLAN                                                                                                              
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: regexIdDb.regex_id_rum_coll
+   indexName: idx_b_id_rum
+   indexKey: {"b": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["b": [1, Infinity], "_id": ["rum_", "rum`")], ["b": [1, Infinity], "_id": [{ "$regularExpression" : { "pattern" : "^rum_", "options" : "" } }, { "$regularExpression" : { "pattern" : "^rum_", "options" : "" } }]]
+   ->  Index Scan using idx_b_id_rum on documentdb_data.documents_86102 collection
+         Output: document
+         Index Cond: ((collection.document @>= '{ "b" : { "$numberInt" : "1" } }'::bson) AND (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^rum_", "options" : "" } } }'::bson))
+(10 rows)
+
+-- Combined b + non-anchored _id regex on composite RUM
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_rum_coll", "filter": { "b": { "$gt": 10 }, "_id": { "$regex": "three" } }, "sort": { "_id": 1 } }');
+                        document                        
+--------------------------------------------------------
+ { "_id" : "abd_three", "b" : { "$numberInt" : "13" } }
+(1 row)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_rum_coll", "filter": { "b": { "$gt": 10 }, "_id": { "$regex": "three" } } }');
+                                                                                                           QUERY PLAN                                                                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document
+   namespaceName: regexIdDb.regex_id_rum_coll
+   indexName: idx_b_id_rum
+   indexKey: {"b": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["b": (10, Infinity], "_id": ["", { })], ["b": (10, Infinity], "_id": [{ "$regularExpression" : { "pattern" : "three", "options" : "" } }, { "$regularExpression" : { "pattern" : "three", "options" : "" } }]]
+   ->  Index Scan using idx_b_id_rum on documentdb_data.documents_86102 collection
+         Output: document
+         Index Cond: ((collection.document @> '{ "b" : { "$numberInt" : "10" } }'::bson) AND (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "three", "options" : "" } } }'::bson))
+(10 rows)
+
+ROLLBACK;
+-- Disable bitmap scans for RUM EXPLAIN stability across PG versions (PG18 may prefer bitmap)
+BEGIN;
+SET LOCAL enable_bitmapscan TO off;
+-- EXPLAIN for RUM index with hint to force regex pushdown on composite RUM
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_rum_coll", "filter": { "_id": { "$regex": "^abc" } }, "hint": "idx_b_id_rum" }')
+$cmd$);
+                                                                                                         run_explain_and_trim                                                                                                          
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: regexIdDb.regex_id_rum_coll
+   indexName: idx_b_id_rum
+   indexKey: {"b": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["b": (MinKey, MaxKey), "_id": ["abc", "abd")], ["b": (MinKey, MaxKey), "_id": [{ "$regularExpression" : { "pattern" : "^abc", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc", "options" : "" } }]]
+   ->  Index Scan using idx_b_id_rum on documents_86102 collection (actual rows=2 loops=1)
+         Index Cond: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
+(8 rows)
+
+-- Non-anchored regex on RUM index with hint
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_rum_coll", "filter": { "_id": { "$regex": "rum" } }, "hint": "idx_b_id_rum" }')
+$cmd$);
+                                                                                                      run_explain_and_trim                                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
+   namespaceName: regexIdDb.regex_id_rum_coll
+   indexName: idx_b_id_rum
+   indexKey: {"b": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["b": (MinKey, MaxKey), "_id": ["", { })], ["b": (MinKey, MaxKey), "_id": [{ "$regularExpression" : { "pattern" : "rum", "options" : "" } }, { "$regularExpression" : { "pattern" : "rum", "options" : "" } }]]
+   ->  Index Scan using idx_b_id_rum on documents_86102 collection (actual rows=10 loops=1)
+         Index Cond: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "rum", "options" : "" } } }'::bson)
+(8 rows)
+
+-- Regex type on RUM index with hint
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_rum_coll", "filter": { "_id": { "$regularExpression": { "pattern": "^abc", "options": "" } } }, "hint": "idx_b_id_rum" }')
+$cmd$);
+                                                                                                         run_explain_and_trim                                                                                                          
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: regexIdDb.regex_id_rum_coll
+   indexName: idx_b_id_rum
+   indexKey: {"b": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["b": (MinKey, MaxKey), "_id": ["abc", "abd")], ["b": (MinKey, MaxKey), "_id": [{ "$regularExpression" : { "pattern" : "^abc", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc", "options" : "" } }]]
+   ->  Index Scan using idx_b_id_rum on documents_86102 collection (actual rows=2 loops=1)
+         Index Cond: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
+(8 rows)
+
+-- Combined b + _id regex EXPLAIN to show composite RUM pushdown
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_rum_coll", "filter": { "b": { "$gt": 10 }, "_id": { "$regex": "^abc" } } }')
+$cmd$);
+                                                                                                       run_explain_and_trim                                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: regexIdDb.regex_id_rum_coll
+   indexName: idx_b_id_rum
+   indexKey: {"b": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["b": (10, Infinity], "_id": ["abc", "abd")], ["b": (10, Infinity], "_id": [{ "$regularExpression" : { "pattern" : "^abc", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc", "options" : "" } }]]
+   ->  Index Scan using idx_b_id_rum on documents_86102 collection (actual rows=2 loops=1)
+         Index Cond: ((document @> '{ "b" : { "$numberInt" : "10" } }'::bson) AND (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson))
+(8 rows)
+
+-- Combined b + non-anchored _id regex EXPLAIN on composite RUM
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_rum_coll", "filter": { "b": { "$gt": 10 }, "_id": { "$regex": "three" } } }')
+$cmd$);
+                                                                                                      run_explain_and_trim                                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: regexIdDb.regex_id_rum_coll
+   indexName: idx_b_id_rum
+   indexKey: {"b": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["b": (10, Infinity], "_id": ["", { })], ["b": (10, Infinity], "_id": [{ "$regularExpression" : { "pattern" : "three", "options" : "" } }, { "$regularExpression" : { "pattern" : "three", "options" : "" } }]]
+   ->  Index Scan using idx_b_id_rum on documents_86102 collection (actual rows=1 loops=1)
+         Index Cond: ((document @> '{ "b" : { "$numberInt" : "10" } }'::bson) AND (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "three", "options" : "" } } }'::bson))
+(8 rows)
+
+ROLLBACK;
+-- =============================================
+-- Section 9: Bitmap scan verification
+-- Disable enable_indexscan to force bitmap scans and verify regex pushdown
+-- =============================================
+BEGIN;
+SET LOCAL enable_indexscan TO off;
+-- Btree bitmap scan with anchored prefix regex on _id
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" } } }')
+$cmd$);
+                                                             run_explain_and_trim                                                             
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_86101 collection (actual rows=2 loops=1)
+   Recheck Cond: (shard_key_value = '86101'::bigint)
+   Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
+   Heap Blocks: exact=1
+   ->  Bitmap Index Scan on _id_ (actual rows=2 loops=1)
+         Index Cond: ((shard_key_value = '86101'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))
+(6 rows)
+
+-- Btree bitmap scan with non-anchored regex on _id
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "str" } } }')
+$cmd$);
+                                                           run_explain_and_trim                                                           
+------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_86101 collection (actual rows=20 loops=1)
+   Recheck Cond: (shard_key_value = '86101'::bigint)
+   Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "str", "options" : "" } } }'::bson)
+   Rows Removed by Filter: 4
+   Heap Blocks: exact=1
+   ->  Bitmap Index Scan on _id_ (actual rows=24 loops=1)
+         Index Cond: ((shard_key_value = '86101'::bigint) AND (object_id >= '{ "" : "" }'::bson) AND (object_id < '{ "" : {  } }'::bson))
+(7 rows)
+
+-- Btree bitmap scan with regex type ($regularExpression) on _id
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regularExpression": { "pattern": "^abc", "options": "" } } } }')
+$cmd$);
+                                                             run_explain_and_trim                                                             
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_86101 collection (actual rows=2 loops=1)
+   Recheck Cond: (shard_key_value = '86101'::bigint)
+   Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
+   Heap Blocks: exact=1
+   ->  Bitmap Index Scan on _id_ (actual rows=2 loops=1)
+         Index Cond: ((shard_key_value = '86101'::bigint) AND (object_id >= '{ "" : "abc" }'::bson) AND (object_id < '{ "" : "abd" }'::bson))
+(6 rows)
+
+-- RUM bitmap scan with hint on _id-only regex
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_rum_coll", "filter": { "b": { "$exists": true }, "_id": { "$regex": "^abc" } }, "hint": "idx_b_id_rum" }')
+$cmd$);
+                                                                                                         run_explain_and_trim                                                                                                          
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: regexIdDb.regex_id_rum_coll
+   indexName: idx_b_id_rum
+   indexKey: {"b": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["b": [MinKey, MaxKey], "_id": ["abc", "abd")], ["b": [MinKey, MaxKey], "_id": [{ "$regularExpression" : { "pattern" : "^abc", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc", "options" : "" } }]]
+   ->  Bitmap Heap Scan on documents_86102 collection (actual rows=2 loops=1)
+         Recheck Cond: ((document @>= '{ "b" : { "$minKey" : 1 } }'::bson) AND (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson))
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_b_id_rum (actual rows=2 loops=1)
+               Index Cond: ((document @>= '{ "b" : { "$minKey" : 1 } }'::bson) AND (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson))
+(11 rows)
+
+-- RUM bitmap scan with combined b + _id regex
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_rum_coll", "filter": { "b": { "$gt": 10 }, "_id": { "$regex": "^abc" } } }')
+$cmd$);
+                                                                                                       run_explain_and_trim                                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: regexIdDb.regex_id_rum_coll
+   indexName: idx_b_id_rum
+   indexKey: {"b": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["b": (10, Infinity], "_id": ["abc", "abd")], ["b": (10, Infinity], "_id": [{ "$regularExpression" : { "pattern" : "^abc", "options" : "" } }, { "$regularExpression" : { "pattern" : "^abc", "options" : "" } }]]
+   ->  Bitmap Heap Scan on documents_86102 collection (actual rows=2 loops=1)
+         Recheck Cond: ((document @> '{ "b" : { "$numberInt" : "10" } }'::bson) AND (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson))
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_b_id_rum (actual rows=2 loops=1)
+               Index Cond: ((document @> '{ "b" : { "$numberInt" : "10" } }'::bson) AND (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson))
+(11 rows)
+
+-- RUM bitmap scan with non-anchored _id regex and b filter
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_rum_coll", "filter": { "b": { "$gt": 10 }, "_id": { "$regex": "three" } } }')
+$cmd$);
+                                                                                                      run_explain_and_trim                                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: regexIdDb.regex_id_rum_coll
+   indexName: idx_b_id_rum
+   indexKey: {"b": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["b": (10, Infinity], "_id": ["", { })], ["b": (10, Infinity], "_id": [{ "$regularExpression" : { "pattern" : "three", "options" : "" } }, { "$regularExpression" : { "pattern" : "three", "options" : "" } }]]
+   ->  Bitmap Heap Scan on documents_86102 collection (actual rows=1 loops=1)
+         Recheck Cond: ((document @> '{ "b" : { "$numberInt" : "10" } }'::bson) AND (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "three", "options" : "" } } }'::bson))
+         Heap Blocks: exact=1
+         ->  Bitmap Index Scan on idx_b_id_rum (actual rows=1 loops=1)
+               Index Cond: ((document @> '{ "b" : { "$numberInt" : "10" } }'::bson) AND (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "three", "options" : "" } } }'::bson))
+(11 rows)
+
+ROLLBACK;
+-- =============================================
+-- Section 10: Edge cases
+-- =============================================
+-- Empty regex should match all string _ids
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "" } }, "sort": { "_id": 1 } }');
+                        document                        
+--------------------------------------------------------
+ { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
+ { "_id" : "abc_two", "a" : { "$numberInt" : "22" } }
+ { "_id" : "abd_three", "a" : { "$numberInt" : "23" } }
+ { "_id" : "str_1", "a" : { "$numberInt" : "1" } }
+ { "_id" : "str_10", "a" : { "$numberInt" : "10" } }
+ { "_id" : "str_11", "a" : { "$numberInt" : "11" } }
+ { "_id" : "str_12", "a" : { "$numberInt" : "12" } }
+ { "_id" : "str_13", "a" : { "$numberInt" : "13" } }
+ { "_id" : "str_14", "a" : { "$numberInt" : "14" } }
+ { "_id" : "str_15", "a" : { "$numberInt" : "15" } }
+ { "_id" : "str_16", "a" : { "$numberInt" : "16" } }
+ { "_id" : "str_17", "a" : { "$numberInt" : "17" } }
+ { "_id" : "str_18", "a" : { "$numberInt" : "18" } }
+ { "_id" : "str_19", "a" : { "$numberInt" : "19" } }
+ { "_id" : "str_2", "a" : { "$numberInt" : "2" } }
+ { "_id" : "str_20", "a" : { "$numberInt" : "20" } }
+ { "_id" : "str_3", "a" : { "$numberInt" : "3" } }
+ { "_id" : "str_4", "a" : { "$numberInt" : "4" } }
+ { "_id" : "str_5", "a" : { "$numberInt" : "5" } }
+ { "_id" : "str_6", "a" : { "$numberInt" : "6" } }
+ { "_id" : "str_7", "a" : { "$numberInt" : "7" } }
+ { "_id" : "str_8", "a" : { "$numberInt" : "8" } }
+ { "_id" : "str_9", "a" : { "$numberInt" : "9" } }
+ { "_id" : "xyz_four", "a" : { "$numberInt" : "24" } }
+(24 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "" } } }');
+                                                                             QUERY PLAN                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "" }'::bson) AND (collection.object_id < '{ "" : {  } }'::bson))
+   Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "", "options" : "" } } }'::bson)
+(4 rows)
+
+-- ^$ should match only empty string _id (none in our data)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^$" } }, "sort": { "_id": 1 } }');
+ document 
+----------
+(0 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^$" } } }');
+                                                                             QUERY PLAN                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "" }'::bson) AND (collection.object_id < '{ "" : {  } }'::bson))
+   Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^$", "options" : "" } } }'::bson)
+(4 rows)
+
+-- anchor only ^ matches all string _ids
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^" } }, "sort": { "_id": 1 } }');
+                        document                        
+--------------------------------------------------------
+ { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
+ { "_id" : "abc_two", "a" : { "$numberInt" : "22" } }
+ { "_id" : "abd_three", "a" : { "$numberInt" : "23" } }
+ { "_id" : "str_1", "a" : { "$numberInt" : "1" } }
+ { "_id" : "str_10", "a" : { "$numberInt" : "10" } }
+ { "_id" : "str_11", "a" : { "$numberInt" : "11" } }
+ { "_id" : "str_12", "a" : { "$numberInt" : "12" } }
+ { "_id" : "str_13", "a" : { "$numberInt" : "13" } }
+ { "_id" : "str_14", "a" : { "$numberInt" : "14" } }
+ { "_id" : "str_15", "a" : { "$numberInt" : "15" } }
+ { "_id" : "str_16", "a" : { "$numberInt" : "16" } }
+ { "_id" : "str_17", "a" : { "$numberInt" : "17" } }
+ { "_id" : "str_18", "a" : { "$numberInt" : "18" } }
+ { "_id" : "str_19", "a" : { "$numberInt" : "19" } }
+ { "_id" : "str_2", "a" : { "$numberInt" : "2" } }
+ { "_id" : "str_20", "a" : { "$numberInt" : "20" } }
+ { "_id" : "str_3", "a" : { "$numberInt" : "3" } }
+ { "_id" : "str_4", "a" : { "$numberInt" : "4" } }
+ { "_id" : "str_5", "a" : { "$numberInt" : "5" } }
+ { "_id" : "str_6", "a" : { "$numberInt" : "6" } }
+ { "_id" : "str_7", "a" : { "$numberInt" : "7" } }
+ { "_id" : "str_8", "a" : { "$numberInt" : "8" } }
+ { "_id" : "str_9", "a" : { "$numberInt" : "9" } }
+ { "_id" : "xyz_four", "a" : { "$numberInt" : "24" } }
+(24 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^" } } }');
+                                                                             QUERY PLAN                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "" }'::bson) AND (collection.object_id < '{ "" : {  } }'::bson))
+   Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^", "options" : "" } } }'::bson)
+(4 rows)
+
+-- ^nonexistent should match nothing
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^nonexistent" } }, "sort": { "_id": 1 } }');
+ document 
+----------
+(0 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^nonexistent" } } }');
+                                                                                       QUERY PLAN                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_86101 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '86101'::bigint) AND (collection.object_id >= '{ "" : "nonexistent" }'::bson) AND (collection.object_id < '{ "" : "nonexistenu" }'::bson))
+   Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^nonexistent", "options" : "" } } }'::bson)
+(4 rows)
+
+-- =============================================
+-- Section 11: Feature flag toggle
+-- =============================================
+-- Disable the feature flag and verify regex still works (just no pushdown optimization)
+BEGIN;
+SET LOCAL documentdb.enableObjectIdFuncExprConversion TO off;
+SET LOCAL documentdb.forceDisableSeqScan TO off;
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" } }, "sort": { "_id": 1 } }');
+                       document                       
+------------------------------------------------------
+ { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
+ { "_id" : "abc_two", "a" : { "$numberInt" : "22" } }
+(2 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
+    '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" } } }');
+                                                        QUERY PLAN                                                        
+--------------------------------------------------------------------------------------------------------------------------
+ Seq Scan on documentdb_data.documents_86101 collection
+   Output: document
+   Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
+(3 rows)
+
+-- EXPLAIN with feature flag off should show different plan (no object_id pushdown)
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" } } }')
+$cmd$);
+                                             run_explain_and_trim                                              
+---------------------------------------------------------------------------------------------------------------
+ Seq Scan on documents_86101 collection (actual rows=2 loops=1)
+   Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
+   Rows Removed by Filter: 24
+(3 rows)
+
+ROLLBACK;
+RESET documentdb.enableExtendedExplainPlans;
+RESET documentdb.forceDisableSeqScan;

@@ -528,6 +528,12 @@ TryGetErrorMessageAndCode(ErrorData *errorData, int *code, char **errmessage)
 /*
  * Ensures that the _id field in a write document conforms to the protocol requirements
  * Right now this ensures that the _id is not undefined or an array or a regex pattern
+ *
+ * NOTE: If this contract ever changes to allow regex _id values, the btree and RUM
+ * index pushdown logic for $regex on _id must be updated accordingly, since it
+ * currently assumes _id values are never regex types when computing index bounds.
+ * See HandleRegexBtreeIdPushdown and HandleSupportRequestForRegularObjectIdCondition
+ * in index_support.c.
  */
 void
 ValidateIdField(const bson_value_t *idValue)

@@ -168,7 +168,8 @@ bool IsBtreePrimaryKeyIndex(struct IndexOptInfo *indexInfo);
 bool InMatchIsEquvalentTo(ScalarArrayOpExpr *opExpr, const bson_value_t *arrayValue);
 
 OpExpr * GetOpExprClauseFromIndexOperator(const
-										  MongoIndexOperatorInfo *operator, List *args,
+										  MongoIndexOperatorInfo *operator,
+										  Expr *firstArg, Expr *secondArg,
 										  bytea *indexOptions);
 
 void documentdb_btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
