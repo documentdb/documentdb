@@ -497,3 +497,27 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 set documentdb.enableSortGroupStage to on;
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "firstRent" : { "$first" : "$rent" } } }]}') $$, p_ignore_heap_fetches => true);
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "lastRent" : { "$last" : "$rent" } } }]}') $$, p_ignore_heap_fetches => true);
+
+-- =============================================================================
+-- Test: $sum with constant value uses index only scan with a hinted compound
+-- index.
+-- =============================================================================
+SELECT documentdb_api.create_collection('iosdb_rum', 'sum_const_test');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('iosdb_rum', '{ "createIndexes": "sum_const_test", "indexes": [ { "key": { "region": 1, "dept": 1, "level": 1, "tag": 1 }, "name": "region_1_dept_1_level_1_tag_1", "enableOrderedIndex": true } ] }', true);
+
+SELECT COUNT(documentdb_api.insert_one('iosdb_rum', 'sum_const_test', FORMAT('{ "_id": %s, "region": 100, "dept": 20, "level": 5, "tag": "tag-%s" }', i, i % 3)::documentdb_core.bson)) FROM generate_series(1, 100) i;
+
+SET documentdb.enableIndexOnlyScanForCoveredAggregateTargets TO on;
+
+-- Result correctness must hold both with the legacy $sum accumulator and the
+-- new with-expr accumulator path; both runs should produce the same counts.
+SET documentdb.enableNewWithExprAccumulators TO off;
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate": "sum_const_test", "pipeline": [ { "$match": { "region": 100, "dept": 20, "level": 5 } }, { "$group": { "_id": "$tag", "count": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "hint": "region_1_dept_1_level_1_tag_1" }');
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate": "sum_const_test", "pipeline": [ { "$match": { "region": 100, "dept": 20, "level": 5 } }, { "$group": { "_id": "$tag", "count": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "hint": "region_1_dept_1_level_1_tag_1" }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate": "sum_const_test", "pipeline": [ { "$match": { "region": 100, "dept": 20, "level": 5 } }, { "$group": { "_id": "$tag", "count": { "$sum": 1 } } } ], "cursor": {}, "hint": "region_1_dept_1_level_1_tag_1" }') $$, p_ignore_heap_fetches => true);
+
+RESET documentdb.enableIndexOnlyScanForCoveredAggregateTargets;
+RESET documentdb.enableNewWithExprAccumulators;
+SELECT documentdb_api.drop_collection('iosdb_rum', 'sum_const_test');

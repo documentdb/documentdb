@@ -1955,7 +1955,10 @@ TryExtractFieldPathFromConst(Expr *expr)
 	}
 
 	pgbsonelement pathElement;
-	PgbsonToSinglePgbsonElement(pathBson, &pathElement);
+	if (!TryGetSinglePgbsonElementFromPgbson(pathBson, &pathElement))
+	{
+		return NULL;
+	}
 
 	if (pathElement.bsonValue.value_type == BSON_TYPE_UTF8)
 	{
@@ -2181,6 +2184,7 @@ CheckFieldCoverage(Node *node, void *context)
 
 		const char *fieldPath = NULL;
 		bool sawDocumentVar = false;
+		bool sawEmptyBsonConst = false;
 
 		Aggref *aggref = (Aggref *) node;
 		ListCell *aggArgCell;
@@ -2196,12 +2200,30 @@ CheckFieldCoverage(Node *node, void *context)
 				continue;
 			}
 
+			/* Detect placeholder empty-BSON Consts emitted by
+			 * GetDocumentExprForGroupAccumulatorValue() when the accumulator
+			 * expression is a constant (e.g., $sum: 1). These carry no field
+			 * reference, so they don't disqualify the aggregate from IOS.
+			 */
+			if (IsA(argExpr, Const))
+			{
+				pgbson *constBson = TryExtractPgbsonFromConst(argExpr);
+				if (constBson != NULL && IsPgbsonEmptyDocument(constBson))
+				{
+					sawEmptyBsonConst = true;
+					continue;
+				}
+			}
+
 			/* Currently, we only handle aggregate functions with two arguments, and one field path. */
 			if (fieldPath == NULL)
 			{
 				fieldPath = TryExtractFieldPathFromConst(argExpr);
 			}
 		}
+
+		Assert(!(sawEmptyBsonConst && fieldPath != NULL));
+		Assert(!(sawDocumentVar && sawEmptyBsonConst));
 
 		if (sawDocumentVar && fieldPath != NULL)
 		{
@@ -2213,6 +2235,17 @@ CheckFieldCoverage(Node *node, void *context)
 			}
 
 			return false; /* Type 2 agg handled; don't recurse */
+		}
+
+		/* Constant-valued accumulator (e.g., $sum: 1): the
+		 * accumulator expression was constant-folded by
+		 * GetDocumentExprForGroupAccumulatorValue() to an empty BSON Const,
+		 * and the document Var is unused. There is no field reference to
+		 * cover, so this aggregate is safe for index-only scan.
+		 */
+		if (sawEmptyBsonConst && fieldPath == NULL)
+		{
+			return false; /* Type 2 agg with constant operand; don't recurse */
 		}
 
 		return expression_tree_walker(node, CheckFieldCoverage, context); /* Type 1 agg; recurse to inner Func */
