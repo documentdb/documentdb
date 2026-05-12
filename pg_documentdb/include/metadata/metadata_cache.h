@@ -118,6 +118,9 @@ Oid BsonInRangeNumericFunctionId(void);
 Oid BsonInRangeIntervalFunctionId(void);
 Oid BsonQueryMatchWithLetAndCollationFunctionId(void);
 
+/* object_id functions */
+Oid BsonRegexObjectIdMatchFunctionId(void);
+
 /* bson_value functions */
 Oid BsonValueEqualMatchFunctionId(void);
 Oid BsonValueGreaterThanMatchFunctionId(void);

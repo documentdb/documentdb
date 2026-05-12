@@ -510,6 +510,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the $exists function for bson */
 	Oid BsonExistsMatchFunctionId;
 
+	/* Oid of the $regex function for object_id and documents */
+	Oid BsonRegexObjectIdMatchFunctionId;
+
 	/* OID of the cursor state function */
 	Oid CursorStateFunctionId;
 
@@ -2280,6 +2283,18 @@ BsonRegexMatchFunctionId(void)
 {
 	return GetBinaryOperatorFunctionId(&Cache.BsonRegexMatchFunctionId,
 									   "bson_dollar_regex", BsonTypeId(), BsonTypeId());
+}
+
+
+Oid
+BsonRegexObjectIdMatchFunctionId(void)
+{
+	return GetOperatorFunctionIdThreeArgs(&Cache.BsonRegexObjectIdMatchFunctionId,
+										  ApiCatalogSchemaName,
+										  "bson_dollar_regex",
+										  BsonTypeId(),
+										  BsonTypeId(),
+										  BsonQueryTypeId());
 }
 
 

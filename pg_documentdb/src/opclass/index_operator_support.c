@@ -273,9 +273,9 @@ PushBinaryExpressionQuals(bson_iter_t *outerIter, List *inputQuals,
 		secondArg = (Expr *) queryBsonConst;
 	}
 
-	List *args = list_make2(documentExpr, secondArg);
 	Expr *finalExpression =
-		(Expr *) GetOpExprClauseFromIndexOperator(operator, args, indexOptions);
+		(Expr *) GetOpExprClauseFromIndexOperator(operator, documentExpr, secondArg,
+												  indexOptions);
 	return lappend(inputQuals, finalExpression);
 }
 

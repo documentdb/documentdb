@@ -1996,26 +1996,63 @@ TryBuildNextUtf8PrefixBoundary(char *prefix, uint32_t codePointStart,
 }
 
 
-static void
-OptimizeBoundaryForRegexExpression(RegexData *regexData,
-								   CompositeIndexBounds *queryBounds)
+static bool
+HasValidRegexOptions(const char *regexOptions)
 {
-	StringView strView = regexData->regex != NULL ? CreateStringViewFromString(
-		regexData->regex) : CreateStringViewFromString("");
+	if (regexOptions == NULL)
+	{
+		return true;
+	}
 
-	const char *indexCollation = NULL;
+	while (*regexOptions != '\0')
+	{
+		char currentChar = *regexOptions++;
+		switch (currentChar)
+		{
+			/* 's' is dotall which doesn't affect anchored prefix searches
+			 * so is acceptable for limit bounds.
+			 */
+			case 's':
+			{
+				continue;
+			}
+
+			case 'a':
+			{
+				/* TODO: Handle anchor set via options*/
+				return false;
+			}
+
+			default:
+				return false;
+		}
+	}
+
+	return true;
+}
+
+
+void
+GetBoundsForRegex(const char *regexString, const char *regexOptions,
+				  bson_value_t *lowerBound, bool *lowerBoundInclusive,
+				  bson_value_t *upperBound, bool *upperBoundInclusive)
+{
+	StringView strView = regexString != NULL ? CreateStringViewFromString(
+		regexString) : CreateStringViewFromString("");
 
 	/* We can only optimize if we have no options and the regex starts with ^ */
 	if (!EnableRegexPrefixIndexBounds ||
-		strcmp(regexData->options, "") != 0 ||
+		!HasValidRegexOptions(regexOptions) ||
 		!StringViewStartsWith(&strView, '^'))
 	{
 		/* Set the bounds to be all strings since we can't optimize based on the regex expression */
 		CompositeSingleBound bounds = GetTypeLowerBound(BSON_TYPE_UTF8);
-		SetLowerBound(&queryBounds->lowerBound, &bounds, indexCollation);
+		*lowerBound = bounds.bound;
+		*lowerBoundInclusive = bounds.isBoundInclusive;
 
 		bounds = GetTypeUpperBound(BSON_TYPE_UTF8);
-		SetUpperBound(&queryBounds->upperBound, &bounds, indexCollation);
+		*upperBound = bounds.bound;
+		*upperBoundInclusive = bounds.isBoundInclusive;
 		return;
 	}
 
@@ -2084,12 +2121,10 @@ OptimizeBoundaryForRegexExpression(RegexData *regexData,
 		/* Keep lower-bound storage stable since upper-bound generation may rewrite the work buffer. */
 		char *lowerBoundary = pnstrdup(anchorPrefixBuffer, prefixLength);
 
-		CompositeSingleBound bounds = { 0 };
-		bounds.bound.value_type = BSON_TYPE_UTF8;
-		bounds.bound.value.v_utf8.str = lowerBoundary;
-		bounds.bound.value.v_utf8.len = prefixLength;
-		bounds.isBoundInclusive = true;
-		SetLowerBound(&queryBounds->lowerBound, &bounds, indexCollation);
+		lowerBound->value_type = BSON_TYPE_UTF8;
+		lowerBound->value.v_utf8.str = lowerBoundary;
+		lowerBound->value.v_utf8.len = prefixLength;
+		*lowerBoundInclusive = true;
 
 		char *upperBoundary = NULL;
 		uint32_t upperBoundaryLength = 0;
@@ -2111,16 +2146,17 @@ OptimizeBoundaryForRegexExpression(RegexData *regexData,
 
 		if (hasUpperBoundary)
 		{
-			bounds.bound.value.v_utf8.str = upperBoundary;
-			bounds.bound.value.v_utf8.len = upperBoundaryLength;
-			bounds.isBoundInclusive = false;
-			SetUpperBound(&queryBounds->upperBound, &bounds, indexCollation);
+			upperBound->value_type = BSON_TYPE_UTF8;
+			upperBound->value.v_utf8.str = upperBoundary;
+			upperBound->value.v_utf8.len = upperBoundaryLength;
+			*upperBoundInclusive = false;
 		}
 		else
 		{
 			/* Invalid/increment-exhausted UTF-8 prefixes fall back to full UTF-8 type bounds. */
-			bounds = GetTypeUpperBound(BSON_TYPE_UTF8);
-			SetUpperBound(&queryBounds->upperBound, &bounds, indexCollation);
+			CompositeSingleBound upperUtf8Bound = GetTypeUpperBound(BSON_TYPE_UTF8);
+			*upperBound = upperUtf8Bound.bound;
+			*upperBoundInclusive = upperUtf8Bound.isBoundInclusive;
 		}
 
 		pfree(anchorPrefixBuffer);
@@ -2131,9 +2167,25 @@ OptimizeBoundaryForRegexExpression(RegexData *regexData,
 
 	/* If we can't optimize based on the regex expression, set the bounds to be all strings. */
 	CompositeSingleBound bounds = GetTypeLowerBound(BSON_TYPE_UTF8);
-	SetLowerBound(&queryBounds->lowerBound, &bounds, indexCollation);
+	*lowerBound = bounds.bound;
+	*lowerBoundInclusive = bounds.isBoundInclusive;
 	bounds = GetTypeUpperBound(BSON_TYPE_UTF8);
-	SetUpperBound(&queryBounds->upperBound, &bounds, indexCollation);
+	*upperBound = bounds.bound;
+	*upperBoundInclusive = bounds.isBoundInclusive;
+}
+
+
+static void
+OptimizeBoundaryForRegexExpression(RegexData *regexData,
+								   CompositeIndexBounds *queryBounds)
+{
+	const char *indexCollation = NULL;
+	CompositeSingleBound lowerBound = { 0 }, upperBound = { 0 };
+	GetBoundsForRegex(regexData->regex, regexData->options, &lowerBound.bound,
+					  &lowerBound.isBoundInclusive, &upperBound.bound,
+					  &upperBound.isBoundInclusive);
+	SetLowerBound(&queryBounds->lowerBound, &lowerBound, indexCollation);
+	SetUpperBound(&queryBounds->upperBound, &upperBound, indexCollation);
 }
 
 
