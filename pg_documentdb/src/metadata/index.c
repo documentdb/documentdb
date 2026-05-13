@@ -47,6 +47,7 @@
 
 extern int MaxNumActiveUsersIndexBuilds;
 extern int IndexBuildScheduleInSec;
+extern bool EmitEnableOrderedIndexFalseInResponse;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -64,6 +65,7 @@ static IndexOptionsEquivalency GetOptionsEquivalencyFromIndexOptions(
 	pgbson *leftIndexSpec,
 	pgbson *
 	rightIndexSpec);
+static CustomIndexOption BsonValueToCustomIndexOption(const bson_value_t *value);
 
 
 /* Supported index types
@@ -476,7 +478,8 @@ IndexSpecOptionsAreEquivalent(const IndexSpec *leftIndexSpec,
 												  rightIndexSpec->indexOptions);
 		hash_destroy(bsonElementHash);
 
-		if (optionsEquivalency == IndexOptionsEquivalency_NotEquivalent)
+		if (optionsEquivalency == IndexOptionsEquivalency_NotEquivalent ||
+			optionsEquivalency == IndexOptionsEquivalency_CompatEqual)
 		{
 			return optionsEquivalency;
 		}
@@ -2411,6 +2414,10 @@ IndexSpecIsWildcardIndex(const IndexSpec *indexSpec)
 }
 
 
+/*
+ * Returns true if the index spec has options that sets the enableCompositeTerm or enableOrderedIndex
+ * option. The option value can still be -1 (explicit false), 1 (default true), 2 (explicit true).
+ */
 inline static bool
 IsOptionsKeyOrderedIndex(const char *key)
 {
@@ -2723,10 +2730,27 @@ SerializeIndexSpec(const IndexSpec *indexSpec, bool isGetIndexes,
 					/* TODO: We should just write this if the value is != ShouldUseCompositeOpClassByDefault
 					 * but we're leaving it here during the transition period of this being enabled by default in
 					 * some cases.*/
-					bool value = BsonValueAsBool(bson_iter_value(&optionsIter));
-					PgbsonWriterAppendBool(&storageEngineOptionsWriter,
-										   "enableOrderedIndex", 18,
-										   value);
+					CustomIndexOption option = BsonValueToCustomIndexOption(
+						bson_iter_value(&optionsIter));
+
+					if (option == CustomIndexOption_False)
+					{
+						/* Only emit "enableOrderedIndex": false when the GUC is on. When
+						 * disabled, omit the field so callers don't see an explicit false. */
+						if (EmitEnableOrderedIndexFalseInResponse)
+						{
+							PgbsonWriterAppendBool(&storageEngineOptionsWriter,
+												   "enableOrderedIndex", 18,
+												   false);
+						}
+					}
+					else if (option == CustomIndexOption_True ||
+							 option == CustomIndexOption_DefaultTrue)
+					{
+						PgbsonWriterAppendBool(&storageEngineOptionsWriter,
+											   "enableOrderedIndex", 18,
+											   true);
+					}
 				}
 				else if (StringViewEqualsCString(&keyView,
 												 EXTENDED_INDEX_SPEC_FLAG_FIELD_NAME))
@@ -2790,60 +2814,155 @@ SerializeIndexSpec(const IndexSpec *indexSpec, bool isGetIndexes,
 }
 
 
+/*
+ * Converts a bson_value_t (as persisted in index options or provided by user)
+ * into the CustomIndexOption enum.
+ *
+ * NULL      → Undefined  (option not present)
+ * INT32     → cast directly (persisted enum values: False=-1, True=1, DefaultTrue=2)
+ * bool/other→ True or False based on BsonValueAsBool
+ */
+static CustomIndexOption
+BsonValueToCustomIndexOption(const bson_value_t *value)
+{
+	if (value == NULL)
+	{
+		return CustomIndexOption_Undefined;
+	}
+
+	if (value->value_type == BSON_TYPE_INT32)
+	{
+		return (CustomIndexOption) value->value.v_int32;
+	}
+
+	return BsonValueAsBool(value) ? CustomIndexOption_True : CustomIndexOption_False;
+}
+
+
+/*
+ * Checks whether a specific index option field is still equivalent between
+ * an existing (source) index and an incoming (target) index request.
+ *
+ * src is the option value from the existing index in the catalog (NULL if absent).
+ * target is the option value from the incoming create index request (NULL if absent).
+ */
 static bool
-AreIndexOptionsStillEquivalent(const char *path, const bson_value_t *left,
-							   const bson_value_t *right)
+AreIndexOptionsStillEquivalent(const char *path, const bson_value_t *src,
+							   const bson_value_t *target,
+							   bool *treatEquivalentAsEqual)
 {
 	bool areEquivalent = true;
+
 	if (IsOptionsKeyOrderedIndex(path))
 	{
-		if (left != NULL || right != NULL)
+		CustomIndexOption srcOption = BsonValueToCustomIndexOption(src);
+		CustomIndexOption targetOption = BsonValueToCustomIndexOption(target);
+
+		switch (srcOption)
 		{
-			bool enableCompositeTermLeft = false;
-			bool enableCompositeTermRight = false;
-
-			if (left != NULL)
+			case CustomIndexOption_DefaultTrue:
 			{
-				enableCompositeTermLeft = BsonValueAsBool(left);
-			}
-			if (right != NULL)
-			{
-				enableCompositeTermRight = BsonValueAsBool(right);
+				/* System-defaulted source: equivalent if target is unspecified
+				 * (system will re-apply the default) or explicitly true. */
+				areEquivalent = (targetOption == CustomIndexOption_Undefined ||
+								 targetOption == CustomIndexOption_True ||
+								 targetOption == CustomIndexOption_DefaultTrue);
+
+				break;
 			}
 
-			areEquivalent = enableCompositeTermLeft == enableCompositeTermRight;
+			case CustomIndexOption_True:
+			{
+				/* System-defaulted source: equivalent if target is unspecified
+				 * (system will re-apply the default) or explicitly true. */
+				areEquivalent = (targetOption == CustomIndexOption_True ||
+								 targetOption == CustomIndexOption_DefaultTrue);
+
+				break;
+			}
+
+			case CustomIndexOption_False:
+			{
+				/* False matches False and Undefined.
+				 *
+				 * False and Undefined both represent non-composite indexes (only
+				 * True and DefaultTrue produce composite indexes). When the stored
+				 * value is False (-1) and the incoming request carries no option
+				 * (Undefined - key absent), the physical index is the same.
+				 *
+				 * DefaultTrue is excluded: a GUC-promoted DefaultTrue means a
+				 * composite index was requested, which is a genuinely different
+				 * physical index. The same-name idempotency case is handled
+				 * separately in CheckIndexSpecConflictWithExistingIndexes. */
+				areEquivalent = (targetOption == CustomIndexOption_False ||
+								 targetOption == CustomIndexOption_Undefined);
+				break;
+			}
+
+			case CustomIndexOption_Undefined:
+			{
+				/* Undefined matches False (both mean "option is off"), Undefined
+				 * (identical), and DefaultTrue (system-applied default).
+				 *
+				 * Matching DefaultTrue ensures that createIndex remains idempotent:
+				 * if a user created an index before the GUC was enabled (persisted
+				 * as Undefined), re-issuing the same createIndex command after the
+				 * GUC is turned on (which transforms undefined → DefaultTrue) will
+				 * correctly recognize it as the same index rather than erroring with
+				 * a spurious conflict. The tradeoff is that the old non-composite
+				 * index won't be automatically upgraded to composite — the user
+				 * must drop and recreate to get composite behavior. */
+				areEquivalent = (targetOption == CustomIndexOption_False ||
+								 targetOption == CustomIndexOption_DefaultTrue ||
+								 targetOption == CustomIndexOption_Undefined);
+
+				/* This is to make sure we treat the indexes as equal for error reporting.
+				 * As the system option should not be part of option difference calculation. */
+				if (targetOption == CustomIndexOption_DefaultTrue)
+				{
+					*treatEquivalentAsEqual = true;
+				}
+				break;
+			}
+
+			default:
+			{
+				/* Unknown/corrupted value — treat as not equivalent to be safe. */
+				areEquivalent = false;
+				break;
+			}
 		}
 	}
 
 	if (areEquivalent && strcmp(path, "buildAsUnique") == 0)
 	{
-		if (left != NULL || right != NULL)
+		if (src != NULL || target != NULL)
 		{
-			bool buildAsUniqueLeft = false;
-			bool buildAsUniqueRight = false;
+			bool buildAsUniqueSrc = false;
+			bool buildAsUniqueTarget = false;
 
-			if (left != NULL)
+			if (src != NULL)
 			{
-				buildAsUniqueLeft = BsonValueAsBool(left);
+				buildAsUniqueSrc = BsonValueAsBool(src);
 			}
-			if (right != NULL)
+			if (target != NULL)
 			{
-				buildAsUniqueRight = BsonValueAsBool(right);
+				buildAsUniqueTarget = BsonValueAsBool(target);
 			}
 
-			areEquivalent = buildAsUniqueLeft == buildAsUniqueRight;
+			areEquivalent = buildAsUniqueSrc == buildAsUniqueTarget;
 		}
 	}
 
 	if (areEquivalent && strcmp(path, "collation") == 0)
 	{
-		if (left == NULL || right == NULL)
+		if (src == NULL || target == NULL)
 		{
-			areEquivalent = left == right;
+			areEquivalent = src == target;
 		}
 		else
 		{
-			areEquivalent = BsonValueEquals(left, right);
+			areEquivalent = BsonValueEquals(src, target);
 		}
 	}
 
@@ -2879,6 +2998,7 @@ GetOptionsEquivalencyFromIndexOptions(HTAB *bsonElementHash,
 	}
 
 	/* Now check the right options against the hash */
+	bool treatEquivalentAsEqual = false;
 	if (rightIndexSpec != NULL)
 	{
 		bson_iter_t rightOptionsIter;
@@ -2895,7 +3015,8 @@ GetOptionsEquivalencyFromIndexOptions(HTAB *bsonElementHash,
 			{
 				/* right has a key and left doesn't - call compare function to see what to do */
 				if (!AreIndexOptionsStillEquivalent(element.path, NULL,
-													&element.bsonValue))
+													&element.bsonValue,
+													&treatEquivalentAsEqual))
 				{
 					return IndexOptionsEquivalency_NotEquivalent;
 				}
@@ -2905,7 +3026,8 @@ GetOptionsEquivalencyFromIndexOptions(HTAB *bsonElementHash,
 				/* They both exist, compare by value */
 				if (!AreIndexOptionsStillEquivalent(element.path,
 													&foundElement->bsonValue,
-													&element.bsonValue))
+													&element.bsonValue,
+													&treatEquivalentAsEqual))
 				{
 					return IndexOptionsEquivalency_NotEquivalent;
 				}
@@ -2919,14 +3041,16 @@ GetOptionsEquivalencyFromIndexOptions(HTAB *bsonElementHash,
 	hash_seq_init(&status, bsonElementHash);
 	while ((entry = (pgbsonelement *) hash_seq_search(&status)) != NULL)
 	{
-		if (!AreIndexOptionsStillEquivalent(entry->path, &entry->bsonValue, NULL))
+		if (!AreIndexOptionsStillEquivalent(entry->path, &entry->bsonValue, NULL,
+											&treatEquivalentAsEqual))
 		{
 			hash_seq_term(&status);
 			return IndexOptionsEquivalency_NotEquivalent;
 		}
 	}
 
-	return IndexOptionsEquivalency_Equivalent;
+	return (treatEquivalentAsEqual) ? IndexOptionsEquivalency_CompatEqual :
+		   IndexOptionsEquivalency_Equivalent;
 }
 
 

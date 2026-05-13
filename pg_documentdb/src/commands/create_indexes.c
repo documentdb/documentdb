@@ -406,7 +406,8 @@ IsSinglePathIndex(IndexDef *indexDef)
 inline static bool
 IsCompositePathIndex(IndexDef *indexDef)
 {
-	return indexDef->enableCompositeTerm == BoolIndexOption_True;
+	return indexDef->enableCompositeTerm == CustomIndexOption_True ||
+		   indexDef->enableCompositeTerm == CustomIndexOption_DefaultTrue;
 }
 
 
@@ -1516,13 +1517,52 @@ ParseCustomIndexDefOption(const char *indexDefDocKey, bson_iter_t *indexDefDocIt
 	{
 		EnsureTopLevelFieldIsBooleanLike(indexDefDocKey, indexDefDocIter);
 		const bson_value_t *value = bson_iter_value(indexDefDocIter);
-		if (BsonValueAsBool(value))
+
+		/*
+		 * If the caller passes a numeric value, cast it directly to the
+		 * CustomIndexOption enum so that sentinel values (e.g. -1 for
+		 * CustomIndexOption_False, 1 for CustomIndexOption_DefaultTrue) are
+		 * preserved correctly instead of being collapsed to true/false by
+		 * BsonValueAsBool (which treats any non-zero number as true).
+		 */
+		if (value->value_type == BSON_TYPE_BOOL)
 		{
-			indexDef->enableCompositeTerm = BoolIndexOption_True;
+			if (BsonValueAsBool(value))
+			{
+				indexDef->enableCompositeTerm = CustomIndexOption_True;
+			}
+			else
+			{
+				indexDef->enableCompositeTerm = CustomIndexOption_False;
+			}
 		}
-		else
+		else if (BsonTypeIsNumber(value->value_type))
 		{
-			indexDef->enableCompositeTerm = BoolIndexOption_False;
+			/*
+			 * Reject values that are not whole numbers or fall outside int64
+			 * range (e.g. 2.1, NaN, Inf, 999999999999999999999).
+			 */
+			bool checkFixedInteger = true;
+			bool shouldError = false;
+			int32 numericValue = BsonValueAsInt32(value);
+			if (IsBsonValue32BitInteger(value, checkFixedInteger))
+			{
+				indexDef->enableCompositeTerm = (CustomIndexOption) numericValue;
+			}
+			else
+			{
+				shouldError = true;
+			}
+
+			if (shouldError || (numericValue != CustomIndexOption_False &&
+								numericValue != CustomIndexOption_DefaultTrue &&
+								numericValue != CustomIndexOption_True))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"The field '%s' must be a boolean or one of the sentinel values -1, 1, or 2",
+									indexDefDocKey)));
+			}
 		}
 
 		return true;
@@ -2221,14 +2261,6 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 							errmsg(
 								"Creating a 2dsphere index as ttl index is not supported.")));
 		}
-
-		/* TTL indexes should always use single path composite term indexing
-		 * when the GUC `CreateTTLIndexAsCompositeByDefault` is enabled (enabled by default) */
-		if (CreateTTLIndexAsCompositeByDefault && indexDef->enableCompositeTerm !=
-			BoolIndexOption_False)
-		{
-			indexDef->enableCompositeTerm = BoolIndexOption_True;
-		}
 	}
 
 	/* parse the partialFilterExpression with applicable collation*/
@@ -2239,17 +2271,34 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 											indexDef->collationString);
 	}
 
-	if (indexDef->enableCompositeTerm == BoolIndexOption_Undefined &&
-		indexDef->key->isIdIndex)
+	/* If composite option is not provided, create a composite index by default if
+	 * requested for legacy clusters via configuration, or if it's a non-legacy cluster
+	 * and the default composite op class should be used.
+	 * Skip for index. Other indexes types that don't support composite (2d, 2dsphere, hashed, text).
+	 * are taken care below. */
+
+	if (ShouldUseCompositeOpClassByDefault() ||
+		(CreateTTLIndexAsCompositeByDefault && isTTLIndex))
 	{
-		indexDef->enableCompositeTerm = BoolIndexOption_False;
+		/* TTL indexes should always use single path composite term indexing
+		 * when the GUC `CreateTTLIndexAsCompositeByDefault` is enabled (enabled by default). */
+		indexDef->key->canSupportCompositeTerm = true;
+		if (indexDef->enableCompositeTerm == CustomIndexOption_Undefined)
+		{
+			indexDef->enableCompositeTerm = CustomIndexOption_DefaultTrue;
+		}
 	}
 
-	if (indexDef->enableCompositeTerm == BoolIndexOption_True ||
-		(indexDef->enableCompositeTerm == BoolIndexOption_Undefined &&
-		 ShouldUseCompositeOpClassByDefault()))
+	if (indexDef->key->isIdIndex)
 	{
-		bool shouldError = indexDef->enableCompositeTerm == BoolIndexOption_True;
+		indexDef->key->canSupportCompositeTerm = false;
+	}
+
+
+	if (indexDef->enableCompositeTerm == CustomIndexOption_True ||
+		indexDef->enableCompositeTerm == CustomIndexOption_DefaultTrue)
+	{
+		bool shouldError = indexDef->enableCompositeTerm == CustomIndexOption_True;
 
 		indexDef->key->canSupportCompositeTerm = true;
 
@@ -2306,12 +2355,14 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 									"enableOrderedIndex is not yet supported for multi-key wildcard indexes.")));
 			}
 		}
-
-		if (indexDef->key->canSupportCompositeTerm)
-		{
-			indexDef->enableCompositeTerm = BoolIndexOption_True;
-		}
 	}
+
+	/* Skip cases which can't support composite terms */
+	if (!indexDef->key->canSupportCompositeTerm)
+	{
+		indexDef->enableCompositeTerm = CustomIndexOption_Undefined;
+	}
+
 
 	/*
 	 * Validate collation compatibility with index types and options.
@@ -2354,7 +2405,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 		}
 
 		/* Collation is only supported for ordered (composite) indexes */
-		if (indexDef->enableCompositeTerm != BoolIndexOption_True)
+		if (!IsCompositePathIndex(indexDef))
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 							errmsg(
@@ -2370,7 +2421,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 		}
 	}
 
-	if (indexDef->enableCompositeTerm != BoolIndexOption_True &&
+	if (!IsCompositePathIndex(indexDef) &&
 		indexDef->key->isWildcard && indexDef->key->hasDescendingIndex)
 	{
 		/* Non composite does not support descending indexes */
@@ -2380,7 +2431,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 	}
 
 	if (indexDef->buildAsUnique == BoolIndexOption_True &&
-		indexDef->enableCompositeTerm != BoolIndexOption_True)
+		!IsCompositePathIndex(indexDef))
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 						errmsg(
@@ -4219,6 +4270,7 @@ CheckForConflictsAndPruneExistingIndexes(uint64 collectionId, List *indexDefList
 		IndexDef *indexDef = lfirst(indexDefCell);
 
 		IndexSpec indexSpec = MakeIndexSpecForIndexDef(indexDef);
+
 		int32_t inBuildIndexId = -1;
 		if (!CheckIndexSpecConflictWithExistingIndexes(collectionId, &indexSpec,
 													   &inBuildIndexId))
@@ -4381,9 +4433,8 @@ CheckIndexSpecConflictWithExistingIndexes(uint64 collectionId, const IndexSpec *
 					&optionsMatchedIndexDetails->indexSpec, indexSpec);
 			}
 
-			equivalency = IndexSpecOptionsAreEquivalent(indexSpec,
-														&optionsMatchedIndexDetails->
-														indexSpec);
+			equivalency = IndexSpecOptionsAreEquivalent(&optionsMatchedIndexDetails->
+														indexSpec, indexSpec);
 
 			if (equivalency == IndexOptionsEquivalency_TextEquivalent)
 			{
@@ -4397,6 +4448,20 @@ CheckIndexSpecConflictWithExistingIndexes(uint64 collectionId, const IndexSpec *
 					&optionsMatchedIndexDetails->indexSpec, indexSpec);
 			}
 
+			/*
+			 * when equivalency == IndexOptionsEquivalency_CompatEqual,
+			 * i.e., the case where they are not equivalent for migration.
+			 * but the error message need to treat them as equal, and we fall through and
+			 * use ThrowIndexOptionsConflictError.
+			 *
+			 * For example, existing index: { "v" : 2, "key" : { "a" : 1 }, "name" : "a" } was
+			 * created as unordered. And Requested index: { "v" : 2, "key" : { "a" : 1 }, "name" : "a_1" }
+			 * was attempted to be created this index ordered (system default) post migration.
+			 *
+			 * Even though options don't match - it needs to be treated as only name did not match and options matched.
+			 */
+
+			/* For all other cases we naturally use ThrowIndexOptionsConflictError  */
 			ThrowIndexOptionsConflictError(
 				optionsMatchedIndexDetails->indexSpec.indexName);
 		}
@@ -5006,9 +5071,18 @@ MakeIndexSpecForIndexDef(IndexDef *indexDef)
 		PgbsonWriterAppendInt32(&writer, "enableLargeIndexKeys", 20, 1);
 	}
 
-	if (indexDef->enableCompositeTerm == BoolIndexOption_True)
+	if (IsCompositePathIndex(indexDef))
 	{
-		PgbsonWriterAppendInt32(&writer, "enableOrderedIndex", 18, 1);
+		PgbsonWriterAppendInt32(&writer, "enableOrderedIndex", 18,
+								(int32_t) indexDef->enableCompositeTerm);
+	}
+	else if (indexDef->enableCompositeTerm == CustomIndexOption_False)
+	{
+		/* Persist explicit false (as -1) so we can distinguish "user said false"
+		 * from "user said nothing" for conflict checking and idempotency.
+		 * Skip _id indexes since the system sets them to False implicitly. */
+		PgbsonWriterAppendInt32(&writer, "enableOrderedIndex", 18,
+								(int32_t) CustomIndexOption_False);
 	}
 
 	if (indexDef->collationSpec)
@@ -5189,15 +5263,7 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 			enableLargeIndexKeys = true;
 		}
 
-		bool enableNewIndexOpClass = false;
-		if (indexDef->enableCompositeTerm != BoolIndexOption_Undefined)
-		{
-			enableNewIndexOpClass = indexDef->enableCompositeTerm == BoolIndexOption_True;
-		}
-		else
-		{
-			enableNewIndexOpClass = ShouldUseCompositeOpClassByDefault();
-		}
+		bool enableNewIndexOpClass = IsCompositePathIndex(indexDef);
 
 		bool useReducedWildcardTermGeneration = false;
 		bool buildAsUnique = false;
@@ -5337,15 +5403,7 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 								   BoolIndexOption_False;
 		}
 
-		bool enableNewIndexOpClass = false;
-		if (indexDef->enableCompositeTerm != BoolIndexOption_Undefined)
-		{
-			enableNewIndexOpClass = indexDef->enableCompositeTerm == BoolIndexOption_True;
-		}
-		else
-		{
-			enableNewIndexOpClass = ShouldUseCompositeOpClassByDefault();
-		}
+		bool enableNewIndexOpClass = IsCompositePathIndex(indexDef);
 
 		bool useReducedWildcardTermGeneration = ForceWildcardReducedTerm ||
 												(indexDef->enableReducedWildcardTerms ==
