@@ -41,3 +41,46 @@ SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch
 -- fails
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('list_metadata_db1', '{ "listIndexes": "list_metadata_view1_1" }') ORDER BY 1;
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('list_metadata_db1', '{ "listIndexes": "list_metadata_non_existent" }') ORDER BY 1;
+
+-- List indexes with all four enableCompositeTerm / enableOrderedIndex states:
+--   DefaultTrue : GUC defaultUseCompositeOpClass=on  + no  enableCompositeTerm → stored as 2
+--   True        : explicit enableCompositeTerm=true                             → stored as 1
+--   Undefined   : GUC defaultUseCompositeOpClass=off + no  enableCompositeTerm → not stored
+--   False       : explicit enableCompositeTerm=false                            → stored as -1
+
+-- DefaultTrue — GUC on, no explicit enableCompositeTerm
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('list_metadata_db1',
+    '{ "createIndexes": "list_idx_opts", "indexes": [ { "key": { "d": 1 }, "name": "d_defaulttrue" } ] }', TRUE);
+END;
+
+-- True — explicit enableCompositeTerm: true
+SELECT documentdb_api_internal.create_indexes_non_concurrently('list_metadata_db1',
+    '{ "createIndexes": "list_idx_opts", "indexes": [ { "key": { "e": 1 }, "name": "e_true", "enableCompositeTerm": true } ] }', TRUE);
+
+-- Undefined — GUC off, no explicit enableCompositeTerm
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('list_metadata_db1',
+    '{ "createIndexes": "list_idx_opts", "indexes": [ { "key": { "f": 1 }, "name": "f_undefined" } ] }', TRUE);
+END;
+
+-- False — explicit enableCompositeTerm: false
+SELECT documentdb_api_internal.create_indexes_non_concurrently('list_metadata_db1',
+    '{ "createIndexes": "list_idx_opts", "indexes": [ { "key": { "g": 1 }, "name": "g_false", "enableCompositeTerm": false } ] }', TRUE);
+
+-- List all indexes: DefaultTrue→true, True→true, Undefined→(no field), False→false
+SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch')
+FROM documentdb_api.list_indexes_cursor_first_page('list_metadata_db1', '{ "listIndexes": "list_idx_opts" }')
+ORDER BY 1;
+
+-- emitEnableOrderedIndexFalseInResponse GUC test
+-- GUC OFF: False index omits enableOrderedIndex entirely; all other behaviour unchanged
+SET documentdb.emitEnableOrderedIndexFalseInResponse TO off;
+SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch')
+FROM documentdb_api.list_indexes_cursor_first_page('list_metadata_db1', '{ "listIndexes": "list_idx_opts" }')
+ORDER BY 1;
+
+-- Reset to default
+SET documentdb.emitEnableOrderedIndexFalseInResponse TO on;

@@ -157,6 +157,11 @@ bool EnableIndexOnlyScanForFindProject = DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND
 #define DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE true
 bool CreateTTLIndexAsCompositeByDefault = DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE;
 
+/* Added in v114, enabled on v113, remove after v116 */
+#define DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE true
+bool EmitEnableOrderedIndexFalseInResponse =
+	DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE;
+
 /* Added in v109, Pending stabilization, enable in v120 */
 /* Remove if EnableCompositeReducedCorrelatedTermsOnCommonSubPath becomes stabilized */
 #define DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS false
@@ -996,6 +1001,16 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to always create TTL indexes as composite indexes by default."),
 		NULL, &CreateTTLIndexAsCompositeByDefault,
 		DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.emitEnableOrderedIndexFalseInResponse", newGucPrefix),
+		gettext_noop(
+			"When enabled, list index responses include \"enableOrderedIndex\": false "
+			"for indexes whose enableCompositeTerm was explicitly set to false (-1). "
+			"When disabled, the field is omitted for those indexes."),
+		NULL, &EmitEnableOrderedIndexFalseInResponse,
+		DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

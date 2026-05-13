@@ -547,7 +547,7 @@ select
     c.collection_name, 
     (index_spec).index_name,
     -- index_is_ordered column tells if the index allows ordered scan 
-    COALESCE(documentdb_core.bson_get_value_text((index_spec).index_options::documentdb_core.bson, 'enableOrderedIndex'::text)::bool, false) as is_ordered,
+    COALESCE(documentdb_core.bson_get_value_text((index_spec).index_options::documentdb_core.bson, 'enableOrderedIndex'::text)::int, 0) > 0 as is_ordered,
     (index_spec).index_expire_after_seconds as ttl_expiry,
     (index_spec).index_name as index_name,
     index_spec
@@ -704,3 +704,251 @@ RESET documentdb.forceDisableSeqScan;
 RESET documentdb.enableExtendedExplainPlans;
 RESET documentdb.enableDeadIndexEntryMarkingByTTLTask;
 SELECT documentdb_api.drop_collection('ttl_lpdead_db', 'ttlDeadTupleTest');
+
+---------------------------------------------------------------------------------------------
+-- Group A: enableOrderedIndex equivalency tests with createTTLIndexAsCompositeByDefault=OFF
+-- With GUC OFF, undefined stays Undefined (no TTL default transformation)
+-- Equivalence table (src → target):
+--   True/DefaultTrue  matches  Undefined, True, DefaultTrue
+--   False             matches  False, Undefined
+--   Undefined         matches  False, DefaultTrue, Undefined
+---------------------------------------------------------------------------------------------
+
+-- A1. source=True (explicit), target=True (explicit) => equivalent (same name = noop)
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a1", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- Verify A1 index
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_a1" }') ORDER BY 1;
+SELECT (index_spec).index_name, index_spec FROM documentdb_api_catalog.collection_indexes ci JOIN documentdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'ttl_default_composite' AND c.collection_name = 'ttlcoll_a1' AND (index_spec).index_expire_after_seconds > 0;
+
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a1", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- A2. source=True (explicit), target=False (explicit) => NOT equivalent (different name so it creates)
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a1", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": false, "name": "ttl_index_a2", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- A4. source=Undefined (no enableCompositeTerm, GUC OFF), target=False (explicit) => equivalent
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a4", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- Verify A4 index (no storageEngine since undefined)
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_a4" }') ORDER BY 1;
+SELECT (index_spec).index_name, index_spec FROM documentdb_api_catalog.collection_indexes ci JOIN documentdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'ttl_default_composite' AND c.collection_name = 'ttlcoll_a4' AND (index_spec).index_expire_after_seconds > 0;
+
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a4", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": false, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- A5. source=Undefined, target=True (explicit) => NOT default_is_custom_index_option_undefined_equivalent_to_trueivalent (different name so it creates)
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a4", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index_a5", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- A6. source=Undefined, target=undefined => default_is_custom_index_option_undefined_equivalent_to_trueivalent
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a4", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- A7. source=DefaultTrue (via TTL GUC ON), then test with GUC ON again => equivalent
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a7", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- Verify A7 index
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_a7" }') ORDER BY 1;
+SELECT (index_spec).index_name, index_spec FROM documentdb_api_catalog.collection_indexes ci JOIN documentdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'ttl_default_composite' AND c.collection_name = 'ttlcoll_a7' AND (index_spec).index_expire_after_seconds > 0;
+
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a7", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- A8. source=DefaultTrue (via TTL GUC), target=True (explicit) => equivalent
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a7", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- A9. source=DefaultTrue (via TTL GUC), target=False (explicit) => NOT equivalent (different name so it creates)
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a7", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": false, "name": "ttl_index_a9", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+---------------------------------------------------------------------------------------------
+-- Group B: enableOrderedIndex equivalency tests with createTTLIndexAsCompositeByDefault=ON
+-- With GUC ON, undefined → DefaultTrue(2) for TTL indexes
+---------------------------------------------------------------------------------------------
+
+-- B1. source=True (explicit), target=True (explicit) => equivalent (same name = noop)
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b1", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- Verify B1 index
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_b1" }') ORDER BY 1;
+SELECT (index_spec).index_name, index_spec FROM documentdb_api_catalog.collection_indexes ci JOIN documentdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'ttl_default_composite' AND c.collection_name = 'ttlcoll_b1' AND (index_spec).index_expire_after_seconds > 0;
+
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b1", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- B2. source=True (explicit), target=False (explicit) => NOT equivalent (different name so it creates)
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b1", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": false, "name": "ttl_index_b2", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- B3. source=True (explicit), target=undefined (GUC ON → DefaultTrue) => equivalent
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b1", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- B4. source=Undefined (explicit false, GUC ON), target=False (explicit) => equivalent
+-- Note: explicit false is not persisted, so source is effectively Undefined in catalog
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b4", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": false, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- Verify B4 index
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_b4" }') ORDER BY 1;
+SELECT (index_spec).index_name, index_spec FROM documentdb_api_catalog.collection_indexes ci JOIN documentdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'ttl_default_composite' AND c.collection_name = 'ttlcoll_b4' AND (index_spec).index_expire_after_seconds > 0;
+
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b4", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": false, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- B5. source=False (persisted as -1), target=True (explicit) => NOT equivalent (different name so it creates)
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b4", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index_b5", "v" : 1, "expireAfterSeconds": 5}]}', true);
+ROLLBACK;
+
+-- B6. source=False (persisted as -1), target=undefined (GUC ON → DefaultTrue) => non-equivalent (different name so it creates)
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b4", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index_ne", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- B7. source=DefaultTrue (via TTL GUC), target=DefaultTrue (via TTL GUC) => equivalent
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b7", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- Verify B7 index
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_b7" }') ORDER BY 1;
+SELECT (index_spec).index_name, index_spec FROM documentdb_api_catalog.collection_indexes ci JOIN documentdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'ttl_default_composite' AND c.collection_name = 'ttlcoll_b7' AND (index_spec).index_expire_after_seconds > 0;
+
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b7", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- B8. source=DefaultTrue (via TTL GUC), target=True (explicit) => equivalent
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b7", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- B9. source=DefaultTrue (via TTL GUC), target=False (explicit) => NOT equivalent (different name so it creates)
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b7", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": false, "name": "ttl_index_b9", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+-- B10. source=DefaultTrue (via TTL GUC), target=DefaultTrue (TTL GUC overrides other GUC settings) => equivalent
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b7", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+END;
+
+---------------------------------------------------------------------------------------------
+-- Group C: Unsupported index types should NOT get composite (DefaultTrue guard)
+-- Verifies that hashed, 2d, 2dsphere, text indexes stay non-composite
+-- even when ShouldUseCompositeOpClassByDefault() returns true
+---------------------------------------------------------------------------------------------
+
+-- C1. Hashed index should not get enableOrderedIndex
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_c1", "indexes": [{"key": {"a": "hashed"}, "name": "hashed_idx"}]}', true);
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_c1" }') ORDER BY 1;
+
+-- C2. 2dsphere index should not get enableOrderedIndex
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_c2", "indexes": [{"key": {"loc": "2dsphere"}, "name": "geo_idx"}]}', true);
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_c2" }') ORDER BY 1;
+
+-- C3. 2d index should not get enableOrderedIndex
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_c3", "indexes": [{"key": {"loc": "2d"}, "name": "twod_idx"}]}', true);
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_c3" }') ORDER BY 1;
+
+-- C4. Text index should not get enableOrderedIndex
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_c4", "indexes": [{"key": {"content": "text"}, "name": "text_idx"}]}', true);
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_c4" }') ORDER BY 1;
+
+-- C5. Compound index with hashed component should not get enableOrderedIndex
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_c5", "indexes": [{"key": {"a": 1, "b": "hashed"}, "name": "compound_hash_idx"}]}', true);
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_c5" }') ORDER BY 1;
+
+-- C6. Regular index on same collection SHOULD get enableOrderedIndex
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_c1", "indexes": [{"key": {"b": 1}, "name": "regular_idx"}]}', true);
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_c1" }') ORDER BY 1;
+
+-- C7. Explicit enableCompositeTerm:true on hashed should error
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_c7", "indexes": [{"key": {"a": "hashed"}, "enableCompositeTerm": true, "name": "bad_hashed_idx"}]}', true);
+
+-- C8. Explicit enableCompositeTerm:true on 2dsphere should error
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_c8", "indexes": [{"key": {"loc": "2dsphere"}, "enableCompositeTerm": true, "name": "bad_geo_idx"}]}', true);
+
+
+---------------------------------------------------------------------------------------------
+-- Group E: collMod expireAfterSeconds on composite TTL indexes
+-- Verify collMod doesn't break enableOrderedIndex
+---------------------------------------------------------------------------------------------
+
+-- E1. Create TTL index with DefaultTrue
+BEGIN;
+SET LOCAL documentdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_e1", "indexes": [{"key": {"ts": 1}, "name": "ts_ttl", "v" : 1, "expireAfterSeconds": 60}]}', true);
+END;
+
+-- Verify before collMod
+SELECT (index_spec).index_name, (index_spec).index_expire_after_seconds, index_spec FROM documentdb_api_catalog.collection_indexes ci JOIN documentdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'ttl_default_composite' AND c.collection_name = 'ttlcoll_e1' AND (index_spec).index_expire_after_seconds > 0;
+
+-- E2. collMod to change expireAfterSeconds — should preserve enableOrderedIndex
+SELECT documentdb_api.coll_mod('ttl_default_composite', 'ttlcoll_e1', '{"collMod": "ttlcoll_e1", "index": {"name": "ts_ttl", "expireAfterSeconds": 120}}');
+
+-- Verify after collMod — enableOrderedIndex should still be there
+SELECT (index_spec).index_name, (index_spec).index_expire_after_seconds, index_spec FROM documentdb_api_catalog.collection_indexes ci JOIN documentdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'ttl_default_composite' AND c.collection_name = 'ttlcoll_e1' AND (index_spec).index_expire_after_seconds > 0;
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_e1" }') ORDER BY 1;
+
+
+---------------------------------------------------------------------------------------------
+-- Group F: _id index equivalency (system sets False, should not leak)
+---------------------------------------------------------------------------------------------
+
+-- F1. Creating duplicate _id-like index with different name should give clean error
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_f1", "indexes": [{"key": {"_id": 1.5}, "name": "custom_id_1"}]}', true);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_f1", "indexes": [{"key": {"_id": 1.5}, "name": "custom_id_2"}]}', true);
+
+-- F2. _id index should never show enableOrderedIndex in listIndexes
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_f1" }') ORDER BY 1;

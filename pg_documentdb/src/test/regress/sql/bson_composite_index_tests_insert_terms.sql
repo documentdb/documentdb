@@ -171,23 +171,39 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "a_-1", "key": { "a": -1} } ] }', TRUE);
 
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('comp_db','{ "listIndexes": "comp_collection" }') ORDER BY 1;
+SELECT (index_spec).index_name, index_spec FROM documentdb_api_catalog.collection_indexes ci JOIN documentdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'comp_db' AND c.collection_name = 'comp_collection';
+
+
 set documentdb.defaultUseCompositeOpClass to on;
 
--- name collision still fails
+-- these should preserve the old non composite indexes (src False, and target DefaultTrue should resolve to equivalent) - 
+-- and since the names match, it should be no-op
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "a_1", "key": { "a": 1 } } ] }', TRUE);
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "a_-1", "key": { "a": -1 } } ] }', TRUE);
 
+-- These are treated as equivalent options but different names, so error is thrown
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "a_1_comp", "key": { "a": 1 } } ] }', TRUE);
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "a_-1_comp", "key": { "a": -1} } ] }', TRUE);
+
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "_id_1_comp", "key": { "_id": 1} } ] }', TRUE);
 
 SELECT collection_id as collid FROM documentdb_api_catalog.collections where database_name = 'comp_db' and collection_name = 'comp_collection' \gset 
 SELECT index_spec FROM documentdb_api_catalog.collection_indexes where collection_id = :'collid'::int4;
+
+-- drop the unordered ones and create new ones with composite terms
+CALL documentdb_api.drop_indexes('comp_db', '{ "dropIndexes": "comp_collection", "index": "a_1" }');
+CALL documentdb_api.drop_indexes('comp_db', '{ "dropIndexes": "comp_collection", "index": "a_-1" }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "a_1_comp", "key": { "a": 1 } } ] }', TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'comp_db', '{ "createIndexes": "comp_collection", "indexes": [ { "name": "a_-1_comp", "key": { "a": -1} } ] }', TRUE);
+
 
 -- creating two with composite and different names fails
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
@@ -397,3 +413,144 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ 
 
 -- runtime filter: $exists correctly excludes _id 2
 SELECT document FROM documentdb_api_catalog.bson_aggregation_find('comp_db', '{ "find": "dotted_subpath_runtime_coll", "filter": { "a.b.c": { "$exists": true } } }');
+
+
+---------------------------------------------------------------------------------------------
+-- Non-TTL index equivalency with defaultUseCompositeOpClass
+---------------------------------------------------------------------------------------------
+
+-- D1. Create non-TTL index with GUC off (undefined → no composite)
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{"createIndexes": "comp_equiv_d1", "indexes": [{"key": {"x": 1}, "name": "x_idx"}]}', true);
+END;
+
+-- Verify D1 — no storageEngine
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('comp_db','{ "listIndexes": "comp_equiv_d1" }') ORDER BY 1;
+SELECT (index_spec).index_name, index_spec FROM documentdb_api_catalog.collection_indexes ci JOIN documentdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'comp_db' AND c.collection_name = 'comp_equiv_d1' AND (index_spec).index_name = 'x_idx';
+
+-- D2. Re-create same index with legacy GUC on (undefined → DefaultTrue) => equivalent (idempotent)
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{"createIndexes": "comp_equiv_d1", "indexes": [{"key": {"x": 1}, "name": "x_idx"}]}', true);
+END;
+
+-- D3. Create non-TTL index with legacy GUC on (undefined → DefaultTrue)
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{"createIndexes": "comp_equiv_d3", "indexes": [{"key": {"y": 1}, "name": "y_idx"}]}', true);
+END;
+
+-- Verify D3 — should have storageEngine with enableOrderedIndex: true
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('comp_db','{ "listIndexes": "comp_equiv_d3" }') ORDER BY 1;
+SELECT (index_spec).index_name, index_spec FROM documentdb_api_catalog.collection_indexes ci JOIN documentdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'comp_db' AND c.collection_name = 'comp_equiv_d3' AND (index_spec).index_name = 'y_idx';
+
+-- D4. Re-create D3 with GUC off, same name, undefined => equivalent (Undefined matches DefaultTrue)
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{"createIndexes": "comp_equiv_d3", "indexes": [{"key": {"y": 1}, "name": "y_idx"}]}', true);
+END;
+
+-- D5. Re-create D3 with explicit false (-1), different name => NOT equivalent (creates new index)
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{"createIndexes": "comp_equiv_d3", "indexes": [{"key": {"y": 1}, "enableCompositeTerm": false, "name": "y_idx_nocomp"}]}', true);
+END;
+
+-- D6. Verify both indexes coexist
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('comp_db','{ "listIndexes": "comp_equiv_d3" }') ORDER BY 1;
+
+-- D7. Create two indexes in the same collection with the same key but different enableCompositeTerm settings => NOT equivalent (creates new index)
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{"createIndexes": "comp_equiv_d3", "indexes": 
+    [
+        {"key": {"z": 1}, "enableCompositeTerm": false, "name": "z_idx_nocomp"},
+        {"key": {"z": 1}, "enableCompositeTerm": true, "name": "z_idx_comp"}
+    ]}', true);
+END;
+
+-- D8. Verify both indexes coexist
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('comp_db','{ "listIndexes": "comp_equiv_d3" }') ORDER BY 1;
+
+-- D9. Create two indexes in the same collection with the same key but different enableCompositeTerm settings => NOT equivalent (creates new index)
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{"createIndexes": "comp_equiv_d3", "indexes": 
+    [
+        {"key": {"w": 1}, "name": "w_idx"},
+        {"key": {"w": 1}, "enableCompositeTerm": false, "name": "w_idx_nocomp"},
+        {"key": {"w": 1}, "enableCompositeTerm": true, "name": "w_idx_comp"}
+    ]}', true);
+END;
+
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{"createIndexes": "comp_equiv_d3", "indexes": 
+    [
+        {"key": {"w": 1}, "name": "w_idx"},
+        {"key": {"w": 1}, "enableCompositeTerm": false, "name": "w_idx_nocomp"},
+        {"key": {"w": 1}, "enableCompositeTerm": true, "name": "w_idx_comp"}
+    ]}', true);
+END;
+
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{"createIndexes": "comp_equiv_d3", "indexes": 
+    [
+        {"key": {"w": 1}, "name": "w_idx"}
+    ]}', true);
+END;
+
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{"createIndexes": "comp_equiv_d3", "indexes": 
+    [
+        {"key": {"w": 1}, "name": "w_idx"}
+    ]}', true);
+END;
+
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{"createIndexes": "comp_equiv_d3", "indexes": 
+    [
+        {"key": {"w": 1}, "enableCompositeTerm": true, "name": "w_idx"}
+    ]}', true);
+END;
+
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{"createIndexes": "comp_equiv_d3", "indexes": 
+    [
+        {"key": {"p": 1}, "enableCompositeTerm": -1, "name": "p_idx"}
+    ]}', true);
+END;
+
+
+-- D10. Verify both indexes coexist
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('comp_db','{ "listIndexes": "comp_equiv_d3" }') ORDER BY 1;
+
+-- D11. Test emitEnableOrderedIndexFalseInResponse GUC
+-- Create a collection with one composite (True) and one explicitly-false index.
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{"createIndexes": "comp_emit_guc", "indexes": [
+    {"key": {"a": 1}, "enableCompositeTerm": true,  "name": "a_comp"},
+    {"key": {"b": 1}, "enableCompositeTerm": false, "name": "b_nocomp"}
+]}', true);
+END;
+
+-- D11a. GUC ON (default): explicitly-false index emits "enableOrderedIndex": false
+SET documentdb.emitEnableOrderedIndexFalseInResponse TO on;
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch')
+FROM documentdb_api.list_indexes_cursor_first_page('comp_db', '{ "listIndexes": "comp_emit_guc" }')
+ORDER BY 1;
+
+-- D11b. GUC OFF: explicitly-false index omits enableOrderedIndex entirely
+SET documentdb.emitEnableOrderedIndexFalseInResponse TO off;
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch')
+FROM documentdb_api.list_indexes_cursor_first_page('comp_db', '{ "listIndexes": "comp_emit_guc" }')
+ORDER BY 1;
+
+-- Reset to default
+SET documentdb.emitEnableOrderedIndexFalseInResponse TO on;
