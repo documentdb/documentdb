@@ -187,7 +187,7 @@ typedef struct IndexDef
 	BoolIndexOption enableLargeIndexKeys;
 
 	/* Feature flag to enable the composite term index */
-	BoolIndexOption enableCompositeTerm;
+	CustomIndexOption enableCompositeTerm;
 
 	/* Flag to indicate we should create the index as unique without the unique constraint being added to the table. Then we can transform it to unique iff an equivalent unique index exists. */
 	BoolIndexOption buildAsUnique;

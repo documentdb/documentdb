@@ -124,3 +124,77 @@ SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch
 ERROR:  The namespace list_metadata_db1.list_metadata_view1_1 refers to a view object rather than a collection
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('list_metadata_db1', '{ "listIndexes": "list_metadata_non_existent" }') ORDER BY 1;
 ERROR:  Namespace does not currently exist: list_metadata_db1.list_metadata_non_existent
+-- List indexes with all four enableCompositeTerm / enableOrderedIndex states:
+--   DefaultTrue : GUC defaultUseCompositeOpClass=on  + no  enableCompositeTerm → stored as 2
+--   True        : explicit enableCompositeTerm=true                             → stored as 1
+--   Undefined   : GUC defaultUseCompositeOpClass=off + no  enableCompositeTerm → not stored
+--   False       : explicit enableCompositeTerm=false                            → stored as -1
+-- DefaultTrue — GUC on, no explicit enableCompositeTerm
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('list_metadata_db1',
+    '{ "createIndexes": "list_idx_opts", "indexes": [ { "key": { "d": 1 }, "name": "d_defaulttrue" } ] }', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- True — explicit enableCompositeTerm: true
+SELECT documentdb_api_internal.create_indexes_non_concurrently('list_metadata_db1',
+    '{ "createIndexes": "list_idx_opts", "indexes": [ { "key": { "e": 1 }, "name": "e_true", "enableCompositeTerm": true } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Undefined — GUC off, no explicit enableCompositeTerm
+BEGIN;
+SET LOCAL documentdb.defaultUseCompositeOpClass TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('list_metadata_db1',
+    '{ "createIndexes": "list_idx_opts", "indexes": [ { "key": { "f": 1 }, "name": "f_undefined" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- False — explicit enableCompositeTerm: false
+SELECT documentdb_api_internal.create_indexes_non_concurrently('list_metadata_db1',
+    '{ "createIndexes": "list_idx_opts", "indexes": [ { "key": { "g": 1 }, "name": "g_false", "enableCompositeTerm": false } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "4" }, "numIndexesAfter" : { "$numberInt" : "5" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- List all indexes: DefaultTrue→true, True→true, Undefined→(no field), False→false
+SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch')
+FROM documentdb_api.list_indexes_cursor_first_page('list_metadata_db1', '{ "listIndexes": "list_idx_opts" }')
+ORDER BY 1;
+                                                                                                                                           bson_dollar_unwind                                                                                                                                            
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "list_metadata_db1.list_idx_opts", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "list_metadata_db1.list_idx_opts", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "d" : { "$numberInt" : "1" } }, "name" : "d_defaulttrue", "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "list_metadata_db1.list_idx_opts", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "e" : { "$numberInt" : "1" } }, "name" : "e_true", "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "list_metadata_db1.list_idx_opts", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "f" : { "$numberInt" : "1" } }, "name" : "f_undefined" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "list_metadata_db1.list_idx_opts", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "g" : { "$numberInt" : "1" } }, "name" : "g_false", "storageEngine" : { "enableOrderedIndex" : false } } }, "ok" : { "$numberDouble" : "1.0" } }
+(5 rows)
+
+-- emitEnableOrderedIndexFalseInResponse GUC test
+-- GUC OFF: False index omits enableOrderedIndex entirely; all other behaviour unchanged
+SET documentdb.emitEnableOrderedIndexFalseInResponse TO off;
+SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch')
+FROM documentdb_api.list_indexes_cursor_first_page('list_metadata_db1', '{ "listIndexes": "list_idx_opts" }')
+ORDER BY 1;
+                                                                                                                                           bson_dollar_unwind                                                                                                                                            
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "list_metadata_db1.list_idx_opts", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "list_metadata_db1.list_idx_opts", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "d" : { "$numberInt" : "1" } }, "name" : "d_defaulttrue", "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "list_metadata_db1.list_idx_opts", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "e" : { "$numberInt" : "1" } }, "name" : "e_true", "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "list_metadata_db1.list_idx_opts", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "f" : { "$numberInt" : "1" } }, "name" : "f_undefined" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "list_metadata_db1.list_idx_opts", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "g" : { "$numberInt" : "1" } }, "name" : "g_false" } }, "ok" : { "$numberDouble" : "1.0" } }
+(5 rows)
+
+-- Reset to default
+SET documentdb.emitEnableOrderedIndexFalseInResponse TO on;
