@@ -419,7 +419,7 @@ BEGIN
     END LOOP;
     SELECT check_explain_index_and_filter(
         lines,
-        ARRAY['collection.shard_key_value = ''403''::bigint', 'ROW(collection.shard_key_value, collection.object_id) >'],
+        ARRAY['collection.shard_key_value = ''403''::bigint', 'object_id >'],
         ARRAY['documentdb_api_internal.cursor_state(collection.document, ''{ "']
     ) INTO result;
     RAISE NOTICE 'check_explain_index_and_filter: %', result;
@@ -442,4 +442,45 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('p
     '{ "getMore": { "$numberLong": "4294967294" }, "collection": "aggregation_cursor_pk_in", "batchSize": 5 }', :'r1_continuation');
 
 
+-- test buffers used in btree index scans with large $in filter and primary key scan
+SELECT COUNT(documentdb_api.insert_one('pkcursordb', 'saop_pkpushdown', FORMAT('{ "_id": "prefix:%s_suffix", "a": %s }', i, i)::bson)) FROM generate_series(1, 10000) i;
+
+-- reindex and vacuum analyze the table
+SELECT collection_id AS pkpushdown_coll FROM documentdb_api_catalog.collections WHERE database_name = 'pkcursordb' AND collection_name = 'saop_pkpushdown' \gset
+
+REINDEX TABLE documentdb_data.documents_:pkpushdown_coll;
+VACUUM (ANALYZE ON) documentdb_data.documents_:pkpushdown_coll;
+
+-- now run a query for the first page where every periodic value is in the $in.
+SELECT bson_build_document('find', 'saop_pkpushdown'::text, 'filter', bson_build_document('_id',
+    bson_build_document('$in', (SELECT ARRAY_AGG(FORMAT('prefix:%s_suffix', i * 10)) FROM generate_series(1, 1000) i)::text[])), 'batchSize', 250) AS find_spec \gset
+
+SELECT continuation FROM documentdb_api.find_cursor_first_page('pkcursordb', :'find_spec', cursorId => 534) \gset
+
+-- now run the getmore explain once without buffers (to seed the buffers into shared memory)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim(
+  'EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)' ||
+  $cmd$ SELECT document FROM bson_aggregation_getmore('pkcursordb', '{ "getMore": { "$numberLong": "534" }, "collection": "saop_pkpushdown" }', '$cmd$ || :'continuation' || $cmd$')$cmd$);
+
+-- rerun with Buffers on to check resource usage
+-- extract the max shared hit from the getMore explain output
+SELECT MAX((regexp_match(line, 'shared hit=(\d+)'))[1]::int) AS getmore_buffers
+FROM documentdb_distributed_test_helpers.run_explain_and_trim(
+  'EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS ON, TIMING OFF, SUMMARY OFF, VERBOSE ON)' ||
+  $cmd$ SELECT document FROM bson_aggregation_getmore('pkcursordb', '{ "getMore": { "$numberLong": "534" }, "collection": "saop_pkpushdown" }', '$cmd$ || :'continuation' || $cmd$')$cmd$) AS line \gset
+
 set documentdb.enableCursorsOnAggregationQueryRewrite to off;
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim(
+  'EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)' ||
+  $cmd$ SELECT document FROM bson_aggregation_find('pkcursordb', '$cmd$ || :'find_spec' || $cmd$')$cmd$);
+
+-- extract the max shared hit from the find explain output
+SELECT MAX((regexp_match(line, 'shared hit=(\d+)'))[1]::int) AS find_buffers
+FROM documentdb_distributed_test_helpers.run_explain_and_trim(
+  'EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS ON, TIMING OFF, SUMMARY OFF, VERBOSE ON)' ||
+  $cmd$ SELECT document FROM bson_aggregation_find('pkcursordb', '$cmd$ || :'find_spec' || $cmd$')$cmd$) AS line \gset
+
+-- validate that getMore uses no more buffers than the equivalent find query
+SELECT :getmore_buffers <= :find_buffers AS getmore_buffers_leq_find_buffers;

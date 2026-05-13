@@ -727,8 +727,8 @@ OpExprForAggregationStageSupportFunction(Node *supportRequest)
 
 
 /* Checks if the expr is a shard key equality expr and if so returns true and populates the shardKeyValue */
-static bool
-IsOpExprShardKey(Expr *expr, int64 *shardKeyValue)
+bool
+IsOpExprShardKeyEquality(Expr *expr, int64 *shardKeyValue)
 {
 	if (!IsA(expr, OpExpr))
 	{
@@ -774,7 +774,7 @@ bool
 IsOpExprShardKeyForUnshardedCollections(Expr *expr, uint64 collectionId)
 {
 	int64 extractedShardKeyValue = 0;
-	return IsOpExprShardKey(expr, &extractedShardKeyValue) &&
+	return IsOpExprShardKeyEquality(expr, &extractedShardKeyValue) &&
 		   extractedShardKeyValue == (int64) collectionId;
 }
 
@@ -1764,7 +1764,7 @@ ExprIsValidForIndexOnlyScan(Expr *expr, bytea *indexOptions, bool *isShardKeyExp
 				return false;
 			}
 
-			bool isOpExprShardKeyResult = IsOpExprShardKey(expr, shardKeyValue);
+			bool isOpExprShardKeyResult = IsOpExprShardKeyEquality(expr, shardKeyValue);
 			if (isShardKeyExpr != NULL)
 			{
 				*isShardKeyExpr = isOpExprShardKeyResult;
