@@ -679,21 +679,8 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 																	   &
 																	   canSupportIndexOnlyScan);
 
-		/* If this is a composite index, then we need to ensure that
-		 * the first column of the index matches the query path.
-		 * This is because using the composite index would require specifying
-		 * the first column.
-		 */
-		if (!firstColumnSpecified)
-		{
-			*indexStartupCost = 0;
-			*indexTotalCost = INFINITY;
-			*indexSelectivity = 0;
-			*indexCorrelation = 0;
-			*indexPages = 0;
-			return;
-		}
-
+		/* Even if the first column was not specified and the index covers the query entirely we should consider doing
+		 * an index-only scan even though the cost will be set to INFINITY. This way we support index only scan when hinting is used and the first column is not part of the filters. */
 		if (canSupportIndexOnlyScan && path->path.pathtype != T_IndexOnlyScan)
 		{
 			/* We copy the index opt info to a new allocated memory as we can't modify
@@ -709,6 +696,21 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 
 			path->path.pathtype = T_IndexOnlyScan;
 			convertedToIndexOnlyScan = true;
+		}
+
+		/* If this is a composite index, then we need to ensure that
+		 * the first column of the index matches the query path.
+		 * This is because using the composite index would require specifying
+		 * the first column.
+		 */
+		if (!firstColumnSpecified)
+		{
+			*indexStartupCost = 0;
+			*indexTotalCost = INFINITY;
+			*indexSelectivity = 0;
+			*indexCorrelation = 0;
+			*indexPages = 0;
+			return;
 		}
 	}
 

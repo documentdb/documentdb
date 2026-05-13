@@ -477,6 +477,51 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate
 set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_rent_1", "pipeline" : [{ "$group" : { "_id" : "$addr.city", "totalRent" : { "$sum" : "$addr.rent" }, "cnt" : { "$count" : {} }, "minRent" : { "$min" : "$addr.rent" }, "maxRent" : { "$max" : "$addr.rent" }, "avgRent" : { "$avg" : "$addr.rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
 
+-- GROUP BY WITHOUT ACCUMULATORS
+-- Distinct-style $group (no accumulator). When the grouping key is covered by
+-- the secondary index and the $match produces an equality (single-key) qual,
+-- the plan should use Index Only Scan. Range quals and hint-only fullScan
+-- variants today fall back to a regular Index Scan even when the grouping key
+-- is covered; these are tracked as known gaps.
+
+-- NG1: leading-key _id covered by compound index city_rent_1 with equality
+-- $match. Plan should use Index Only Scan.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$city" } }]}') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$city" } }], "cursor" : {}}');
+
+-- NG2: dotted _id covered by addr_city_rent_1; equality $match. IOS.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"addr.city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$addr.city" } }]}') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"addr.city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$addr.city" } }], "cursor" : {}}');
+
+-- NG3: uncovered _id (sqft is not in city_rent_1) should NOT use IOS even with
+-- an equality $match and hint, because the grouping key isn't covered.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$sqft" } }]}') $$, p_ignore_heap_fetches => true);
+
+-- NG4: correctness parity with enableIndexOnlyScanForCoveredAggregateTargets
+-- off vs on for a no-accumulator $group. Both runs must produce identical output.
+set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$city" } }], "cursor" : {}}');
+set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$city" } }], "cursor" : {}}');
+
+-- NG5: range $match + no-accumulator $group on a covered key. The country_1
+-- index on this collection has a truncated entry (doc _id:18 above is truncated)
+-- so we can't do index only scan.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$gte": "Mexico"}} }, { "$group" : { "_id" : "$country" } }, { "$sort": {"_id": 1} }]}') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$gte": "Mexico"}} }, { "$group" : { "_id" : "$country" } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
+
+-- NG6: hint-only (no $match) + no-accumulator $group on a non-leading
+-- covered key. Plan should use Index Only Scan.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$group" : { "_id" : "$rent" } }, { "$sort": {"_id": 1} }]}') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$group" : { "_id" : "$rent" } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
+
+-- NG7 (known gap): whole-object _id { city: "$city", rent: "$rent" } - both
+-- leaf paths are individually covered by city_rent_1, but the IOS aggregate
+-- target push only recognises flat "$path" expressions today. Falls back to
+-- a regular Index Scan; correctness is still verified.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$group" : { "_id" : { "city": "$city", "rent": "$rent" } } }, { "$sort": {"_id.city": 1, "_id.rent": 1} }]}') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$group" : { "_id" : { "city": "$city", "rent": "$rent" } } }, { "$sort": {"_id.city": 1, "_id.rent": 1} }], "cursor" : {}}');
+
 -- KNOWN INDEX ONLY SCAN GAPS (should work, but doesn't yet)
 -- Without a $match or hint, the planner has no reason to pick the secondary index.
 -- In the future, accumulator-only pipelines should be able to use IOS via aggregate pushdown.

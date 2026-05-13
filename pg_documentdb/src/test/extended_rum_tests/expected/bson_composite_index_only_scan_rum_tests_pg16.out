@@ -2013,6 +2013,200 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate
  { "_id" : "Seattle", "totalRent" : { "$numberInt" : "17700" }, "cnt" : { "$numberInt" : "4" }, "minRent" : { "$numberInt" : "4000" }, "maxRent" : { "$numberInt" : "5000" }, "avgRent" : { "$numberDouble" : "4425.0" } }
 (3 rows)
 
+-- GROUP BY WITHOUT ACCUMULATORS
+-- Distinct-style $group (no accumulator). When the grouping key is covered by
+-- the secondary index and the $match produces an equality (single-key) qual,
+-- the plan should use Index Only Scan. Range quals and hint-only fullScan
+-- variants today fall back to a regular Index Scan even when the grouping key
+-- is covered; these are tracked as known gaps.
+-- NG1: leading-key _id covered by compound index city_rent_1 with equality
+-- $match. Plan should use Index Only Scan.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$city" } }]}') $$, p_ignore_heap_fetches => true);
+                                                                                                                                                                             run_explain_and_trim                                                                                                                                                                             
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual rows=1 loops=1)
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=7 loops=1)
+         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Index Cond: (collection.document @= '{ "city" : "Seattle" }'::bson)
+         Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
+         Heap Fetches: xxx
+(8 rows)
+
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$city" } }], "cursor" : {}}');
+       document        
+-----------------------
+ { "_id" : "Seattle" }
+(1 row)
+
+-- NG2: dotted _id covered by addr_city_rent_1; equality $match. IOS.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"addr.city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$addr.city" } }]}') $$, p_ignore_heap_fetches => true);
+                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual rows=1 loops=1)
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Only Scan using addr_city_geo_zip_1 on documentdb_data.documents_9107 collection (actual rows=4 loops=1)
+         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Index Cond: (collection.document @= '{ "addr.city" : "Seattle" }'::bson)
+         Order By: (collection.document |-<> '{ "addr.city" : { "$numberInt" : "1" } }'::bson)
+         Heap Fetches: xxx
+(8 rows)
+
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"addr.city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$addr.city" } }], "cursor" : {}}');
+       document        
+-----------------------
+ { "_id" : "Seattle" }
+(1 row)
+
+-- NG3: uncovered _id (sqft is not in city_rent_1) should NOT use IOS even with
+-- an equality $match and hint, because the grouping key isn't covered.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$sqft" } }]}') $$, p_ignore_heap_fetches => true);
+                                                                                                                                                                             run_explain_and_trim                                                                                                                                                                             
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ HashAggregate (actual rows=7 loops=1)
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Batches: 1  Memory Usage: xxxkB
+   ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=7 loops=1)
+         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Index Cond: (collection.document @= '{ "city" : "Seattle" }'::bson)
+(7 rows)
+
+-- NG4: correctness parity with enableIndexOnlyScanForCoveredAggregateTargets
+-- off vs on for a no-accumulator $group. Both runs must produce identical output.
+set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$city" } }], "cursor" : {}}');
+       document        
+-----------------------
+ { "_id" : "Seattle" }
+(1 row)
+
+set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$city" } }], "cursor" : {}}');
+       document        
+-----------------------
+ { "_id" : "Seattle" }
+(1 row)
+
+-- NG5: range $match + no-accumulator $group on a covered key. The country_1
+-- index on this collection has a truncated entry (doc _id:18 above is truncated)
+-- so we can't do index only scan.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$gte": "Mexico"}} }, { "$group" : { "_id" : "$country" } }, { "$sort": {"_id": 1} }]}') $$, p_ignore_heap_fetches => true);
+                                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_2.document, (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
+         Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Index Scan using country_1 on documentdb_data.documents_9101 collection (actual rows=10 loops=1)
+                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Index Cond: (collection.document @>= '{ "country" : "Mexico" }'::bson)
+                     Order By: (collection.document |-<> '{ "country" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
+
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$gte": "Mexico"}} }, { "$group" : { "_id" : "$country" } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
+       document       
+----------------------
+ { "_id" : "Mexico" }
+ { "_id" : "Spain" }
+ { "_id" : "USA" }
+(3 rows)
+
+-- NG6: hint-only (no $match) + no-accumulator $group on a non-leading
+-- covered key. Plan should use Index Only Scan.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$group" : { "_id" : "$rent" } }, { "$sort": {"_id": 1} }]}') $$, p_ignore_heap_fetches => true);
+                                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=15 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=15 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  HashAggregate (actual rows=15 loops=1)
+               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Batches: 1  Memory Usage: xxxkB
+               ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
+                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Index Cond: (collection.document @<> '{ "rent" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                     Heap Fetches: xxx
+(14 rows)
+
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$group" : { "_id" : "$rent" } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
+               document                
+---------------------------------------
+ { "_id" : { "$numberInt" : "2000" } }
+ { "_id" : { "$numberInt" : "2200" } }
+ { "_id" : { "$numberInt" : "2500" } }
+ { "_id" : { "$numberInt" : "2700" } }
+ { "_id" : { "$numberInt" : "2800" } }
+ { "_id" : { "$numberInt" : "3000" } }
+ { "_id" : { "$numberInt" : "3200" } }
+ { "_id" : { "$numberInt" : "3300" } }
+ { "_id" : { "$numberInt" : "3500" } }
+ { "_id" : { "$numberInt" : "3700" } }
+ { "_id" : { "$numberInt" : "4000" } }
+ { "_id" : { "$numberInt" : "4200" } }
+ { "_id" : { "$numberInt" : "4500" } }
+ { "_id" : { "$numberInt" : "4800" } }
+ { "_id" : { "$numberInt" : "5000" } }
+(15 rows)
+
+-- NG7 (known gap): whole-object _id { city: "$city", rent: "$rent" } - both
+-- leaf paths are individually covered by city_rent_1, but the IOS aggregate
+-- target push only recognises flat "$path" expressions today. Falls back to
+-- a regular Index Scan; correctness is still verified.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$group" : { "_id" : { "city": "$city", "rent": "$rent" } } }, { "$sort": {"_id.city": 1, "_id.rent": 1} }]}') $$, p_ignore_heap_fetches => true);
+                                                                                                                                                                                                                             run_explain_and_trim                                                                                                                                                                                                                             
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=20 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id.city" : { "$numberInt" : "1" } }'::bson)), (bson_orderby(agg_stage_1.document, '{ "_id.rent" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id.city" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(agg_stage_1.document, '{ "_id.rent" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=20 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id.city" : { "$numberInt" : "1" } }'::bson), bson_orderby(agg_stage_1.document, '{ "_id.rent" : { "$numberInt" : "1" } }'::bson)
+         ->  HashAggregate (actual rows=20 loops=1)
+               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "city" : "$city", "rent" : "$rent" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "city" : "$city", "rent" : "$rent" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "city" : "$city", "rent" : "$rent" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Batches: 1  Memory Usage: xxxkB
+               ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
+                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "city" : "$city", "rent" : "$rent" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Index Cond: (collection.document @<> '{ "city" : { "fullScan" : true } }'::bson)
+(13 rows)
+
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$group" : { "_id" : { "city": "$city", "rent": "$rent" } } }, { "$sort": {"_id.city": 1, "_id.rent": 1} }], "cursor" : {}}');
+                                document                                
+------------------------------------------------------------------------
+ { "_id" : { "city" : "Chicago", "rent" : { "$numberInt" : "2000" } } }
+ { "_id" : { "city" : "Chicago", "rent" : { "$numberInt" : "2200" } } }
+ { "_id" : { "city" : "Chicago", "rent" : { "$numberInt" : "2500" } } }
+ { "_id" : { "city" : "Chicago", "rent" : { "$numberInt" : "2700" } } }
+ { "_id" : { "city" : "NYC", "rent" : { "$numberInt" : "2000" } } }
+ { "_id" : { "city" : "NYC", "rent" : { "$numberInt" : "2200" } } }
+ { "_id" : { "city" : "NYC", "rent" : { "$numberInt" : "2500" } } }
+ { "_id" : { "city" : "NYC", "rent" : { "$numberInt" : "2700" } } }
+ { "_id" : { "city" : "NYC", "rent" : { "$numberInt" : "2800" } } }
+ { "_id" : { "city" : "NYC", "rent" : { "$numberInt" : "3000" } } }
+ { "_id" : { "city" : "NYC", "rent" : { "$numberInt" : "3200" } } }
+ { "_id" : { "city" : "NYC", "rent" : { "$numberInt" : "3300" } } }
+ { "_id" : { "city" : "NYC", "rent" : { "$numberInt" : "3500" } } }
+ { "_id" : { "city" : "Seattle", "rent" : { "$numberInt" : "3500" } } }
+ { "_id" : { "city" : "Seattle", "rent" : { "$numberInt" : "3700" } } }
+ { "_id" : { "city" : "Seattle", "rent" : { "$numberInt" : "4000" } } }
+ { "_id" : { "city" : "Seattle", "rent" : { "$numberInt" : "4200" } } }
+ { "_id" : { "city" : "Seattle", "rent" : { "$numberInt" : "4500" } } }
+ { "_id" : { "city" : "Seattle", "rent" : { "$numberInt" : "4800" } } }
+ { "_id" : { "city" : "Seattle", "rent" : { "$numberInt" : "5000" } } }
+(20 rows)
+
 -- KNOWN INDEX ONLY SCAN GAPS (should work, but doesn't yet)
 -- Without a $match or hint, the planner has no reason to pick the secondary index.
 -- In the future, accumulator-only pipelines should be able to use IOS via aggregate pushdown.
