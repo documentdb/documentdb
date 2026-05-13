@@ -40,7 +40,7 @@ ALLOW_DEFAULT_VISIBILITY=yes
 
 USE_DOCUMENTDB_CORE = 1
 include $(OSS_SRC_DIR)/Makefile.cflags
-SOURCES = $(wildcard src/*.c) $(wildcard src/**/*.c)
+SOURCES = $(wildcard src/*.c) $(wildcard src/**/*.c) $(wildcard src/**/**/*.c)
 
 OBJS = $(patsubst %.c,%.o,$(SOURCES))
 
