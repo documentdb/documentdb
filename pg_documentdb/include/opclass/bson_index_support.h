@@ -165,6 +165,7 @@ void WalkRestrictionPathsForIndexOperations(List *restrictInfo,
 											ReplaceExtensionFunctionContext *context);
 
 bool IsBtreePrimaryKeyIndex(struct IndexOptInfo *indexInfo);
+bool IsOpExprShardKeyEquality(Expr *expr, int64 *shardKeyValue);
 bool InMatchIsEquvalentTo(ScalarArrayOpExpr *opExpr, const bson_value_t *arrayValue);
 
 OpExpr * GetOpExprClauseFromIndexOperator(const

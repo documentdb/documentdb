@@ -203,9 +203,11 @@ static void ExtensionScanReScanCustomScan(CustomScanState *node);
 static void ExtensionScanExplainCustomScan(CustomScanState *node, List *ancestors,
 										   ExplainState *es);
 
-static RestrictInfo * BuildPrimaryKeyRowRestrictInfo(PlannerInfo *root, RelOptInfo *rel,
-													 Datum *primaryKeyDatums, bool
-													 rowCompareIsInclusive);
+static RestrictInfo * BuildPrimaryKeyRestrictInfo(PlannerInfo *root, RelOptInfo *rel,
+												  IndexOptInfo *indexInfo,
+												  Datum *primaryKeyDatums, bool
+												  rowCompareIsInclusive,
+												  bool *isObjectIdContinuation);
 static void ParseContinuationState(ExtensionScanState *scanState,
 								   InputContinuation *continuation);
 static TupleTableSlot * ExtensionScanNext(CustomScanState *node);
@@ -562,9 +564,12 @@ GetPrimaryKeyContinuationIndexPath(PlannerInfo *root, RelOptInfo *rel,
 							"Expecting a primary key to resume the query but found none")));
 	}
 
-	RestrictInfo *rowCompareRestrictInfo = BuildPrimaryKeyRowRestrictInfo(root, rel,
-																		  primaryKeyDatums,
-																		  rowCompareIsInclusive);
+	bool isIdContinuation = false;
+	RestrictInfo *rowCompareRestrictInfo = BuildPrimaryKeyRestrictInfo(
+		root, rel, info,
+		primaryKeyDatums,
+		rowCompareIsInclusive,
+		&isIdContinuation);
 
 	List *oldIndexList = rel->indexlist;
 	List *oldPathList = rel->pathlist;
@@ -624,7 +629,7 @@ GetPrimaryKeyContinuationIndexPath(PlannerInfo *root, RelOptInfo *rel,
 	{
 		/* The first one can be shard_key_value = <value> */
 		IndexClause *secondClause = lsecond_node(IndexClause, inputPath->indexclauses);
-		if (secondClause->rinfo != rowCompareRestrictInfo)
+		if (secondClause->rinfo != rowCompareRestrictInfo && !isIdContinuation)
 		{
 			ereport(ERROR, (errmsg(
 								"Unexpected index clause found when resuming primary key scan")));
@@ -687,9 +692,11 @@ AddRowCompareToExistingPrimaryKeyPath(PlannerInfo *root, RelOptInfo *rel,
 									  IndexPath *existingPath,
 									  Datum *primaryKeyDatums, bool rowCompareIsInclusive)
 {
+	bool isObjectIdContinuation = false;
 	RestrictInfo *rowCompareRestrictInfo =
-		BuildPrimaryKeyRowRestrictInfo(root, rel, primaryKeyDatums,
-									   rowCompareIsInclusive);
+		BuildPrimaryKeyRestrictInfo(root, rel, existingPath->indexinfo,
+									primaryKeyDatums,
+									rowCompareIsInclusive, &isObjectIdContinuation);
 
 	/* Copy the IndexPath and its IndexOptInfo so we don't modify the original */
 	IndexPath *pathCopy = palloc(sizeof(IndexPath));
@@ -711,8 +718,16 @@ AddRowCompareToExistingPrimaryKeyPath(PlannerInfo *root, RelOptInfo *rel,
 	rowCompareClause->rinfo = rowCompareRestrictInfo;
 	rowCompareClause->indexquals = list_make1(rowCompareRestrictInfo);
 	rowCompareClause->lossy = false;
-	rowCompareClause->indexcol = 0;
-	rowCompareClause->indexcols = list_make2_int(0, 1);
+
+	if (isObjectIdContinuation)
+	{
+		rowCompareClause->indexcol = 1;
+	}
+	else
+	{
+		rowCompareClause->indexcol = 0;
+		rowCompareClause->indexcols = list_make2_int(0, 1);
+	}
 
 	/*
 	 * Insert the RowCompareExpr clause in sorted position by indexcol.
@@ -831,6 +846,7 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 	pgbson *continuation = NULL;
 	bool hasContinuation = false;
 	RestrictInfo *unshardedShardKeyRestrictInfo = NULL;
+	bool hasShardKeyEqualityFilter = false;
 	ListCell *cell;
 
 	foreach(cell, rel->baserestrictinfo)
@@ -839,12 +855,20 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 
 		/* Track the unsharded shard_key_value expr */
 		if (EnablePrimaryKeyCursorScan &&
-			context->inputData.isShardQuery &&
-			context->inputData.collectionId > 0 &&
-			IsOpExprShardKeyForUnshardedCollections(rinfo->clause,
-													context->inputData.collectionId))
+			context->inputData.isShardQuery)
 		{
-			unshardedShardKeyRestrictInfo = rinfo;
+			int64_t shardKeyValueIgnore = 0;
+			if (context->inputData.collectionId > 0 &&
+				IsOpExprShardKeyForUnshardedCollections(rinfo->clause,
+														context->inputData.collectionId))
+			{
+				hasShardKeyEqualityFilter = true;
+				unshardedShardKeyRestrictInfo = rinfo;
+			}
+			else if (IsOpExprShardKeyEquality(rinfo->clause, &shardKeyValueIgnore))
+			{
+				hasShardKeyEqualityFilter = true;
+			}
 		}
 
 		if (IsA(rinfo->clause, FuncExpr))
@@ -1044,7 +1068,12 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 
 				bool isPrimaryKeyIndex = IsBtreePrimaryKeyIndex(
 					indexPath->indexinfo);
-				isPrimaryKeyPath = EnablePrimaryKeyCursorScan && isPrimaryKeyIndex;
+
+				/* Only support PK Cursor scan with _id clauses for unsharded collections
+				 * at the moment
+				 */
+				isPrimaryKeyPath = EnablePrimaryKeyCursorScan && isPrimaryKeyIndex &&
+								   hasShardKeyEqualityFilter;
 
 				if (isPrimaryKeyIndex && !isPrimaryKeyPath)
 				{
@@ -1078,7 +1107,8 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 				{
 					IndexPath *indexPath = (IndexPath *) bitmapQualPath;
 
-					isPrimaryKeyPath = IsBtreePrimaryKeyIndex(indexPath->indexinfo);
+					isPrimaryKeyPath = IsBtreePrimaryKeyIndex(indexPath->indexinfo) &&
+									   hasShardKeyEqualityFilter;
 					if (isPrimaryKeyPath && EnablePrimaryKeyCursorScan)
 					{
 						inputPath = (Path *) indexPath;
@@ -1181,7 +1211,8 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 	rel->partial_pathlist = NIL;
 
 	/* We're responsible for trimming the shard_key_value expr here. */
-	if (EnablePrimaryKeyCursorScan && unshardedShardKeyRestrictInfo != NULL)
+	if (EnablePrimaryKeyCursorScan && !EnableCursorPlanBeforeRestrictionPathUpdate &&
+		unshardedShardKeyRestrictInfo != NULL)
 	{
 		if (list_length(rel->baserestrictinfo) == 1)
 		{
@@ -2374,44 +2405,77 @@ ReadCustomScanContinuationExtensionScanNode(struct ExtensibleNode *node)
 
 
 static RestrictInfo *
-BuildPrimaryKeyRowRestrictInfo(PlannerInfo *root, RelOptInfo *rel,
-							   Datum *primaryKeyDatums, bool rowCompareIsInclusive)
+BuildPrimaryKeyRestrictInfo(PlannerInfo *root, RelOptInfo *rel,
+							IndexOptInfo *indexInfo,
+							Datum *primaryKeyDatums, bool rowCompareIsInclusive,
+							bool *isObjectIdContinuation)
 {
-	Var *shardKeyVar = makeVar(rel->relid,
-							   DOCUMENT_DATA_TABLE_SHARD_KEY_VALUE_VAR_ATTR_NUMBER,
-							   INT8OID, -1, InvalidOid, 0);
+	ListCell *cell;
+	bool hasShardKeyEquality = false;
+	foreach(cell, indexInfo->indrestrictinfo)
+	{
+		RestrictInfo *rinfo = (RestrictInfo *) lfirst(cell);
+		int64 shardKeyValueIgnore;
+		if (IsOpExprShardKeyEquality(rinfo->clause, &shardKeyValueIgnore))
+		{
+			hasShardKeyEquality = true;
+			break;
+		}
+	}
+
 	Var *objectIdVar = makeVar(rel->relid, DOCUMENT_DATA_TABLE_OBJECT_ID_VAR_ATTR_NUMBER,
 							   BsonTypeId(), -1, InvalidOid, 0);
 
-	Const *shardKeyConst = makeConst(INT8OID, -1, InvalidOid, sizeof(int64),
-									 primaryKeyDatums[0], false, true);
 	Const *objectIdConst = makeConst(BsonTypeId(), -1, InvalidOid, -1,
 									 primaryKeyDatums[1], false, false);
-	RowCompareExpr *rcexpr = makeNode(RowCompareExpr);
-	rcexpr = makeNode(RowCompareExpr);
-#if PG_VERSION_NUM >= 180000
-	rcexpr->cmptype = rowCompareIsInclusive ? COMPARE_GE : COMPARE_GT;
-#else
-	rcexpr->rctype = rowCompareIsInclusive ? ROWCOMPARE_GE : ROWCOMPARE_GT;
-#endif
-
-	if (rowCompareIsInclusive)
+	Expr *skipExpr;
+	*isObjectIdContinuation = false;
+	if (hasShardKeyEquality)
 	{
-		rcexpr->opnos = list_make2_oid(BigIntGreaterEqualOperatorId(),
-									   BsonGreaterThanEqualOperatorId());
+		/* Construct object_id > in this path */
+		Oid opOid = rowCompareIsInclusive ? BsonGreaterThanEqualOperatorId() :
+					BsonGreaterThanOperatorId();
+		skipExpr = make_opclause(opOid, BOOLOID, false, (Expr *) objectIdVar,
+								 (Expr *) objectIdConst, InvalidOid, InvalidOid);
+		*isObjectIdContinuation = true;
 	}
 	else
 	{
-		rcexpr->opnos = list_make2_oid(BigIntGreaterOperatorId(),
-									   BsonGreaterThanOperatorId());
+		Var *shardKeyVar = makeVar(rel->relid,
+								   DOCUMENT_DATA_TABLE_SHARD_KEY_VALUE_VAR_ATTR_NUMBER,
+								   INT8OID, -1, InvalidOid, 0);
+
+
+		Const *shardKeyConst = makeConst(INT8OID, -1, InvalidOid, sizeof(int64),
+										 primaryKeyDatums[0], false, true);
+		RowCompareExpr *rcexpr = makeNode(RowCompareExpr);
+	#if PG_VERSION_NUM >= 180000
+		rcexpr->cmptype = rowCompareIsInclusive ? COMPARE_GE : COMPARE_GT;
+	#else
+		rcexpr->rctype = rowCompareIsInclusive ? ROWCOMPARE_GE : ROWCOMPARE_GT;
+	#endif
+
+		if (rowCompareIsInclusive)
+		{
+			rcexpr->opnos = list_make2_oid(BigIntGreaterEqualOperatorId(),
+										   BsonGreaterThanEqualOperatorId());
+		}
+		else
+		{
+			rcexpr->opnos = list_make2_oid(BigIntGreaterOperatorId(),
+										   BsonGreaterThanOperatorId());
+		}
+
+		rcexpr->opfamilies = list_make2_oid(IntegerOpsOpFamilyOid(),
+											BsonBtreeOpFamilyOid());
+		rcexpr->inputcollids = list_make2_oid(InvalidOid, InvalidOid);
+		rcexpr->largs = list_make2(shardKeyVar, objectIdVar);
+		rcexpr->rargs = list_make2(shardKeyConst, objectIdConst);
+		skipExpr = (Expr *) rcexpr;
 	}
 
-	rcexpr->opfamilies = list_make2_oid(IntegerOpsOpFamilyOid(), BsonBtreeOpFamilyOid());
-	rcexpr->inputcollids = list_make2_oid(InvalidOid, InvalidOid);
-	rcexpr->largs = list_make2(shardKeyVar, objectIdVar);
-	rcexpr->rargs = list_make2(shardKeyConst, objectIdConst);
 
-	RestrictInfo *shardKeyRestrict = make_simple_restrictinfo(root, (Expr *) rcexpr);
+	RestrictInfo *shardKeyRestrict = make_simple_restrictinfo(root, skipExpr);
 
 	return shardKeyRestrict;
 }

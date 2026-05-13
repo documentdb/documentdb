@@ -85,13 +85,13 @@ SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1, "cursor.id"
 -- ===========================================================================
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('dyncursordb',
     '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 3 }', :'r1_continuation');
-                                                                                           QUERY PLAN                                                                                            
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                  QUERY PLAN                                                                                  
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Index Scan using _id_ on documentdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
-         Index Cond: ((collection.shard_key_value = '9201'::bigint) AND (ROW(collection.shard_key_value, collection.object_id) >= ROW('9201'::bigint, '{ "" : { "$numberInt" : "3" } }'::bson)))
+         Index Cond: ((collection.shard_key_value = '9201'::bigint) AND (collection.object_id >= '{ "" : { "$numberInt" : "3" } }'::bson))
 (5 rows)
 
 -- ===========================================================================
@@ -153,13 +153,13 @@ SELECT cp FROM firstPageResponse;
 SELECT continuation AS r1_continuation FROM firstPageResponse \gset
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('dyncursordb',
     '{ "getMore": { "$numberLong": "4294967294" }, "collection": "dyncursor_coll", "batchSize": 2 }', :'r1_continuation');
-                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$gt" : { "$numberInt" : "3" }, "$lt" : { "$numberInt" : "8" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Index Scan using _id_ on documentdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
-         Index Cond: ((collection.shard_key_value = '9201'::bigint) AND (ROW(collection.shard_key_value, collection.object_id) >= ROW('9201'::bigint, '{ "" : { "$numberInt" : "6" } }'::bson)) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+         Index Cond: ((collection.shard_key_value = '9201'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberInt" : "6" } }'::bson))
 (5 rows)
 
 -- Drain remaining rows after the first page
@@ -318,7 +318,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('d
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "sk" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Index Scan using _id_ on documentdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
-         Index Cond: ((collection.shard_key_value = '9201'::bigint) AND (ROW(collection.shard_key_value, collection.object_id) >= ROW('9201'::bigint, '{ "" : { "$numberInt" : "6" } }'::bson)))
+         Index Cond: ((collection.shard_key_value = '9201'::bigint) AND (collection.object_id >= '{ "" : { "$numberInt" : "6" } }'::bson))
          Filter: (collection.document @= '{ "sk" : { "$numberInt" : "1" } }'::bson)
 (6 rows)
 
