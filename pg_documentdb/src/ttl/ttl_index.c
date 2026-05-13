@@ -141,7 +141,7 @@ delete_expired_rows(PG_FUNCTION_ARGS)
 					 "SELECT index_id, collection_id, (index_spec).index_key, "
 					 "(index_spec).index_pfe, (index_spec).index_expire_after_seconds,"
 					 "(index_spec).index_is_sparse, "
-					 "COALESCE(%s.bson_get_value_text((index_spec).index_options::%s,'enableCompositeTerm'::text)::bool, %s.bson_get_value_text((index_spec).index_options::%s, 'enableOrderedIndex'::text)::bool, false) as index_is_ordered, "
+					 "COALESCE(%s.bson_get_value_text((index_spec).index_options::%s,'enableCompositeTerm'::text)::int, %s.bson_get_value_text((index_spec).index_options::%s, 'enableOrderedIndex'::text)::int, 0) > 0 as index_is_ordered, "
 					 "(index_spec).index_name FROM %s.collection_indexes "
 					 "WHERE index_is_valid AND (index_spec).index_expire_after_seconds >= 0 "
 					 "ORDER BY collection_id, index_id",

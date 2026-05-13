@@ -49,6 +49,37 @@ typedef enum BoolIndexOption
 } BoolIndexOption;
 
 /*
+ * CustomIndexOption extends BoolIndexOption with an additional DefaultTrue state
+ * to distinguish system-managed defaults from user-explicit settings.
+ *
+ * Undefined is 0 so that zero-initialized structs (palloc0) default to
+ * "not specified" rather than "explicitly false", which would have added an
+ * implicit contract that composite options needed to be set as undefined after init.
+ */
+typedef enum CustomIndexOption
+{
+	/*
+	 *  User did not specify the option. Zero-init safe. Not persisted in index option.
+	 *  Before CustomIndexOption: Undefined undefined or explicit false
+	 *  After CustomIndexOption: Undefined means undefined
+	 */
+	CustomIndexOption_Undefined = 0,
+
+	/* User explicitly set the option to false. Persisted in index option as -1.*/
+	CustomIndexOption_False = -1,
+
+	/* System forced the option to true (e.g. TTL GUC, defaultUseCompositeOpClass).
+	 * Persisted in index option.*/
+	CustomIndexOption_DefaultTrue = 1,
+
+	/*
+	 *  User explicitly set the option to true. Persisted in index option as 2.
+	 *  After CustomIndexOption: 2 is explicit true, set by user.
+	 */
+	CustomIndexOption_True = 2,
+} CustomIndexOption;
+
+/*
  * Representation of index_spec_type.
  *
  * If you decide making any changes to this struct, consider syncing
@@ -287,6 +318,15 @@ typedef enum IndexOptionsEquivalency
 	 * The index specs are actually the same.
 	 */
 	IndexOptionsEquivalency_Equal,
+
+	/*
+	 * The index specs are treated as equal for migration compatibility
+	 * purposes. For example, existing is an unordered index and incoming
+	 * is an implicit ordered index. They are treated as equivalent to preserve
+	 * existing behavior but we should not report their options to be
+	 * equivalent.
+	 */
+	IndexOptionsEquivalency_CompatEqual,
 } IndexOptionsEquivalency;
 
 /* public helpers for IndexSpec */
