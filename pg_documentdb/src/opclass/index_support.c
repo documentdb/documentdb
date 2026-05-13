@@ -1925,6 +1925,14 @@ PlanHasAggregates(PlannerInfo *root)
 }
 
 
+static bool
+PlanHasGroupBy(PlannerInfo *root)
+{
+	return list_length(root->group_pathkeys) != 0 ||
+		   (root->parent_root != NULL && PlanHasGroupBy(root->parent_root));
+}
+
+
 static pgbson *
 TryExtractPgbsonFromConst(Expr *expr)
 {
@@ -2360,14 +2368,10 @@ static bool
 IsQueryEligibleForIndexOnlyScan(PlannerInfo *root, Index scanRti, bool *hasDocumentVar)
 {
 	bool planHasAggregates = PlanHasAggregates(root);
+	bool planHasGroupby = PlanHasGroupBy(root);
 	if (root->hasJoinRTEs ||
-		(!planHasAggregates && !EnableIndexOnlyScanForFindProject))
+		(!planHasAggregates && !planHasGroupby && !EnableIndexOnlyScanForFindProject))
 	{
-		/* Don't handle simple queries for now - only things with aggregates
-		 * Note: Things like GroupBy with no aggregates will not work here, but
-		 * that's okay. We also only consider base tables for index only scans.
-		 * TODO: This can also be extended to handle covered indexes later.
-		 */
 		return false;
 	}
 
@@ -2384,7 +2388,8 @@ IsQueryEligibleForIndexOnlyScan(PlannerInfo *root, Index scanRti, bool *hasDocum
 
 	if (projectionState.hasDocumentVar)
 	{
-		if (!EnableIndexOnlyScanForCoveredAggregateTargets && planHasAggregates)
+		if (!EnableIndexOnlyScanForCoveredAggregateTargets && (planHasAggregates ||
+															   planHasGroupby))
 		{
 			return false;
 		}

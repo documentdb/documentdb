@@ -317,7 +317,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  GroupAggregate
    Output: bson_repath_and_build('_id'::text, bson_repath_and_build('b'::text, (bson_expression_get(document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'c'::text, (bson_expression_get(document, '{ "" : "$c" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)))), (bson_expression_get(document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(document, '{ "" : "$c" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: bson_expression_get(collection.document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_expression_get(collection.document, '{ "" : "$c" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Index Scan using b_c_1 on documentdb_data.documents_8601_860002 collection
+   ->  Index Only Scan using b_c_1 on documentdb_data.documents_8601_860002 collection
          Output: bson_expression_get(document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_expression_get(document, '{ "" : "$c" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
          Index Cond: ((collection.document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
          Order By: ((collection.document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "c" : { "$numberInt" : "1" } }'::bson))
