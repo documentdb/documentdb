@@ -261,6 +261,7 @@ done
 scriptDir="$( cd -P "$( dirname "$source" )" && pwd )"
 
 . $scriptDir/utils.sh
+. $scriptDir/preload_libraries.sh
 
 if [ -z $postgresDirectory ]; then
     postgresDirectory="$HOME/.documentdb/data"
@@ -297,17 +298,16 @@ else
     echo "${green}Found existing PostgreSQL data directory at $postgresDirectory${reset}"
 fi
 
-clusterPreloadLibraries="pg_documentdb_core, pg_documentdb"
-
+ossPreloadArgs=""
 if [ "$distributed" == "true" ]; then
-  clusterPreloadLibraries="citus, $clusterPreloadLibraries, pg_documentdb_distributed"
+  ossPreloadArgs="$ossPreloadArgs --distributed"
 fi
 
 if [ "$useDocumentdbExtendedRum" == "true" ]; then
-  clusterPreloadLibraries="$clusterPreloadLibraries, pg_documentdb_extended_rum"
+  ossPreloadArgs="$ossPreloadArgs --rum"
 fi
 
-sharedPreloadLibraries="pg_cron, $clusterPreloadLibraries"
+sharedPreloadLibraries="$(GetDocumentDBBasePreloadLibraries $ossPreloadArgs)"
 
 # We stop the coordinator first and the worker node servers
 # afterwards. However this order is not required and it doesn't
