@@ -149,6 +149,10 @@ bool EnableCompositeUniqueHash = DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH;
 #define DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS false
 bool EnableFailureOnParallelIndexArrays = DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS;
 
+/* Added in v114, Pending stabilization, enable in v120 */
+#define DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT false
+bool EnableIndexOnlyScanForFindProject = DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT;
+
 /* Added in v110, enabled in v110, remove after v113 */
 #define DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE true
 bool CreateTTLIndexAsCompositeByDefault = DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE;
@@ -822,6 +826,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to fail when parallel arrays are indexed in composite indexes."),
 		NULL, &EnableFailureOnParallelIndexArrays,
 		DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableIndexOnlyScanForFindProject", newGucPrefix),
+		gettext_noop(
+			"Whether or not to enable index only scan for find with project operations."),
+		NULL, &EnableIndexOnlyScanForFindProject,
+		DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
