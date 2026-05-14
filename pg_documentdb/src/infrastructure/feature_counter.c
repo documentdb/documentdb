@@ -210,6 +210,7 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_AGGREGATE_GROUP_COUNT] = "group_count",
 	[FEATURE_AGGREGATE_GROUP_COUNT_WITH_ARG] = "group_count_with_arg",
 	[FEATURE_AGGREGATE_GROUP_DECOMPOSED_GROUP_BY] = "group_decomposed_group_by",
+	[FEATURE_AGGREGATE_GROUP_SORT_PREFIX_CANDIDATE] = "group_sort_prefix_candidate",
 	[FEATURE_AGGREGATE_GROUP_FIRST] = "group_first",
 	[FEATURE_AGGREGATE_GROUP_FIRST_N] = "group_first_n",
 	[FEATURE_AGGREGATE_GROUP_LAST] = "group_last",

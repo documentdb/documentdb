@@ -88,7 +88,7 @@ extern bool RemoveMatchNamespaceFilters;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableGroupByCompoundIdIndexPushdown;
 extern bool EnableSortGroupStage;
-extern bool EnableSortPushToAccumulator;
+extern bool EnableSortPushToAccumulatorWithPrefix;
 
 /* GUC to config tdigest compression */
 extern int TdigestCompressionAccuracy;
@@ -170,11 +170,19 @@ typedef struct SortGroupAnalysisResult
 	/* All accumulators are order-insensitive ($sum, $avg, etc.), so the sort is unnecessary */
 	bool canDropSort;
 
-	/* Every accumulator is either $first or order-insensitive, with at least
-	 * one $first present, so the sort can be pushed into aggorder. This condition will be
-	 * expanded in future. */
-	bool canPushSortToAccumulator;
+	/* When group keys form a non-dotted prefix of the sort keys, holds the
+	 * suffix-only sort spec (remaining keys after the prefix). EOD when
+	 * either no prefix match exists or the full sort is pushed. */
+	bson_value_t suffixSortSpec;
+
+	/* True when group keys form a valid non-dotted prefix of (or exactly match)
+	 * the sort keys.  Distinguishes successful prefix/exact match from
+	 * bail-out (dotted paths, mismatch, etc.).  Check suffixSortSpec to
+	 * tell prefix-with-suffix apart from exact match. */
+	bool groupKeysFormSortPrefix;
 } SortGroupAnalysisResult;
+
+#define MAX_SUFFIX_SORT_GROUP_KEYS (INDEX_MAX_KEYS * 2)
 
 static void AddCursorFunctionsToQuery(Query *query, Query *baseQuery,
 									  QueryData *queryData,
@@ -241,7 +249,7 @@ static Query * HandleSortGroup(const bson_value_t *existingValue, Query *query,
 							   AggregationPipelineBuildContext *context);
 static Query * HandleGroupCore(const bson_value_t *existingValue, Query *query,
 							   AggregationPipelineBuildContext *context,
-							   bool sortSpecIsForAccumulatorOperator);
+							   const bson_value_t *accumulatorSortSpec);
 
 static bool RequiresPersistentCursorFalse(const bson_value_t *pipelineValue,
 										  bool *isSingleRowResult);
@@ -292,6 +300,9 @@ static bool TryInlineChangeStreamNamespaceFilters(AggregationStage *changeStream
 static void SetAccumulatorSortOrder(TargetEntry *accumulatorTle, Expr *documentExpr,
 									const bson_value_t *sortSpec,
 									const char *collationString);
+static bool TryBuildSuffixSortSpec(const bson_value_t *groupValue,
+								   const bson_value_t *sortValue,
+								   bson_value_t *suffixSortSpec);
 
 #define COMPATIBLE_CHANGE_STREAM_STAGES_COUNT 8
 const char *CompatibleChangeStreamPipelineStages[COMPATIBLE_CHANGE_STREAM_STAGES_COUNT] =
@@ -5336,7 +5347,8 @@ AnalyzeSortGroupAccumulators(const bson_value_t *groupValue,
 {
 	SortGroupAnalysisResult result = {
 		.canDropSort = false,
-		.canPushSortToAccumulator = false
+		.groupKeysFormSortPrefix = false,
+		.suffixSortSpec = { .value_type = BSON_TYPE_EOD }
 	};
 
 	bson_iter_t groupIter;
@@ -5396,10 +5408,210 @@ AnalyzeSortGroupAccumulators(const bson_value_t *groupValue,
 	* order-insensitive.  The sort is unnecessary only when none of
 	* the accumulators were order-sensitive (i.e. no $first seen). */
 	result.canDropSort = !hasFirstAccumulator;
-	result.canPushSortToAccumulator = hasFirstAccumulator &&
-									  IsSortSpecCompatibleForPushToAccumulatorOperator(
-		sortValue);
+
+	/* When $first is present, check compatibility once for the full sort
+	 * spec, then try the prefix-based suffix decomposition. */
+	if (hasFirstAccumulator)
+	{
+		bool canPushSortToAccumulator =
+			IsSortSpecCompatibleForPushToAccumulatorOperator(sortValue);
+		if (canPushSortToAccumulator)
+		{
+			result.groupKeysFormSortPrefix =
+				TryBuildSuffixSortSpec(groupValue, sortValue, &result.suffixSortSpec);
+		}
+	}
+
 	return result;
+}
+
+
+/*
+ * Extracts the unprefixed group-by field paths from a $group _id value
+ * (scalar "$f" or document { f: "$f", ... }).  Returns false (and leaves
+ * *numFieldPaths == 0) when _id isn't a string or document, an entry isn't
+ * a "$"-prefixed field reference, an entry is a "$$" variable ref, or the
+ * field count would exceed maxFieldPaths.
+ */
+static bool
+TryExtractGroupByFieldPaths(const bson_value_t *idValue,
+							StringView *fieldPaths,
+							int maxFieldPaths,
+							int *numFieldPaths)
+{
+	*numFieldPaths = 0;
+
+	if (maxFieldPaths < 1)
+	{
+		return false;
+	}
+
+	if (idValue->value_type == BSON_TYPE_UTF8)
+	{
+		/* Scalar _id (e.g. "$f3"): require "$" + >=1 field char (also makes
+		 * path[1] safe), and reject "$$" variable refs (e.g. "$$ROOT"). */
+		const char *path = idValue->value.v_utf8.str;
+		uint32_t pathLen = idValue->value.v_utf8.len;
+		if (pathLen < 2 || path[0] != '$' || path[1] == '$')
+		{
+			return false;
+		}
+
+		fieldPaths[0].string = path + 1;
+		fieldPaths[0].length = pathLen - 1;
+		*numFieldPaths = 1;
+		return true;
+	}
+	else if (idValue->value_type == BSON_TYPE_DOCUMENT)
+	{
+		/* Compound _id: e.g., { f3: "$f3", f4: "$f4" } */
+		bson_iter_t idIter;
+		BsonValueInitIterator(idValue, &idIter);
+		int count = 0;
+		while (bson_iter_next(&idIter))
+		{
+			if (count >= maxFieldPaths)
+			{
+				return false;
+			}
+
+			const bson_value_t *val = bson_iter_value(&idIter);
+			if (val->value_type != BSON_TYPE_UTF8)
+			{
+				return false;
+			}
+
+			/* Same per-entry guard as the scalar branch: require "$" + >=1
+			 * field char and reject "$$" variable refs (e.g. "$$ROOT"). */
+			const char *path = val->value.v_utf8.str;
+			uint32_t pathLen = val->value.v_utf8.len;
+			if (pathLen < 2 || path[0] != '$' || path[1] == '$')
+			{
+				return false;
+			}
+
+			fieldPaths[count].string = path + 1;
+			fieldPaths[count].length = pathLen - 1;
+			count++;
+		}
+
+		if (count == 0)
+		{
+			return false;
+		}
+
+		*numFieldPaths = count;
+		return true;
+	}
+
+	return false;
+}
+
+
+/*
+ * Checks if group-by keys are a non-dotted prefix of the sort keys and builds
+ * a suffix sort spec containing only the remaining sort keys.
+ * Returns true if the group keys form a valid prefix of (or exactly match)
+ * the sort keys; false if the keys don't match or a bail-out occurs (e.g.
+ * dotted paths).  When true and there are remaining sort keys, suffixSortSpec
+ * is populated; when true and there are no remaining keys, suffixSortSpec
+ * stays EOD (exact-match case).
+ */
+static bool
+TryBuildSuffixSortSpec(const bson_value_t *groupValue,
+					   const bson_value_t *sortValue,
+					   bson_value_t *suffixSortSpec)
+{
+	if (groupValue->value_type != BSON_TYPE_DOCUMENT ||
+		sortValue->value_type != BSON_TYPE_DOCUMENT)
+	{
+		return false;
+	}
+
+	/* Step 1: Locate _id within the group spec. */
+	bson_iter_t groupIter;
+	BsonValueInitIterator(groupValue, &groupIter);
+
+	bson_value_t idValue = { 0 };
+	while (bson_iter_next(&groupIter))
+	{
+		StringView keyView = bson_iter_key_string_view(&groupIter);
+		if (StringViewEquals(&keyView, &IdFieldStringView))
+		{
+			idValue = *bson_iter_value(&groupIter);
+			break;
+		}
+	}
+
+	if (idValue.value_type == BSON_TYPE_EOD)
+	{
+		return false;
+	}
+
+	/* Step 2: Extract the group-by field paths from _id. */
+	StringView groupKeys[MAX_SUFFIX_SORT_GROUP_KEYS];
+	int numGroupKeys = 0;
+	if (!TryExtractGroupByFieldPaths(&idValue, groupKeys,
+									 MAX_SUFFIX_SORT_GROUP_KEYS, &numGroupKeys))
+	{
+		return false;
+	}
+
+	/* Reject dotted paths: pushing a sort with dotted keys into the
+	 * accumulator is not supported by the prefix-decomposition path. */
+	for (int i = 0; i < numGroupKeys; i++)
+	{
+		if (StringViewContains(&groupKeys[i], '.'))
+		{
+			return false;
+		}
+	}
+
+	/* Step 3: Check that group keys form an exact prefix of sort keys. */
+	bson_iter_t sortIter;
+	BsonValueInitIterator(sortValue, &sortIter);
+
+	for (int i = 0; i < numGroupKeys; i++)
+	{
+		if (!bson_iter_next(&sortIter))
+		{
+			/* Sort spec has fewer keys than group keys */
+			return false;
+		}
+
+		uint32_t sortKeyLen = bson_iter_key_len(&sortIter);
+		const char *sortKey = bson_iter_key(&sortIter);
+		if (sortKeyLen != groupKeys[i].length ||
+			memcmp(groupKeys[i].string, sortKey, sortKeyLen) != 0)
+		{
+			return false;
+		}
+	}
+
+	/* Step 4: Build suffix sort spec from remaining sort keys. */
+	if (!bson_iter_next(&sortIter))
+	{
+		/* No suffix keys — sort is fully covered by group keys.
+		 * Signal this via the suffixSortSpec remaining EOD; the caller
+		 * distinguishes this from bail-out via groupKeysFormSortPrefix. */
+		return true;
+	}
+
+	pgbson_writer suffixWriter;
+	PgbsonWriterInit(&suffixWriter);
+
+	/* Write the current (first suffix) key and then the rest */
+	do {
+		pgbsonelement element;
+		BsonIterToPgbsonElement(&sortIter, &element);
+		PgbsonWriterAppendValue(&suffixWriter, element.path, element.pathLength,
+								&element.bsonValue);
+	} while (bson_iter_next(&sortIter));
+
+	pgbson *suffixBson = PgbsonWriterGetPgbson(&suffixWriter);
+	*suffixSortSpec = ConvertPgbsonToBsonValue(suffixBson);
+
+	return true;
 }
 
 
@@ -5637,14 +5849,33 @@ HandleSortGroup(const bson_value_t *existingValue, Query *query,
 
 	SortGroupAnalysisResult analysisResult = AnalyzeSortGroupAccumulators(&groupValue,
 																		  &sortValue);
-	bool canPushSort = EnableSortPushToAccumulator &&
-					   analysisResult.canPushSortToAccumulator;
-	if (canPushSort)
+
+	/* Drop the explicit Sort node when :
+	 * 1) Group keys form a non-dotted prefix of the sort keys; any remaining suffix keys are pushed into the
+	 * accumulator's ORDER BY.  Gated by EnableSortPushToAccumulatorWithPrefix.
+	 * 2) No order-sensitive accumulators are present.
+	 * */
+	bool hasSuffixSort = analysisResult.suffixSortSpec.value_type != BSON_TYPE_EOD;
+	if (analysisResult.groupKeysFormSortPrefix)
 	{
-		ValidateSortSpec(&sortValue);
-		context->sortSpec = sortValue;
+		ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_SORT_PREFIX_CANDIDATE);
 	}
-	else if (!analysisResult.canDropSort)
+	bool prefixOptimization = analysisResult.groupKeysFormSortPrefix &&
+							  EnableSortPushToAccumulatorWithPrefix;
+	bool canPushSort = prefixOptimization && hasSuffixSort;
+	bool canSkipSortNode = prefixOptimization || analysisResult.canDropSort;
+
+	if (canSkipSortNode)
+	{
+		/* Two skip-the-Sort-node paths converge here: prefix optimization
+		 * (sort keys are covered by group keys, optionally with a suffix
+		 * pushed into the accumulator) and canDropSort (every accumulator
+		 * is order-insensitive).  Neither calls HandleSort, so we must
+		 * still validate the spec here to catch bad inputs (empty spec,
+		 * mixed $natural and non-$natural keys, invalid directions). */
+		ValidateSortSpec(&sortValue);
+	}
+	else
 	{
 		query = HandleSort(&sortValue, query, context);
 		if (context->requiresSubQuery || context->requiresSubQueryAfterProject)
@@ -5654,16 +5885,12 @@ HandleSortGroup(const bson_value_t *existingValue, Query *query,
 								"Unexpected error - $sort stage demands a subquery when it should not.")));
 		}
 	}
-	else
-	{
-		/* HandleSort validates internally; when dropping the sort we must
-		 * still validate the spec to catch bad inputs (empty spec, mixed
-		 * $natural and non-$natural keys, invalid direction values, etc). */
-		ValidateSortSpec(&sortValue);
-	}
+
+	const bson_value_t *accumulatorSortSpec = canPushSort ?
+											  &analysisResult.suffixSortSpec : NULL;
 
 	return HandleGroupCore(&groupValue, query, context,
-						   canPushSort);
+						   accumulatorSortSpec);
 }
 
 
@@ -6371,7 +6598,7 @@ AddPercentileMedianGroupAccumulator(Query *query, const bson_value_t *accumulato
 static Query *
 HandleGroupCore(const bson_value_t *existingValue, Query *query,
 				AggregationPipelineBuildContext *context,
-				bool sortSpecIsForAccumulatorOperator)
+				const bson_value_t *accumulatorSortSpec)
 {
 	/*
 	 * Collation is only supported with the new WithExpr accumulators, not for
@@ -6450,61 +6677,18 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 	 * or a document whose fields are all $path expressions.
 	 */
 	bool isGroupByValidForIndexPushdown = false;
-	const char *groupByFieldPaths[INDEX_MAX_KEYS] = { 0 };
-	uint32_t groupByFieldPathLens[INDEX_MAX_KEYS] = { 0 };
+	StringView groupByFieldPaths[INDEX_MAX_KEYS] = { 0 };
 	int numGroupByFields = 0;
 	if (CanPushSortFilterToIndex(query, context))
 	{
-		if (idValue.value_type == BSON_TYPE_UTF8 &&
-			idValue.value.v_utf8.len > 1 &&
-			idValue.value.v_utf8.str[0] == '$' &&
-			idValue.value.v_utf8.str[1] != '$')
-		{
-			groupByFieldPaths[0] = idValue.value.v_utf8.str + 1;
-			groupByFieldPathLens[0] = idValue.value.v_utf8.len - 1;
-			numGroupByFields = 1;
-			isGroupByValidForIndexPushdown = true;
-		}
-		else if (idValue.value_type == BSON_TYPE_DOCUMENT)
-		{
-			bson_iter_t docIter;
-			BsonValueInitIterator(&idValue, &docIter);
-			bool allFieldsValid = true;
-			int fieldCount = 0;
-
-			while (bson_iter_next(&docIter))
-			{
-				/* TODO: Consider removing this limit -
-				 * in the case where there are more than INDEX_MAX_KEYS fields, we can still do partial index pushdown
-				 * on the first INDEX_MAX_KEYS fields.
-				 */
-				if (fieldCount >= INDEX_MAX_KEYS)
-				{
-					allFieldsValid = false;
-					break;
-				}
-
-				const bson_value_t *fieldVal = bson_iter_value(&docIter);
-				if (fieldVal->value_type != BSON_TYPE_UTF8 ||
-					fieldVal->value.v_utf8.len <= 1 ||
-					fieldVal->value.v_utf8.str[0] != '$' ||
-					fieldVal->value.v_utf8.str[1] == '$')
-				{
-					allFieldsValid = false;
-					break;
-				}
-
-				groupByFieldPaths[fieldCount] = fieldVal->value.v_utf8.str + 1;
-				groupByFieldPathLens[fieldCount] = fieldVal->value.v_utf8.len - 1;
-				fieldCount++;
-			}
-
-			if (allFieldsValid && fieldCount > 0)
-			{
-				numGroupByFields = fieldCount;
-				isGroupByValidForIndexPushdown = true;
-			}
-		}
+		/* TODO: Consider lifting the INDEX_MAX_KEYS cap -
+		 * in the case where there are more than INDEX_MAX_KEYS fields, we
+		 * can still do partial index pushdown on the first INDEX_MAX_KEYS
+		 * fields. TryExtractGroupByFieldPaths currently bails entirely. */
+		isGroupByValidForIndexPushdown =
+			TryExtractGroupByFieldPaths(&idValue, groupByFieldPaths,
+										INDEX_MAX_KEYS,
+										&numGroupByFields);
 	}
 
 	ParseState *parseState = make_parsestate(NULL);
@@ -6851,7 +7035,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_FIRST);
 			if (context->sortSpec.value_type == BSON_TYPE_EOD ||
-				sortSpecIsForAccumulatorOperator)
+				accumulatorSortSpec != NULL)
 			{
 				TargetEntry *accumulatorTle = NULL;
 				if (CanUseWithExprAggregates())
@@ -6879,10 +7063,10 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 														   &accumulatorTle);
 				}
 
-				if (sortSpecIsForAccumulatorOperator)
+				if (accumulatorSortSpec != NULL)
 				{
 					SetAccumulatorSortOrder(accumulatorTle, origEntry->expr,
-											&context->sortSpec,
+											accumulatorSortSpec,
 											context->collationString);
 				}
 			}
@@ -7277,8 +7461,8 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		for (int i = 0; i < numGroupByFields; i++)
 		{
 			pgbsonelement sortElement = { 0 };
-			sortElement.path = groupByFieldPaths[i];
-			sortElement.pathLength = groupByFieldPathLens[i];
+			sortElement.path = groupByFieldPaths[i].string;
+			sortElement.pathLength = groupByFieldPaths[i].length;
 			sortElement.bsonValue.value_type = BSON_TYPE_INT32;
 			sortElement.bsonValue.value.v_int32 = 1;
 			pgbson *sortSpec = PgbsonElementToPgbson(&sortElement);
@@ -7288,6 +7472,34 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 				BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
 				InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
 			currentQuals = lappend(currentQuals, fullScanExpr);
+		}
+
+		/* When the group-by keys form a prefix of the sort spec, the suffix
+		 * keys (those not covered by group-by) are pushed into the
+		 * accumulator's ORDER BY instead of a full $sort stage.  Add fullScan
+		 * quals for these suffix keys so the planner can consider index
+		 * pushdown on them.
+		 * We don't do this for Pg15 as it does not push ordered aggregates to the index.
+		 * Had we gone forward in pg15, we would have fewer pathkeys than sort/orderby columns
+		 * which causes a crash in ProcessOrderByStatements(index_support.c).
+		 */
+		if (accumulatorSortSpec != NULL && PG_VERSION_NUM >= 160000)
+		{
+			bson_iter_t suffixSortIter;
+			BsonValueInitIterator(accumulatorSortSpec, &suffixSortIter);
+
+			while (bson_iter_next(&suffixSortIter))
+			{
+				pgbsonelement suffixSortElement;
+				BsonIterToPgbsonElement(&suffixSortIter, &suffixSortElement);
+				Const *suffixSortConst = MakeBsonConst(
+					PgbsonElementToPgbson(&suffixSortElement));
+				List *rangeArgs = list_make2(origEntry->expr, suffixSortConst);
+				Expr *fullScanExpr = (Expr *) makeFuncExpr(
+					BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
+					InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+				currentQuals = lappend(currentQuals, fullScanExpr);
+			}
 		}
 
 		query->jointree->quals = (Node *) make_ands_explicit(
@@ -7414,9 +7626,8 @@ Query *
 HandleGroup(const bson_value_t *existingValue, Query *query,
 			AggregationPipelineBuildContext *context)
 {
-	bool sortSpecIsForAccumulatorOperator = false;
 	return HandleGroupCore(existingValue, query, context,
-						   sortSpecIsForAccumulatorOperator);
+						   NULL);
 }
 
 

@@ -328,9 +328,10 @@ bool FailOnNonEmptyGroupCountArg = DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG;
 #define DEFAULT_ENABLE_SORT_GROUP_STAGE true
 bool EnableSortGroupStage = DEFAULT_ENABLE_SORT_GROUP_STAGE;
 
-/* Added in v112, Pending stabilization, enable in v113 */
-#define DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR false
-bool EnableSortPushToAccumulator = DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR;
+/* Added in v113, Pending stabilization, enable in v115 */
+#define DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR_WITH_PREFIX false
+bool EnableSortPushToAccumulatorWithPrefix =
+	DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR_WITH_PREFIX;
 
 /* Added in v112, enabled in v112, remove after v114 */
 #define DEFAULT_ENABLE_DUPLICATE_FIELD_FIX true
@@ -787,10 +788,11 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableSortPushToAccumulator", newGucPrefix),
+		psprintf("%s.enableSortPushToAccumulatorWithPrefix", newGucPrefix),
 		gettext_noop(
-			"Whether to push sort order into accumulator in $sortGroup."),
-		NULL, &EnableSortPushToAccumulator, DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR,
+			"Whether to push suffix sort keys into accumulator when group keys are a prefix of sort keys in $sortGroup."),
+		NULL, &EnableSortPushToAccumulatorWithPrefix,
+		DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR_WITH_PREFIX,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
