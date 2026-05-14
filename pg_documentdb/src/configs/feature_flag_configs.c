@@ -153,10 +153,6 @@ bool EnableFailureOnParallelIndexArrays = DEFAULT_ENABLE_FAILURE_ON_PARALLEL_IND
 #define DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT false
 bool EnableIndexOnlyScanForFindProject = DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT;
 
-/* Added in v110, enabled in v110, remove after v113 */
-#define DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE true
-bool CreateTTLIndexAsCompositeByDefault = DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE;
-
 /* Added in v114, enabled on v113, remove after v116 */
 #define DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE true
 bool EmitEnableOrderedIndexFalseInResponse =
@@ -436,6 +432,24 @@ bool EnablePreImages = DEFAULT_ENABLE_PREIMAGES;
 /* Added in v109, Pending stabilization, enable in v120 */
 #define DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER false
 bool IndexBuildsScheduledOnBgWorker = DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER;
+
+/*
+ * SECTION: TTL feature flags
+ */
+
+/* Added in v110, enabled in v110, remove after v115 */
+#define DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE true
+bool CreateTTLIndexAsCompositeByDefault = DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE;
+
+
+/* Added in v113, Pending stabilization, enable in v116 */
+#define DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK false
+bool EnableDeadIndexEntryMarkingByTTLTask =
+	DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK;
+
+/* Added in v111, enabled in v111, remove after v115 */
+#define DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES true
+bool TTLSkipCaughtUpIndexes = DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES;
 
 /* FEATURE FLAGS END */
 
@@ -1111,4 +1125,26 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL, &EnableObjectIdFuncExprConversion,
 		DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVERSION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableDeadIndexEntryMarkingByTTLTask", newGucPrefix),
+		gettext_noop(
+			"Whether to enable marking dead index entries during TTL task scans to avoid redundant heap fetches."),
+		NULL,
+		&EnableDeadIndexEntryMarkingByTTLTask,
+		DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.TTLSkipCaughtUpIndexes", newGucPrefix),
+		gettext_noop(
+			"Whether to skip checking a TTL index further, once they are caught up during a TTL task invocation cycle."),
+		NULL,
+		&TTLSkipCaughtUpIndexes,
+		DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
 }
