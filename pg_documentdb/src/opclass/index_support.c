@@ -31,6 +31,7 @@
 #include <optimizer/cost.h>
 #include <access/genam.h>
 #include <utils/index_selfuncs.h>
+#include <utils/selfuncs.h>
 #include <access/gin.h>
 #include <catalog/pg_collation.h>
 
@@ -528,6 +529,43 @@ dollar_support_object_id(PG_FUNCTION_ARGS)
 			{
 				responsePointer = (Pointer) list_make1(finalNode);
 			}
+		}
+	}
+	else if (IsA(supportRequest, SupportRequestSelectivity))
+	{
+		SupportRequestSelectivity *req = (SupportRequestSelectivity *) supportRequest;
+
+		if (!req->is_join)
+		{
+			Oid operatorOid = InvalidOid;
+
+			/* TODO(object_id_funcs): Make this more generalizable. Also move to bson_dollar_selectivity.c */
+			if (IsClusterVersionAtleast(DocDB_V0, 114, 0) &&
+				req->funcid == BsonRegexObjectIdMatchFunctionId())
+			{
+				const MongoIndexOperatorInfo *operator =
+					GetMongoIndexOperatorInfoByPostgresFuncId(BsonRegexMatchFunctionId());
+				operatorOid = GetMongoQueryOperatorOid(operator);
+			}
+
+			if (operatorOid == InvalidOid)
+			{
+				PG_RETURN_POINTER(responsePointer);
+			}
+
+			/* Run selectivity against object_id and the query spec. */
+			List *newArgs = list_make2(lsecond(req->args), lthird(req->args));
+
+			/* default to 0.333 to match PG default selectivity. */
+			req->selectivity = generic_restriction_selectivity(req->root,
+															   operatorOid,
+															   req->inputcollid,
+															   newArgs,
+															   req->varRelid,
+															   DEFAULT_INEQ_SEL);
+
+			list_free(newArgs);
+			responsePointer = (Pointer) req;
 		}
 	}
 
