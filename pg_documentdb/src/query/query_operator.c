@@ -388,55 +388,85 @@ Datum
 query_match_support(PG_FUNCTION_ARGS)
 {
 	Node *supportRequest = (Node *) PG_GETARG_POINTER(0);
-	if (IsA(supportRequest, SupportRequestSimplify))
+	if (!IsA(supportRequest, SupportRequestSimplify))
 	{
-		/* Try to convert operator/function call to index conditions */
-		SupportRequestSimplify *req =
-			(SupportRequestSimplify *) supportRequest;
-		FuncExpr *funcExpr = req->fcall;
+		PG_RETURN_POINTER(NULL);
+	}
 
-		if (funcExpr->funcid == BsonQueryMatchFunctionId() &&
-			list_length(funcExpr->args) == 2)
+	/* Try to convert operator/function call to index conditions */
+	SupportRequestSimplify *req = (SupportRequestSimplify *) supportRequest;
+	FuncExpr *funcExpr = req->fcall;
+
+	bool hasLetAndCollation =
+		funcExpr->funcid == BsonQueryMatchWithLetAndCollationFunctionId();
+	if (!hasLetAndCollation && funcExpr->funcid != BsonQueryMatchFunctionId())
+	{
+		PG_RETURN_POINTER(NULL);
+	}
+
+	Expr *queryArg = lsecond(funcExpr->args);
+	if (!IsA(queryArg, Const))
+	{
+		PG_RETURN_POINTER(NULL);
+	}
+
+	Const *queryConst = (Const *) queryArg;
+	if (queryConst->constisnull)
+	{
+		PG_RETURN_POINTER(NULL);
+	}
+
+	BsonQueryOperatorContext context = { 0 };
+	context.documentExpr = linitial(funcExpr->args);
+	context.inputType = MongoQueryOperatorInputType_Bson;
+	context.simplifyOperators = true;
+	context.coerceOperatorExprIfApplicable = true;
+	context.requiredFilterPathNameHashSet = NULL;
+	context.variableContext = NULL;
+
+	if (hasLetAndCollation)
+	{
+		Expr *variableSpecArg = lthird(funcExpr->args);
+		Expr *collationArg = lfourth(funcExpr->args);
+
+		if (!IsA(variableSpecArg, Const) || !IsA(collationArg, Const))
 		{
-			Expr *firstArg = linitial(funcExpr->args);
-			Expr *secondArg = lsecond(funcExpr->args);
+			PG_RETURN_POINTER(NULL);
+		}
 
-			if (!IsA(secondArg, Const))
+		Const *variableSpecConst = (Const *) variableSpecArg;
+		if (!variableSpecConst->constisnull)
+		{
+			context.variableContext = (Expr *) variableSpecConst;
+		}
+
+		Const *collationConst = (Const *) collationArg;
+		if (!collationConst->constisnull)
+		{
+			char *collationString =
+				TextDatumGetCString(collationConst->constvalue);
+			if (IsCollationApplicable(collationString))
 			{
-				PG_RETURN_POINTER(NULL);
-			}
-
-			Const *constValue = (Const *) secondArg;
-			if (constValue->constisnull)
-			{
-				PG_RETURN_POINTER(NULL);
-			}
-
-			pgbson *queryDocument = DatumGetPgBson(constValue->constvalue);
-
-			/* open the Mongo query document */
-			bson_iter_t queryDocIter;
-			PgbsonInitIterator(queryDocument, &queryDocIter);
-
-			BsonQueryOperatorContext context = { 0 };
-			context.documentExpr = firstArg;
-			context.inputType = MongoQueryOperatorInputType_Bson;
-			context.simplifyOperators = true;
-			context.coerceOperatorExprIfApplicable = true;
-			context.requiredFilterPathNameHashSet = NULL;
-			context.variableContext = NULL;
-
-			/* convert the Mongo query to a list of Postgres quals */
-			List *quals = CreateQualsFromQueryDocIterator(&queryDocIter, &context);
-			UpdateQueryOperatorContextSortList(req->root->parse,
-											   context.targetEntries,
-											   context.sortClauses);
-
-			if (quals != NIL)
-			{
-				PG_RETURN_POINTER(make_ands_explicit(quals));
+				context.collationString = collationString;
 			}
 		}
+	}
+
+	pgbson *queryDocument = DatumGetPgBson(queryConst->constvalue);
+
+	/* open the Mongo query document */
+	bson_iter_t queryDocIter;
+	PgbsonInitIterator(queryDocument, &queryDocIter);
+
+	/* convert the Mongo query to a list of Postgres quals */
+	List *quals = CreateQualsFromQueryDocIterator(&queryDocIter, &context);
+	UpdateQueryOperatorContextSortList(req->root->parse,
+									   context.targetEntries,
+									   context.sortClauses);
+
+	if (quals != NIL)
+	{
+		PG_RETURN_POINTER(make_ands_explicit(quals));
 	}
 
 	PG_RETURN_POINTER(NULL);
@@ -1432,12 +1462,28 @@ ReplaceBsonQueryOperatorsMutator(Node *node, ReplaceBsonQueryOperatorsContext *c
 				queryNode = EvaluateBoundParameters(queryNode,
 													context->boundParams);
 			}
+			if (IsA(queryNode, RelabelType))
+			{
+				RelabelType *relabeled = (RelabelType *) queryNode;
+				if (relabeled->relabelformat == COERCE_IMPLICIT_CAST)
+				{
+					queryNode = (Node *) relabeled->arg;
+				}
+			}
 
 			Node *variableSpecNode = lthird(funcExpr->args);
 			if (IsA(variableSpecNode, Param))
 			{
 				variableSpecNode = EvaluateBoundParameters(variableSpecNode,
 														   context->boundParams);
+			}
+			if (IsA(variableSpecNode, RelabelType))
+			{
+				RelabelType *relabeled = (RelabelType *) variableSpecNode;
+				if (relabeled->relabelformat == COERCE_IMPLICIT_CAST)
+				{
+					variableSpecNode = (Node *) relabeled->arg;
+				}
 			}
 
 			Node *collationStringNode = lfourth(funcExpr->args);
