@@ -434,18 +434,25 @@ SET LOCAL enable_seqscan TO OFF;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_delete_d')
-  WHERE documentdb_api_internal.bson_query_match(document, '{"a": "CaT"}'::bson, '{}'::bson, 'en-u-ks-level3')
+  WHERE documentdb_api_internal.bson_query_match(document, '{"a": "CaT"}'::bson, '{}'::bson, 'en-u-ks-level1')
 $cmd$);
-                                                             run_explain_and_trim                                                             
+                                                                     run_explain_and_trim                                                                     
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 8
    Tasks Shown: One of 8
    ->  Task
          Node: host=localhost port=58070 dbname=regression
-         ->  Seq Scan on documents_95653_95650032 documents_95653
-               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CaT", "collation" : "en-u-ks-level3" }'::documentdb_core.bson)
-(7 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan)
+               indexName: idx_a_en_s1
+               indexKey: {"a": 1}
+               isMultiKey: false
+               indexBounds: ["a": ["CaT", "CaT"]]
+               ->  Bitmap Heap Scan on documents_95653_95650032 documents_95653
+                     Recheck Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CaT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+                     ->  Bitmap Index Scan on idx_a_en_s1
+                           Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CaT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(14 rows)
 
 END;
 -- deleteOne predicate with both _id and shard key filter
