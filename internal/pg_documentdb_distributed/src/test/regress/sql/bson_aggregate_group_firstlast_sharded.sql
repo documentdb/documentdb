@@ -183,7 +183,7 @@ ROLLBACK;
 
 -- 4b. sortGroup ON: Sort node should disappear, orderby pushed to aggregate
 SET documentdb.enableSortGroupStage TO on;
-SET documentdb.enableSortPushToAccumulator TO on;
+SET documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 
 set citus.propagate_set_commands to 'local';
 BEGIN;
@@ -195,7 +195,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgro
 ROLLBACK;
 
 RESET documentdb.enableSortGroupStage;
-RESET documentdb.enableSortPushToAccumulator;
+RESET documentdb.enableSortPushToAccumulatorWithPrefix;
 SELECT documentdb_api.drop_collection('db', 'fl_sortgroup_dist');
 
 SET documentdb.enableNewWithExprAccumulators TO off;

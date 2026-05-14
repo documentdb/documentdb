@@ -881,12 +881,15 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 RESET documentdb.enableSortGroupStage;
 -- =============================================================================
 -- 29. $sort + $group with only $first operator.
---     When enableSortGroupStage is on, the Sort node should disappear
---     and $first should use aggregate-internal ORDER BY instead.
+--     When enableSortGroupStage and enableSortPushToAccumulatorWithPrefix are
+--     on AND the group keys form a non-dotted prefix of the sort keys, the
+--     explicit Sort node is dropped and any suffix sort keys are pushed into
+--     the accumulator's ORDER BY.  When the sort spec is not a prefix of the
+--     group keys, the Sort node is preserved.
 -- =============================================================================
 -- Insert test data: 10 rows across 4 groups
 SELECT documentdb_api.insert_one('db','fl_sortgroup_test','{ "_id": 1, "g": "X", "seq": 30, "val": "third" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:304: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:307: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -980,7 +983,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 -- With sortGroup ON: Sort node for {g,seq} should disappear, and orderby pushed to aggregate
 SET documentdb.enableSortGroupStage TO on;
-SET documentdb.enableSortPushToAccumulator TO on;
+SET documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                  document                 
 ------------------------------------------
@@ -991,16 +994,16 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgro
 (4 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
-                                                                                                                                                                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                                                                                                                                                                              
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                                                                                                                                                      
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "g" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "g" : { "$numberInt" : "1" } }'::bson)), (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "g" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "g" : { "$numberInt" : "1" } }'::bson), bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
                Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '25701010'::bigint)
@@ -1057,9 +1060,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                                  Index Cond: (collection.shard_key_value = '25701010'::bigint)
 (16 rows)
 
--- 30c. Mix of $first and $sum → sort pushed into $first's aggorder;
---      $sum is order-insensitive so the explicit Sort node is still present
---      only for the GroupAggregate's group key ordering.
+-- 30c. Mix of $first and $sum with non-prefix sort {seq} (group key is $g).
+--      Sort spec is not a prefix of the group keys, so the Sort node is
+--      preserved; $first cannot use the prefix-push path here.
 SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "total": { "$sum": "$seq" } } } ] }');
                                    document                                   
@@ -1071,26 +1074,33 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgro
 (4 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "total": { "$sum": "$seq" } } } ] }');
-                                                                                                                                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                             
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST), 'total'::text, documentdb_api_internal.bsonsumwithexpr(document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'total'::text, documentdb_api_internal.bsonsumwithexpr(agg_stage_0.document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-         ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-               Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(11 rows)
+         Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
+         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Subquery Scan on agg_stage_0
+               Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+               ->  Sort
+                     Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+                     Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+                     ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
+                           Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
+(16 rows)
 
 -- =============================================================================
--- 31. Descending sort with sort-pushdown
+-- 31. Descending sort.  31a uses sort {seq} (non-prefix, Sort node remains);
+--     31b/31c use sort {g, seq} (prefix-eligible, suffix {seq} pushed into
+--     accumulator's ORDER BY).
 -- =============================================================================
 SET documentdb.enableSortGroupStage TO on;
--- 31a. Single descending: $first picks the row with the highest seq (100 for W, 50 for Y, etc.)
+-- 31a. Single descending: non-prefix sort, Sort node remains; $first picks the row with the highest seq (100 for W, 50 for Y, etc.)
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": -1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                  document                  
 -------------------------------------------
@@ -1101,20 +1111,25 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgro
 (4 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": -1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
-                                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                                            
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)) USING OPERATOR(documentdb_api_internal.>>>) NULLS LAST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"-1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson))
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
-         ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)
-               Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(11 rows)
+         Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
+         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Subquery Scan on agg_stage_0
+               Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+               ->  Sort
+                     Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "-1" } }'::bson))
+                     Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+                     ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
+                           Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)
+                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
+(16 rows)
 
 -- 31b. Compound descending
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": -1, "seq": -1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
@@ -1137,23 +1152,24 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgro
 (4 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1, "seq": -1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
-                                                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                    
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "g" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)) USING OPERATOR(documentdb_api_internal.>>>) NULLS LAST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)) USING OPERATOR(documentdb_api_internal.>>>) NULLS LAST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "g" : { "$numberInt" : "1" } }'::bson)), (bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson))
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "g" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson))
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
          ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "g" : { "$numberInt" : "1" } }'::bson), bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)
                Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '25701010'::bigint)
 (11 rows)
 
 -- =============================================================================
--- 32. Multiple $first accumulators under sort-pushdown
+-- 32. Multiple $first accumulators with non-prefix sort {seq}.
+--     Sort spec is not a prefix of group key $g; Sort node remains.
 -- =============================================================================
 SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "firstSeq": { "$first": "$seq" } } } ] }');
@@ -1166,23 +1182,29 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgro
 (4 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "firstSeq": { "$first": "$seq" } } } ] }');
-                                                                                                                                                                                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                            
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                                                                                                                                                         QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST), 'firstSeq'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'firstSeq'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$seq" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-         ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-               Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(11 rows)
+         Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
+         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Subquery Scan on agg_stage_0
+               Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+               ->  Sort
+                     Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+                     Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+                     ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
+                           Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
+(16 rows)
 
 -- =============================================================================
--- 33. $first with expression input under sort-pushdown
+-- 33. $first with expression input under non-prefix sort {seq}.
+--     Sort node remains; expression evaluation happens after the sort.
 -- =============================================================================
 SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstDoubled": { "$first": { "$multiply": ["$seq", 2] } } } } ] }');
@@ -1195,7 +1217,8 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgro
 (4 rows)
 
 -- =============================================================================
--- 34. Pipeline continuation: $sort + $group $first + subsequent $sort
+-- 34. Pipeline continuation: $sort + $group $first + subsequent $sort.
+--     Non-prefix sort {seq} on the inner stage; Sort node remains there.
 -- =============================================================================
 SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
@@ -1208,28 +1231,34 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgro
 (4 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
-                                                                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                                                                  
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                                                                                                                                
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
    Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    ->  Subquery Scan on agg_stage_1
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(collection.document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
                ->  Sort
-                     Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-                           Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(16 rows)
+                     Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
+                     Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     ->  Subquery Scan on agg_stage_0
+                           Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+                           ->  Sort
+                                 Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+                                 Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+                                 ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
+                                       Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+                                       Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
+                                       ->  Bitmap Index Scan on _id_
+                                             Index Cond: (collection.shard_key_value = '25701010'::bigint)
+(21 rows)
 
 -- =============================================================================
--- 35. $first + all order-insensitive accumulators combined
+-- 35. $first + all order-insensitive accumulators combined.
+--     Non-prefix sort {seq}; Sort node remains.
 -- =============================================================================
 SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "total": { "$sum": "$seq" }, "average": { "$avg": "$seq" }, "minSeq": { "$min": "$seq" }, "maxSeq": { "$max": "$seq" }, "cnt": { "$count": {} } } } ] }');
@@ -1242,20 +1271,25 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgro
 (4 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "total": { "$sum": "$seq" }, "average": { "$avg": "$seq" }, "minSeq": { "$min": "$seq" }, "maxSeq": { "$max": "$seq" }, "cnt": { "$count": {} } } } ] }');
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST), 'total'::text, documentdb_api_internal.bsonsumwithexpr(document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'average'::text, documentdb_api_internal.bsonaveragewithexpr(document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'minSeq'::text, documentdb_api_internal.bsonminwithexpr(document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'maxSeq'::text, documentdb_api_internal.bsonmaxwithexpr(document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'total'::text, documentdb_api_internal.bsonsumwithexpr(agg_stage_0.document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'average'::text, documentdb_api_internal.bsonaveragewithexpr(agg_stage_0.document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'minSeq'::text, documentdb_api_internal.bsonminwithexpr(agg_stage_0.document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'maxSeq'::text, documentdb_api_internal.bsonmaxwithexpr(agg_stage_0.document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-         ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-               Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(11 rows)
+         Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
+         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Subquery Scan on agg_stage_0
+               Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+               ->  Sort
+                     Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+                     Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+                     ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
+                           Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
+(16 rows)
 
 -- =============================================================================
 -- 36. Accumulators that block optimization (Sort node must remain)
@@ -1405,8 +1439,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 (11 rows)
 
 -- =============================================================================
--- 38. enableNewWithExprAccumulators OFF with sort-pushdown
---     Should use legacy BsonFirstOnSortedAggregate function with aggorder
+-- 38. enableNewWithExprAccumulators OFF with non-prefix sort.
+--     Sort spec {seq} is not a prefix of group key $g, so Sort node remains;
+--     this exercises the legacy BsonFirstOnSortedAggregate path.
 -- =============================================================================
 SET documentdb.enableSortGroupStage TO on;
 SET documentdb.enableNewWithExprAccumulators TO off;
@@ -1420,29 +1455,32 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgro
 (4 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
-                                                                                                                                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                                                                                                                                             
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, bsonfirstonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson) ORDER BY (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-         ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-               Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(11 rows)
+         Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
+         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Subquery Scan on agg_stage_0
+               Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+               ->  Sort
+                     Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+                     Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+                     ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
+                           Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
+(16 rows)
 
 SET documentdb.enableNewWithExprAccumulators TO on;
 -- =============================================================================
--- 39. enableOrderByIndexTerm with sort-pushdown
---     Verify the bson_orderby_index funcexpr is the same whether the sort is
---     an explicit $sort stage (enableSortGroupStage=off) or pushed into $first
---     aggorder (enableSortGroupStage=on).
---     Also verify execution output does not change between enableOrderByIndexTerm
---     on/off with enableSortGroupStage on.
+-- 39. enableOrderByIndexTerm with $sort + $group.
+--     Only 39d uses a prefix-eligible sort {g, seq}; the others use non-prefix
+--     sort {seq} so the Sort node remains and bson_orderby_index appears in
+--     the explicit Sort instead of aggorder.
 -- =============================================================================
 -- 39a. enableOrderByIndexTerm ON, enableSortGroupStage OFF: bson_orderby_index in Sort node
 SET documentdb.enableOrderByIndexTerm TO on;
@@ -1468,45 +1506,57 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                                  Index Cond: (collection.shard_key_value = '25701010'::bigint)
 (16 rows)
 
--- 39b. enableOrderByIndexTerm ON, enableSortGroupStage ON: bson_orderby_index in aggorder
+-- 39b. enableOrderByIndexTerm ON, enableSortGroupStage ON, non-prefix sort:
+--      bson_orderby_index stays in the Sort node (no prefix-push)
 SET documentdb.enableOrderByIndexTerm TO on;
 SET documentdb.enableSortGroupStage TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
-                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                     
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (documentdb_api_internal.bson_orderby_index(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (documentdb_api_internal.bson_orderby_index(document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-         ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, documentdb_api_internal.bson_orderby_index(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-               Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(11 rows)
+         Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
+         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Subquery Scan on agg_stage_0
+               Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+               ->  Sort
+                     Output: collection.document, (documentdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+                     Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+                     ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
+                           Output: collection.document, documentdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
+(16 rows)
 
--- 39c. enableOrderByIndexTerm ON, descending sort: bson_orderby_index_reverse in aggorder
+-- 39c. enableOrderByIndexTerm ON, descending non-prefix sort: bson_orderby_index_reverse in Sort node
 SET documentdb.enableOrderByIndexTerm TO on;
 SET documentdb.enableSortGroupStage TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": -1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
-                                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                                           
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (documentdb_api_internal.bson_orderby_index_reverse(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) DESC NULLS LAST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"-1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (documentdb_api_internal.bson_orderby_index_reverse(document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) DESC NULLS LAST
-         ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, documentdb_api_internal.bson_orderby_index_reverse(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-               Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(11 rows)
+         Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
+         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Subquery Scan on agg_stage_0
+               Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+               ->  Sort
+                     Output: collection.document, (documentdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+                     Sort Key: (documentdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) DESC NULLS LAST
+                     ->  Bitmap Heap Scan on documentdb_data.documents_25701010 collection
+                           Output: collection.document, documentdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
+(16 rows)
 
--- 39d. Execution: enableOrderByIndexTerm ON, enableSortGroupStage ON, ascending
+-- 39d. Execution: enableOrderByIndexTerm ON, enableSortGroupStage ON, prefix-eligible ascending
+--      Sort {g, seq} matches the group prefix, so suffix {seq} is pushed into aggorder.
 --      Output must match enableOrderByIndexTerm OFF (test 29 ON result)
 SET documentdb.enableOrderByIndexTerm TO on;
 SET documentdb.enableSortGroupStage TO on;
@@ -1519,7 +1569,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgro
  { "_id" : "Z", "firstVal" : "low" }
 (4 rows)
 
--- 39e. Execution: enableOrderByIndexTerm ON, enableSortGroupStage ON, descending
+-- 39e. Execution: enableOrderByIndexTerm ON, enableSortGroupStage ON, non-prefix descending
 SET documentdb.enableOrderByIndexTerm TO on;
 SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": -1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
@@ -1533,10 +1583,12 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgro
 
 RESET documentdb.enableOrderByIndexTerm;
 -- =============================================================================
--- 40. Nested field paths in sort spec
+-- 40. Nested field paths in sort spec.
+--     Sort {info.priority} is dotted and group key is $g, so the prefix
+--     decomposition bails out (dotted paths) and Sort node remains.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','fl_nested_sort','{ "_id": 1, "g": "A", "info": { "priority": 3 }, "val": "low-pri" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:467: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:479: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1569,20 +1621,25 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_nested_
 (2 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_nested_sort", "pipeline": [ { "$sort": { "info.priority": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
-                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                           
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                                                                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"info.priority\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson))
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-         ->  Bitmap Heap Scan on documentdb_data.documents_25701011 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson)
-               Recheck Cond: (collection.shard_key_value = '25701011'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701011'::bigint)
-(11 rows)
+         Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
+         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Subquery Scan on agg_stage_0
+               Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+               ->  Sort
+                     Output: collection.document, (bson_orderby(collection.document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson))
+                     Sort Key: (bson_orderby(collection.document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+                     ->  Bitmap Heap Scan on documentdb_data.documents_25701011 collection
+                           Output: collection.document, bson_orderby(collection.document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson)
+                           Recheck Cond: (collection.shard_key_value = '25701011'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '25701011'::bigint)
+(16 rows)
 
 SELECT documentdb_api.drop_collection('db', 'fl_nested_sort');
  drop_collection 
@@ -1591,12 +1648,14 @@ SELECT documentdb_api.drop_collection('db', 'fl_nested_sort');
 (1 row)
 
 -- =============================================================================
--- 41. Collation with sort-pushdown: case-insensitive sort affects $first result
+-- 41. Collation with non-prefix sort {name} (group key $g): case-insensitive
+--     sort affects $first result.  Sort node remains; collation applies inside
+--     the explicit Sort.
 --     Binary comparison sorts uppercase before lowercase (e.g. "Banana" < "apple"),
 --     while case-insensitive collation (strength=1) sorts alphabetically ("apple" < "Banana").
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','fl_collation_sortpush','{ "_id": 1, "g": "A", "name": "cherry", "seq": 2 }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:483: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:497: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1632,28 +1691,33 @@ SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 SET documentdb_core.enableCollation TO on;
 -- 41a. With collation (case-insensitive): sort by name ascending, $first picks alphabetically first
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": 1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-                document                
-----------------------------------------
- { "_id" : "A", "firstName" : "apple" }
- { "_id" : "B", "firstName" : "date" }
+                  document                   
+---------------------------------------------
+ { "_id" : "A", "firstName" : "Banana" }
+ { "_id" : "B", "firstName" : "Elderberry" }
 (2 rows)
 
--- 41b. EXPLAIN: collation-aware orderby function in aggorder (no Sort node)
+-- 41b. EXPLAIN: Sort node remains (non-prefix sort); collation-aware orderby applies in the Sort
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": 1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-                                                                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                           
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                            
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstName'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text ORDER BY (documentdb_api_internal.bson_orderby(document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING OPERATOR(documentdb_api_internal.<<<) NULLS FIRST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstName'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"name\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (documentdb_api_internal.bson_orderby(document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-         ->  Bitmap Heap Scan on documentdb_data.documents_25701012 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, documentdb_api_internal.bson_orderby(document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
-               Recheck Cond: (collection.shard_key_value = '25701012'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701012'::bigint)
-(11 rows)
+         Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
+         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Subquery Scan on agg_stage_0
+               Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+               ->  Sort
+                     Output: collection.document, (documentdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+                     Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+                     ->  Bitmap Heap Scan on documentdb_data.documents_25701012 collection
+                           Output: collection.document, documentdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+                           Recheck Cond: (collection.shard_key_value = '25701012'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '25701012'::bigint)
+(16 rows)
 
 -- 41c. Without collation (binary comparison): $first result differs from collated sort
 --      Binary: "Banana"(0x42) < "apple"(0x61) vs case-insensitive: "apple" < "Banana"
@@ -1666,27 +1730,32 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
 
 -- 41d. Collation with descending sort
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": -1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-                  document                   
----------------------------------------------
+                document                 
+-----------------------------------------
  { "_id" : "A", "firstName" : "cherry" }
- { "_id" : "B", "firstName" : "Elderberry" }
+ { "_id" : "B", "firstName" : "date" }
 (2 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": -1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-                                                                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                           
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstName'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text ORDER BY (documentdb_api_internal.bson_orderby(document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING OPERATOR(documentdb_api_internal.>>>) NULLS LAST)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstName'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"name\" : { \"$numberInt\" : \"-1\" } }"}'::bson[]), '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (documentdb_api_internal.bson_orderby(document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text))
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST
-         ->  Bitmap Heap Scan on documentdb_data.documents_25701012 collection
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, documentdb_api_internal.bson_orderby(document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)
-               Recheck Cond: (collection.shard_key_value = '25701012'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701012'::bigint)
-(11 rows)
+         Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
+         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Subquery Scan on agg_stage_0
+               Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+               ->  Sort
+                     Output: collection.document, (documentdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text))
+                     Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST
+                     ->  Bitmap Heap Scan on documentdb_data.documents_25701012 collection
+                           Output: collection.document, documentdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)
+                           Recheck Cond: (collection.shard_key_value = '25701012'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '25701012'::bigint)
+(16 rows)
 
 SET documentdb_core.enableCollation TO off;
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
@@ -1696,7 +1765,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_collation_sortpush');
  t
 (1 row)
 
-RESET documentdb.enableSortPushToAccumulator;
+RESET documentdb.enableSortPushToAccumulatorWithPrefix;
 RESET documentdb.enableSortGroupStage;
 SELECT documentdb_api.drop_collection('db', 'fl_sortgroup_test');
  drop_collection 

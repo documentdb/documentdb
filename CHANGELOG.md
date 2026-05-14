@@ -2,6 +2,7 @@
 
 ### documentdb v0.113-0 (Unreleased) ###
 * Use in-place tuple overwrite instead of delete-and-reinsert when vacuuming RUM entry page posting lists *[Perf]*
+* Push suffix sort keys into accumulator in `$sortGroup` when group-by keys form a non-dotted prefix of the sort keys. Guarded by `enableSortPushToAccumulatorWithPrefix` feature flag, disabled by default while pending stabilization. *[Perf]*
 * Support collation with non-unique ordered indexes with `$in` and `$nin` but not with ordered scans. Requires `documentdb.EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
 * Support for pruning dead index entry on ordered TTL indexes. Requires `EnableDeadIndexEntryMarkingByTTLTask` to be on. *[Perf]*
 * Enable index-only scan for `$group` accumulators when all referenced fields are covered by the composite index *[Perf]*
@@ -15,7 +16,6 @@
 * Support collation with non-unique ordered indexes with `$not` combined with `$gt`, `$gte`, `$lt`, `$lte`. Requires `EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
 * Fix crash in `BsonOrderFinal` and `BsonOrderFinalOnSorted` when `BSONFIRSTN`/`BSONLASTN` aggregates run on empty sharded collections, caused by a NULL datum not being detected before detoasting. Also fix similar crash in `bson_maxminn_combine` for `BSONMAXN`/`BSONMINN` *[Bugfix]* (#531)
 * Migrate `DrainStreamingQuery` from SPI cursor-based execution to direct executor invocation via `DestReceiver`, eliminating Portal/SPI overhead for streaming queries *[Perf]*
-* Add `enableSortPushToAccumulator` GUC to control pushing sort order into accumulator in `$sortGroup`; disabled by default while pending stabilization. *[Bugfix]*
 
 ### documentdb v0.111-0 (May 11, 2026) ###
 * Support index pushdown for `$group` stage when `_id` is a single-field document expression (e.g., `{ _id: { "field": "$path" } }`) *[Perf]*
