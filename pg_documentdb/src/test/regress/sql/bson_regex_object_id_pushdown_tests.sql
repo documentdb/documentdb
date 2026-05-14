@@ -429,5 +429,49 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 $cmd$);
 ROLLBACK;
 
+
+-- =============================================
+-- Section 12: Selectivity-driven plan choice
+-- With 10,000 string-_id rows and one matching row, the planner should
+-- pick an Index Scan on the _id_ btree when the $regex predicate is
+-- rewritten to bson_regex_object_id_match (selectivity ~= DEFAULT_INEQ_SEL).
+-- With enableObjectIdFuncExprConversion off, the rewrite doesn't happen,
+-- the predicate defaults to ~1.0 selectivity, and the planner picks
+-- a Seq Scan instead.
+-- =============================================
+SELECT COUNT(*) FROM (
+    SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_big',
+        FORMAT('{ "_id": "row_%s", "a": %s }', g, g)::bson)
+    FROM generate_series(1, 10000) g
+) i;
+-- One doc that matches the anchored prefix ^abc
+SELECT documentdb_api.insert_one('regexIdDb', 'regex_id_big',
+    '{ "_id": "abc_only", "a": 99999 }');
+SELECT collection_id AS regex_id_big_id FROM documentdb_api_catalog.collections
+    WHERE database_name = 'regexIdDb' AND collection_name = 'regex_id_big' \gset
+ANALYZE documentdb_data.documents_:regex_id_big_id;
+
+BEGIN;
+SET LOCAL documentdb.forceDisableSeqScan TO off;
+
+-- With the rewrite + selectivity fix: planner picks Index Scan on _id_
+SET LOCAL documentdb.enableObjectIdFuncExprConversion TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_big", "filter": { "_id": { "$regex": "^abc" } } }')
+$cmd$);
+
+-- Without the rewrite: predicate looks unselective, planner falls back to Seq Scan
+SET LOCAL documentdb.enableObjectIdFuncExprConversion TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('regexIdDb',
+        '{ "find": "regex_id_big", "filter": { "_id": { "$regex": "^abc" } } }')
+$cmd$);
+ROLLBACK;
+
 RESET documentdb.enableExtendedExplainPlans;
 RESET documentdb.forceDisableSeqScan;
+
+SELECT documentdb_api.drop_collection('regexIdDb', 'regex_id_big');
