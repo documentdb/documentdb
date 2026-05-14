@@ -25,94 +25,121 @@ extern PGDLLEXPORT void DocumentDBSetRumUnredactedLogEmitHook(rum_format_log_hoo
 
 PGDLLEXPORT bool DocumentDBRumLoadCommonGUCs = true;
 
+/* TestingConfig */
 #define RUM_DEFAULT_THROW_ERROR_ON_INVALID_DATA_PAGE false
 PGDLLEXPORT bool RumThrowErrorOnInvalidDataPage =
 	RUM_DEFAULT_THROW_ERROR_ON_INVALID_DATA_PAGE;
 
 /* rumbtree.c */
+/* FeatureFlag: Added in v108, enabled in v108, remove after v121 */
 #define RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT true
 PGDLLEXPORT bool RumTrackIncompleteSplit = RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT;
 
+/* FeatureFlag: Added in v108, enabled in v108, remove after v121 */
 #define RUM_DEFAULT_FIX_INCOMPLETE_SPLIT true
 PGDLLEXPORT bool RumFixIncompleteSplit = RUM_DEFAULT_FIX_INCOMPLETE_SPLIT;
 
+/* TestingConfig */
 #define RUM_DEFAULT_ENABLE_INJECT_PAGE_SPLIT_INCOMPLETE false
 PGDLLEXPORT bool RumInjectPageSplitIncomplete =
 	RUM_DEFAULT_ENABLE_INJECT_PAGE_SPLIT_INCOMPLETE;
 
 /* rumentrypage.c */
+/* SystemConfig */
 #define RUM_DEFAULT_FILL_FACTOR 50
 PGDLLEXPORT int RumDefaultPageFillFactor = RUM_DEFAULT_FILL_FACTOR;
 
 /* rumdatapage.c */
-PGDLLEXPORT int RumDataPageIntermediateSplitSize = -1;
+/* TestingConfig */
+#define DEFAULT_RUM_DATA_PAGE_INTERMEDIATE_SPLIT_SIZE -1
+PGDLLEXPORT int RumDataPageIntermediateSplitSize =
+	DEFAULT_RUM_DATA_PAGE_INTERMEDIATE_SPLIT_SIZE;
 
+/* TestingConfig */
 #define RUM_DEFAULT_SKIP_RESET_ON_DEAD_ENTRY_PAGE false
 PGDLLEXPORT bool RumSkipResetOnDeadEntryPage = RUM_DEFAULT_SKIP_RESET_ON_DEAD_ENTRY_PAGE;
 
 /* rumget.c */
-PGDLLEXPORT int RumFuzzySearchLimit = 0;
+/* SystemConfig */
+#define RUM_DEFAULT_FUZZY_SEARCH_LIMIT 0
+PGDLLEXPORT int RumFuzzySearchLimit = RUM_DEFAULT_FUZZY_SEARCH_LIMIT;
 
+/* SystemConfig */
 #define RUM_DEFAULT_DISABLE_FAST_SCAN false
 PGDLLEXPORT bool RumDisableFastScan = RUM_DEFAULT_DISABLE_FAST_SCAN;
 
-#define DEFAULT_FORCE_RUM_ORDERED_INDEX_SCAN false
-PGDLLEXPORT bool RumForceOrderedIndexScan = DEFAULT_FORCE_RUM_ORDERED_INDEX_SCAN;
+/* TestingConfig */
+#define RUM_DEFAULT_FORCE_RUM_ORDERED_INDEX_SCAN false
+PGDLLEXPORT bool RumForceOrderedIndexScan = RUM_DEFAULT_FORCE_RUM_ORDERED_INDEX_SCAN;
 
+/* FeatureFlag: Added in v108, enabled in v108, remove after v121 */
 #define RUM_DEFAULT_ENABLE_SKIP_INTERMEDIATE_ENTRY true
 PGDLLEXPORT bool RumEnableSkipIntermediateEntry =
 	RUM_DEFAULT_ENABLE_SKIP_INTERMEDIATE_ENTRY;
 
+/* TestingConfig */
 #define RUM_DEFAULT_PARALLEL_INDEX_WORKERS_OVERRIDE -1
 PGDLLEXPORT int RumParallelIndexWorkersOverride =
 	RUM_DEFAULT_PARALLEL_INDEX_WORKERS_OVERRIDE;
 
+/* FeatureFlag: Added in v110, enabled in v112, remove after v125  */
 #define RUM_DEFAULT_ENABLE_PARALLEL_INDEX_BUILD true
 PGDLLEXPORT bool RumEnableParallelIndexBuild = RUM_DEFAULT_ENABLE_PARALLEL_INDEX_BUILD;
 
 /* rumvacuum.c */
+/* FeatureFlag: Added in v108, enabled in v108, remove after v120 */
 #define RUM_DEFAULT_SKIP_RETRY_ON_DELETE_PAGE true
 PGDLLEXPORT bool RumSkipRetryOnDeletePage = RUM_DEFAULT_SKIP_RETRY_ON_DELETE_PAGE;
 
+/* FeatureFlag: Added in v108, Pending stabilization, enable on v115  */
 #define RUM_DEFAULT_PRUNE_EMPTY_PAGES false
 PGDLLEXPORT bool RumPruneEmptyPages = RUM_DEFAULT_PRUNE_EMPTY_PAGES;
 
+/* FeatureFlag: Added on v108, enabled in v113, remove after v125 */
 #define RUM_DEFAULT_ENABLE_NEW_BULK_DELETE true
 PGDLLEXPORT bool RumEnableNewBulkDelete = RUM_DEFAULT_ENABLE_NEW_BULK_DELETE;
 
+/* FeatureFlag: Added in v108, Pending stabilization, enable on v116 */
 #define RUM_DEFAULT_ENABLE_NEW_BULK_DELETE_INLINE_DATA_PAGES false
 PGDLLEXPORT bool RumNewBulkDeleteInlineDataPages =
 	RUM_DEFAULT_ENABLE_NEW_BULK_DELETE_INLINE_DATA_PAGES;
 
+/* SystemConfig */
 #define RUM_DEFAULT_SKIP_PRUNE_POSTING_TREE_PAGES false
 PGDLLEXPORT bool RumVacuumSkipPrunePostingTreePages =
 	RUM_DEFAULT_SKIP_PRUNE_POSTING_TREE_PAGES;
 
+/* TestingConfig */
 #define RUM_DEFAULT_VACUUM_CYCLE_ID_OVERRIDE -1
 int32_t RumVacuumCycleIdOverride = RUM_DEFAULT_VACUUM_CYCLE_ID_OVERRIDE;
 
+/* TestingConfig */
 #define RUM_DEFAULT_TRAVERSE_PAGE_ONLY_ON_BACKTRACK false
 PGDLLEXPORT bool RumTraversePageOnlyOnBackTrack =
 	RUM_DEFAULT_TRAVERSE_PAGE_ONLY_ON_BACKTRACK;
 
+/* TestingConfig */
 #define RUM_DEFAULT_SKIP_GLOBAL_VISIBILITY_CHECK_ON_PRUNE false
 PGDLLEXPORT bool RumSkipGlobalVisibilityCheckOnPrune =
 	RUM_DEFAULT_SKIP_GLOBAL_VISIBILITY_CHECK_ON_PRUNE;
 
-/* Enabled in v113, remove after v115 */
+/* FeatureFlag: Added in v113, enabled in v113, remove after v120 */
 #define RUM_DEFAULT_ENABLE_OVERWRITE_ENTRY_TUPLE_ON_VACUUM true
 PGDLLEXPORT bool RumEnableOverwriteEntryTupleOnVacuum =
 	RUM_DEFAULT_ENABLE_OVERWRITE_ENTRY_TUPLE_ON_VACUUM;
 
 /* rumget.c */
+/* FeatureFlag: Added in v109, Pending stabilization, enable on v116 */
 #define RUM_DEFAULT_ENABLE_SUPPORT_DEAD_INDEX_ITEMS false
 PGDLLEXPORT bool RumEnableSupportDeadIndexItems =
 	RUM_DEFAULT_ENABLE_SUPPORT_DEAD_INDEX_ITEMS;
 
+/* FeatureFlag: Added on v108, Enabled in v108, remove after v116 */
 #define RUM_DEFAULT_ENABLE_ORDERED_OPERATOR_SCANS true
 PGDLLEXPORT bool RumEnableOrderedOperatorScans =
 	RUM_DEFAULT_ENABLE_ORDERED_OPERATOR_SCANS;
 
+/* FeatureFlag: Added in v113, Enabled in v113, remove after v125 */
 #define RUM_DEFAULT_ENABLE_PAGE_FILL_FACTOR true
 PGDLLEXPORT bool RumEnablePageFillFactor =
 	RUM_DEFAULT_ENABLE_PAGE_FILL_FACTOR;
@@ -197,7 +224,7 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		"Sets whether or not to force a run ordered index scan",
 		NULL,
 		&RumForceOrderedIndexScan,
-		DEFAULT_FORCE_RUM_ORDERED_INDEX_SCAN,
+		RUM_DEFAULT_FORCE_RUM_ORDERED_INDEX_SCAN,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 

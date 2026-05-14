@@ -69,6 +69,7 @@ SELECT documentdb_api.insert_one('prep_unique_db', 'collection', '{ "_id": 102, 
 SELECT document from documentdb_data.documents_588001 where document @@ '{"a": 1}';
 
 -- now convert it to unique (this should fail for GUC check)
+set documentdb.enableCollModUnique to off;
 SELECT documentdb_api.coll_mod('prep_unique_db', 'collection', '{ "collMod": "collection", "index": { "name": "a_1", "unique": true } }');
 
 -- now this fails with existing unique violations
