@@ -176,7 +176,7 @@ SET LOCAL enable_seqscan TO OFF;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_delete_d')
-  WHERE documentdb_api_internal.bson_query_match(document, '{"a": "CaT"}'::bson, '{}'::bson, 'en-u-ks-level3')
+  WHERE documentdb_api_internal.bson_query_match(document, '{"a": "CaT"}'::bson, '{}'::bson, 'en-u-ks-level1')
 $cmd$);
 END;
 
