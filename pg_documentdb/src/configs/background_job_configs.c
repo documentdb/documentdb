@@ -47,8 +47,6 @@ int TTLTaskMaxRunTimeInMS = DEFAULT_TTL_TASK_MAX_RUNTIME_IN_MS;
 #define DEFAULT_REPEAT_PURGE_INDEXES_FOR_TTL_TASK true
 bool RepeatPurgeIndexesForTTLTask = DEFAULT_REPEAT_PURGE_INDEXES_FOR_TTL_TASK;
 
-#define DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES true
-bool TTLSkipCaughtUpIndexes = DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES;
 
 #define DEFAULT_SKIP_REPEAT_DELETE_FOR_UNORDERED_INDEX true
 bool SkipRepeatDeleteForUnOrderedIndex = DEFAULT_SKIP_REPEAT_DELETE_FOR_UNORDERED_INDEX;
@@ -60,9 +58,6 @@ int MaxTTLBatchSizeUnorderedIndex = DEFAULT_MAX_TTL_BATCH_SIZE_UNORDERED_INDEX;
 #define DEFAULT_ENABLE_TTL_DESC_SORT false
 bool EnableTTLDescSort = DEFAULT_ENABLE_TTL_DESC_SORT;
 
-#define DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK false
-bool EnableDeadIndexEntryMarkingByTTLTask =
-	DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK;
 
 #define DEFAULT_ENABLE_BG_WORKER true
 bool EnableBackgroundWorker = DEFAULT_ENABLE_BG_WORKER;
@@ -88,9 +83,6 @@ bool LogTTLProgressActivity = DEFAULT_LOG_TTL_PROGRESS_ACTIVITY;
 
 #define DEFAULT_ENABLE_TTL_BATCH_OBSERVABILITY true
 bool EnableTTLBatchObservability = DEFAULT_ENABLE_TTL_BATCH_OBSERVABILITY;
-
-#define DEFAULT_FORCE_INDEX_SCAN_TTL_TASK true
-bool ForceIndexScanForTTLTask = DEFAULT_FORCE_INDEX_SCAN_TTL_TASK;
 
 #define DEFAULT_USE_INDEX_HINTS_TTL_TASK true
 bool UseIndexHintsForTTLTask = DEFAULT_USE_INDEX_HINTS_TTL_TASK;
@@ -122,13 +114,6 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		gettext_noop(
 			"Whether to calculate and emit TTL batch observability metrics."),
 		NULL, &EnableTTLBatchObservability, DEFAULT_ENABLE_TTL_BATCH_OBSERVABILITY,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.forceIndexScanForTTLTask", prefix),
-		gettext_noop(
-			"Whether to force Index Scan for TTL task by locally disabling Sequential Scan and Bitmap Index Scan"),
-		NULL, &ForceIndexScanForTTLTask, DEFAULT_FORCE_INDEX_SCAN_TTL_TASK,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -172,16 +157,6 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		0,
 		NULL, NULL, NULL);
 
-	DefineCustomBoolVariable(
-		psprintf("%s.TTLSkipCaughtUpIndexes", newGucPrefix),
-		gettext_noop(
-			"Whether to skip checking a TTL index further, once they are caught up during a TTL task invocation cycle."),
-		NULL,
-		&TTLSkipCaughtUpIndexes,
-		DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES,
-		PGC_USERSET,
-		0,
-		NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.skipRepeatDeleteForUnOrderedIndex", newGucPrefix),
@@ -238,16 +213,6 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		0,
 		NULL, NULL, NULL);
 
-	DefineCustomBoolVariable(
-		psprintf("%s.enableDeadIndexEntryMarkingByTTLTask", newGucPrefix),
-		gettext_noop(
-			"Whether to enable marking dead index entries during TTL task scans to avoid redundant heap fetches."),
-		NULL,
-		&EnableDeadIndexEntryMarkingByTTLTask,
-		DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK,
-		PGC_USERSET,
-		0,
-		NULL, NULL, NULL);
 
 	DefineCustomIntVariable(
 		psprintf("%s.maxNumActiveUsersIndexBuilds", prefix),
