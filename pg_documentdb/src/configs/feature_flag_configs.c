@@ -240,11 +240,11 @@ bool EnableSkipDottedFieldIndexTerms = DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TE
 bool EnableExprLookupIndexPushdown = DEFAULT_ENABLE_EXPR_LOOKUP_INDEX_PUSHDOWN;
 
 
-/* Added in v110, Pending stabilization. Superseded by EnableNewWithExprAccumulators in v111, enable in v113 */
+/* Added in v110, Pending stabilization. Superseded by EnableNewWithExprAccumulators in v111, enable in v114 */
 #define DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS false
 bool EnableNewMinMaxAccumulators = DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS;
 
-/* Added in v111, Pending stabilization, enable in v113 */
+/* Added in v111, Pending stabilization, enable in v114 */
 #define DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS false
 bool EnableNewWithExprAccumulators = DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS;
 
@@ -388,12 +388,12 @@ bool EnableSchemaEnforcementForCSFLE = DEFAULT_ENABLE_SCHEMA_ENFORCEMENT_FOR_CSF
 #define DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT true
 bool UsePgStatsLiveTuplesForCount = DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT;
 
-/* Added in v109, Pending stabilization, enable in v114 */
-#define DEFAULT_ENABLE_PREPARE_UNIQUE false
+/* Added in v109, enabled in v114, remove after v118 */
+#define DEFAULT_ENABLE_PREPARE_UNIQUE true
 bool EnablePrepareUnique = DEFAULT_ENABLE_PREPARE_UNIQUE;
 
-/* Added in v109, Pending stabilization, enable in v114 */
-#define DEFAULT_ENABLE_COLLMOD_UNIQUE false
+/* Added in v109, enabled in v114, remove after v118 */
+#define DEFAULT_ENABLE_COLLMOD_UNIQUE true
 bool EnableCollModUnique = DEFAULT_ENABLE_COLLMOD_UNIQUE;
 
 /* Added in v113, Pending stabilization, enable in v116 */
