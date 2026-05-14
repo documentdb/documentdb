@@ -2799,13 +2799,9 @@ GetSortDetails(PlannerInfo *root, Index rti,
 		}
 
 		FuncExpr *func = (FuncExpr *) member->em_expr;
+		bool isGroupByEntry = false;
 		if (func->funcid == BsonOrderByFunctionOid())
 		{
-			if (*hasGroupby)
-			{
-				break;
-			}
-
 			*hasOrderBy = true;
 		}
 		else if (EnableOrderByIndexTerm &&
@@ -2813,22 +2809,20 @@ GetSortDetails(PlannerInfo *root, Index rti,
 				  func->funcid == BsonOrderByIndexReverseFunctionOid()))
 		{
 			/* TODO: Collation index pushdown support. */
-			if (*hasGroupby)
-			{
-				break;
-			}
-
 			*hasOrderBy = true;
 		}
 		else if (func->funcid == BsonExpressionGetFunctionOid() ||
 				 func->funcid == BsonExpressionGetWithLetFunctionOid())
 		{
+			/* Reject GROUP BY pathkey appearing after ORDER BY pathkeys;
+			 * GROUP BY entries must form a leading prefix of the pathkey list. */
 			if (*hasOrderBy)
 			{
 				return NIL;
 			}
 
 			*hasGroupby = true;
+			isGroupByEntry = true;
 		}
 		else if (func->funcid == DocumentDBCoreBsonToBsonFunctionOId())
 		{
@@ -2852,6 +2846,8 @@ GetSortDetails(PlannerInfo *root, Index rti,
 			 * where we have a group by with an expression that can be rewritten to a path and we want
 			 * to be able to push down the path extraction to the index. We only allow this for group by
 			 * because for order by we want to be more strict and only allow direct paths.
+			 * Reject GROUP BY pathkey appearing after ORDER BY pathkeys;
+			 * GROUP BY entries must form a leading prefix of the pathkey list.
 			 */
 			if (*hasOrderBy)
 			{
@@ -2859,6 +2855,7 @@ GetSortDetails(PlannerInfo *root, Index rti,
 			}
 
 			*hasGroupby = true;
+			isGroupByEntry = true;
 		}
 		else
 		{
@@ -2901,7 +2898,7 @@ GetSortDetails(PlannerInfo *root, Index rti,
 		pgbsonelement sortElement;
 		PgbsonToSinglePgbsonElement(
 			DatumGetPgBson(secondConst->constvalue), &sortElement);
-		if (*hasGroupby)
+		if (isGroupByEntry)
 		{
 			/* In the case of group by the expression would be { "": expr }
 			 * Here we can push down to the index iff the expression is a path.

@@ -51,7 +51,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 -- 3. With enableSortGroupStage on
 SET LOCAL documentdb.enableSortGroupStage TO on;
-SET LOCAL documentdb.enableSortPushToAccumulator TO on;
+SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
                                         document                                         
 -----------------------------------------------------------------------------------------
@@ -61,20 +61,16 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_tes
 (3 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
-                                                                                                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                 
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                                                                                                                                                                     
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, bsonfirstonsorted(bson_expression_get(document, '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson) ORDER BY (bson_orderby(document, '{ "g" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST), 'total'::text, bsonsum(bson_expression_get(document, '{ "" : "$seq" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (bson_expression_get(collection.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Incremental Sort
-         Output: (bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "g" : { "$numberInt" : "1" } }'::bson))
-         Sort Key: (bson_expression_get(collection.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "g" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-         Presorted Key: (bson_expression_get(collection.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Index Scan using g_1 on documentdb_data.documents_1801 collection
-               Output: bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "g" : { "$numberInt" : "1" } }'::bson)
-               Index Cond: (collection.document @<> '{ "g" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-               Order By: (collection.document |-<> '{ "g" : { "$numberInt" : "1" } }'::bson)
-(11 rows)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, bsonfirstonsorted(bson_expression_get(document, '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'total'::text, bsonsum(bson_expression_get(document, '{ "" : "$seq" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: bson_expression_get(collection.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Index Scan using g_1 on documentdb_data.documents_1801 collection
+         Output: bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Index Cond: (collection.document @<> '{ "g" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+         Order By: (collection.document |-<> '{ "g" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
 
 -- 4. Sort on v (different from group key g), without enableSortGroupStage
 SET LOCAL documentdb.enableSortGroupStage TO off;
@@ -107,7 +103,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 -- 5. Sort on v, with enableSortGroupStage on
 SET LOCAL documentdb.enableSortGroupStage TO on;
-SET LOCAL documentdb.enableSortPushToAccumulator TO on;
+SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "v": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
                                         document                                         
 -----------------------------------------------------------------------------------------
@@ -117,20 +113,23 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_tes
 (3 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "v": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
-                                                                                                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                 
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, bsonfirstonsorted(bson_expression_get(document, '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson) ORDER BY (bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST), 'total'::text, bsonsum(bson_expression_get(document, '{ "" : "$seq" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (bson_expression_get(collection.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Incremental Sort
-         Output: (bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::bson))
-         Sort Key: (bson_expression_get(collection.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-         Presorted Key: (bson_expression_get(collection.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Index Scan using g_1 on documentdb_data.documents_1801 collection
-               Output: bson_expression_get(document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::bson)
-               Index Cond: (collection.document @<> '{ "g" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-               Order By: (collection.document |-<> '{ "g" : { "$numberInt" : "1" } }'::bson)
-(11 rows)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_0.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'total'::text, bsonsum(bson_expression_get(agg_stage_0.document, '{ "" : "$seq" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_0.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (bson_expression_get(agg_stage_0.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (bson_expression_get(agg_stage_0.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
+         Sort Key: (bson_expression_get(agg_stage_0.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Subquery Scan on agg_stage_0
+               Output: bson_expression_get(agg_stage_0.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+               ->  Sort
+                     Output: collection.document, (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson))
+                     Sort Key: (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+                     ->  Index Scan using g_1 on documentdb_data.documents_1801 collection
+                           Output: collection.document, bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)
+                           Index Cond: (collection.document @<> '{ "g" : { "fullScan" : true } }'::bson)
+(14 rows)
 
 ROLLBACK;
 SELECT documentdb_api.drop_collection('db', 'fl_grp_test');
