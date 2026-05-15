@@ -17,6 +17,9 @@ SELECT documentdb_api.compact('{"compact": "compact_test", "dryRun": "invalid"}'
 SELECT documentdb_api.compact('{"compact": "compact_test", "comment": "test comment"}');
 SELECT documentdb_api.compact('{"compact": "compact_test", "force": false}');
 
+-- Enable the GUC so that compact actually performs VACUUM FULL
+SET documentdb.enableCompactVacuumFull TO on;
+
 -- Insert a single document
 SELECT documentdb_api.insert_one('commands_compact_db', 'compact_test', FORMAT('{ "_id": 1, "a": "%s", "c": [ %s "d" ] }', repeat('Sample', 100000), repeat('"' || repeat('a', 1000) || '", ', 5000))::documentdb_core.bson);
 
@@ -141,3 +144,5 @@ SELECT :big_relpages_after_compact::bigint < :big_relpages_before_compact::bigin
 
 RESET citus.show_shards_for_app_name_prefixes;
 SELECT documentdb_api.drop_collection('commands_compact_db','compact_test_sharded');
+
+RESET documentdb.enableCompactVacuumFull;

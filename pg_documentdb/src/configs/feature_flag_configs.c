@@ -397,6 +397,9 @@ bool EnableCollModUnique = DEFAULT_ENABLE_COLLMOD_UNIQUE;
 #define DEFAULT_ENABLE_UNIQUE_REINDEX false
 bool EnableUniqueReindex = DEFAULT_ENABLE_UNIQUE_REINDEX;
 
+/* Added in v114, Pending stabilization, enable in v120 */
+#define DEFAULT_ENABLE_COMPACT_VACUUM_FULL false
+bool EnableCompactVacuumFull = DEFAULT_ENABLE_COMPACT_VACUUM_FULL;
 
 /* Added in v110, enabled in v110, remove after v113 */
 #define DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY true
@@ -1144,6 +1147,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&TTLSkipCaughtUpIndexes,
 		DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCompactVacuumFull", newGucPrefix),
+		gettext_noop(
+			"Whether to enable VACUUM FULL execution during compact command. When off, compact is a no-op."),
+		NULL,
+		&EnableCompactVacuumFull,
+		DEFAULT_ENABLE_COMPACT_VACUUM_FULL,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
