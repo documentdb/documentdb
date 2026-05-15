@@ -24,6 +24,8 @@
 #include "utils/storage_utils.h"
 #include "utils/version_utils.h"
 
+extern bool EnableCompactVacuumFull;
+
 typedef struct CompactArgs
 {
 	/* The name of the database */
@@ -54,6 +56,7 @@ typedef struct CompactArgs
 
 static void ParseCompactCommandSpec(pgbson *compactSpec, CompactArgs *args);
 static void PerformVacuum(MongoCollection *collection);
+static void ValidateCompactAccess(MongoCollection *collection);
 static void ValidateLocksAndCheckAccess(MongoCollection *collection);
 
 
@@ -124,6 +127,37 @@ command_compact(PG_FUNCTION_ARGS)
 							   args.collectionName)));
 	}
 
+	/* Always validate the user has permission to run compact on this collection */
+	ValidateCompactAccess(collection);
+
+	/*
+	 * dryRun is always supported regardless of the GUC since it only
+	 * reads bloat stats without performing vacuum or taking locks.
+	 */
+	if (args.dryRun)
+	{
+		CollectionBloatStats bloatStats;
+		memset(&bloatStats, 0, sizeof(CollectionBloatStats));
+		bloatStats = GetCollectionBloatEstimate(collection->collectionId);
+
+		pgbson_writer response;
+		PgbsonWriterInit(&response);
+		PgbsonWriterAppendDouble(&response, "ok", 2, 1);
+		PgbsonWriterAppendInt64(&response, "estimatedBytesFreed", 19,
+								bloatStats.estimatedBloatStorage);
+		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&response));
+	}
+
+	if (!EnableCompactVacuumFull)
+	{
+		pgbson_writer response;
+		PgbsonWriterInit(&response);
+		PgbsonWriterAppendDouble(&response, "ok", 2, 1);
+		PgbsonWriterAppendInt64(&response, "bytesFreed", 10, 0);
+
+		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&response));
+	}
+
 	ValidateLocksAndCheckAccess(collection);
 
 	/* Start building the response */
@@ -137,12 +171,6 @@ command_compact(PG_FUNCTION_ARGS)
 
 	/* Get the bloat stats before vacuuming */
 	beforeVacuumStats = GetCollectionBloatEstimate(collection->collectionId);
-	if (args.dryRun)
-	{
-		PgbsonWriterAppendInt64(&response, "estimatedBytesFreed", 19,
-								beforeVacuumStats.estimatedBloatStorage);
-		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&response));
-	}
 
 	if (!beforeVacuumStats.nullStats && (beforeVacuumStats.estimatedBloatStorage /
 										 BYTES_PER_MB) >= args.freeSpaceTargetMB)
@@ -168,16 +196,11 @@ command_compact(PG_FUNCTION_ARGS)
 /*-------------------*/
 
 /*
- * Performs the necessary checks to ensure that the current user has priveleges to
- * perform the compact operation on the collection, also checks if the realtion to be vacuumed
- * is available for exclusive access locking
+ * Validates that the current user has privileges to perform compact on the collection.
  */
 static void
-ValidateLocksAndCheckAccess(MongoCollection *collection)
+ValidateCompactAccess(MongoCollection *collection)
 {
-	/*
-	 * Check if the current user is permitted to perform VACUUM FULL on the collection.
-	 */
 	HeapTuple tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(collection->relationId));
 	if (!HeapTupleIsValid(tuple))
 	{
@@ -216,7 +239,17 @@ ValidateLocksAndCheckAccess(MongoCollection *collection)
 							collection->name.databaseName,
 							collection->name.collectionName)));
 	}
+}
 
+
+/*
+ * Checks if the relation to be vacuumed is available for exclusive access locking.
+ * Note: ValidateCompactAccess is already called before this function in command_compact,
+ * so we only need to check locking here.
+ */
+static void
+ValidateLocksAndCheckAccess(MongoCollection *collection)
+{
 	/* Now checking if the collection is available for exclusive locking :
 	 * - To validate early if only 1 vacuum is running on the collection.
 	 *

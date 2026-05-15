@@ -33,6 +33,8 @@ SELECT documentdb_api.compact('{"compact": "compact_test", "comment": "test comm
 ERROR:  Invalid command compact specification, missing database or collection name
 SELECT documentdb_api.compact('{"compact": "compact_test", "force": false}');
 ERROR:  command compact option force:false is not supported
+-- Enable the GUC so that compact actually performs VACUUM FULL
+SET documentdb.enableCompactVacuumFull TO on;
 -- Insert a single document
 SELECT documentdb_api.insert_one('commands_compact_db', 'compact_test', FORMAT('{ "_id": 1, "a": "%s", "c": [ %s "d" ] }', repeat('Sample', 100000), repeat('"' || repeat('a', 1000) || '", ', 5000))::documentdb_core.bson);
                               insert_one                              
@@ -220,3 +222,4 @@ SELECT documentdb_api.drop_collection('commands_compact_db','compact_test_sharde
  t
 (1 row)
 
+RESET documentdb.enableCompactVacuumFull;
