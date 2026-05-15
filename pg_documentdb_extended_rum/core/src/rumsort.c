@@ -96,22 +96,14 @@ static void * rum_tuplesort_getrum_internal(RumTuplesortstate *state,
 /*
  * Logical tape handling should be done through this macro.
  */
-#if PG_VERSION_NUM >= 150000
 #define LT_TYPE LogicalTape *
 #define LT_ARG tape
 #define TAPE(state, LT_ARG) LT_ARG
-#else
-#define LT_TYPE int
-#define LT_ARG tapenum
-#define TAPE(state, LT_ARG) state->tapeset, LT_ARG
-#endif
 
 /*
  * Just for convenience and uniformity.
  */
-#if PG_VERSION_NUM >= 110000
 #define tuplesort_begin_common(x, y) tuplesort_begin_common((x), NULL, (y))
-#endif
 
 /*
  * Trace log wrapper.
@@ -305,7 +297,6 @@ copytup_rum(RumTuplesortstate *state, SortTuple *stup, void *tup)
 	stup->datum1 = Float8GetDatum(nKeys > 0 ? item->data[0] : 0);
 	stup->isnull1 = false;
 	stup->tuple = tup;
-	USEMEM(state, GetMemoryChunkSpace(tup));
 }
 
 
@@ -315,7 +306,6 @@ copytup_rumitem(RumTuplesortstate *state, SortTuple *stup, void *tup)
 	stup->isnull1 = true;
 	stup->tuple = palloc(sizeof(RumScanItem));
 	memcpy(stup->tuple, tup, sizeof(RumScanItem));
-	USEMEM(state, GetMemoryChunkSpace(stup->tuple));
 }
 
 
@@ -325,7 +315,6 @@ copytup_rumitem_minimal(RumTuplesortstate *state, SortTuple *stup, void *tup)
 	stup->isnull1 = true;
 	stup->tuple = palloc(sizeof(ItemPointerData));
 	memcpy(stup->tuple, tup, sizeof(ItemPointerData));
-	USEMEM(state, GetMemoryChunkSpace(stup->tuple));
 }
 
 
@@ -374,11 +363,7 @@ writetup_rum_internal(RumTuplesortstate *state, LT_TYPE LT_ARG,
 					 (void *) item, size);
 
 	randomAccess =
-#       if PG_VERSION_NUM >= 150000
 		(TSS_GET(state)->sortopt & TUPLESORT_RANDOMACCESS) != 0;
-#       else
-		TSS_GET(state)->randomAccess;
-#       endif
 
 	if (randomAccess)
 	{
@@ -408,17 +393,15 @@ readtup_rum_internal(RumTuplesortstate *state, SortTuple *stup,
 {
 	unsigned int tuplen = len - sizeof(unsigned int);
 	size_t size = rum_item_size(state);
-	void *item = palloc(size);
+#if PG_VERSION_NUM >= 160000
+	void *item = tuplesort_readtup_alloc(state, size);
+#else
+	void *item = readtup_alloc(state, size);
+#endif
 
 	Assert(tuplen == size);
 
-	USEMEM(state, GetMemoryChunkSpace(item));
-
-#if PG_VERSION_NUM >= 150000
 	LogicalTapeReadExact(LT_ARG, item, size);
-#else
-	LogicalTapeReadExact(TSS_GET(state)->tapeset, LT_ARG, item, size);
-#endif
 	stup->tuple = item;
 	stup->isnull1 = is_item;
 
@@ -427,19 +410,12 @@ readtup_rum_internal(RumTuplesortstate *state, SortTuple *stup,
 		stup->datum1 = Float8GetDatum(TSS_GET(state)->nKeys > 0 ?
 									  ((RumSortItem *) item)->data[0] : 0);
 	}
-#if PG_VERSION_NUM >= 150000
+
 	if (TSS_GET(state)->sortopt & TUPLESORT_RANDOMACCESS)   /* need trailing
 	                                                         * length word? */
 	{
 		LogicalTapeReadExact(LT_ARG, &tuplen, sizeof(tuplen));
 	}
-#else
-	if (TSS_GET(state)->randomAccess)
-	{
-		LogicalTapeReadExact(TSS_GET(state)->tapeset, LT_ARG, &tuplen,
-							 sizeof(tuplen));
-	}
-#endif
 }
 
 
@@ -471,17 +447,13 @@ RumTuplesortstate *
 rum_tuplesort_begin_rum(int workMem, int nKeys, bool randomAccess,
 						bool compareItemPointer)
 {
-#if PG_VERSION_NUM >= 150000
 	RumTuplesortstate *state = tuplesort_begin_common(workMem,
 													  randomAccess ?
 													  TUPLESORT_RANDOMACCESS :
 													  TUPLESORT_NONE);
-#else
-	RumTuplesortstate *state = tuplesort_begin_common(workMem, randomAccess);
-#endif
 	MemoryContext oldcontext;
 
-	oldcontext = MemoryContextSwitchTo(TSS_GET(state)->sortcontext);
+	oldcontext = MemoryContextSwitchTo(TSS_GET(state)->maincontext);
 
 	LOG_SORT("begin rum sort: nKeys = %d, workMem = %d, randomAccess = %c",
 			 nKeys, workMem, randomAccess ? 't' : 'f');
@@ -505,7 +477,7 @@ rum_tuplesort_begin_rumitem(int workMem, FmgrInfo *cmp)
 	RumTuplesortstate *state = tuplesort_begin_common(workMem, false);
 	MemoryContext oldcontext;
 
-	oldcontext = MemoryContextSwitchTo(TSS_GET(state)->sortcontext);
+	oldcontext = MemoryContextSwitchTo(TSS_GET(state)->maincontext);
 
 	LOG_SORT("begin rumitem sort: workMem = %d", workMem);
 
@@ -522,7 +494,7 @@ rum_tuplesort_begin_rumitem(int workMem, FmgrInfo *cmp)
 	RumTuplesortstateExt *rs;
 	MemoryContext oldcontext;
 
-	oldcontext = MemoryContextSwitchTo(TSS_GET(state)->sortcontext);
+	oldcontext = MemoryContextSwitchTo(TSS_GET(state)->maincontext);
 
 	/* Allocate extended state in the same context as state */
 	rs = palloc(sizeof(*rs));
@@ -552,7 +524,7 @@ rum_tuplesort_begin_rumitem_minimal(int workMem,
 	RumTuplesortstate *state = tuplesort_begin_common(workMem, false);
 	MemoryContext oldcontext;
 
-	oldcontext = MemoryContextSwitchTo(TSS_GET(state)->sortcontext);
+	oldcontext = MemoryContextSwitchTo(TSS_GET(state)->maincontext);
 
 	LOG_SORT("begin rumitem sort: workMem = %d", workMem);
 
@@ -569,7 +541,7 @@ rum_tuplesort_begin_rumitem_minimal(int workMem,
 	RumTuplesortstateExt *rs;
 	MemoryContext oldcontext;
 
-	oldcontext = MemoryContextSwitchTo(TSS_GET(state)->sortcontext);
+	oldcontext = MemoryContextSwitchTo(TSS_GET(state)->maincontext);
 
 	/* Allocate extended state in the same context as state */
 	rs = palloc(sizeof(*rs));
@@ -603,9 +575,9 @@ rum_tuplesort_begin_rumitem_minimal(int workMem,
 void
 rum_tuplesort_end(RumTuplesortstate *state)
 {
-#if PG_VERSION_NUM < 150000 && PG_VERSION_NUM >= 130000
-	tuplesort_free(state);
-#elif PG_VERSION_NUM < 160000
+#if PG_VERSION_NUM >= 160000
+	tuplesort_end(state);
+#else
 
 	/* rum_tuplesort_begin* for PG < 16 copies the RumTuplesortstate
 	 * inside the Sort context. Consequently, we can't free and delete
@@ -617,8 +589,6 @@ rum_tuplesort_end(RumTuplesortstate *state)
 	bool deleteSortContext = false;
 	tuplesort_free_with_options(state, deleteSortContext);
 	MemoryContextDelete(state->maincontext);
-#else
-	tuplesort_end(state);
 #endif
 }
 
@@ -645,7 +615,7 @@ rum_tuplesort_putrum(RumTuplesortstate *state, RumSortItem *item)
 	TuplesortPublic *base = TuplesortstateGetPublic((TuplesortPublic *) state);
 #endif
 
-	oldcontext = MemoryContextSwitchTo(rum_tuplesort_get_memorycontext(state));
+	oldcontext = MemoryContextSwitchTo(TSS_GET(state)->tuplecontext);
 	copytup_rum(state, &stup, item);
 
 #if PG_VERSION_NUM >= 170000
@@ -663,6 +633,8 @@ rum_tuplesort_putrum(RumTuplesortstate *state, RumSortItem *item)
 #elif PG_VERSION_NUM >= 160000
 	tuplesort_puttuple_common(state, &stup, false);
 #else
+	USEMEM(state, GetMemoryChunkSpace(stup.tuple));
+	MemoryContextSwitchTo(rum_tuplesort_get_memorycontext(state));
 	puttuple_common(state, &stup);
 #endif
 
@@ -681,7 +653,7 @@ rum_tuplesort_putrumitem(RumTuplesortstate *state, RumScanItem *item)
 	TuplesortPublic *base = TuplesortstateGetPublic((TuplesortPublic *) state);
 #endif
 
-	oldcontext = MemoryContextSwitchTo(rum_tuplesort_get_memorycontext(state));
+	oldcontext = MemoryContextSwitchTo(TSS_GET(state)->tuplecontext);
 	copytup_rumitem(state, &stup, item);
 
 #if PG_VERSION_NUM >= 170000
@@ -699,6 +671,8 @@ rum_tuplesort_putrumitem(RumTuplesortstate *state, RumScanItem *item)
 #elif PG_VERSION_NUM >= 160000
 	tuplesort_puttuple_common(state, &stup, false);
 #else
+	USEMEM(state, GetMemoryChunkSpace(stup.tuple));
+	MemoryContextSwitchTo(rum_tuplesort_get_memorycontext(state));
 	puttuple_common(state, &stup);
 #endif
 
@@ -715,7 +689,7 @@ rum_tuplesort_putrumitem_minimal(RumTuplesortstate *state, struct ItemPointerDat
 	Size tuplen;
 	TuplesortPublic *base = TuplesortstateGetPublic((TuplesortPublic *) state);
 #endif
-	oldcontext = MemoryContextSwitchTo(rum_tuplesort_get_memorycontext(state));
+	oldcontext = MemoryContextSwitchTo(TSS_GET(state)->tuplecontext);
 	copytup_rumitem_minimal(state, &stup, item);
 
 #if PG_VERSION_NUM >= 170000
@@ -733,6 +707,8 @@ rum_tuplesort_putrumitem_minimal(RumTuplesortstate *state, struct ItemPointerDat
 #elif PG_VERSION_NUM >= 160000
 	tuplesort_puttuple_common(state, &stup, false);
 #else
+	USEMEM(state, GetMemoryChunkSpace(stup.tuple));
+	MemoryContextSwitchTo(rum_tuplesort_get_memorycontext(state));
 	puttuple_common(state, &stup);
 #endif
 
@@ -762,12 +738,8 @@ static void *
 rum_tuplesort_getrum_internal(RumTuplesortstate *state, bool forward,
 							  bool *should_free)
 {
-#if PG_VERSION_NUM >= 100000
 	*should_free = false;
 	return (RumSortItem *) tuplesort_getindextuple(state, forward);
-#else
-	return (RumSortItem *) tuplesort_getindextuple(state, forward, should_free);
-#endif
 }
 
 
