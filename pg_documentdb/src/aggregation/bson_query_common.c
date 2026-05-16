@@ -63,6 +63,30 @@ InitializeQueryDollarRange(const bson_value_t *filterValue,
 			rangeParams->isElemMatch = true;
 			rangeParams->elemMatchValue = *bson_iter_value(&rangeIter);
 		}
+		else if (strcmp(key, "minIndexOp") == 0)
+		{
+			if (rangeParams->isMaxIndexKey)
+			{
+				ereport(ERROR, (errmsg("Cannot specify both minIndexOp and maxIndexOp"),
+								errdetail_log(
+									"Cannot specify both minIndexOp and maxIndexOp")));
+			}
+
+			rangeParams->isMinIndexKey = true;
+			rangeParams->minOrMaxIndexKey = *bson_iter_value(&rangeIter);
+		}
+		else if (strcmp(key, "maxIndexOp") == 0)
+		{
+			if (rangeParams->isMinIndexKey)
+			{
+				ereport(ERROR, (errmsg("Cannot specify both minIndexOp and maxIndexOp"),
+								errdetail_log(
+									"Cannot specify both minIndexOp and maxIndexOp")));
+			}
+
+			rangeParams->isMaxIndexKey = true;
+			rangeParams->minOrMaxIndexKey = *bson_iter_value(&rangeIter);
+		}
 		else
 		{
 			ereport(ERROR, (errmsg("Range predicate not supported: %s", key),

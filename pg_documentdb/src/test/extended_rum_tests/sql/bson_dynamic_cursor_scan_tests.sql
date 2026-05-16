@@ -41,12 +41,16 @@ PREPARE drain_find_query_continuation(bson, bson) AS
 -- ===========================================================================
 -- Test 1: EXPLAIN first page - PK cursor scan wraps query under DocumentDBApiCursorScan
 -- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "batchSize": 3 }');
+$cmd$);
 
 -- ===========================================================================
 -- Test 2: EXPLAIN with _id range filter
 -- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "filter": { "_id": { "$gt": 3, "$lt": 8 }}, "batchSize": 1 }');
+$cmd$);
 
 -- ===========================================================================
 -- Test 3: First page + getMore draining with batchSize=3
@@ -68,8 +72,10 @@ SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1, "cursor.id"
 -- ===========================================================================
 -- Test 4: EXPLAIN the getMore - should show DocumentDBApiCursorScan with PK scan and continuation
 -- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('dyncursordb',
-    '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 3 }', :'r1_continuation');
+    '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 3 }', $cmd$ || quote_literal(:'r1_continuation') || $cmd$::documentdb_core.bson);
+$cmd$);
 
 -- ===========================================================================
 -- Test 5: Full drain with batchSize=2 for first page, batchSize=1 for getMore
@@ -99,8 +105,10 @@ SELECT cp FROM firstPageResponse;
 
 SELECT continuation AS r1_continuation FROM firstPageResponse \gset
 
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('dyncursordb',
-    '{ "getMore": { "$numberLong": "4294967294" }, "collection": "dyncursor_coll", "batchSize": 2 }', :'r1_continuation');
+    '{ "getMore": { "$numberLong": "4294967294" }, "collection": "dyncursor_coll", "batchSize": 2 }', $cmd$ || quote_literal(:'r1_continuation') || $cmd$::documentdb_core.bson);
+$cmd$);
 
 -- Drain remaining rows after the first page
 SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1, "cursor.id": 1 }'), continuation FROM
@@ -120,7 +128,9 @@ SET documentdb.enablePrimaryKeyCursorScan TO off;
 SET enable_indexscan TO off;
 SET enable_bitmapscan TO off;
 
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "batchSize": 3 }');
+$cmd$);
 
 SET enable_indexscan TO on;
 SET enable_bitmapscan TO on;
@@ -137,7 +147,9 @@ EXECUTE drain_find_query('{ "find": "dyncursor_coll", "projection": { "_id": 1 }
 -- ===========================================================================
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
 
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "batchSize": 3 }');
+$cmd$);
 
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
 
@@ -167,7 +179,9 @@ ANALYZE;
 SET enable_indexscan TO off;
 SET enable_seqscan TO off;
 
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_coll", "filter": { "sk": 1 }, "projection": { "_id": 1 }, "batchSize": 2 }');
+$cmd$);
 
 -- ===========================================================================
 -- Test 13b: EXPLAIN with aggregation query rewrite + bitmap scan
@@ -175,7 +189,9 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dync
 -- ===========================================================================
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
 
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_coll", "filter": { "sk": 1 }, "projection": { "_id": 1 }, "batchSize": 2 }');
+$cmd$);
 
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
 
@@ -202,8 +218,10 @@ SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1, "cursor.id"
 -- ===========================================================================
 -- Test 15: EXPLAIN getMore with bitmap heap scan continuation
 -- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('dyncursordb',
-    '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 2 }', :'r1_continuation');
+    '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 2 }', $cmd$ || quote_literal(:'r1_continuation') || $cmd$::documentdb_core.bson);
+$cmd$);
 
 -- ===========================================================================
 -- Test 16: Full drain with bitmap heap scan (sk=2, batchSize=1)
@@ -286,7 +304,9 @@ SET enable_seqscan TO off;
 -- x=5 (200 docs) AND y=3 (286 docs) => 28 docs via BitmapAnd
 -- Should show BitmapAnd with two Bitmap Index Scans
 -- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_bm_coll", "filter": { "x": 5, "y": 3 }, "projection": { "_id": 1 }, "batchSize": 2 }');
+$cmd$);
 
 -- ===========================================================================
 -- Test 22: Full drain bitmap AND - x=5 AND y=3, batchSize=5
@@ -298,7 +318,9 @@ EXECUTE drain_bm_query('{ "find": "dyncursor_bm_coll", "filter": { "x": 5, "y": 
 -- Test 23: EXPLAIN bitmap AND with different values
 -- x=3 AND y=1 => should also produce BitmapAnd
 -- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_bm_coll", "filter": { "x": 3, "y": 1 }, "projection": { "_id": 1 }, "batchSize": 2 }');
+$cmd$);
 
 -- ===========================================================================
 -- Test 24: Full drain bitmap AND - x=3 AND y=1, batchSize=3
@@ -310,7 +332,9 @@ EXECUTE drain_bm_query('{ "find": "dyncursor_bm_coll", "filter": { "x": 3, "y": 
 -- Test 25: EXPLAIN bitmap OR across different indexes
 -- $or: [{x:5}, {y:3}] => BitmapOr with x_1 and y_1 index scans
 -- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_bm_coll", "filter": { "$or": [{ "x": 5 }, { "y": 3 }] }, "projection": { "_id": 1 }, "batchSize": 3 }');
+$cmd$);
 
 -- ===========================================================================
 -- Test 26: Full drain bitmap OR across different indexes
@@ -333,8 +357,10 @@ SELECT cp FROM firstPageResponse;
 SELECT continuation AS r1_continuation FROM firstPageResponse \gset
 
 -- EXPLAIN the getMore for bitmap OR continuation
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('dyncursordb',
-    '{ "getMore": { "$numberLong": "535" }, "collection": "dyncursor_bm_coll", "batchSize": 3 }', :'r1_continuation');
+    '{ "getMore": { "$numberLong": "535" }, "collection": "dyncursor_bm_coll", "batchSize": 3 }', $cmd$ || quote_literal(:'r1_continuation') || $cmd$::documentdb_core.bson);
+$cmd$);
 
 -- getMore: fetch next batch
 SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1, "cursor.id": 1 }'), continuation IS NOT NULL as has_continuation FROM
@@ -354,8 +380,10 @@ SELECT cp FROM firstPageResponse;
 SELECT continuation AS r1_continuation FROM firstPageResponse \gset
 
 -- EXPLAIN the getMore for bitmap AND continuation
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('dyncursordb',
-    '{ "getMore": { "$numberLong": "535" }, "collection": "dyncursor_bm_coll", "batchSize": 3 }', :'r1_continuation');
+    '{ "getMore": { "$numberLong": "535" }, "collection": "dyncursor_bm_coll", "batchSize": 3 }', $cmd$ || quote_literal(:'r1_continuation') || $cmd$::documentdb_core.bson);
+$cmd$);
 
 -- getMore: fetch remaining
 SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1, "cursor.id": 1 }'), continuation IS NOT NULL as has_continuation FROM

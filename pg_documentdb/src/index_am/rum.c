@@ -198,6 +198,8 @@ typedef enum RumFunctionCatalog
 	RumFunction_RumUpdateMultiKeyStatus,
 	RumFunction_SetUnredactedLogHook,
 	RumFunction_RumOrderedCostEstimate,
+	RumFunction_GetCurrentIndexKey,
+	RumFunction_SkipTidsForCurrentEntry,
 	RumFunction_Max,
 } RumFunctionCatalog;
 
@@ -218,6 +220,8 @@ static const char *RumFunctionArray[RumFunction_Max] =
 	[RumFunction_RumUpdateMultiKeyStatus] = "rum_update_multi_key_status",
 	[RumFunction_SetUnredactedLogHook] = "SetRumUnredactedLogEmitHook",
 	[RumFunction_RumOrderedCostEstimate] = "RumOrderedCostEstimate",
+	[RumFunction_GetCurrentIndexKey] = "documentdb_rum_get_current_index_key",
+	[RumFunction_SkipTidsForCurrentEntry] = "documentdb_rum_skip_tids_for_current_entry",
 };
 
 
@@ -238,6 +242,8 @@ static const char *DocumentDBRumFunctionArray[RumFunction_Max] =
 	[RumFunction_RumUpdateMultiKeyStatus] = "documentdb_rum_update_multi_key_status",
 	[RumFunction_SetUnredactedLogHook] = "DocumentDBSetRumUnredactedLogEmitHook",
 	[RumFunction_RumOrderedCostEstimate] = "DocumentDBRumOrderedCostEstimate",
+	[RumFunction_GetCurrentIndexKey] = "documentdb_rum_get_current_index_key",
+	[RumFunction_SkipTidsForCurrentEntry] = "documentdb_rum_skip_tids_for_current_entry",
 };
 
 
@@ -597,6 +603,26 @@ LoadRumRoutine(void)
 							   functionCatalog[RumFunction_RumUpdateMultiKeyStatus],
 							   !missingOk,
 							   ignoreLibFileHandle);
+
+	GetCurrentIndexKeyFunc getCurrentIndexKeyFunc =
+		load_external_function(rumLibPath,
+							   functionCatalog[RumFunction_GetCurrentIndexKey],
+							   !missingOk,
+							   ignoreLibFileHandle);
+	if (getCurrentIndexKeyFunc != NULL)
+	{
+		RumIndexAmEntry.get_current_index_key = getCurrentIndexKeyFunc;
+	}
+
+	SkipTidsOnCurrentEntryFunc skipTidsFunc =
+		load_external_function(rumLibPath,
+							   functionCatalog[RumFunction_SkipTidsForCurrentEntry],
+							   !missingOk,
+							   ignoreLibFileHandle);
+	if (skipTidsFunc != NULL)
+	{
+		RumIndexAmEntry.skip_tids_on_current_entry = skipTidsFunc;
+	}
 
 	ereport(LOG, (errmsg(
 					  "rum library has update func %d, get func %d, cost estimate func %d",
@@ -2110,4 +2136,49 @@ ResetReportedIndexCosts(void)
 {
 	IndexExplainCostsIndex = 0;
 	memset(IndexExplainCosts, 0, sizeof(IndexExplainCosts));
+}
+
+
+Datum
+DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan)
+{
+	if (!IsCompositeOpClass(scan->indexRelation))
+	{
+		ereport(ERROR, (errmsg(
+							"GetCurrentIndexKeyFunc not supported for non ordered indexes")));
+	}
+
+	GetCurrentIndexKeyFunc getCurrentIndexKey =
+		GetIndexKeyCurrentKeyFunc(scan->indexRelation->rd_rel->relam,
+								  scan->indexRelation->rd_opfamily[0]);
+	if (getCurrentIndexKey == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Index AM does not support get_current_index_key for index")));
+	}
+
+	DocumentDBRumIndexState *state = scan->opaque;
+	return getCurrentIndexKey(state->innerScan);
+}
+
+
+void
+DocumentDBRumSkipTidsForCurrentEntry(IndexScanDesc scan, SkipTidsOnCurrentEntryFunc
+									 skipTidsFunc,
+									 ItemPointer userContinuationState)
+{
+	if (!IsCompositeOpClass(scan->indexRelation))
+	{
+		ereport(ERROR, (errmsg(
+							"GetCurrentIndexKeyFunc not supported for non ordered indexes")));
+	}
+
+	if (skipTidsFunc == NULL)
+	{
+		return;
+	}
+
+	DocumentDBRumIndexState *state = scan->opaque;
+	skipTidsFunc(state->innerScan, BlockIdGetBlockNumber(
+					 &userContinuationState->ip_blkid));
 }

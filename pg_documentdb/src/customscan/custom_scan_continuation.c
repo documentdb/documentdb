@@ -1762,10 +1762,13 @@ ExtensionScanNext(CustomScanState *node)
 	{
 		bool shouldContinue = false;
 		bool returnOnEquality = false;
+		double numSkipped = 0;
 		slot = SkipWithUserContinuation(extensionScanState->innerScanState,
 										&extensionScanState->userContinuationState,
 										returnOnEquality,
-										&shouldContinue);
+										&shouldContinue,
+										&numSkipped);
+
 		extensionScanState->hasUserContinuationState = false;
 		if (slot != NULL)
 		{
@@ -2026,7 +2029,8 @@ ParseContinuationState(ExtensionScanState *extensionScanState,
  */
 static bool
 SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
-							 ItemPointerData *userContinuation)
+							 ItemPointerData *userContinuation,
+							 double *numSkipped)
 {
 	TBMIterator tbmiterator = { 0 };
 
@@ -2111,6 +2115,7 @@ SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
 		BlockNumber blockno = tbmres_tmp.blockno;
 		if (blockno < target_blockno)
 		{
+			(*numSkipped)++;
 			tbm_iterate(&tbmiterator, &tbmres);
 			continue; /* Skip blocks before target */
 		}
@@ -2152,7 +2157,8 @@ SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
  */
 static bool
 SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
-							 ItemPointerData *userContinuation)
+							 ItemPointerData *userContinuation,
+							 double *numSkipped)
 {
 	TBMIterator *tbmiterator = NULL;
 
@@ -2230,6 +2236,7 @@ SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
 		}
 
 		BlockNumber blockno = tbmres_tmp->blockno;
+		(*numSkipped) += tbmres_tmp->ntuples;
 		if (blockno < target_blockno)
 		{
 			tbmres = tbm_iterate(tbmiterator);
@@ -2275,9 +2282,10 @@ SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
  */
 TupleTableSlot *
 SkipWithUserContinuation(ScanState *innerScanState, ItemPointer userContinuation,
-						 bool returnOnEquality, bool *shouldContinue)
+						 bool returnOnEquality, bool *shouldContinue, double *numSkipped)
 {
 	*shouldContinue = false;
+	*numSkipped = 0;
 
 	if (EnableContinuationFastBitmapLookup &&
 		innerScanState->ps.type == T_BitmapHeapScanState)
@@ -2285,7 +2293,8 @@ SkipWithUserContinuation(ScanState *innerScanState, ItemPointer userContinuation
 		BitmapHeapScanState *bitmapScanState =
 			(BitmapHeapScanState *) &innerScanState->ps;
 		bool found = SkipBitmapToUserContinuation(bitmapScanState,
-												  userContinuation);
+												  userContinuation,
+												  numSkipped);
 		if (!found)
 		{
 			return NULL;
@@ -2312,6 +2321,7 @@ SkipWithUserContinuation(ScanState *innerScanState, ItemPointer userContinuation
 		 * would need to be reconciled as we build more scans on top of this.
 		 * TODO: Consider impact of VACUUM on the cursor state execution and skip
 		 */
+		(*numSkipped)++;
 		TupleTableSlot *originalSlot = GetOriginalSlot(innerScanState, slot);
 		if (ItemPointerCompare(&originalSlot->tts_tid, userContinuation) == 0)
 		{
