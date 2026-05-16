@@ -989,6 +989,9 @@ rumbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 						  true);
 	}
 
+	pgstat_progress_update_param(PROGRESS_CREATEIDX_SUBPHASE,
+								 PROGRESS_RUM_PHASE_POST_WRITE_WAL);
+
 	/*
 	 * Return statistics
 	 */

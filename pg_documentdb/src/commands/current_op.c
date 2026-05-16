@@ -1480,6 +1480,10 @@ PhaseToUserMessage(const char *phaseString)
 	{
 		return "Writing WAL files (building index).";
 	}
+	else if (strstr(phaseString, "finalizing index") != NULL)
+	{
+		return "Finalizing index build.";
+	}
 	else if (strcmp(phaseString, "cleaning up") == 0)
 	{
 		return "Cleaning up.";

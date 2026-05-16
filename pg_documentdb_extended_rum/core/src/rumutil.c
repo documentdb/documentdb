@@ -1236,6 +1236,11 @@ rumbuildphasename(int64 phasenum)
 			return "writing WAL files";
 		}
 
+		case PROGRESS_RUM_PHASE_POST_WRITE_WAL:
+		{
+			return "finalizing index";
+		}
+
 		default:
 			return NULL;
 	}
