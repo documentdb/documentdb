@@ -3808,6 +3808,7 @@ ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetSca
 			scankey[i].sk_strategy == BSON_INDEX_STRATEGY_UNIQUE_EQUAL)
 		{
 			/* This scan is for multiple scan keys or unique equal - bail with the composite scan */
+			PgbsonWriterFree(&querySpecWriter);
 			return false;
 		}
 

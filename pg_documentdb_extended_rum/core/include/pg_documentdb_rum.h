@@ -1643,6 +1643,7 @@ extern Datum FunctionCall10Coll(FmgrInfo *flinfo, Oid collation,
 #define PROGRESS_RUM_PHASE_PERFORMSORT_2 5
 #define PROGRESS_RUM_PHASE_MERGE_2 6
 #define PROGRESS_RUM_PHASE_WRITE_WAL 7
+#define PROGRESS_RUM_PHASE_POST_WRITE_WAL 8
 
 
 #define UNREDACTED_RUM_LOG_CODE MAKE_SQLSTATE('R', 'Z', 'Z', 'Z', 'Z')

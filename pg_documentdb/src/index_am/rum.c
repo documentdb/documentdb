@@ -1089,6 +1089,8 @@ extension_rumendscan_core(IndexScanDesc scan, IndexAmRoutine *coreRoutine)
 		if (outerScanState->innerScan)
 		{
 			coreRoutine->amendscan(outerScanState->innerScan);
+			IndexScanEnd(outerScanState->innerScan);
+			outerScanState->innerScan = NULL;
 		}
 
 		pfree(outerScanState);
