@@ -90,5 +90,8 @@ IndexPath * AddRowCompareToExistingPrimaryKeyPath(PlannerInfo *root,
 TupleTableSlot * SkipWithUserContinuation(ScanState *innerScanState,
 										  ItemPointer userContinuation,
 										  bool returnOnEquality,
-										  bool *shouldContinue);
+										  bool *shouldContinue,
+										  double *numSkipped);
+
+void WalkAndExplainScanState(PlanState *scanState, ExplainState *es);
 #endif

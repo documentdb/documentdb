@@ -256,8 +256,6 @@ static bool IsMatchingPathForQueryOperator(RelOptInfo *rel, Path *path,
 										   MatchIndexPath matchIndexPath,
 										   void *matchContext);
 static Expr * ProcessFullScanForOrderBy(SupportRequestIndexCondition *req, List *args);
-static OpExpr * CreateFullScanOpExpr(Expr *documentExpr, const char *sourcePath, uint32_t
-									 sourcePathLength, int32_t orderByScanDirection);
 static Expr * CreateKnownFullScanExpr(Datum queryValue, Expr *documentExpr, int
 									  sortDirection);
 static OpExpr * CreateExistsTrueOpExpr(Expr *documentExpr, const char *sourcePath,
@@ -6004,7 +6002,7 @@ CreateExistsTrueOpExpr(Expr *documentExpr, const char *sourcePath,
 }
 
 
-static OpExpr *
+OpExpr *
 CreateFullScanOpExpr(Expr *documentExpr, const char *sourcePath, uint32_t
 					 sourcePathLength, int32_t orderByDirection)
 {

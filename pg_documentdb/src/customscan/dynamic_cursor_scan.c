@@ -28,6 +28,7 @@
 #include <optimizer/restrictinfo.h>
 #include <optimizer/paths.h>
 #include <optimizer/tlist.h>
+#include <opclass/bson_gin_index_term.h>
 
 
 #if PG_VERSION_NUM >= 180000
@@ -50,6 +51,8 @@
 #include "index_am/documentdb_rum.h"
 #include "utils/version_utils.h"
 #include "utils/documentdb_errors.h"
+#include "opclass/bson_gin_index_mgmt.h"
+#include "utils/docdb_make_funcs.h"
 
 #define InputContinuationNodeName "DynamicCursorScanInputContinuation"
 
@@ -101,6 +104,9 @@ typedef struct DynamicCursorInputContinuation
 
 	/* The continuation item pointer as a uint64 value */
 	uint64_t itemPointerAsUint64;
+
+	/* The continuation state for the index scan */
+	bytea *indexContinuation;
 } DynamicCursorInputContinuation;
 
 
@@ -145,6 +151,9 @@ typedef struct ExtensionCursorScanState
 	/* The continuation state passed in by the user */
 	ItemPointerData userContinuationState;
 
+	/* The continuation state for the index scan */
+	bytea *indexContinuation;
+
 	/* The core scan method to fetch tuples */
 	ExecScanAccessMtd execScanMethod;
 } ExtensionCursorScanState;
@@ -176,6 +185,8 @@ static void ReadDynamicCursorInputContinuation(struct ExtensibleNode *node);
 static bool EqualUnsupportedExtensionCursorScanNode(const struct ExtensibleNode *a,
 													const struct ExtensibleNode *b);
 static TupleTableSlot * ExtensionCursorScanNextWithContinuation(CustomScanState *node);
+static TupleTableSlot * ExtensionCursorScanNextWithIndexContinuation(
+	CustomScanState *node);
 static void ParseContinuationDocument(pgbson *continuation,
 									  ParsedContinuationState *state);
 static Path * GeneratePathFromContinuation(ParsedContinuationState *tempState,
@@ -187,8 +198,16 @@ static Path * GeneratePathFromContinuation(ParsedContinuationState *tempState,
 										   ReplaceExtensionFunctionContext *indexContext);
 static void WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 													 QueryScanType scanType);
+static void AddOrderByRequiredClausesIfNecessary(IndexPath *indexPath, PlannerInfo *root,
+												 RelOptInfo *rel);
+static void AddContinuationQualsToIndexPath(PlannerInfo *root, RelOptInfo *rel,
+											IndexPath *resumePath,
+											ParsedContinuationState *state);
 
 PG_FUNCTION_INFO_V1(command_cursor_tracker);
+
+extern bool EnableRumCursorDynamicIndexScans;
+extern bool EnableRumDynamicIndexScansSkipToTid;
 
 /* Declaration of extensibility paths for query processing (See extensible.h) */
 static const struct CustomPathMethods DynamicExtensionCursorScanMethods = {
@@ -362,7 +381,8 @@ CreateCustomScanPathForStreaming(PlannerInfo *root, RelOptInfo *rel, Path *input
 static bool
 GetIndexSupportsGetIndexKey(Oid relam, Oid opfamily)
 {
-	return false;
+	return EnableRumCursorDynamicIndexScans &&
+		   GetIndexKeyCurrentKeyFunc(relam, opfamily) != NULL;
 }
 
 
@@ -395,7 +415,9 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 			else if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
 												 indexPath->indexinfo->opfamily[0]))
 			{
+				/* Mark as supported indexscan */
 				scanType = QueryScanType_SecondaryIndexScan;
+				AddOrderByRequiredClausesIfNecessary(indexPath, root, rel);
 			}
 			else if (indexPath->indexinfo->amhasgetbitmap)
 			{
@@ -427,6 +449,7 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 			else if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
 												 indexPath->indexinfo->opfamily[0]))
 			{
+				/* IndexOnlyScan is always an ordered scan - nothing to do here */
 				scanType = QueryScanType_SecondaryIndexOnlyScan;
 			}
 			else if (indexPath->indexinfo->amhasgetbitmap)
@@ -468,12 +491,32 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 				}
 				else if (bitmapQualPath->pathtype == T_IndexOnlyScan)
 				{
-					scanType = QueryScanType_SecondaryIndexBitmapScan;
+					if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
+													indexPath->indexinfo->opfamily[0]))
+					{
+						/* IndexOnlyScan is always an ordered scan - nothing to do here */
+						scanType = QueryScanType_SecondaryIndexOnlyScan;
+						inputPath = (Path *) indexPath;
+					}
+					else
+					{
+						scanType = QueryScanType_SecondaryIndexBitmapScan;
+					}
 				}
 				else
 				{
 					Assert(bitmapQualPath->pathtype == T_IndexScan);
-					scanType = QueryScanType_SecondaryIndexBitmapScan;
+					if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
+													indexPath->indexinfo->opfamily[0]))
+					{
+						scanType = QueryScanType_SecondaryIndexScan;
+						AddOrderByRequiredClausesIfNecessary(indexPath, root, rel);
+						inputPath = (Path *) indexPath;
+					}
+					else
+					{
+						scanType = QueryScanType_SecondaryIndexBitmapScan;
+					}
 				}
 			}
 			else if (bitmapQualPath->pathtype == T_BitmapAnd)
@@ -864,6 +907,7 @@ ExtensionCursorScanCreateCustomScanState(CustomScan *cscan)
 	scanState->tableOid = continuation->queryTableId;
 	Uint64AsItemPointer(&scanState->userContinuationState,
 						continuation->itemPointerAsUint64);
+	scanState->indexContinuation = continuation->indexContinuation;
 
 	/* Set the exec scan method */
 	switch (scanState->scanType)
@@ -871,8 +915,6 @@ ExtensionCursorScanCreateCustomScanState(CustomScan *cscan)
 		case QueryScanType_SecondaryIndexBitmapScan:
 		case QueryScanType_SecondaryIndexBitmapAnd:
 		case QueryScanType_SecondaryIndexBitmapOr:
-		case QueryScanType_SecondaryIndexScan:
-		case QueryScanType_SecondaryIndexOnlyScan:
 		{
 			/* For bitmap heap scans, we need to skip with continuations if there is one */
 			if (ItemPointerIsValid(&scanState->userContinuationState))
@@ -889,10 +931,28 @@ ExtensionCursorScanCreateCustomScanState(CustomScan *cscan)
 			break;
 		}
 
+		case QueryScanType_SecondaryIndexScan:
+		case QueryScanType_SecondaryIndexOnlyScan:
+		{
+			if (ItemPointerIsValid(&scanState->userContinuationState))
+			{
+				scanState->execScanMethod =
+					(ExecScanAccessMtd) ExtensionCursorScanNextWithIndexContinuation;
+			}
+			else
+			{
+				scanState->execScanMethod =
+					(ExecScanAccessMtd) ExtensionCursorScanNext;
+			}
+
+			break;
+		}
+
 		default:
 		{
 			scanState->execScanMethod =
 				(ExecScanAccessMtd) ExtensionCursorScanNext;
+			break;
 		}
 	}
 
@@ -938,7 +998,68 @@ ExtensionCursorScanReScanCustomScan(CustomScanState *node)
 static void
 ExtensionCursorScanExplainCustomScan(CustomScanState *node, List *ancestors,
 									 ExplainState *es)
-{ }
+{
+	ExtensionCursorScanState *extensionCursorScanState =
+		(ExtensionCursorScanState *) node;
+
+	switch (extensionCursorScanState->scanType)
+	{
+		case QueryScanType_PrimaryKeyScan:
+		{
+			ExplainPropertyText("scanType", "Primary Key Scan", es);
+			break;
+		}
+
+		case QueryScanType_SecondaryIndexScan:
+		{
+			ExplainPropertyText("scanType", "Secondary Index Scan", es);
+			break;
+		}
+
+		case QueryScanType_SecondaryIndexOnlyScan:
+		{
+			ExplainPropertyText("scanType", "Secondary Index Only Scan", es);
+			break;
+		}
+
+		case QueryScanType_SecondaryIndexBitmapScan:
+		{
+			ExplainPropertyText("scanType", "Secondary Index Bitmap Scan", es);
+			break;
+		}
+
+		case QueryScanType_SecondaryIndexBitmapAnd:
+		{
+			ExplainPropertyText("scanType", "Secondary Index Bitmap AND Scan", es);
+			break;
+		}
+
+		case QueryScanType_SecondaryIndexBitmapOr:
+		{
+			ExplainPropertyText("scanType", "Secondary Index Bitmap OR Scan", es);
+			break;
+		}
+
+		case QueryScanType_TidRangeScan:
+		{
+			ExplainPropertyText("scanType", "TID Range Scan", es);
+			break;
+		}
+
+		default:
+		{
+			break;
+		}
+	}
+
+	if (node->ss.ps.instrument != NULL && node->ss.ps.instrument->ntuples2 > 0)
+	{
+		ExplainPropertyFloat("Skipped Tuples", "docs", node->ss.ps.instrument->ntuples2,
+							 0, es);
+	}
+
+	WalkAndExplainScanState((PlanState *) extensionCursorScanState->innerScanState, es);
+}
 
 
 static TupleTableSlot *
@@ -984,6 +1105,104 @@ ExtensionCursorScanNext(CustomScanState *node)
 
 
 static TupleTableSlot *
+ExtensionCursorScanNextWithIndexContinuation(CustomScanState *node)
+{
+	ExtensionCursorScanState *scanState =
+		(ExtensionCursorScanState *) node;
+
+	/* From the next round, just use the vanilla next function */
+	scanState->execScanMethod = (ExecScanAccessMtd) ExtensionCursorScanNext;
+	if (!ItemPointerIsValid(&scanState->userContinuationState))
+	{
+		return scanState->execScanMethod((ScanState *) node);
+	}
+
+	/* First check continuation state on the index */
+	ScanState *ps = scanState->innerScanState;
+
+	TupleTableSlot *slot = NULL;
+	IndexScanDesc scanDesc = NULL;
+	SkipTidsOnCurrentEntryFunc skipTidsFunc = NULL;
+	double numSkipped = 0;
+	while (true)
+	{
+		slot = ps->ps.ExecProcNode((PlanState *) ps);
+
+		if (TupIsNull(slot))
+		{
+			return slot;
+		}
+
+		numSkipped++;
+		if (scanDesc == NULL)
+		{
+			if (IsA(ps, IndexOnlyScanState))
+			{
+				IndexOnlyScanState *ioss = (IndexOnlyScanState *) ps;
+				scanDesc = ioss->ioss_ScanDesc;
+			}
+			else
+			{
+				IndexScanState *iss = (IndexScanState *) ps;
+				scanDesc = iss->iss_ScanDesc;
+			}
+
+			skipTidsFunc = GetSkipTidsOnCurrentEntryFunc(
+				scanDesc->indexRelation->rd_rel->relam,
+				scanDesc->indexRelation->
+				rd_opfamily[0]);
+		}
+
+		Datum currentKey = DocumentDBRumGetCurrentIndexKey(scanDesc);
+		bytea *currentKeyBytes = DatumGetByteaP(currentKey);
+
+		const char *collation = NULL;
+		bool isComparisonValidIgnore = false;
+		int cmp = CompareSerializedBsonIndexTerms(currentKeyBytes,
+												  scanState->indexContinuation,
+												  collation, &isComparisonValidIgnore);
+		if (cmp != 0)
+		{
+			/* We passed the continuation (continuation point got deleted) */
+			break;
+		}
+
+		/* Still at the same key - skip forward if TID < required TID
+		 * We use the indexscan's TID here since we do not have HOT here.
+		 * TODO: Revisit with HOT (since the Heap's TID can be disjoint from
+		 * the index's TID in the case of HOT).
+		 */
+		if (ItemPointerCompare(&scanDesc->xs_heaptid,
+							   &scanState->userContinuationState) >= 0)
+		{
+			/* We're at the target TID or after it - return this slot */
+			break;
+		}
+		else if (skipTidsFunc != NULL && EnableRumDynamicIndexScansSkipToTid)
+		{
+			/* See if the index can push forward until the Block of the TID exclusive */
+			DocumentDBRumSkipTidsForCurrentEntry(
+				scanDesc, skipTidsFunc, &scanState->userContinuationState);
+			continue;
+		}
+		else
+		{
+			/* Continue enumeration of tuples until we cross the target TID or entry */
+			continue;
+		}
+	}
+
+	if (node->ss.ps.instrument)
+	{
+		node->ss.ps.instrument->ntuples2 = numSkipped;
+	}
+
+	TupleTableSlot *ourSlot = node->ss.ss_ScanTupleSlot;
+	return ExecCopySlot(ourSlot, slot);
+}
+
+
+static TupleTableSlot *
 ExtensionCursorScanNextWithContinuation(CustomScanState *node)
 {
 	ExtensionCursorScanState *scanState =
@@ -996,9 +1215,15 @@ ExtensionCursorScanNextWithContinuation(CustomScanState *node)
 	{
 		bool returnOnEquality = true;
 		bool shouldContinue = false;
+		double numSkipped = 0;
 		slot = SkipWithUserContinuation(
 			scanState->innerScanState, &scanState->userContinuationState,
-			returnOnEquality, &shouldContinue);
+			returnOnEquality, &shouldContinue, &numSkipped);
+		if (node->ss.ps.instrument)
+		{
+			node->ss.ps.instrument->ntuples2 = numSkipped;
+		}
+
 		if (slot != NULL)
 		{
 			TupleTableSlot *ourSlot = node->ss.ss_ScanTupleSlot;
@@ -1049,6 +1274,11 @@ CopyNodeDynamicCursorContinuation(struct ExtensibleNode *target_node, const stru
 
 	/* Note: Any pointer fields need to be updated post the memcpy */
 	memcpy(newNode, from, sizeof(DynamicCursorInputContinuation));
+	if (newNode->indexContinuation)
+	{
+		newNode->indexContinuation = DatumGetByteaPCopy(PointerGetDatum(
+															newNode->indexContinuation));
+	}
 }
 
 
@@ -1062,6 +1292,24 @@ OutDynamicCursorInputContinuation(StringInfo str, const struct ExtensibleNode *r
 	WRITE_OID_FIELD(queryTableId);
 	WRITE_INT32_FIELD(scanType);
 	WRITE_UINT64_FIELD(itemPointerAsUint64);
+
+	char *targetStr;
+	if (node->indexContinuation != NULL)
+	{
+		PG_USED_FOR_ASSERTS_ONLY uint64_t targetLength;
+		int dataSize = VARSIZE_ANY_EXHDR(node->indexContinuation);
+		int requiredSize = dataSize * 2 + 1; /* each byte is represented by 2 hex chars, plus null terminator */
+		targetStr = (char *) palloc(requiredSize);
+		targetLength = hex_encode((char *) VARDATA_ANY(node->indexContinuation), dataSize,
+								  targetStr);
+		Assert(targetLength == (uint64_t) (requiredSize - 1));
+	}
+	else
+	{
+		targetStr = pstrdup("");
+	}
+	WRITE_STRING_FIELD_VALUE(continuation, targetStr);
+	pfree(targetStr);
 }
 
 
@@ -1071,6 +1319,7 @@ OutDynamicCursorInputContinuation(StringInfo str, const struct ExtensibleNode *r
 static void
 ReadDynamicCursorInputContinuation(struct ExtensibleNode *node)
 {
+	const char *continuationHex = NULL;
 	const char *token;
 	int length;
 	DynamicCursorInputContinuation *local_node = (DynamicCursorInputContinuation *) node;
@@ -1080,6 +1329,24 @@ ReadDynamicCursorInputContinuation(struct ExtensibleNode *node)
 	READ_OID_FIELD(queryTableId);
 	READ_INT32_FIELD(scanType);
 	READ_UINT64_FIELD(itemPointerAsUint64);
+	READ_STRING_FIELD_VALUE(continuationHex);
+
+	if (continuationHex != NULL && strlen(continuationHex) > 0)
+	{
+		PG_USED_FOR_ASSERTS_ONLY uint64 written;
+		length = strlen(continuationHex) / 2;
+		bytea *buffer = (bytea *) palloc(length + VARHDRSZ);
+		SET_VARSIZE(buffer, length + VARHDRSZ);
+
+		char *writePtr = VARDATA(buffer);
+		written = hex_decode(continuationHex, length, writePtr);
+		Assert(written == (uint64) length);
+		local_node->indexContinuation = buffer;
+	}
+	else
+	{
+		local_node->indexContinuation = NULL;
+	}
 }
 
 
@@ -1088,6 +1355,7 @@ WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 										 QueryScanType scanType)
 {
 	TupleTableSlot *planSlot = ps->ss_ScanTupleSlot;
+	bool hasTid = false;
 	if (ItemPointerIsValid(&planSlot->tts_tid))
 	{
 		/* ItemPointer is 6 bytes (4-byte BlockNumber + 2-byte OffsetNumber),
@@ -1095,6 +1363,7 @@ WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 		ItemPointer tuple = &planSlot->tts_tid;
 		uint64_t tupleValue = ItemPointerToUint64(tuple);
 		PgbsonWriterAppendInt64(writer, "tid", 3, tupleValue);
+		hasTid = true;
 	}
 
 	switch (scanType)
@@ -1138,7 +1407,43 @@ WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 		case QueryScanType_SecondaryIndexScan:
 		case QueryScanType_SecondaryIndexOnlyScan:
 		{
-			ereport(ERROR, (errmsg("Secondary index scans not yet supported")));
+			Oid indexOid;
+			IndexScanDesc scanDesc;
+			if (IsA(ps, IndexOnlyScanState))
+			{
+				IndexOnlyScanState *ioss = (IndexOnlyScanState *) ps;
+				indexOid = ioss->ioss_ScanDesc->indexRelation->rd_rel->oid;
+				scanDesc = ioss->ioss_ScanDesc;
+			}
+			else
+			{
+				IndexScanState *iss = (IndexScanState *) ps;
+				indexOid = iss->iss_ScanDesc->indexRelation->rd_rel->oid;
+				scanDesc = iss->iss_ScanDesc;
+			}
+
+			if (!hasTid)
+			{
+				/* Index only scans may not set it if it loaded from the index,
+				 * get it from the scanDesc.
+				 */
+				ItemPointer tuple = &scanDesc->xs_heaptid;
+				uint64_t tupleValue = ItemPointerToUint64(tuple);
+				PgbsonWriterAppendInt64(writer, "tid", 3, tupleValue);
+			}
+
+			const char *indexName = get_rel_name(indexOid);
+			PgbsonWriterAppendUtf8(writer, "idx", 3, indexName);
+
+			Datum currentKey = DocumentDBRumGetCurrentIndexKey(scanDesc);
+			bytea *buffer = DatumGetByteaP(currentKey);
+			bson_value_t bufferBinary = { 0 };
+			bufferBinary.value_type = BSON_TYPE_BINARY;
+			bufferBinary.value.v_binary.subtype = 0;
+			bufferBinary.value.v_binary.data = (uint8_t *) VARDATA_ANY(buffer);
+			bufferBinary.value.v_binary.data_len = VARSIZE_ANY_EXHDR(buffer);
+			PgbsonWriterAppendValue(writer, "sik", 3, &bufferBinary);
+			break;
 		}
 
 		case QueryScanType_SecondaryIndexBitmapOr:
@@ -1195,6 +1500,7 @@ ParseContinuationDocument(pgbson *continuation, ParsedContinuationState *state)
 
 	bson_iter_t reader;
 	bson_value_t pkContinuation = { 0 };
+	bson_value_t secondaryIndexContinuation = { 0 };
 	PgbsonInitIterator(continuation, &reader);
 
 	while (bson_iter_next(&reader))
@@ -1300,6 +1606,16 @@ ParseContinuationDocument(pgbson *continuation, ParsedContinuationState *state)
 				continue;
 			}
 
+			case 's':
+			{
+				if (strcmp(fieldName, "sik") == 0)
+				{
+					secondaryIndexContinuation = *bson_iter_value(&reader);
+				}
+
+				continue;
+			}
+
 			default:
 			{
 				continue;
@@ -1307,33 +1623,117 @@ ParseContinuationDocument(pgbson *continuation, ParsedContinuationState *state)
 		}
 	}
 
-	if (state->scanType == QueryScanType_PrimaryKeyScan)
+	switch (state->scanType)
 	{
-		if (pkContinuation.value_type != BSON_TYPE_DOCUMENT)
+		case QueryScanType_PrimaryKeyScan:
 		{
-			ereport(ERROR, (errmsg(
-								"Invalid continuation provided - primary key continuation must be a document")));
+			if (pkContinuation.value_type != BSON_TYPE_DOCUMENT)
+			{
+				ereport(ERROR, (errmsg(
+									"Invalid continuation provided - primary key continuation must be a document")));
+			}
+
+			bson_iter_t pkReader;
+			BsonValueInitIterator(&pkContinuation, &pkReader);
+			while (bson_iter_next(&pkReader))
+			{
+				const char *pkFieldName = bson_iter_key(&pkReader);
+				if (strcmp(pkFieldName, "sk") == 0)
+				{
+					Datum shardKeyDatum = Int64GetDatum(bson_iter_int64(&pkReader));
+					state->cursorDatums[0] = shardKeyDatum;
+				}
+				else if (strcmp(pkFieldName, "id") == 0)
+				{
+					pgbson *objectId = PgbsonInitFromDocumentBsonValue(bson_iter_value(
+																		   &pkReader));
+					Datum objectIdDatum = PointerGetDatum(objectId);
+					state->cursorDatums[1] = objectIdDatum;
+				}
+			}
+
+			break;
 		}
 
-		bson_iter_t pkReader;
-		BsonValueInitIterator(&pkContinuation, &pkReader);
-		while (bson_iter_next(&pkReader))
+		case QueryScanType_SecondaryIndexScan:
+		case QueryScanType_SecondaryIndexOnlyScan:
 		{
-			const char *pkFieldName = bson_iter_key(&pkReader);
-			if (strcmp(pkFieldName, "sk") == 0)
+			if (secondaryIndexContinuation.value_type != BSON_TYPE_BINARY)
 			{
-				Datum shardKeyDatum = Int64GetDatum(bson_iter_int64(&pkReader));
-				state->cursorDatums[0] = shardKeyDatum;
+				ereport(ERROR, (errmsg(
+									"Invalid continuation provided - secondary index continuation must be binary")));
 			}
-			else if (strcmp(pkFieldName, "id") == 0)
-			{
-				pgbson *objectId = PgbsonInitFromDocumentBsonValue(bson_iter_value(
-																	   &pkReader));
-				Datum objectIdDatum = PointerGetDatum(objectId);
-				state->cursorDatums[1] = objectIdDatum;
-			}
+
+			bytea *buffer = palloc(secondaryIndexContinuation.value.v_binary.data_len +
+								   VARHDRSZ);
+			SET_VARSIZE(buffer, secondaryIndexContinuation.value.v_binary.data_len +
+						VARHDRSZ);
+			memcpy(VARDATA(buffer), secondaryIndexContinuation.value.v_binary.data,
+				   secondaryIndexContinuation.value.v_binary.data_len);
+			Datum currentKey = PointerGetDatum(buffer);
+			state->cursorDatums[0] = currentKey;
+			break;
+		}
+
+		default:
+		{
+			break;
 		}
 	}
+}
+
+
+static Path *
+PlanWithIndexAndGetPath(PlannerInfo *root, RelOptInfo *rel,
+						ParsedContinuationState *state)
+{
+	List *indexList = NIL;
+	ListCell *indexCell;
+	foreach(indexCell, rel->indexlist)
+	{
+		IndexOptInfo *index = lfirst_node(IndexOptInfo, indexCell);
+		if (list_member_oid(state->indexOids, index->indexoid))
+		{
+			indexList = lappend(indexList, index);
+		}
+	}
+
+	if (indexList == NIL)
+	{
+		if (state->indexOids == NIL)
+		{
+			ereport(ERROR, (errmsg(
+								"Continuation document is missing index information for bitmap scan")));
+		}
+		else
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
+							errmsg("Cannot find indexes for continuation with index")));
+		}
+	}
+
+	List *origIndexList = rel->indexlist;
+	List *origPathList = rel->pathlist;
+	rel->indexlist = indexList;
+	rel->pathlist = NIL;
+
+	create_index_paths(root, rel);
+
+	if (rel->pathlist == NIL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
+						errmsg(
+							"Cannot find path for index for continuation with index OID")));
+	}
+
+	/* Save the newly generated paths before restoring the original lists,
+	 * otherwise we'd read from the restored origPathList instead of the
+	 * paths created by create_index_paths. */
+	Path *finalPath = (Path *) linitial(rel->pathlist);
+
+	rel->indexlist = origIndexList;
+	rel->pathlist = origPathList;
+	return finalPath;
 }
 
 
@@ -1367,6 +1767,17 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 					if (IsBtreePrimaryKeyIndex(indexPath->indexinfo))
 					{
 						existingPkPath = indexPath;
+						break;
+					}
+				}
+				else if (currentPath->pathtype == T_BitmapHeapScan)
+				{
+					BitmapHeapPath *bitmapHeapPath = (BitmapHeapPath *) currentPath;
+					if (IsA(bitmapHeapPath->bitmapqual, IndexPath) &&
+						IsBtreePrimaryKeyIndex(
+							((IndexPath *) bitmapHeapPath->bitmapqual)->indexinfo))
+					{
+						existingPkPath = (IndexPath *) bitmapHeapPath->bitmapqual;
 						break;
 					}
 				}
@@ -1448,16 +1859,113 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 		case QueryScanType_SecondaryIndexOnlyScan:
 		case QueryScanType_SecondaryIndexScan:
 		{
-			ereport(ERROR, (errmsg(
-								"Unsupported secondary index continuation scantype for continuation %d",
-								state->scanType)));
+			/* Similar to index hints, here we set the index list to just the one with
+			 * the index specified, and then build a bitmap heap path. We also set the TID
+			 * in the continuation so that we can skip to the right page in the bitmap heap scan.
+			 */
+			inputContinuation->itemPointerAsUint64 = ItemPointerToUint64(
+				&state->userContinuationState);
+			inputContinuation->indexContinuation = DatumGetByteaP(state->cursorDatums[0]);
+			if (state->tableOid != inputContinuation->queryTableId)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
+								errmsg(
+									"Cannot resume a secondary index scan since the table ID has changed.")));
+			}
+
+			ListCell *cell;
+			IndexPath *resumePath = NULL;
+			foreach(cell, rel->pathlist)
+			{
+				Path *currentPath = lfirst(cell);
+				if (currentPath->pathtype == T_IndexScan ||
+					currentPath->pathtype == T_IndexOnlyScan)
+				{
+					IndexPath *indexPath = (IndexPath *) currentPath;
+					if (list_member_oid(state->indexOids, indexPath->indexinfo->indexoid))
+					{
+						resumePath = indexPath;
+						break;
+					}
+				}
+				else if (currentPath->pathtype == T_BitmapHeapScan)
+				{
+					BitmapHeapPath *bitmapHeapPath = (BitmapHeapPath *) currentPath;
+					if (IsA(bitmapHeapPath->bitmapqual, IndexPath) &&
+						list_member_oid(state->indexOids,
+										((IndexPath *) bitmapHeapPath->bitmapqual)->
+										indexinfo->indexoid))
+					{
+						resumePath = (IndexPath *) bitmapHeapPath->bitmapqual;
+						break;
+					}
+				}
+			}
+
+			if (resumePath == NULL)
+			{
+				/* Here we need to plan a path that uses this index with that continuation */
+				Path *finalPath = PlanWithIndexAndGetPath(root, rel, state);
+				if (finalPath == NULL)
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
+									errmsg(
+										"Cannot find path for index for continuation with index")));
+				}
+
+				if (IsA(finalPath, BitmapHeapPath))
+				{
+					BitmapHeapPath *bitmapHeapPath = (BitmapHeapPath *) finalPath;
+					if (!IsA(bitmapHeapPath->bitmapqual, IndexPath))
+					{
+						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
+										errmsg(
+											"Expected bitmap heap path to be qualified by an index path for continuation with index")));
+					}
+
+					resumePath = (IndexPath *) bitmapHeapPath->bitmapqual;
+				}
+				else if (IsA(finalPath, IndexPath))
+				{
+					resumePath = (IndexPath *) finalPath;
+				}
+				else
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED), errmsg(
+										"Expected path to be either an index path or a bitmap heap path for continuation with index")));
+				}
+			}
+
+			/* Here we need to add the operators to skip based on continuation */
+			AddContinuationQualsToIndexPath(root, rel, resumePath, state);
+
+			/* Note: The query can change state across continuations (what started as an indexonlyscan
+			 * can become indexscans and vice versa. Allow this to happen as writes happen since
+			 * truncation state or addition of multikeys can change viability of indexonlyscan.
+			 * Similarly, if the index loses arrays, it can become eligible for IXOS after a vacuum.
+			 */
+			if (resumePath->path.pathtype == T_IndexOnlyScan)
+			{
+				state->scanType = QueryScanType_SecondaryIndexOnlyScan;
+			}
+			else
+			{
+				state->scanType = QueryScanType_SecondaryIndexScan;
+				AddOrderByRequiredClausesIfNecessary(resumePath, root, rel);
+			}
+
+			inputContinuation->scanType = state->scanType;
+			return (Path *) CreateCustomScanPathForStreaming(root, rel,
+															 (Path *) resumePath,
+															 inputContinuation,
+															 baseRelPathTarget);
 		}
 
 		case QueryScanType_SecondaryIndexBitmapScan:
 		case QueryScanType_SecondaryIndexBitmapAnd:
 		case QueryScanType_SecondaryIndexBitmapOr:
 		{
-			/* Similar to index hints, here we set teh index list to just the one with
+			/* Similar to index hints, here we set the index list to just the one with
 			 * the index specified, and then build a bitmap heap path. We also set the TID
 			 * in the continuation so that we can skip to the right page in the bitmap heap scan.
 			 */
@@ -1536,52 +2044,7 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 			}
 
 			/* If we got here, we didn't find a bitmap or index path already created */
-			List *indexList = NIL;
-			foreach(indexCell, rel->indexlist)
-			{
-				IndexOptInfo *index = lfirst_node(IndexOptInfo, indexCell);
-				if (list_member_oid(state->indexOids, index->indexoid))
-				{
-					indexList = lappend(indexList, index);
-				}
-			}
-
-			if (indexList == NIL)
-			{
-				if (state->indexOids == NIL)
-				{
-					ereport(ERROR, (errmsg(
-										"Continuation document is missing index information for bitmap scan")));
-				}
-				else
-				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED), errmsg(
-										"Cannot find indexes for continuation with index OID %d",
-										linitial_oid(state->indexOids))));
-				}
-			}
-
-			List *origIndexList = rel->indexlist;
-			List *origPathList = rel->pathlist;
-			rel->indexlist = indexList;
-			rel->pathlist = NIL;
-
-			create_index_paths(root, rel);
-
-			if (rel->pathlist == NIL)
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED), errmsg(
-									"Cannot find path for index for continuation with index OID %d",
-									linitial_oid(state->indexOids))));
-			}
-
-			/* Save the newly generated paths before restoring the original lists,
-			 * otherwise we'd read from the restored origPathList instead of the
-			 * paths created by create_index_paths. */
-			Path *finalPath = (Path *) linitial(rel->pathlist);
-
-			rel->indexlist = origIndexList;
-			rel->pathlist = origPathList;
+			Path *finalPath = PlanWithIndexAndGetPath(root, rel, state);
 			if (IsA(finalPath, BitmapHeapPath))
 			{
 				return (Path *) CreateCustomScanPathForStreaming(root, rel,
@@ -1604,8 +2067,7 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 			}
 
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED), errmsg(
-								"Cannot create valid bitmap path for index for continuation with index OID %d",
-								linitial_oid(state->indexOids))));
+								"Cannot create valid bitmap path for index for continuation with index")));
 		}
 
 		default:
@@ -1614,4 +2076,95 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 								   state->scanType)));
 		}
 	}
+}
+
+
+inline static IndexClause *
+MakeSimpleIndexClause(PlannerInfo *root, OpExpr *expr)
+{
+	RestrictInfo *rinfo = make_simple_restrictinfo(root, (Expr *) expr);
+
+	IndexClause *iclause = makeNode(IndexClause);
+	iclause->rinfo = rinfo;
+	iclause->indexquals = list_make1(rinfo);
+	iclause->lossy = false;
+	iclause->indexcol = 0;
+	iclause->indexcols = NIL;
+	return iclause;
+}
+
+
+/*
+ * For index scans with an order by, we need to add the order by expressions
+ * as indexqual clauses on the path so that we enforce that the index does
+ * an ordered scan. Otherwise, the index layer may choose a fast/regular scan
+ * which may violate the assumptions made for ordered scans.
+ */
+static void
+AddOrderByRequiredClausesIfNecessary(IndexPath *indexPath, PlannerInfo *root,
+									 RelOptInfo *rel)
+{
+	if (indexPath->indexorderbys != NIL ||
+		indexPath->path.pathtype == T_IndexOnlyScan)
+	{
+		/* Already going to be an ordered scan */
+		return;
+	}
+
+	int8_t sortOrder = 0;
+	const char *firstPath = GetCompositeFirstIndexPathAndSortOrder(
+		indexPath->indexinfo->opclassoptions[0], &sortOrder);
+
+	int varlevelsup = 0;
+	Var *documentVar = makeVar(rel->relid, DOCUMENT_DATA_TABLE_DOCUMENT_VAR_ATTR_NUMBER,
+							   BsonTypeId(), DOCUMENT_DATA_TABLE_DOCUMENT_VAR_TYPMOD,
+							   DOCUMENT_DATA_TABLE_DOCUMENT_VAR_COLLATION, varlevelsup);
+	OpExpr *expr = CreateFullScanOpExpr((Expr *) documentVar, firstPath, strlen(
+											firstPath), sortOrder);
+
+	IndexClause *iclause = MakeSimpleIndexClause(root, expr);
+	indexPath->indexclauses = lappend(indexPath->indexclauses, iclause);
+}
+
+
+static void
+AddContinuationQualsToIndexPath(PlannerInfo *root, RelOptInfo *rel, IndexPath *resumePath,
+								ParsedContinuationState *state)
+{
+	if (state->cursorDatums[0] == (Datum) 0)
+	{
+		ereport(ERROR, (errmsg("Invalid continuation provided - missing cursor state")));
+	}
+
+	bytea *continuationBuffer = DatumGetByteaPP(state->cursorDatums[0]);
+
+	/* We add this as a min operator on this index */
+	const char *firstPath = GetCompositeFirstIndexPath(
+		resumePath->indexinfo->opclassoptions[0]);
+	pgbson_writer writer, childWriter;
+	PgbsonWriterInit(&writer);
+	PgbsonWriterStartDocument(&writer, firstPath, strlen(firstPath), &childWriter);
+
+	bson_value_t bufferValue = { 0 };
+	bufferValue.value_type = BSON_TYPE_BINARY;
+	bufferValue.value.v_binary.subtype = 0;
+	bufferValue.value.v_binary.data = (uint8_t *) continuationBuffer;
+	bufferValue.value.v_binary.data_len = VARSIZE_ANY(continuationBuffer);
+	PgbsonWriterAppendValue(&childWriter, "minIndexOp", 10, &bufferValue);
+	PgbsonWriterEndDocument(&writer, &childWriter);
+	pgbson *minIndexKeySpec = PgbsonWriterGetPgbson(&writer);
+
+	int varlevelsup = 0;
+	Var *documentVar = makeVar(rel->relid, DOCUMENT_DATA_TABLE_DOCUMENT_VAR_ATTR_NUMBER,
+							   BsonTypeId(), DOCUMENT_DATA_TABLE_DOCUMENT_VAR_TYPMOD,
+							   DOCUMENT_DATA_TABLE_DOCUMENT_VAR_COLLATION, varlevelsup);
+	OpExpr *rangeExpr = (OpExpr *) make_opclause(BsonRangeMatchOperatorOid(), BOOLOID,
+												 false,
+												 (Expr *) documentVar,
+												 (Expr *) MakeBsonConst(minIndexKeySpec),
+												 InvalidOid, InvalidOid);
+	rangeExpr->opfuncid = BsonRangeMatchFunctionId();
+
+	IndexClause *iclause = MakeSimpleIndexClause(root, rangeExpr);
+	resumePath->indexclauses = lappend(resumePath->indexclauses, iclause);
 }

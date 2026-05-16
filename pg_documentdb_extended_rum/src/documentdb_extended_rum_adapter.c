@@ -55,6 +55,10 @@ extern PGDLLIMPORT bool can_documentdb_rum_index_scan_ordered(IndexScanDesc scan
 extern PGDLLIMPORT Datum documentdb_rumhandler(PG_FUNCTION_ARGS);
 extern PGDLLIMPORT bool documentdb_rum_get_multi_key_status(Relation indexRelation);
 extern PGDLLIMPORT void documentdb_rum_update_multi_key_status(Relation indexRelation);
+extern PGDLLIMPORT Datum documentdb_rum_get_current_index_key(struct
+															  IndexScanDescData *scan);
+extern PGDLLIMPORT void documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan,
+																  BlockNumber block);
 
 /* Static Globals */
 static BsonIndexAmEntry DocumentDBIndexAmEntry = {
@@ -80,6 +84,8 @@ static BsonIndexAmEntry DocumentDBIndexAmEntry = {
 	.can_order_in_index_scans = can_documentdb_rum_index_scan_ordered,
 	.supports_ordered_operator_scans = true,
 	.create_indexes_support_funcs = NULL,
+	.get_current_index_key = documentdb_rum_get_current_index_key,
+	.skip_tids_on_current_entry = documentdb_rum_skip_tids_on_current_entry,
 };
 static DocumentDBRumOidCacheData Cache = { 0 };
 static bool has_custom_routine = false;

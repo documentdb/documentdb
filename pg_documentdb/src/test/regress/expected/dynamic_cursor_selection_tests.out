@@ -1,3 +1,93 @@
+-- ============================================================================
+-- Dynamic Cursor Selection Tests
+-- ============================================================================
+--
+-- This test validates which query shapes are streamable (use dynamic cursors)
+-- vs non-streamable (use persistent cursors). The table below summarizes all
+-- scenarios and their current/desired streamability status.
+--
+-- Legend:
+--   Streamable     = uses DocumentDBApiCursorScan (dynamic cursor)
+--   Non-streamable = uses DocumentDBApiScan (persistent cursor)
+--   TODO           = currently non-streamable, but should be made streamable
+--
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+-- | Scenario | Description                              | Status          | Notes                                    |
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+-- | 1        | Simple find (no filter)                  | Streamable      |                                          |
+-- | 2        | Find with equality filter                | Streamable      |                                          |
+-- | 3        | Find with range filter                   | Streamable      |                                          |
+-- | 4        | Find with projection                    | Streamable      |                                          |
+-- | 5        | Find with filter + projection            | Streamable      |                                          |
+-- | 6        | Find with skip                           | Non-streamable  | TODO: track skip offset in continuation  |
+-- | 7        | Find with sort (indexed field)           | Non-streamable  | TODO: push sort to index                 |
+-- | 8        | Find with limit                          | Non-streamable  | TODO: track limit in continuation        |
+-- | 9        | Find with sort + limit                   | Non-streamable  | TODO: push sort to index                 |
+-- | 10       | Find with sort + skip + limit            | Non-streamable  | TODO: push sort to index                 |
+-- | 11       | Find with filter + skip                  | Non-streamable  | TODO: track skip offset in continuation  |
+-- | 12       | Find with filter + sort                  | Non-streamable  | TODO: push sort to index                 |
+-- | 13       | Find with filter + limit                 | Non-streamable  | TODO: track limit in continuation        |
+-- | 14       | Find with filter + sort + limit          | Non-streamable  | TODO: push sort to index                 |
+-- | 15       | Find with filter + skip + limit          | Non-streamable  | TODO: track skip/limit in continuation   |
+-- | 16       | Find with sort + skip (no limit)         | Non-streamable  | TODO: push sort to index                 |
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+--
+-- Aggregation Pipeline Stages:
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+-- | Stage    | Description                              | Status          | Notes                                    |
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+-- | $match   | Filter stage                             | Streamable      |                                          |
+-- | $addFlds | Add/compute fields                       | Streamable      |                                          |
+-- | $project | Field projection                         | Streamable      |                                          |
+-- | $set     | Set fields (alias of $addFields)         | Streamable      |                                          |
+-- | $unset   | Remove fields                            | Streamable      |                                          |
+-- | $replace | Replace root/with                        | Streamable      |                                          |
+-- | $unionW  | Union with another collection            | Streamable      |                                          |
+-- | $limit=1 | Single-row limit                         | Streamable      |                                          |
+-- | $skip=0  | No-op skip                               | Streamable      |                                          |
+-- | $limit>1 | Multi-row limit                          | Non-streamable  | TODO: track remaining limit              |
+-- | $skip>0  | Non-zero skip                            | Non-streamable  | TODO: track skip offset                  |
+-- | $sort    | Sort stage                               | Non-streamable  | TODO: push sort to index                 |
+-- | $group   | Group/aggregate stage                    | Non-streamable  | TODO: index-pushed distinct-style group  |
+-- | $sortGrp | $sort + $group optimization              | Non-streamable  | TODO: push sort+group to index           |
+-- | $unwind  | Array unwind                             | Non-streamable  |                                          |
+-- | $lookup  | Join with another collection             | Non-streamable  |                                          |
+-- | $bucket  | Bucket grouping                          | Non-streamable  |                                          |
+-- | $sortCnt | Sort by count                            | Non-streamable  |                                          |
+-- | $sample  | Random sample                            | Non-streamable  |                                          |
+-- | $count   | Count documents                          | Non-streamable  |                                          |
+-- | $facet   | Multi-faceted aggregation                | Non-streamable  |                                          |
+-- | $redact  | Field-level redaction                    | Non-streamable  |                                          |
+-- | $bktAuto | Auto-bucketing                           | Non-streamable  |                                          |
+-- | $densify | Densify time series                      | Non-streamable  |                                          |
+-- | $fill    | Fill missing values                      | Non-streamable  |                                          |
+-- | $graphLk | Graph lookup                             | Non-streamable  |                                          |
+-- | $setWFld | Set window fields                        | Non-streamable  |                                          |
+-- | $collSts | Collection stats                         | Non-streamable  |                                          |
+-- | $docs    | Documents stage                          | Non-streamable  |                                          |
+-- | $inhibit | Inhibit optimization                     | Non-streamable  |                                          |
+-- | $search  | Vector/text search                       | Non-streamable  |                                          |
+-- | $vecSrch | Vector search                            | Non-streamable  |                                          |
+-- | $geoNear | Geospatial near                          | Non-streamable  |                                          |
+-- | $idxStat | Index statistics                         | Non-streamable  |                                          |
+-- | $merge   | Merge output                             | Non-streamable  |                                          |
+-- | $out     | Output to collection                     | Non-streamable  |                                          |
+-- | $lkpUnwd | Lookup + unwind optimization             | Non-streamable  |                                          |
+-- | $currOp  | Current operations (admin)               | Non-streamable  |                                          |
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+--
+-- Combined Pipeline Stages:
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+-- | Combo    | Description                              | Status          | Notes                                    |
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+-- | m+addF   | $match + $addFields                      | Streamable      |                                          |
+-- | p+unset  | $project + $unset                        | Streamable      |                                          |
+-- | m+sort   | $match + $sort                           | Non-streamable  | TODO: push sort to index                 |
+-- | m+group  | $match + $group                          | Non-streamable  | TODO: push group to index                |
+-- | m+skip   | $match + $skip                           | Non-streamable  | TODO: track skip in continuation         |
+-- | m+limit  | $match + $limit (limit>1)                | Non-streamable  | TODO: track limit in continuation        |
+-- | m+s+lim  | $match + $sort + $limit                  | Non-streamable  | TODO: push sort to index                 |
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
 SET search_path TO documentdb_api_catalog, documentdb_api, documentdb_core, public;
 SET documentdb.next_collection_id TO 2600;
 SET documentdb.next_collection_index_id TO 2600;
@@ -55,10 +145,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 --------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: document
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll" }');
@@ -79,10 +171,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 -----------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: document
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": 1 } }');
@@ -103,10 +197,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 -----------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: document
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
          Filter: (collection.document @> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": { "$gt": 1 } } }');
@@ -127,10 +223,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "projection": { "a": 1 } }');
@@ -151,10 +249,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "b" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": 1 }, "projection": { "b": 1 } }');
@@ -169,6 +269,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 (6 rows)
 
 -- Scenario 6: Find with skip only (non-streamable)
+-- TODO: skip should be streamable with dynamic cursors when the skip offset
+-- can be tracked in the continuation state.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "skip": 2 }');
                          QUERY PLAN                          
@@ -190,6 +292,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 (4 rows)
 
 -- Scenario 7: Find with sort only (non-streamable)
+-- TODO: sort on an indexed field should be streamable with dynamic cursors
+-- when the sort order matches the index order (index-pushed sort).
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "sort": { "a": 1 } }');
                                               QUERY PLAN                                               
@@ -213,6 +317,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 (5 rows)
 
 -- Scenario 8: Find with limit only (non-streamable)
+-- TODO: limit should be streamable with dynamic cursors when the limit count
+-- can be tracked in the continuation state.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "limit": 3 }');
                          QUERY PLAN                          
@@ -234,6 +340,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 (4 rows)
 
 -- Scenario 9: Find with sort + limit (non-streamable)
+-- TODO: sort + limit should be streamable when the sort is pushed to an index.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "sort": { "a": 1 }, "limit": 2 }');
                                                  QUERY PLAN                                                  
@@ -261,6 +368,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 (7 rows)
 
 -- Scenario 10: Find with sort + skip + limit (non-streamable)
+-- TODO: sort + skip + limit should be streamable when the sort is pushed to an index.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "sort": { "a": 1 }, "skip": 1, "limit": 2 }');
                                                  QUERY PLAN                                                  
@@ -288,6 +396,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 (7 rows)
 
 -- Scenario 11: Find with filter + skip (non-streamable)
+-- TODO: filter + skip should be streamable when skip offset is tracked in continuation.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": 1 }, "skip": 1 }');
                                     QUERY PLAN                                     
@@ -311,6 +420,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
 (5 rows)
 
 -- Scenario 12: Find with filter + sort (non-streamable)
+-- TODO: filter + sort should be streamable when the sort is pushed to an index.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": { "$gt": 1 } }, "sort": { "a": 1 } }');
                                               QUERY PLAN                                               
@@ -334,6 +444,116 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
          Output: document, bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)
          Filter: (collection.document @> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (6 rows)
+
+-- Scenario 13: Find with filter + limit (non-streamable)
+-- TODO: filter + limit should be streamable when the limit count is tracked
+-- in the continuation state.
+SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": { "$gte": 1 } }, "limit": 3 }');
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
+ Limit
+   Output: document
+   ->  Seq Scan on documentdb_data.documents_2601 collection
+         Output: document
+         Filter: (collection.document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+(5 rows)
+
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": { "$gte": 1 } }, "limit": 3 }');
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
+ Limit
+   Output: document
+   ->  Seq Scan on documentdb_data.documents_2601 collection
+         Output: document
+         Filter: (collection.document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+(5 rows)
+
+-- Scenario 14: Find with filter + sort + limit (non-streamable)
+-- TODO: filter + sort + limit should be streamable when the sort is pushed
+-- to an index and limit is tracked in the continuation state.
+SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": { "$gte": 1 } }, "sort": { "a": -1 }, "limit": 2 }');
+                                                      QUERY PLAN                                                       
+-----------------------------------------------------------------------------------------------------------------------
+ Limit
+   Output: document, (bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson))
+   ->  Sort
+         Output: document, (bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson))
+         Sort Key: (bson_orderby(collection.document, '{ "a" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+         ->  Seq Scan on documentdb_data.documents_2601 collection
+               Output: document, bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson)
+               Filter: (collection.document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+(8 rows)
+
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": { "$gte": 1 } }, "sort": { "a": -1 }, "limit": 2 }');
+                                                      QUERY PLAN                                                       
+-----------------------------------------------------------------------------------------------------------------------
+ Limit
+   Output: document, (bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson))
+   ->  Sort
+         Output: document, (bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson))
+         Sort Key: (bson_orderby(collection.document, '{ "a" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+         ->  Seq Scan on documentdb_data.documents_2601 collection
+               Output: document, bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson)
+               Filter: (collection.document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+(8 rows)
+
+-- Scenario 15: Find with filter + skip + limit (non-streamable)
+-- TODO: filter + skip + limit should be streamable when skip and limit are
+-- tracked in the continuation state.
+SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": 1 }, "skip": 1, "limit": 2 }');
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Limit
+   Output: document
+   ->  Seq Scan on documentdb_data.documents_2601 collection
+         Output: document
+         Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+(5 rows)
+
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": 1 }, "skip": 1, "limit": 2 }');
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Limit
+   Output: document
+   ->  Seq Scan on documentdb_data.documents_2601 collection
+         Output: document
+         Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+(5 rows)
+
+-- Scenario 16: Find with sort + skip (non-streamable)
+-- TODO: sort + skip should be streamable when the sort is pushed to an index
+-- and skip offset is tracked in the continuation state.
+SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "sort": { "a": 1 }, "skip": 2 }');
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Limit
+   Output: document, (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson))
+   ->  Sort
+         Output: document, (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+         ->  Seq Scan on documentdb_data.documents_2601 collection
+               Output: document, bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
+
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "sort": { "a": 1 }, "skip": 2 }');
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Limit
+   Output: document, (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson))
+   ->  Sort
+         Output: document, (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+         ->  Seq Scan on documentdb_data.documents_2601 collection
+               Output: document, bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
 
 ------------------------------------------------------------
 -- Query output correctness tests with dynamic cursors enabled.
@@ -404,10 +624,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -----------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: document
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": 1 } }], "cursor": {} }');
@@ -428,10 +650,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: documentdb_api_internal.bson_dollar_add_fields(document, '{ "c" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$addFields": { "c": 1 } }], "cursor": {} }');
@@ -452,10 +676,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: documentdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$project": { "a": 1 } }], "cursor": {} }');
@@ -476,10 +702,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: documentdb_api_internal.bson_dollar_add_fields(document, '{ "d" : "val" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$set": { "d": "val" } }], "cursor": {} }');
@@ -500,10 +728,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -----------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project(document, '{ "b" : { "$numberInt" : "0" } }'::bson)
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$unset": "b" }], "cursor": {} }');
@@ -524,10 +754,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: documentdb_api_internal.bson_dollar_replace_root(document, '{ "newRoot" : { "val" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$replaceRoot": { "newRoot": { "val": "$a" } } }], "cursor": {} }');
@@ -548,10 +780,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: documentdb_api_internal.bson_dollar_replace_root(document, '{ "newRoot" : { "val" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$replaceWith": { "val": "$a" } }], "cursor": {} }');
@@ -577,10 +811,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: document
    ->  Custom Scan (DocumentDBApiCursorScan)
          Output: document
+         scanType: Primary Key Scan
+         indexName: _id_
          ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
                Output: shard_key_value, object_id, document
                Filter: (collection.shard_key_value = '2601'::bigint)
-(7 rows)
+(9 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$limit": 1 }], "cursor": {} }');
@@ -593,6 +829,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 (4 rows)
 
 -- Stage: $limit with limit>1 (non-streamable - RequiresPersistentCursorLimit returns true)
+-- TODO: $limit with limit>1 should be streamable when the remaining limit count
+-- is tracked in the continuation state.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$limit": 5 }], "cursor": {} }');
                          QUERY PLAN                          
@@ -620,10 +858,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 --------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: document
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$skip": 0 }], "cursor": {} }');
@@ -638,6 +878,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 (6 rows)
 
 -- Stage: $skip with skip>0 (non-streamable - RequiresPersistentCursorSkip returns true)
+-- TODO: $skip with skip>0 should be streamable when the skip offset is tracked
+-- in the continuation state.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$skip": 2 }], "cursor": {} }');
                          QUERY PLAN                          
@@ -659,6 +901,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 (4 rows)
 
 -- Stage: $sort (non-streamable - RequiresPersistentCursorTrue)
+-- TODO: $sort should be streamable when the sort order matches an index
+-- (index-pushed sort).
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sort": { "a": 1 } }], "cursor": {} }');
                                               QUERY PLAN                                               
@@ -682,6 +926,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 (5 rows)
 
 -- Stage: $group (non-streamable - RequiresPersistentCursorTrue)
+-- TODO: $group should be streamable when the group key matches an index
+-- (index-pushed distinct-style group).
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$group": { "_id": "$a", "count": { "$sum": 1 } } }], "cursor": {} }');
                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                
@@ -904,10 +1150,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: documentdb_api_internal.bson_dollar_redact(document, '{ }'::bson, '$$KEEP'::text, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$redact": "$$KEEP" }], "cursor": {} }');
@@ -1223,10 +1471,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: documentdb_api_internal.bson_dollar_add_fields(document, '{ "c" : "new" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": 1 } }, { "$addFields": { "c": "new" } }], "cursor": {} }');
@@ -1241,6 +1491,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 (6 rows)
 
 -- Combined: $match + $sort (non-streamable due to $sort)
+-- TODO: $match + $sort should be streamable when the sort is pushed to an index.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": 1 } }, { "$sort": { "a": -1 } }], "cursor": {} }');
                                                    QUERY PLAN                                                    
@@ -1266,6 +1517,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 (6 rows)
 
 -- Combined: $match + $group (non-streamable due to $group)
+-- TODO: $match + $group should be streamable when the group key can be
+-- pushed to an index (index-pushed distinct-style group).
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": { "$gte": 1 } } }, { "$group": { "_id": "$a" } }], "cursor": {} }');
                                                                                                                                                                                QUERY PLAN                                                                                                                                                                               
@@ -1297,10 +1550,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project(documentdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "b" : { "$numberInt" : "0" } }'::bson)
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
          Filter: (collection.shard_key_value = '2601'::bigint)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$project": { "a": 1, "b": 1 } }, { "$unset": "b" }], "cursor": {} }');
@@ -1313,6 +1568,87 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          TID Cond: (collection.ctid >= '(0,0)'::tid)
          Filter: documentdb_api_internal.cursor_state(collection.document, '{ }'::bson)
 (6 rows)
+
+-- Combined: $match + $skip (non-streamable due to $skip)
+-- TODO: $match + $skip should be streamable when skip offset is tracked
+-- in the continuation state.
+SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": { "$gte": 1 } } }, { "$skip": 2 }], "cursor": {} }');
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
+ Limit
+   Output: document
+   ->  Seq Scan on documentdb_data.documents_2601 collection
+         Output: document
+         Filter: (collection.document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+(5 rows)
+
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": { "$gte": 1 } } }, { "$skip": 2 }], "cursor": {} }');
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
+ Limit
+   Output: document
+   ->  Seq Scan on documentdb_data.documents_2601 collection
+         Output: document
+         Filter: (collection.document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+(5 rows)
+
+-- Combined: $match + $limit with limit>1 (non-streamable due to $limit)
+-- TODO: $match + $limit should be streamable when the remaining limit count
+-- is tracked in the continuation state.
+SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": { "$gte": 1 } } }, { "$limit": 3 }], "cursor": {} }');
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
+ Limit
+   Output: document
+   ->  Seq Scan on documentdb_data.documents_2601 collection
+         Output: document
+         Filter: (collection.document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+(5 rows)
+
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": { "$gte": 1 } } }, { "$limit": 3 }], "cursor": {} }');
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
+ Limit
+   Output: document
+   ->  Seq Scan on documentdb_data.documents_2601 collection
+         Output: document
+         Filter: (collection.document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+(5 rows)
+
+-- Combined: $match + $sort + $limit (non-streamable due to $sort + $limit)
+-- TODO: $match + $sort + $limit should be streamable when the sort is pushed
+-- to an index and limit is tracked in the continuation state.
+SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": { "$gte": 1 } } }, { "$sort": { "a": 1 } }, { "$limit": 2 }], "cursor": {} }');
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Limit
+   Output: document, (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson))
+   ->  Sort
+         Output: document, (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+         ->  Seq Scan on documentdb_data.documents_2601 collection
+               Output: document, bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)
+               Filter: (collection.document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+(8 rows)
+
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": { "$gte": 1 } } }, { "$sort": { "a": 1 } }, { "$limit": 2 }], "cursor": {} }');
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Limit
+   Output: document, (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson))
+   ->  Sort
+         Output: document, (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson))
+         Sort Key: (bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+         ->  Seq Scan on documentdb_data.documents_2601 collection
+               Output: document, bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)
+               Filter: (collection.document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+(8 rows)
 
 -- ============================================================================
 -- Section 6: $search and $vectorSearch tests (require vector index)
@@ -1550,6 +1886,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Section 9: Internal combined stages and admin stages
 -- ============================================================================
 -- $sortGroup (internal optimization: $sort followed by $group) — non-streamable (RequiresPersistentCursorTrue)
+-- TODO: $sortGroup should be streamable when the sort+group can be pushed to an index.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sort": { "a": 1 } }, { "$group": { "_id": "$a", "count": { "$sum": 1 } } }], "cursor": {} }');
                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                
