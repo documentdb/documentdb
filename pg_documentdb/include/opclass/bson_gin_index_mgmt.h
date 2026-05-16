@@ -13,6 +13,7 @@
 
 #include "opclass/bson_gin_common.h"
 #include "access/reloptions.h"
+#include "nodes/primnodes.h"
 
 /*
  * Enum identifying the kind of index based on the options.
@@ -236,6 +237,8 @@ int32_t GetCompositeOpClassColumnNumber(const char *currentPath, void *contextOp
 
 int32_t GetCompositeOpClassPathCount(void *contextOptions);
 const char * GetCompositeFirstIndexPath(void *contextOptions);
+const char * GetCompositeFirstIndexPathAndSortOrder(void *contextOptions,
+													int8_t *sortOrder);
 const char * GetFirstPathFromIndexOptionsIfApplicable(bytea *indexOptions,
 													  bool *isWildcardIndex);
 bool PathHasArrayIndexElements(const StringView *path);
@@ -246,6 +249,8 @@ bool TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct
 										PlannerInfo *root, bool *canSupportIndexOnlyScan);
 List * ExtractBoundaryQualsForOrderedIndexPath(struct IndexPath *indexPath,
 											   int *num_sa_scans);
+OpExpr * CreateFullScanOpExpr(Expr *documentExpr, const char *sourcePath, uint32_t
+							  sourcePathLength, int32_t orderByScanDirection);
 
 /* Helper macro to retrieve a length prefixed value in the index options */
 #define Get_Index_Path_Option(options, field, result, resultFieldLength) \

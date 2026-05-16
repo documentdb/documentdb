@@ -36,8 +36,10 @@ PREPARE drain_find_query_continuation(bson, bson) AS
 -- ===========================================================================
 -- Test 1: EXPLAIN first page - PK cursor scan wraps query under DocumentDBApiCursorScan
 -- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "batchSize": 3 }');
-                                                                                  QUERY PLAN                                                                                  
+$cmd$);
+                                                                             run_explain_and_trim                                                                             
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on documentdb_data.documents_9201 collection
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -49,8 +51,10 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dync
 -- ===========================================================================
 -- Test 2: EXPLAIN with _id range filter
 -- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "filter": { "_id": { "$gt": 3, "$lt": 8 }}, "batchSize": 1 }');
-                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                
+$cmd$);
+                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                           
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan using _id_ on documentdb_data.documents_9201 collection
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$gt" : { "$numberInt" : "3" }, "$lt" : { "$numberInt" : "8" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -83,16 +87,20 @@ SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1, "cursor.id"
 -- ===========================================================================
 -- Test 4: EXPLAIN the getMore - should show DocumentDBApiCursorScan with PK scan and continuation
 -- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('dyncursordb',
-    '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 3 }', :'r1_continuation');
-                                                                                  QUERY PLAN                                                                                  
+    '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 3 }', $cmd$ || quote_literal(:'r1_continuation') || $cmd$::documentdb_core.bson);
+$cmd$);
+                                                                             run_explain_and_trim                                                                             
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
          Index Cond: ((collection.shard_key_value = '9201'::bigint) AND (collection.object_id >= '{ "" : { "$numberInt" : "3" } }'::bson))
-(5 rows)
+(7 rows)
 
 -- ===========================================================================
 -- Test 5: Full drain with batchSize=2 for first page, batchSize=1 for getMore
@@ -151,16 +159,20 @@ SELECT cp FROM firstPageResponse;
 (1 row)
 
 SELECT continuation AS r1_continuation FROM firstPageResponse \gset
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('dyncursordb',
-    '{ "getMore": { "$numberLong": "4294967294" }, "collection": "dyncursor_coll", "batchSize": 2 }', :'r1_continuation');
-                                                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                                                      
+    '{ "getMore": { "$numberLong": "4294967294" }, "collection": "dyncursor_coll", "batchSize": 2 }', $cmd$ || quote_literal(:'r1_continuation') || $cmd$::documentdb_core.bson);
+$cmd$);
+                                                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                                                 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$gt" : { "$numberInt" : "3" }, "$lt" : { "$numberInt" : "8" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
          Index Cond: ((collection.shard_key_value = '9201'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberInt" : "6" } }'::bson))
-(5 rows)
+(7 rows)
 
 -- Drain remaining rows after the first page
 SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1, "cursor.id": 1 }'), continuation FROM
@@ -188,8 +200,10 @@ EXECUTE drain_find_query('{ "find": "dyncursor_coll", "projection": { "_id": 1 }
 SET documentdb.enablePrimaryKeyCursorScan TO off;
 SET enable_indexscan TO off;
 SET enable_bitmapscan TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "batchSize": 3 }');
-                                                                                  QUERY PLAN                                                                                  
+$cmd$);
+                                                                             run_explain_and_trim                                                                             
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Seq Scan on documentdb_data.documents_9201 collection
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -212,15 +226,19 @@ EXECUTE drain_find_query('{ "find": "dyncursor_coll", "projection": { "_id": 1 }
 -- the aggregation query rewrite path also uses DocumentDBApiCursorScan
 -- ===========================================================================
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "batchSize": 3 }');
-                                                                                  QUERY PLAN                                                                                  
+$cmd$);
+                                                                             run_explain_and_trim                                                                             
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
          Index Cond: (collection.shard_key_value = '9201'::bigint)
-(5 rows)
+(7 rows)
 
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
 -- ===========================================================================
@@ -254,8 +272,10 @@ ANALYZE;
 -- ===========================================================================
 SET enable_indexscan TO off;
 SET enable_seqscan TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_coll", "filter": { "sk": 1 }, "projection": { "_id": 1 }, "batchSize": 2 }');
-                                                                                                 QUERY PLAN                                                                                                 
+$cmd$);
+                                                                                            run_explain_and_trim                                                                                            
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on documentdb_data.documents_9201 collection
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "sk" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -269,17 +289,22 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dync
 -- Should show DocumentDBApiCursorScan wrapping Bitmap Heap Scan
 -- ===========================================================================
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_coll", "filter": { "sk": 1 }, "projection": { "_id": 1 }, "batchSize": 2 }');
-                                                                                                    QUERY PLAN                                                                                                    
+$cmd$);
+                                                                                               run_explain_and_trim                                                                                               
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "sk" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Bitmap Heap Scan on documentdb_data.documents_9201 collection
+   scanType: Secondary Index Scan
+   indexName: sk_1
+   indexKey: {"sk": 1}
+   isMultiKey: false
+   indexBounds: ["sk": [1, 1]]
+   ->  Index Scan using sk_1 on documentdb_data.documents_9201 collection
          Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "sk" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         Recheck Cond: (collection.document @= '{ "sk" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on sk_1
-               Index Cond: (collection.document @= '{ "sk" : { "$numberInt" : "1" } }'::bson)
-(7 rows)
+         Index Cond: ((collection.document @= '{ "sk" : { "$numberInt" : "1" } }'::bson) AND (collection.document @<> '{ "sk" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+(10 rows)
 
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
 SET enable_indexscan TO on;
@@ -310,17 +335,21 @@ SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1, "cursor.id"
 -- ===========================================================================
 -- Test 15: EXPLAIN getMore with bitmap heap scan continuation
 -- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('dyncursordb',
-    '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 2 }', :'r1_continuation');
-                                                                                                 QUERY PLAN                                                                                                 
+    '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 2 }', $cmd$ || quote_literal(:'r1_continuation') || $cmd$::documentdb_core.bson);
+$cmd$);
+                                                                                            run_explain_and_trim                                                                                            
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "sk" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   scanType: Primary Key Scan
+   indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
          Index Cond: ((collection.shard_key_value = '9201'::bigint) AND (collection.object_id >= '{ "" : { "$numberInt" : "6" } }'::bson))
          Filter: (collection.document @= '{ "sk" : { "$numberInt" : "1" } }'::bson)
-(6 rows)
+(8 rows)
 
 -- ===========================================================================
 -- Test 16: Full drain with bitmap heap scan (sk=2, batchSize=1)
@@ -434,8 +463,10 @@ SET enable_seqscan TO off;
 -- x=5 (200 docs) AND y=3 (286 docs) => 28 docs via BitmapAnd
 -- Should show BitmapAnd with two Bitmap Index Scans
 -- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_bm_coll", "filter": { "x": 5, "y": 3 }, "projection": { "_id": 1 }, "batchSize": 2 }');
-                                                                                                               QUERY PLAN                                                                                                                
+$cmd$);
+                                                                                                          run_explain_and_trim                                                                                                           
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on documentdb_data.documents_9202 collection
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "x" : { "$numberInt" : "5" }, "y" : { "$numberInt" : "3" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -466,8 +497,10 @@ EXECUTE drain_bm_query('{ "find": "dyncursor_bm_coll", "filter": { "x": 5, "y": 
 -- Test 23: EXPLAIN bitmap AND with different values
 -- x=3 AND y=1 => should also produce BitmapAnd
 -- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_bm_coll", "filter": { "x": 3, "y": 1 }, "projection": { "_id": 1 }, "batchSize": 2 }');
-                                                                                                               QUERY PLAN                                                                                                                
+$cmd$);
+                                                                                                          run_explain_and_trim                                                                                                           
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on documentdb_data.documents_9202 collection
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "x" : { "$numberInt" : "3" }, "y" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -502,8 +535,10 @@ EXECUTE drain_bm_query('{ "find": "dyncursor_bm_coll", "filter": { "x": 3, "y": 
 -- Test 25: EXPLAIN bitmap OR across different indexes
 -- $or: [{x:5}, {y:3}] => BitmapOr with x_1 and y_1 index scans
 -- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_bm_coll", "filter": { "$or": [{ "x": 5 }, { "y": 3 }] }, "projection": { "_id": 1 }, "batchSize": 3 }');
-                                                                                                                         QUERY PLAN                                                                                                                          
+$cmd$);
+                                                                                                                    run_explain_and_trim                                                                                                                     
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on documentdb_data.documents_9202 collection
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "$or" : [ { "x" : { "$numberInt" : "5" } }, { "y" : { "$numberInt" : "3" } } ] }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -587,12 +622,23 @@ SELECT cp FROM firstPageResponse;
 
 SELECT continuation AS r1_continuation FROM firstPageResponse \gset
 -- EXPLAIN the getMore for bitmap OR continuation
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('dyncursordb',
-    '{ "getMore": { "$numberLong": "535" }, "collection": "dyncursor_bm_coll", "batchSize": 3 }', :'r1_continuation');
-                                                                                                                            QUERY PLAN                                                                                                                             
+    '{ "getMore": { "$numberLong": "535" }, "collection": "dyncursor_bm_coll", "batchSize": 3 }', $cmd$ || quote_literal(:'r1_continuation') || $cmd$::documentdb_core.bson);
+$cmd$);
+                                                                                                                       run_explain_and_trim                                                                                                                        
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "$or" : [ { "x" : { "$numberInt" : "0" } }, { "y" : { "$numberInt" : "0" } } ] }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   scanType: Secondary Index Bitmap OR Scan
+   indexName: x_1
+   indexKey: {"x": 1}
+   isMultiKey: false
+   indexBounds: ["x": [0, 0]]
+   indexName: y_1
+   indexKey: {"y": 1}
+   isMultiKey: false
+   indexBounds: ["y": [0, 0]]
    ->  Bitmap Heap Scan on documentdb_data.documents_9202 collection
          Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "$or" : [ { "x" : { "$numberInt" : "0" } }, { "y" : { "$numberInt" : "0" } } ] }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
          Recheck Cond: ((collection.document #= '{ "x" : { "$numberInt" : "0" } }'::bsonquery) OR (collection.document #= '{ "y" : { "$numberInt" : "0" } }'::bsonquery))
@@ -601,7 +647,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('d
                      Index Cond: (collection.document @= '{ "x" : { "$numberInt" : "0" } }'::bson)
                ->  Bitmap Index Scan on y_1
                      Index Cond: (collection.document @= '{ "y" : { "$numberInt" : "0" } }'::bson)
-(10 rows)
+(19 rows)
 
 -- getMore: fetch next batch
 SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1, "cursor.id": 1 }'), continuation IS NOT NULL as has_continuation FROM
@@ -627,12 +673,23 @@ SELECT cp FROM firstPageResponse;
 
 SELECT continuation AS r1_continuation FROM firstPageResponse \gset
 -- EXPLAIN the getMore for bitmap AND continuation
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('dyncursordb',
-    '{ "getMore": { "$numberLong": "535" }, "collection": "dyncursor_bm_coll", "batchSize": 3 }', :'r1_continuation');
-                                                                                                                  QUERY PLAN                                                                                                                   
+    '{ "getMore": { "$numberLong": "535" }, "collection": "dyncursor_bm_coll", "batchSize": 3 }', $cmd$ || quote_literal(:'r1_continuation') || $cmd$::documentdb_core.bson);
+$cmd$);
+                                                                                                             run_explain_and_trim                                                                                                              
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "x" : { "$numberInt" : "5" }, "y" : { "$numberInt" : "3" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   scanType: Secondary Index Bitmap AND Scan
+   indexName: y_1
+   indexKey: {"y": 1}
+   isMultiKey: false
+   indexBounds: ["y": [3, 3]]
+   indexName: x_1
+   indexKey: {"x": 1}
+   isMultiKey: false
+   indexBounds: ["x": [5, 5]]
    ->  Bitmap Heap Scan on documentdb_data.documents_9202 collection
          Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "x" : { "$numberInt" : "5" }, "y" : { "$numberInt" : "3" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
          Recheck Cond: ((collection.document @= '{ "y" : { "$numberInt" : "3" } }'::bson) AND (collection.document @= '{ "x" : { "$numberInt" : "5" } }'::bson))
@@ -641,7 +698,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('d
                      Index Cond: (collection.document @= '{ "y" : { "$numberInt" : "3" } }'::bson)
                ->  Bitmap Index Scan on x_1
                      Index Cond: (collection.document @= '{ "x" : { "$numberInt" : "5" } }'::bson)
-(10 rows)
+(19 rows)
 
 -- getMore: fetch remaining
 SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1, "cursor.id": 1 }'), continuation IS NOT NULL as has_continuation FROM

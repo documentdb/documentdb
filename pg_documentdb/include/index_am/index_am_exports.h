@@ -31,6 +31,9 @@ typedef void (*TryExplainIndexFunc)(struct IndexScanDescData *scan,
 typedef bool (*GetMultikeyStatusFunc)(Relation indexRelation);
 typedef bool (*GetTruncationStatusFunc)(Relation indexRelation);
 typedef bool (*CanOrderInIndexScan)(struct IndexScanDescData *scan);
+typedef Datum (*GetCurrentIndexKeyFunc)(struct IndexScanDescData *scan);
+typedef void (*SkipTidsOnCurrentEntryFunc)(struct IndexScanDescData *scan, BlockNumber
+										   blockNo);
 
 typedef struct CreateIndexesSupportFuncs CreateIndexesSupportFuncs;
 
@@ -82,6 +85,12 @@ typedef struct
 
 	/* Optional struct including create index support functions */
 	CreateIndexesSupportFuncs *create_indexes_support_funcs;
+
+	/* Optional function to get the current index key */
+	GetCurrentIndexKeyFunc get_current_index_key;
+
+	/* Optional function to skip TIDs on the current entry */
+	SkipTidsOnCurrentEntryFunc skip_tids_on_current_entry;
 } BsonIndexAmEntry;
 
 /*

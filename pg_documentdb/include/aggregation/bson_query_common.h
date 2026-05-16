@@ -30,6 +30,10 @@ typedef struct DollarRangeParams
 
 	bool isElemMatch;
 	bson_value_t elemMatchValue;
+
+	bool isMinIndexKey;
+	bool isMaxIndexKey;
+	bson_value_t minOrMaxIndexKey;
 } DollarRangeParams;
 
 DollarRangeParams * ParseQueryDollarRange(pgbsonelement *filterElement);

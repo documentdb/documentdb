@@ -70,10 +70,19 @@ typedef struct CompositeIndexBoundsSet
 	CompositeIndexBounds bounds[FLEXIBLE_ARRAY_MEMBER];
 } CompositeIndexBoundsSet;
 
+typedef struct CompositeRowBounds
+{
+	CompositeSingleBound bounds[INDEX_MAX_KEYS];
+} CompositeRowBounds;
+
 typedef struct VariableIndexBounds
 {
 	/* List of CompositeIndexBoundsSet */
 	List *variableBoundsList;
+
+	/* OPTIONAL: row level bounds that are applied to the query */
+	CompositeRowBounds *minBounds;
+	CompositeRowBounds *maxBounds;
 } VariableIndexBounds;
 
 /* A processed set of index bounds for a given path
@@ -198,6 +207,7 @@ void ParseOperatorStrategy(const char **indexPaths, uint32_t *indexPathLengths,
 						   int32_t numPaths, int32_t wildcardIndex,
 						   pgbsonelement *queryElement,
 						   BsonIndexStrategy queryStrategy,
+						   bool *requiresOrderedScans,
 						   VariableIndexBounds *indexBounds);
 
 void UpdateRunDataForVariableBounds(CompositeQueryRunData *runData,
@@ -208,6 +218,9 @@ void UpdateRunDataForVariableBounds(CompositeQueryRunData *runData,
 void UpdateRunDataForOrderedBounds(CompositeQueryRunData *runData,
 								   CompositeOrderedScanEntryData *orderedScanEntryData,
 								   int32_t *unsatisfiablePathIndex);
+void UpdateRunDataForMinMaxBounds(CompositeQueryRunData *runData,
+								  CompositeRowBounds *minBounds,
+								  CompositeRowBounds *maxBounds);
 
 bool TryUpdateBoundsForTruncation(CompositeQueryRunData *runData,
 								  IndexTermCreateMetadata *basePathMetadata,
