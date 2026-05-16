@@ -52,6 +52,8 @@ BsonIndexAmEntry RumIndexAmEntry = {
 	.can_order_in_index_scans = RumScanOrderedFalse,
 	.supports_ordered_operator_scans = false,
 	.create_indexes_support_funcs = NULL,
+	.get_current_index_key = NULL,
+	.skip_tids_on_current_entry = NULL,
 };
 
 /*
@@ -477,6 +479,46 @@ GetIndexSupportsBackwardsScan(Oid relam, bool *indexCanOrder)
 
 	*indexCanOrder = amEntry->is_order_by_supported;
 	return amEntry->is_backwards_scan_supported;
+}
+
+
+GetCurrentIndexKeyFunc
+GetIndexKeyCurrentKeyFunc(Oid relam, Oid opFamily)
+{
+	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relam);
+
+	if (amEntry == NULL)
+	{
+		return NULL;
+	}
+
+	if (amEntry->is_order_by_supported &&
+		amEntry->get_composite_path_op_family_oid() == opFamily)
+	{
+		return amEntry->get_current_index_key;
+	}
+
+	return NULL;
+}
+
+
+SkipTidsOnCurrentEntryFunc
+GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily)
+{
+	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relam);
+
+	if (amEntry == NULL)
+	{
+		return NULL;
+	}
+
+	if (amEntry->is_order_by_supported &&
+		amEntry->get_composite_path_op_family_oid() == opFamily)
+	{
+		return amEntry->skip_tids_on_current_entry;
+	}
+
+	return NULL;
 }
 
 

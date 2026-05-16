@@ -278,6 +278,20 @@ bool FailOnGroupIdDuplicate =
 #define DEFAULT_ENABLE_DELAYED_HOLD_PORTAL true
 bool EnableDelayedHoldPortal = DEFAULT_ENABLE_DELAYED_HOLD_PORTAL;
 
+/* Added in v112, enabled in v112, remove after v114 */
+#define DEFAULT_ENABLE_STREAMING_CURSOR_DRAIN_VIA_DESTRECEIVER true
+bool EnableStreamingCursorDrainViaDestReceiver =
+	DEFAULT_ENABLE_STREAMING_CURSOR_DRAIN_VIA_DESTRECEIVER;
+
+/* Added in v114, enabled in v114, remove after v120 */
+#define DEFAULT_ENABLE_RUM_CURSOR_DYNAMIC_INDEX_SCANS true
+bool EnableRumCursorDynamicIndexScans = DEFAULT_ENABLE_RUM_CURSOR_DYNAMIC_INDEX_SCANS;
+
+/* Added in v114, enabled in v114, remove after v120 */
+#define DEFAULT_ENABLE_RUM_DYNAMIC_INDEX_SCANS_SKIP_TO_TID true
+bool EnableRumDynamicIndexScansSkipToTid =
+	DEFAULT_ENABLE_RUM_DYNAMIC_INDEX_SCANS_SKIP_TO_TID;
+
 /* Added in v110, enabled in 110, remove after v113 */
 #define DEFAULT_ENABLE_DOLLAR_IN_TO_SCALAR_ARRAY_OP_EXPR_CONVERSION true
 bool EnableDollarInToScalarArrayOpExprConversion =
@@ -409,11 +423,6 @@ bool EnableDropInvalidIndexesOnReadOnly = DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ON
 #define DEFAULT_ENABLE_ONLY_COLLECTION_CACHE_INVALIDATE_ON_COLLECTION_CHANGES true
 bool EnableOnlyCollectionCacheInvalidateOnCollectionChanges =
 	DEFAULT_ENABLE_ONLY_COLLECTION_CACHE_INVALIDATE_ON_COLLECTION_CHANGES;
-
-/* Added in v112, enabled in v112, remove after v114 */
-#define DEFAULT_ENABLE_STREAMING_CURSOR_DRAIN_VIA_DESTRECEIVER true
-bool EnableStreamingCursorDrainViaDestReceiver =
-	DEFAULT_ENABLE_STREAMING_CURSOR_DRAIN_VIA_DESTRECEIVER;
 
 /* Added in v112, Pending stabilization, enable in v113 */
 #define DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION false
@@ -1103,6 +1112,22 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to use direct executor DestReceiver for streaming cursor drainage instead of SPI."),
 		NULL, &EnableStreamingCursorDrainViaDestReceiver,
 		DEFAULT_ENABLE_STREAMING_CURSOR_DRAIN_VIA_DESTRECEIVER,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableRumCursorDynamicIndexScans", newGucPrefix),
+		gettext_noop(
+			"Whether to enable dynamic index scans for RUM cursors."),
+		NULL, &EnableRumCursorDynamicIndexScans,
+		DEFAULT_ENABLE_RUM_CURSOR_DYNAMIC_INDEX_SCANS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableRumDynamicIndexScansSkipToTid", newGucPrefix),
+		gettext_noop(
+			"Whether to enable skipping to TID for dynamic index scans for RUM cursors."),
+		NULL, &EnableRumDynamicIndexScansSkipToTid,
+		DEFAULT_ENABLE_RUM_DYNAMIC_INDEX_SCANS_SKIP_TO_TID,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

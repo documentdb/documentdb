@@ -59,6 +59,11 @@ static void entryGetItemOrdered(RumState *rumstate, RumScanEntry entry,
 static void entryFindItem(RumState *rumstate, RumScanEntry entry, RumItem *item, Snapshot
 						  snapshot);
 
+extern PGDLLEXPORT Datum documentdb_rum_get_current_index_key(struct
+															  IndexScanDescData *scan);
+extern PGDLLEXPORT void documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan,
+																  BlockNumber block);
+
 /*
  * Extract key value for ordering.
  *
@@ -4879,4 +4884,81 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 	}
 
 	return false;
+}
+
+
+PGDLLEXPORT Datum
+documentdb_rum_get_current_index_key(IndexScanDesc scan)
+{
+	RumScanOpaque so = (RumScanOpaque) scan->opaque;
+	if (so->scanType != RumOrderedScan)
+	{
+		ereport(ERROR, (errmsg(
+							"documentdb_rum_get_current_index_key can only be called for ordered scans")));
+	}
+
+	Page page = so->orderByScanData->orderByEntryPageCopy;
+
+	OffsetNumber off = so->orderByScanData->orderStack->off;
+
+	/* Off would already be pointing to the next item */
+	off = off - so->orderScanDirection;
+
+	if (off < FirstOffsetNumber || off > PageGetMaxOffsetNumber(page))
+	{
+		return (Datum) 0;
+	}
+
+	ItemId itemId = PageGetItemId(page, off);
+	IndexTuple itup = (IndexTuple) PageGetItem(page, itemId);
+
+	RumNullCategory icategory;
+	Datum idatum = rumtuple_get_key(&so->rumstate, itup, &icategory);
+
+	return idatum;
+}
+
+
+PGDLLEXPORT void
+documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan, BlockNumber block)
+{
+	RumScanOpaque so = (RumScanOpaque) scan->opaque;
+	if (so->scanType != RumOrderedScan)
+	{
+		ereport(ERROR, (errmsg(
+							"documentdb_rum_skip_tids_on_current_entry can only be called for ordered scans")));
+	}
+
+	RumScanEntry entry = so->orderByScanData->orderByEntry;
+	if (entry->isFinished)
+	{
+		/* Current entry is finished - no need to move forward */
+		return;
+	}
+
+	RumItem targetItem = { 0 };
+	BlockIdSet(&targetItem.iptr.ip_blkid, block);
+	targetItem.iptr.ip_posid = 0;
+	targetItem.addInfoIsNull = true;
+
+	if (rumCompareItemPointers(&entry->curItem.iptr, &targetItem.iptr) >= 0)
+	{
+		/* Current item is after the target block - no need to move forward */
+		return;
+	}
+
+	while (!entry->isFinished &&
+		   rumCompareItemPointers(&entry->curItem.iptr, &targetItem.iptr) < 0)
+	{
+		/* Move forward until we reach the target block */
+		entryGetItemOrdered(&so->rumstate, so->orderByScanData->orderByEntry,
+							scan->xs_snapshot, &targetItem, so);
+	}
+
+	/* If we got here, we reached the target block (or could have exceeded it by 1 entry)
+	 * To handle the corner case where the current item is exactly where we need to be,
+	 * we rev offset back by one entry.
+	 */
+	entry->offset -= entry->scanDirection;
+	entry->isFinished = false;
 }

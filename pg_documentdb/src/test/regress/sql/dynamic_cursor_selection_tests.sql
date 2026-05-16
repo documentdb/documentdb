@@ -1,3 +1,94 @@
+-- ============================================================================
+-- Dynamic Cursor Selection Tests
+-- ============================================================================
+--
+-- This test validates which query shapes are streamable (use dynamic cursors)
+-- vs non-streamable (use persistent cursors). The table below summarizes all
+-- scenarios and their current/desired streamability status.
+--
+-- Legend:
+--   Streamable     = uses DocumentDBApiCursorScan (dynamic cursor)
+--   Non-streamable = uses DocumentDBApiScan (persistent cursor)
+--   TODO           = currently non-streamable, but should be made streamable
+--
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+-- | Scenario | Description                              | Status          | Notes                                    |
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+-- | 1        | Simple find (no filter)                  | Streamable      |                                          |
+-- | 2        | Find with equality filter                | Streamable      |                                          |
+-- | 3        | Find with range filter                   | Streamable      |                                          |
+-- | 4        | Find with projection                    | Streamable      |                                          |
+-- | 5        | Find with filter + projection            | Streamable      |                                          |
+-- | 6        | Find with skip                           | Non-streamable  | TODO: track skip offset in continuation  |
+-- | 7        | Find with sort (indexed field)           | Non-streamable  | TODO: push sort to index                 |
+-- | 8        | Find with limit                          | Non-streamable  | TODO: track limit in continuation        |
+-- | 9        | Find with sort + limit                   | Non-streamable  | TODO: push sort to index                 |
+-- | 10       | Find with sort + skip + limit            | Non-streamable  | TODO: push sort to index                 |
+-- | 11       | Find with filter + skip                  | Non-streamable  | TODO: track skip offset in continuation  |
+-- | 12       | Find with filter + sort                  | Non-streamable  | TODO: push sort to index                 |
+-- | 13       | Find with filter + limit                 | Non-streamable  | TODO: track limit in continuation        |
+-- | 14       | Find with filter + sort + limit          | Non-streamable  | TODO: push sort to index                 |
+-- | 15       | Find with filter + skip + limit          | Non-streamable  | TODO: track skip/limit in continuation   |
+-- | 16       | Find with sort + skip (no limit)         | Non-streamable  | TODO: push sort to index                 |
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+--
+-- Aggregation Pipeline Stages:
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+-- | Stage    | Description                              | Status          | Notes                                    |
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+-- | $match   | Filter stage                             | Streamable      |                                          |
+-- | $addFlds | Add/compute fields                       | Streamable      |                                          |
+-- | $project | Field projection                         | Streamable      |                                          |
+-- | $set     | Set fields (alias of $addFields)         | Streamable      |                                          |
+-- | $unset   | Remove fields                            | Streamable      |                                          |
+-- | $replace | Replace root/with                        | Streamable      |                                          |
+-- | $unionW  | Union with another collection            | Streamable      |                                          |
+-- | $limit=1 | Single-row limit                         | Streamable      |                                          |
+-- | $skip=0  | No-op skip                               | Streamable      |                                          |
+-- | $limit>1 | Multi-row limit                          | Non-streamable  | TODO: track remaining limit              |
+-- | $skip>0  | Non-zero skip                            | Non-streamable  | TODO: track skip offset                  |
+-- | $sort    | Sort stage                               | Non-streamable  | TODO: push sort to index                 |
+-- | $group   | Group/aggregate stage                    | Non-streamable  | TODO: index-pushed distinct-style group  |
+-- | $sortGrp | $sort + $group optimization              | Non-streamable  | TODO: push sort+group to index           |
+-- | $unwind  | Array unwind                             | Non-streamable  |                                          |
+-- | $lookup  | Join with another collection             | Non-streamable  |                                          |
+-- | $bucket  | Bucket grouping                          | Non-streamable  |                                          |
+-- | $sortCnt | Sort by count                            | Non-streamable  |                                          |
+-- | $sample  | Random sample                            | Non-streamable  |                                          |
+-- | $count   | Count documents                          | Non-streamable  |                                          |
+-- | $facet   | Multi-faceted aggregation                | Non-streamable  |                                          |
+-- | $redact  | Field-level redaction                    | Non-streamable  |                                          |
+-- | $bktAuto | Auto-bucketing                           | Non-streamable  |                                          |
+-- | $densify | Densify time series                      | Non-streamable  |                                          |
+-- | $fill    | Fill missing values                      | Non-streamable  |                                          |
+-- | $graphLk | Graph lookup                             | Non-streamable  |                                          |
+-- | $setWFld | Set window fields                        | Non-streamable  |                                          |
+-- | $collSts | Collection stats                         | Non-streamable  |                                          |
+-- | $docs    | Documents stage                          | Non-streamable  |                                          |
+-- | $inhibit | Inhibit optimization                     | Non-streamable  |                                          |
+-- | $search  | Vector/text search                       | Non-streamable  |                                          |
+-- | $vecSrch | Vector search                            | Non-streamable  |                                          |
+-- | $geoNear | Geospatial near                          | Non-streamable  |                                          |
+-- | $idxStat | Index statistics                         | Non-streamable  |                                          |
+-- | $merge   | Merge output                             | Non-streamable  |                                          |
+-- | $out     | Output to collection                     | Non-streamable  |                                          |
+-- | $lkpUnwd | Lookup + unwind optimization             | Non-streamable  |                                          |
+-- | $currOp  | Current operations (admin)               | Non-streamable  |                                          |
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+--
+-- Combined Pipeline Stages:
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+-- | Combo    | Description                              | Status          | Notes                                    |
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+-- | m+addF   | $match + $addFields                      | Streamable      |                                          |
+-- | p+unset  | $project + $unset                        | Streamable      |                                          |
+-- | m+sort   | $match + $sort                           | Non-streamable  | TODO: push sort to index                 |
+-- | m+group  | $match + $group                          | Non-streamable  | TODO: push group to index                |
+-- | m+skip   | $match + $skip                           | Non-streamable  | TODO: track skip in continuation         |
+-- | m+limit  | $match + $limit (limit>1)                | Non-streamable  | TODO: track limit in continuation        |
+-- | m+s+lim  | $match + $sort + $limit                  | Non-streamable  | TODO: push sort to index                 |
+-- +----------+------------------------------------------+-----------------+------------------------------------------+
+
 SET search_path TO documentdb_api_catalog, documentdb_api, documentdb_core, public;
 SET documentdb.next_collection_id TO 2600;
 SET documentdb.next_collection_index_id TO 2600;
@@ -53,46 +144,88 @@ SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": 1 }, "projection": { "b": 1 } }');
 
 -- Scenario 6: Find with skip only (non-streamable)
+-- TODO: skip should be streamable with dynamic cursors when the skip offset
+-- can be tracked in the continuation state.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "skip": 2 }');
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "skip": 2 }');
 
 -- Scenario 7: Find with sort only (non-streamable)
+-- TODO: sort on an indexed field should be streamable with dynamic cursors
+-- when the sort order matches the index order (index-pushed sort).
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "sort": { "a": 1 } }');
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "sort": { "a": 1 } }');
 
 -- Scenario 8: Find with limit only (non-streamable)
+-- TODO: limit should be streamable with dynamic cursors when the limit count
+-- can be tracked in the continuation state.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "limit": 3 }');
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "limit": 3 }');
 
 -- Scenario 9: Find with sort + limit (non-streamable)
+-- TODO: sort + limit should be streamable when the sort is pushed to an index.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "sort": { "a": 1 }, "limit": 2 }');
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "sort": { "a": 1 }, "limit": 2 }');
 
 -- Scenario 10: Find with sort + skip + limit (non-streamable)
+-- TODO: sort + skip + limit should be streamable when the sort is pushed to an index.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "sort": { "a": 1 }, "skip": 1, "limit": 2 }');
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "sort": { "a": 1 }, "skip": 1, "limit": 2 }');
 
 -- Scenario 11: Find with filter + skip (non-streamable)
+-- TODO: filter + skip should be streamable when skip offset is tracked in continuation.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": 1 }, "skip": 1 }');
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": 1 }, "skip": 1 }');
 
 -- Scenario 12: Find with filter + sort (non-streamable)
+-- TODO: filter + sort should be streamable when the sort is pushed to an index.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": { "$gt": 1 } }, "sort": { "a": 1 } }');
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": { "$gt": 1 } }, "sort": { "a": 1 } }');
+
+-- Scenario 13: Find with filter + limit (non-streamable)
+-- TODO: filter + limit should be streamable when the limit count is tracked
+-- in the continuation state.
+SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": { "$gte": 1 } }, "limit": 3 }');
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": { "$gte": 1 } }, "limit": 3 }');
+
+-- Scenario 14: Find with filter + sort + limit (non-streamable)
+-- TODO: filter + sort + limit should be streamable when the sort is pushed
+-- to an index and limit is tracked in the continuation state.
+SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": { "$gte": 1 } }, "sort": { "a": -1 }, "limit": 2 }');
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": { "$gte": 1 } }, "sort": { "a": -1 }, "limit": 2 }');
+
+-- Scenario 15: Find with filter + skip + limit (non-streamable)
+-- TODO: filter + skip + limit should be streamable when skip and limit are
+-- tracked in the continuation state.
+SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": 1 }, "skip": 1, "limit": 2 }');
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "filter": { "a": 1 }, "skip": 1, "limit": 2 }');
+
+-- Scenario 16: Find with sort + skip (non-streamable)
+-- TODO: sort + skip should be streamable when the sort is pushed to an index
+-- and skip offset is tracked in the continuation state.
+SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "sort": { "a": 1 }, "skip": 2 }');
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "sort": { "a": 1 }, "skip": 2 }');
 
 ------------------------------------------------------------
 -- Query output correctness tests with dynamic cursors enabled.
@@ -179,6 +312,8 @@ SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$limit": 1 }], "cursor": {} }');
 
 -- Stage: $limit with limit>1 (non-streamable - RequiresPersistentCursorLimit returns true)
+-- TODO: $limit with limit>1 should be streamable when the remaining limit count
+-- is tracked in the continuation state.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$limit": 5 }], "cursor": {} }');
 SET documentdb.enableDynamicCursors TO off;
@@ -191,18 +326,24 @@ SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$skip": 0 }], "cursor": {} }');
 
 -- Stage: $skip with skip>0 (non-streamable - RequiresPersistentCursorSkip returns true)
+-- TODO: $skip with skip>0 should be streamable when the skip offset is tracked
+-- in the continuation state.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$skip": 2 }], "cursor": {} }');
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$skip": 2 }], "cursor": {} }');
 
 -- Stage: $sort (non-streamable - RequiresPersistentCursorTrue)
+-- TODO: $sort should be streamable when the sort order matches an index
+-- (index-pushed sort).
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sort": { "a": 1 } }], "cursor": {} }');
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sort": { "a": 1 } }], "cursor": {} }');
 
 -- Stage: $group (non-streamable - RequiresPersistentCursorTrue)
+-- TODO: $group should be streamable when the group key matches an index
+-- (index-pushed distinct-style group).
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$group": { "_id": "$a", "count": { "$sum": 1 } } }], "cursor": {} }');
 SET documentdb.enableDynamicCursors TO off;
@@ -336,12 +477,15 @@ SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": 1 } }, { "$addFields": { "c": "new" } }], "cursor": {} }');
 
 -- Combined: $match + $sort (non-streamable due to $sort)
+-- TODO: $match + $sort should be streamable when the sort is pushed to an index.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": 1 } }, { "$sort": { "a": -1 } }], "cursor": {} }');
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": 1 } }, { "$sort": { "a": -1 } }], "cursor": {} }');
 
 -- Combined: $match + $group (non-streamable due to $group)
+-- TODO: $match + $group should be streamable when the group key can be
+-- pushed to an index (index-pushed distinct-style group).
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": { "$gte": 1 } } }, { "$group": { "_id": "$a" } }], "cursor": {} }');
 SET documentdb.enableDynamicCursors TO off;
@@ -352,6 +496,30 @@ SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$project": { "a": 1, "b": 1 } }, { "$unset": "b" }], "cursor": {} }');
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$project": { "a": 1, "b": 1 } }, { "$unset": "b" }], "cursor": {} }');
+
+-- Combined: $match + $skip (non-streamable due to $skip)
+-- TODO: $match + $skip should be streamable when skip offset is tracked
+-- in the continuation state.
+SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": { "$gte": 1 } } }, { "$skip": 2 }], "cursor": {} }');
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": { "$gte": 1 } } }, { "$skip": 2 }], "cursor": {} }');
+
+-- Combined: $match + $limit with limit>1 (non-streamable due to $limit)
+-- TODO: $match + $limit should be streamable when the remaining limit count
+-- is tracked in the continuation state.
+SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": { "$gte": 1 } } }, { "$limit": 3 }], "cursor": {} }');
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": { "$gte": 1 } } }, { "$limit": 3 }], "cursor": {} }');
+
+-- Combined: $match + $sort + $limit (non-streamable due to $sort + $limit)
+-- TODO: $match + $sort + $limit should be streamable when the sort is pushed
+-- to an index and limit is tracked in the continuation state.
+SET documentdb.enableDynamicCursors TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": { "$gte": 1 } } }, { "$sort": { "a": 1 } }, { "$limit": 2 }], "cursor": {} }');
+SET documentdb.enableDynamicCursors TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": { "$gte": 1 } } }, { "$sort": { "a": 1 } }, { "$limit": 2 }], "cursor": {} }');
 
 -- ============================================================================
 -- Section 6: $search and $vectorSearch tests (require vector index)
@@ -423,6 +591,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- ============================================================================
 
 -- $sortGroup (internal optimization: $sort followed by $group) — non-streamable (RequiresPersistentCursorTrue)
+-- TODO: $sortGroup should be streamable when the sort+group can be pushed to an index.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sort": { "a": 1 } }, { "$group": { "_id": "$a", "count": { "$sum": 1 } } }], "cursor": {} }');
 SET documentdb.enableDynamicCursors TO off;

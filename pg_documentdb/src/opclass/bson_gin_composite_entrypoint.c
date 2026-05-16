@@ -189,8 +189,8 @@ static int32_t GetIndexPathsFromOptionsWithLength(BsonGinCompositePathOptions *o
 static void ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const
 											char **indexPaths,
 											uint32_t *indexPathsLengths, int32_t numPaths,
-											int32_t
-											wildcardPathIndex,
+											int32_t wildcardPathIndex,
+											bool *requiresOrderedScans,
 											VariableIndexBounds *variableBounds);
 static bytea * BuildTermForBounds(CompositeQueryRunData *runData,
 								  IndexTermCreateMetadata *singlePathMetadata,
@@ -428,6 +428,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	}
 
 	/* Round 1, collect fixed index bounds and collect variable index bounds */
+	bool requiresOrderedScans = false;
 	if (strategy == BSON_INDEX_STRATEGY_UNIQUE_EQUAL)
 	{
 		/* Extract query for unique equal is basically an equality on term generation
@@ -450,7 +451,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 
 		ParseOperatorStrategy(indexPaths, indexPathLengths, numPaths,
 							  metaInfo->wildcardPathIndex, &singleElement, strategy,
-							  &variableBounds);
+							  &requiresOrderedScans, &variableBounds);
 	}
 	else
 	{
@@ -461,7 +462,16 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 								&metaInfo->isBackwardScan, &supportsOrderedOperatorScans);
 		ParseBoundsForCompositeOperator(&singleElement, indexPaths, indexPathLengths,
 										numPaths,
-										metaInfo->wildcardPathIndex, &variableBounds);
+										metaInfo->wildcardPathIndex,
+										&requiresOrderedScans,
+										&variableBounds);
+	}
+
+	if (requiresOrderedScans && !metaInfo->isOrderedScan)
+	{
+		/* An operator asked for an ordered scan - comply */
+		metaInfo->isOrderedScan = true;
+		*searchMode = RUM_SEARCH_MODE_ORDERED;
 	}
 
 
@@ -603,6 +613,8 @@ ProcessStandardCompositeQueryEntries(int32_t totalPathTerms,
 
 	if (variableBounds->variableBoundsList == NIL)
 	{
+		UpdateRunDataForMinMaxBounds(runData, variableBounds->minBounds,
+									 variableBounds->maxBounds);
 		bytea *term = BuildTermForBounds(runData, singlePathMetadata, compositeMetadata,
 										 &(*partialmatch)[0], indexPaths,
 										 indexPathLengths, sortOrders);
@@ -623,6 +635,8 @@ ProcessStandardCompositeQueryEntries(int32_t totalPathTerms,
 					   runData->metaInfo->numIndexPaths));
 			UpdateRunDataForVariableBounds(runDataCopy, pathScanTermMap, variableBounds,
 										   currentTerm);
+			UpdateRunDataForMinMaxBounds(runDataCopy, variableBounds->minBounds,
+										 variableBounds->maxBounds);
 			bytea *term = BuildTermForBounds(runDataCopy, singlePathMetadata,
 											 compositeMetadata,
 											 &(*partialmatch)[i], indexPaths,
@@ -724,6 +738,8 @@ ProcessOrderedCompositeQueryEntries(int32_t totalPathTerms,
 
 	if (variableBounds->variableBoundsList == NIL)
 	{
+		UpdateRunDataForMinMaxBounds(runData, variableBounds->minBounds,
+									 variableBounds->maxBounds);
 		bytea *term = BuildTermForBounds(runData, singlePathMetadata, compositeMetadata,
 										 &(*partialmatch)[0], indexPaths,
 										 indexPathLengths, sortOrders);
@@ -843,6 +859,8 @@ ProcessOrderedCompositeQueryEntries(int32_t totalPathTerms,
 		 */
 		int32_t unsatisfiableIndex = -1;
 		UpdateRunDataForOrderedBounds(runData, data, &unsatisfiableIndex);
+		UpdateRunDataForMinMaxBounds(runData, variableBounds->minBounds,
+									 variableBounds->maxBounds);
 
 		bool partialMatchInnerIgnore = false;
 		bytea *term = BuildTermForBounds(runData, singlePathMetadata,
@@ -3044,6 +3062,23 @@ GetCompositeFirstIndexPath(void *contextOptions)
 }
 
 
+const char *
+GetCompositeFirstIndexPathAndSortOrder(void *contextOptions, int8_t *sortOrder)
+{
+	BsonGinCompositePathOptions *options =
+		(BsonGinCompositePathOptions *) contextOptions;
+
+	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
+	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
+
+	GetIndexPathsFromOptions(
+		options,
+		indexPaths, sortOrders);
+	*sortOrder = sortOrders[0];
+	return pstrdup(indexPaths[0]);
+}
+
+
 int32_t
 GetCompositeOpClassColumnNumber(const char *currentPath, void *contextOptions,
 								int8_t *sortDirection)
@@ -4848,7 +4883,8 @@ GetIndexPathsFromOptionsWithLength(BsonGinCompositePathOptions *options,
 static void
 ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **indexPaths,
 								uint32_t *indexPathsLengths, int32_t numPaths, int32_t
-								wildcardPathIndex, VariableIndexBounds *variableBounds)
+								wildcardPathIndex, bool *requiresOrderedScans,
+								VariableIndexBounds *variableBounds)
 {
 	if (singleElement->bsonValue.value_type != BSON_TYPE_ARRAY)
 	{
@@ -4899,7 +4935,7 @@ ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **index
 		}
 
 		ParseOperatorStrategy(indexPaths, indexPathsLengths, numPaths, wildcardPathIndex,
-							  &queryElement, queryStrategy,
+							  &queryElement, queryStrategy, requiresOrderedScans,
 							  variableBounds);
 	}
 }

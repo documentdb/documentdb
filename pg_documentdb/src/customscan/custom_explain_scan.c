@@ -523,7 +523,7 @@ ExplainIndexScanState(IndexScanDesc indexScan, Oid indexOid, List *indexQuals,
 }
 
 
-static void
+void
 WalkAndExplainScanState(PlanState *scanState, ExplainState *es)
 {
 	check_stack_depth();

@@ -67,6 +67,7 @@ typedef struct CompositeRegexData
 static void ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 										  BsonIndexStrategy queryStrategy,
 										  const char *wildcardPath,
+										  bool *requiresOrdered,
 										  VariableIndexBounds *indexBounds);
 static void ProcessBoundForQuery(CompositeSingleBound *bound,
 								 const char *termPath,
@@ -124,6 +125,7 @@ static void AddMultiBoundaryForNotLess(int32_t indexAttribute, const char *wildc
 static void AddMultiBoundaryForDollarRange(int32_t indexAttribute, const
 										   char *wildcardPath,
 										   pgbsonelement *queryElement,
+										   bool *requiresOrdered,
 										   VariableIndexBounds *indexBounds);
 static CompositeIndexBoundsSet * AddMultiBoundaryForDollarRegex(int32_t indexAttribute,
 																const char *wildcardPath,
@@ -547,6 +549,36 @@ UpdateRunDataForOrderedBounds(CompositeQueryRunData *runData,
 				runData->indexBounds[i].lowerBound.isBoundInclusive &&
 				runData->indexBounds[i].upperBound.isBoundInclusive &&
 				boundsCompare == 0;
+		}
+	}
+}
+
+
+void
+UpdateRunDataForMinMaxBounds(CompositeQueryRunData *runData,
+							 CompositeRowBounds *minBounds,
+							 CompositeRowBounds *maxBounds)
+{
+	if (minBounds == NULL && maxBounds == NULL)
+	{
+		return;
+	}
+
+	for (int i = 0; i < runData->metaInfo->numIndexPaths; i++)
+	{
+		const char *indexCollation = runData->metaInfo->collation;
+		if (minBounds != NULL &&
+			minBounds->bounds[i].bound.value_type != BSON_TYPE_EOD)
+		{
+			SetLowerBound(&runData->indexBounds[i].lowerBound, &minBounds->bounds[i],
+						  indexCollation);
+		}
+
+		if (maxBounds != NULL &&
+			maxBounds->bounds[i].bound.value_type != BSON_TYPE_EOD)
+		{
+			SetUpperBound(&runData->indexBounds[i].upperBound, &maxBounds->bounds[i],
+						  indexCollation);
 		}
 	}
 }
@@ -1023,6 +1055,7 @@ ParseOperatorStrategy(const char **indexPaths, uint32_t *indexPathLengths,
 					  int32_t numPaths, int32_t wildcardIndex,
 					  pgbsonelement *queryElement,
 					  BsonIndexStrategy queryStrategy,
+					  bool *requiresOrderedScans,
 					  VariableIndexBounds *indexBounds)
 {
 	/* First figure out which query path matches */
@@ -1057,7 +1090,7 @@ ParseOperatorStrategy(const char **indexPaths, uint32_t *indexPathLengths,
 	}
 
 	ParseOperatorStrategyWithPath(i, queryElement, queryStrategy, wildcardPath,
-								  indexBounds);
+								  requiresOrderedScans, indexBounds);
 }
 
 
@@ -1065,6 +1098,7 @@ static void
 ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 							  BsonIndexStrategy queryStrategy,
 							  const char *wildcardPath,
+							  bool *requiresOrderedScans,
 							  VariableIndexBounds *indexBounds)
 {
 	bool isNegationOp = false;
@@ -1235,7 +1269,8 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 
 		case BSON_INDEX_STRATEGY_DOLLAR_RANGE:
 		{
-			AddMultiBoundaryForDollarRange(i, wildcardPath, queryElement, indexBounds);
+			AddMultiBoundaryForDollarRange(i, wildcardPath, queryElement,
+										   requiresOrderedScans, indexBounds);
 			break;
 		}
 
@@ -1315,6 +1350,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_INDEXTERM:
 		{
 			/* It's a full scan */
+			*requiresOrderedScans = true;
 			break;
 		}
 
@@ -2699,10 +2735,51 @@ AddMultiBoundaryForDollarType(int32_t indexAttribute, const char *wildcardPath,
 }
 
 
+static CompositeRowBounds *
+CreateMinOrMaxBounds(int32_t indexAttribute, const char *wildcardPath,
+					 bson_value_t *indexKey, bool isBoundInclusive)
+{
+	if (indexAttribute != 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+							"$min index operator is only supported on the first field of a composite index")));
+	}
+
+	if (wildcardPath != NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+							"$min index operator is not supported on wildcard index fields")));
+	}
+
+	if (indexKey->value_type != BSON_TYPE_BINARY)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+							"$min/$max index operator expecting a binary value, but found %s",
+							BsonTypeName(indexKey->value_type))));
+	}
+
+	CompositeRowBounds *bounds = (CompositeRowBounds *) palloc(
+		sizeof(CompositeRowBounds));
+	bytea *indexTerm = (bytea *) indexKey->value.v_binary.data;
+
+	BsonIndexTerm terms[INDEX_MAX_KEYS] = { 0 };
+	InitializeBsonIndexTerm(indexTerm, terms);
+
+	for (int i = 0; i < INDEX_MAX_KEYS; i++)
+	{
+		bounds->bounds[i].bound = terms[i].element.bsonValue;
+		bounds->bounds[i].isBoundInclusive = isBoundInclusive;
+	}
+
+	return bounds;
+}
+
+
 static void
 AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 							   const char *wildcardPath,
 							   pgbsonelement *queryElement,
+							   bool *requiresOrderedScans,
 							   VariableIndexBounds *indexBounds)
 {
 	DollarRangeParams *params = ParseQueryDollarRange(queryElement);
@@ -2710,6 +2787,41 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 	if (params->isFullScan)
 	{
 		/* Don't update any bounds */
+		if (params->orderScanDirection != 0)
+		{
+			*requiresOrderedScans = true;
+		}
+
+		return;
+	}
+
+	if (params->isMinIndexKey)
+	{
+		if (indexBounds->minBounds != NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+								"Multiple $min index operators on the same index are not allowed")));
+		}
+
+		bool isBoundInclusive = true;
+		indexBounds->minBounds = CreateMinOrMaxBounds(indexAttribute, wildcardPath,
+													  &params->minOrMaxIndexKey,
+													  isBoundInclusive);
+		return;
+	}
+
+	if (params->isMaxIndexKey)
+	{
+		if (indexBounds->maxBounds != NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+								"Multiple $max index operators on the same index are not allowed")));
+		}
+
+		bool isBoundInclusive = false;
+		indexBounds->maxBounds = CreateMinOrMaxBounds(indexAttribute, wildcardPath,
+													  &params->minOrMaxIndexKey,
+													  isBoundInclusive);
 		return;
 	}
 
@@ -2767,19 +2879,20 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 										"Missing 'op' key in $elemMatch index operator")));
 				}
 
+				bool requiresOrderedIgnore = false;
 				if (isTopLevelPath)
 				{
 					/* Top level path conditions are mergable */
 					ParseOperatorStrategyWithPath(indexAttribute, &innerElemMatchElement,
 												  queryStrategy, wildcardPath,
-												  &localBounds);
+												  &requiresOrderedIgnore, &localBounds);
 				}
 				else
 				{
 					/* deduced child path conditions are not mergeable */
 					ParseOperatorStrategyWithPath(indexAttribute, &innerElemMatchElement,
 												  queryStrategy, wildcardPath,
-												  indexBounds);
+												  &requiresOrderedIgnore, indexBounds);
 				}
 			}
 		}

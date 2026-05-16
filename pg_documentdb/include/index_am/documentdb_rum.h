@@ -133,4 +133,9 @@ void RecordCostEstimateForIndex(Oid indexOid, Oid relOid, Cost indexStartupCost,
 								double boundarySelectivity,
 								int numBoundaryQuals, double
 								dataPagesProportionFetched);
+
+Datum DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan);
+void DocumentDBRumSkipTidsForCurrentEntry(IndexScanDesc scan, SkipTidsOnCurrentEntryFunc
+										  skipTidsFunc,
+										  ItemPointer userContinuationState);
 #endif
