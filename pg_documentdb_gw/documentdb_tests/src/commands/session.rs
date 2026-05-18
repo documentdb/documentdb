@@ -39,10 +39,10 @@ pub async fn validate_processing(client: &Client, command_name: &str) -> Result<
     let session = client.start_session().await?;
 
     if let Some(bson::Bson::Binary(binary)) = session.id().get("id") {
-        let session_id_bytes: [u8; 16] = binary.bytes.as_slice().try_into().unwrap();
-        let session_id = Uuid::from_bytes(session_id_bytes);
+        let lsid_bytes: [u8; 16] = binary.bytes.as_slice().try_into().unwrap();
+        let lsid = Uuid::from_bytes(lsid_bytes);
         let command = doc! {
-            command_name: [ { "id": session_id } ]
+            command_name: [ { "id": lsid } ]
         };
 
         let response = client.database("admin").run_command(command).await;
@@ -69,8 +69,8 @@ pub async fn validate_session_termination(
     let mut session = client.start_session().await?;
 
     if let Some(bson::Bson::Binary(binary)) = session.id().get("id") {
-        let session_id_bytes: [u8; 16] = binary.bytes.as_slice().try_into().unwrap();
-        let session_id = Uuid::from_bytes(session_id_bytes);
+        let lsid_bytes: [u8; 16] = binary.bytes.as_slice().try_into().unwrap();
+        let lsid = Uuid::from_bytes(lsid_bytes);
 
         // Future 1: Start a long-running operation with the session
         let long_running_task = async {
@@ -163,7 +163,7 @@ pub async fn validate_session_termination(
             sleep(Duration::from_millis(100)).await;
 
             let command = doc! {
-                command_name: [ { "id": session_id } ]
+                command_name: [ { "id": lsid } ]
             };
             let response = client.database("admin").run_command(command).await;
 

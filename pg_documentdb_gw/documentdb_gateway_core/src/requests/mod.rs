@@ -21,7 +21,7 @@ use tokio_postgres::IsolationLevel;
 
 use crate::{
     bson::convert_to_f64,
-    context::{RequestTransactionInfo, SessionId, TransactionNumber},
+    context::{LogicalSessionId, RequestTransactionInfo, TransactionNumber},
     error::{DocumentDBError, ErrorCode, Result},
     protocol::opcode::OpCode,
 };
@@ -52,7 +52,7 @@ pub struct RequestInfo<'a> {
     pub transaction_info: Option<RequestTransactionInfo>,
     db: Option<&'a str>,
     collection: Option<&'a str>,
-    pub session_id: Option<SessionId>,
+    pub lsid: Option<LogicalSessionId>,
     read_concern: ReadConcern,
 }
 
@@ -64,7 +64,7 @@ impl RequestInfo<'_> {
             transaction_info: None,
             db: None,
             collection: None,
-            session_id: None,
+            lsid: None,
             read_concern: ReadConcern::default(),
         }
     }
@@ -209,7 +209,7 @@ impl<'a> Request<'a> {
     {
         let mut max_time_ms = None;
         let mut db = None;
-        let mut session_id: Option<SessionId> = None;
+        let mut lsid: Option<LogicalSessionId> = None;
         let mut transaction_number: Option<TransactionNumber> = None;
         let mut auto_commit = true;
         let mut start_transaction = false;
@@ -229,7 +229,7 @@ impl<'a> Request<'a> {
                 }
                 "maxTimeMS" => max_time_ms = Some(Self::to_i64(v)?),
                 "lsid" => {
-                    session_id = Some(
+                    lsid = Some(
                         v.as_document()
                             .ok_or(DocumentDBError::bad_value(format!(
                                 "Expected lsid to be a document but got {:?}",
@@ -294,7 +294,7 @@ impl<'a> Request<'a> {
                 _ => coll_extractor(k, v)?,
             }
         }
-        let transaction_info = match (&session_id, transaction_number) {
+        let transaction_info = match (&lsid, transaction_number) {
             (Some(_), Some(transaction_number)) => Some(RequestTransactionInfo {
                 transaction_number,
                 auto_commit,
@@ -310,7 +310,7 @@ impl<'a> Request<'a> {
             transaction_info,
             db,
             collection,
-            session_id,
+            lsid,
             read_concern,
         })
     }

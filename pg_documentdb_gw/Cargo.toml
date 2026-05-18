@@ -4,7 +4,6 @@
 members = [
     "documentdb_gateway",
     "documentdb_gateway_core",
-    "documentdb_gateway_lib",
     "documentdb_macros",
     "documentdb_tests"
 ]

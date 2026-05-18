@@ -9,5 +9,5 @@
 mod session_id;
 mod session_manager;
 
-pub use session_id::{SessionId, SessionKey};
+pub use session_id::{LogicalSessionId, SessionKey};
 pub use session_manager::SessionManager;

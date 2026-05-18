@@ -650,13 +650,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "documentdb_gateway_lib"
-version = "0.1.0"
-dependencies = [
- "criterion",
-]
-
-[[package]]
 name = "documentdb_macros"
 version = "0.1.0"
 
