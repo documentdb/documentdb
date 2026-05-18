@@ -38,6 +38,7 @@ struct PgConfigurationInner {
     settings_prefixes: Vec<String>,
     pool_manager: Arc<PoolManager>,
     instance_kind: String,
+    enable_pg_file_settings_refresh: bool,
 }
 
 impl PgConfigurationInner {
@@ -73,27 +74,28 @@ impl PgConfigurationInner {
             }
         };
 
-        // Then, fetch most up-to-date switch-related values from pg_file_settings for settings that are set there. pg_settings may have stale
+        // Fetch most up-to-date switch-related values from pg_file_settings for settings that are set there. pg_settings may have stale
         // values if pg_reload_conf() failed or if 030-user-supplied-server-parameters.conf was updated after the gateway started. Then
         // upsert them into the HashSet. This ensures that we have the most accurate settings without relying on pg_reload_conf() succeeding.
         let pg_file_settings_query = self.pool_manager.query_catalog().pg_file_settings();
-        let pg_file_settings_rows = if pg_file_settings_query.is_empty() {
-            Vec::new()
-        } else {
-            match self.pool_manager.system_requests_connection().await {
-                Ok(conn) => conn
-                    .query(pg_file_settings_query, &[], &[])
-                    .await
-                    .unwrap_or_else(|e| {
-                        tracing::warn!("Failed to query pg_file_settings: {e}");
+        let pg_file_settings_rows =
+            if !self.enable_pg_file_settings_refresh || pg_file_settings_query.is_empty() {
+                Vec::new()
+            } else {
+                match self.pool_manager.system_requests_connection().await {
+                    Ok(conn) => conn
+                        .query(pg_file_settings_query, &[], &[])
+                        .await
+                        .unwrap_or_else(|e| {
+                            tracing::warn!("Failed to query pg_file_settings: {e}");
+                            Vec::new()
+                        }),
+                    Err(e) => {
+                        tracing::warn!("Failed to get connection for pg_file_settings: {e}");
                         Vec::new()
-                    }),
-                Err(e) => {
-                    tracing::warn!("Failed to get connection for pg_file_settings: {e}");
-                    Vec::new()
+                    }
                 }
-            }
-        };
+            };
 
         let all_config_rows: Vec<_> = pg_config_rows
             .into_iter()
@@ -222,6 +224,9 @@ impl PgConfiguration {
             settings_prefixes,
             pool_manager,
             instance_kind: setup_configuration.instance_kind().to_owned(),
+            enable_pg_file_settings_refresh: setup_configuration
+                .enable_pg_file_settings_refresh()
+                .unwrap_or(false),
         };
 
         let values = ArcSwap::from_pointee(inner.load_configurations().await?);

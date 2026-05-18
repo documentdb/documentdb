@@ -116,6 +116,9 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
 
     /// Provides a way to downcast the trait object to a concrete type.
     fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Returns whether refreshing settings from `pg_file_settings` is enabled.
+    fn enable_pg_file_settings_refresh(&self) -> Option<bool>;
 }
 
 clone_trait_object!(SetupConfiguration);
