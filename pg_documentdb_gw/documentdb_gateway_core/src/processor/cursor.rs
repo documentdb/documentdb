@@ -12,7 +12,7 @@ use bson::{rawdoc, RawArrayBuf};
 
 use crate::{
     context::{
-        ConnectionContext, Cursor, CursorId, CursorStoreEntry, RequestContext, SessionId,
+        ConnectionContext, Cursor, CursorId, CursorStoreEntry, LogicalSessionId, RequestContext,
         TransactionNumber,
     },
     error::{DocumentDBError, ErrorCode, Result},
@@ -23,13 +23,13 @@ use crate::{
 
 /// Validates that a request is correct and enforces correct usage of a cursor.
 fn validate_get_more_request(
-    connection_session_id: Option<&SessionId>,
+    connection_lsid: Option<&LogicalSessionId>,
     connection_transaction_number: Option<&TransactionNumber>,
-    cursor_session_id: Option<&SessionId>,
+    cursor_lsid: Option<&LogicalSessionId>,
     cursor_transaction_number: Option<&TransactionNumber>,
 ) -> Result<()> {
     // Session id validation
-    match (connection_session_id, cursor_session_id) {
+    match (connection_lsid, cursor_lsid) {
         (Some(req_sid), None) => {
             // ErrorCode: 50736
             return Err(DocumentDBError::internal_error(format!(
@@ -52,7 +52,7 @@ fn validate_get_more_request(
     }
 
     // Transaction number validation (only when there is no session)
-    if connection_session_id.is_none() {
+    if connection_lsid.is_none() {
         match (connection_transaction_number, cursor_transaction_number) {
             (Some(req_tn), None) => {
                 // ErrorCode: 50739
@@ -164,7 +164,7 @@ pub async fn process_get_more(
     ))?;
 
     // We use the session id from the request context since we may, or may not be in a transaction.
-    let current_session_id = request_context.info().session_id.as_ref();
+    let current_lsid = request_context.info().lsid.as_ref();
     let current_transaction_number = request_context
         .info()
         .transaction_info
@@ -182,9 +182,9 @@ pub async fn process_get_more(
 
     // Validate Get More Request
     validate_get_more_request(
-        current_session_id,
+        current_lsid,
         current_transaction_number,
-        cursor_ref.session_id(),
+        cursor_ref.lsid(),
         cursor_ref.transaction_number(),
     )?;
 
@@ -193,7 +193,7 @@ pub async fn process_get_more(
         cursor,
         db,
         collection,
-        session_id,
+        lsid,
         transaction_number,
         mut cursor_timeout,
         ..
@@ -243,7 +243,7 @@ pub async fn process_get_more(
                 &db,
                 &collection,
                 cursor_timeout,
-                session_id,
+                lsid,
                 transaction_number,
                 caller,
             );
@@ -257,8 +257,8 @@ pub async fn process_get_more(
 mod tests {
     use super::*;
 
-    fn sid(bytes: &[u8]) -> SessionId {
-        SessionId::from(bytes)
+    fn sid(bytes: &[u8]) -> LogicalSessionId {
+        LogicalSessionId::from(bytes)
     }
 
     fn tn(value: i64) -> TransactionNumber {

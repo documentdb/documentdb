@@ -31,7 +31,7 @@ pub fn validate_request(
     };
 
     if request_transaction_info.auto_commit {
-        if request_info.session_id.is_none() {
+        if request_info.lsid.is_none() {
             return Err(DocumentDBError::documentdb_error(
                     ErrorCode::NotARetryableWriteCommand,
                     "txnNumber may only be provided for multi-document transactions and retryable write commands. autocommit:false was not provided, and command is not a retryable write command.".to_owned(),

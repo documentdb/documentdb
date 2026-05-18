@@ -22,7 +22,7 @@ use crate::{
     time::EpochClock,
 };
 use crate::{
-    context::{ConnectionContext, SessionId},
+    context::{ConnectionContext, LogicalSessionId},
     error::{DocumentDBError, ErrorCode, Result},
     postgres::{conn_mgmt::Connection, PgDataClient},
 };
@@ -109,10 +109,10 @@ impl TransactionStore {
     #[must_use]
     pub fn get_connection(
         &self,
-        session_id: &SessionId,
+        lsid: &LogicalSessionId,
         caller: &Principal,
     ) -> Option<Arc<Connection>> {
-        let key = SessionKey::new(session_id.clone(), caller.clone());
+        let key = SessionKey::new(lsid.clone(), caller.clone());
 
         self.transactions
             .get(&key)
@@ -130,11 +130,11 @@ impl TransactionStore {
         &self,
         connection_context: &ConnectionContext,
         transaction_info: &RequestTransactionInfo,
-        session_id: SessionId,
+        lsid: LogicalSessionId,
         pg_data_client: &impl PgDataClient,
         caller: &Principal,
     ) -> Result<()> {
-        let key = SessionKey::new(session_id.clone(), caller.clone());
+        let key = SessionKey::new(lsid.clone(), caller.clone());
 
         if let Some((_, transaction_number)) = connection_context.transaction.as_ref() {
             if transaction_number > &transaction_info.transaction_number {
@@ -195,7 +195,7 @@ impl TransactionStore {
                 transaction_info
                     .isolation_level
                     .unwrap_or(IsolationLevel::ReadCommitted),
-                session_id.clone(),
+                lsid.clone(),
                 caller.clone(),
             )
             .await?;
@@ -257,7 +257,7 @@ impl TransactionStore {
         ))
     }
 
-    /// Removes the active transaction for `session_id`, aborts it, and marks the
+    /// Removes the active transaction for `lsid`, aborts it, and marks the
     /// last-seen transaction as aborted.
     ///
     /// Returns `Ok(None)` when there is no active transaction for the session.
@@ -268,13 +268,12 @@ impl TransactionStore {
     /// last-seen record is missing, or if aborting the transaction fails.
     pub async fn remove_transaction_by_session(
         &self,
-        session_id: &SessionId,
+        lsid: &LogicalSessionId,
         caller: &Principal,
-    ) -> Result<Option<(SessionId, TransactionEntry)>> {
-        let key = SessionKey::new(session_id.clone(), caller.clone());
+    ) -> Result<Option<(LogicalSessionId, TransactionEntry)>> {
+        let key = SessionKey::new(lsid.clone(), caller.clone());
 
-        let Some((deleted_session_id, mut transaction_entry)) = self.transactions.remove(&key)
-        else {
+        let Some((deleted_lsid, mut transaction_entry)) = self.transactions.remove(&key) else {
             return Ok(None);
         };
 
@@ -285,23 +284,20 @@ impl TransactionStore {
 
         let _ = self
             .last_seen_transactions
-            .upsert_async(deleted_session_id.clone(), last_seen_transaction)
+            .upsert_async(deleted_lsid.clone(), last_seen_transaction)
             .await;
 
-        Ok(Some((
-            transaction_entry.1.session_id.clone(),
-            transaction_entry,
-        )))
+        Ok(Some((transaction_entry.1.lsid.clone(), transaction_entry)))
     }
 
-    /// Aborts and removes the active transaction for `session_id`.
+    /// Aborts and removes the active transaction for `lsid`.
     ///
     /// # Errors
     ///
     /// Returns `ErrorCode::NoSuchTransaction` when there is no active
     /// transaction for the session or when the removal fails.
-    pub async fn abort(&self, session_id: &SessionId, caller: &Principal) -> Result<()> {
-        self.remove_transaction_by_session(session_id, caller)
+    pub async fn abort(&self, lsid: &LogicalSessionId, caller: &Principal) -> Result<()> {
+        self.remove_transaction_by_session(lsid, caller)
             .await?
             .map(|_| ())
             .ok_or_else(|| {
@@ -318,8 +314,8 @@ impl TransactionStore {
     /// # Errors
     ///
     /// Returns an error if the operation fails.
-    pub async fn commit(&self, session_id: &SessionId, caller: &Principal) -> Result<()> {
-        let key = SessionKey::new(session_id.clone(), caller.clone());
+    pub async fn commit(&self, lsid: &LogicalSessionId, caller: &Principal) -> Result<()> {
+        let key = SessionKey::new(lsid.clone(), caller.clone());
 
         if let Some((_, (_, mut transaction))) = self.transactions.remove(&key) {
             transaction.commit().await?;

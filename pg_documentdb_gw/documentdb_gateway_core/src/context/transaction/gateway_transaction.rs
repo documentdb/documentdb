@@ -14,7 +14,7 @@ use crate::context::transaction::TransactionNumber;
 use crate::context::CursorId;
 use crate::security::principal::Principal;
 use crate::{
-    context::SessionId,
+    context::LogicalSessionId,
     error::{DocumentDBError, ErrorCode, Result},
     postgres::{self, conn_mgmt::Connection},
 };
@@ -30,7 +30,7 @@ pub struct RequestTransactionInfo {
 
 #[derive(Debug)]
 pub struct GatewayTransaction {
-    pub session_id: SessionId,
+    pub lsid: LogicalSessionId,
     pub transaction_number: TransactionNumber,
     _owner: Principal,
     cursors: HashSet<CursorId>,
@@ -45,11 +45,11 @@ impl GatewayTransaction {
         request: &RequestTransactionInfo,
         conn: Arc<Connection>,
         isolation_level: IsolationLevel,
-        session_id: SessionId,
+        lsid: LogicalSessionId,
         owner: Principal,
     ) -> Result<Self> {
         Ok(Self {
-            session_id,
+            lsid,
             transaction_number: request.transaction_number,
             pg_transaction: Some(postgres::Transaction::start(conn, isolation_level).await?),
             cursors: HashSet::new(),
@@ -65,8 +65,8 @@ impl GatewayTransaction {
     }
 
     #[must_use]
-    pub const fn get_session_id(&self) -> &SessionId {
-        &self.session_id
+    pub const fn get_lsid(&self) -> &LogicalSessionId {
+        &self.lsid
     }
 
     /// # Errors

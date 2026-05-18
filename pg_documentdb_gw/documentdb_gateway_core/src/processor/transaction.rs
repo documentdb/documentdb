@@ -31,8 +31,8 @@ pub async fn handle(
 
         let caller = connection_context.auth_state.principal()?;
 
-        let session_id = request_info
-            .session_id
+        let lsid = request_info
+            .lsid
             .clone()
             .ok_or(DocumentDBError::internal_error(
                 "Session Id is missing. Transactions must be associated with a session.".to_owned(),
@@ -43,7 +43,7 @@ pub async fn handle(
             .create(
                 connection_context,
                 request_transaction_info,
-                session_id.clone(),
+                lsid.clone(),
                 pg_data_client,
                 caller,
             )
@@ -64,24 +64,23 @@ pub async fn handle(
             };
         }
 
-        connection_context.transaction =
-            Some((session_id, request_transaction_info.transaction_number));
+        connection_context.transaction = Some((lsid, request_transaction_info.transaction_number));
     }
     Ok(())
 }
 
 pub async fn process_commit(context: &ConnectionContext) -> Result<Response> {
-    if let Some((session_id, _)) = context.transaction.as_ref() {
+    if let Some((lsid, _)) = context.transaction.as_ref() {
         let store = context.service_context.transaction_store();
         let caller = context.auth_state.principal()?;
 
-        store.commit(session_id, caller).await?;
+        store.commit(lsid, caller).await?;
     }
     Ok(Response::ok())
 }
 
 pub async fn process_abort(context: &ConnectionContext) -> Result<Response> {
-    let (session_id, _) = context
+    let (lsid, _) = context
         .transaction
         .as_ref()
         .ok_or(DocumentDBError::internal_error(
@@ -91,6 +90,6 @@ pub async fn process_abort(context: &ConnectionContext) -> Result<Response> {
     let caller = context.auth_state.principal()?;
     let store = context.service_context.transaction_store();
 
-    store.abort(session_id, caller).await?;
+    store.abort(lsid, caller).await?;
     Ok(Response::ok())
 }

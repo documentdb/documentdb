@@ -421,19 +421,19 @@ pub trait PgDataClient: Send + Sync {
         F: Fn(Arc<Connection>) -> Fut + Send + Sync,
         Fut: Future<Output = std::result::Result<T, tokio_postgres::Error>> + Send,
     {
-        let source = if let Some((session_id, _)) = connection_context.transaction.as_ref() {
+        let source = if let Some((lsid, _)) = connection_context.transaction.as_ref() {
             let caller = connection_context.auth_state.principal()?;
 
             if let Some(connection) = self
                 .service_context()
                 .transaction_store()
-                .get_connection(session_id, caller)
+                .get_connection(lsid, caller)
             {
                 ConnectionSource::Transaction(connection)
             } else {
                 // This should not happen because we check transaction existence at the beginning of each request handling,
                 // but we add this fallback just in case to avoid panicking and to allow the retry logic to kick in.
-                tracing::error!("Transaction connection not found for session_id {:?}, falling back to pool connection", session_id);
+                tracing::error!("Transaction connection not found for lsid {:?}, falling back to pool connection", lsid);
                 ConnectionSource::Pool(self.connection_pool()?)
             }
         } else {
@@ -504,7 +504,7 @@ pub trait PgDataClient: Send + Sync {
             );
 
             let request_info = request_context.info();
-            let session_id = request_info.session_id.clone();
+            let lsid = request_info.lsid.clone();
             let transaction_number = request_info
                 .transaction_info
                 .as_ref()
@@ -516,7 +516,7 @@ pub trait PgDataClient: Send + Sync {
                 request_info.db()?,
                 request_info.collection()?,
                 cursor_timeout,
-                session_id,
+                lsid,
                 transaction_number,
                 connection_context.auth_state.principal()?,
             );
