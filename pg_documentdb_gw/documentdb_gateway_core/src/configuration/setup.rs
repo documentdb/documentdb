@@ -71,6 +71,9 @@ pub struct DocumentDBSetupConfiguration {
 
     // Telemetry configuration
     pub telemetry_options: Option<TelemetryOptions>,
+
+    // Whether to enable refreshing settings from pg_file_settings
+    pub enable_pg_file_settings_refresh: Option<bool>,
 }
 
 impl DocumentDBSetupConfiguration {
@@ -232,6 +235,10 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
 
     fn telemetry_options(&self) -> Option<&TelemetryOptions> {
         self.telemetry_options.as_ref()
+    }
+
+    fn enable_pg_file_settings_refresh(&self) -> Option<bool> {
+        self.enable_pg_file_settings_refresh
     }
 }
 
