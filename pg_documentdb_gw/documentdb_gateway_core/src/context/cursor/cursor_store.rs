@@ -12,7 +12,7 @@ use tokio::{task::JoinHandle, time::Duration};
 
 use crate::context::{CursorId, CursorKey, CursorRef, CursorStoreEntry, TransactionNumber};
 use crate::security::principal::Principal;
-use crate::{configuration::DynamicConfiguration, context::SessionId};
+use crate::{configuration::DynamicConfiguration, context::LogicalSessionId};
 
 // Maps CursorKey -> Connection, Cursor
 #[derive(Debug)]
@@ -79,7 +79,7 @@ impl CursorStore {
             let entry = v.value();
             CursorRef::new(
                 entry.cursor.cursor_id,
-                entry.session_id.clone(),
+                entry.lsid.clone(),
                 entry.transaction_number,
             )
         })
@@ -95,10 +95,10 @@ impl CursorStore {
     }
 
     #[must_use]
-    pub fn invalidate_cursors_by_session(&self, session: &SessionId) -> Vec<i64> {
+    pub fn invalidate_cursors_by_session(&self, lsid: &LogicalSessionId) -> Vec<i64> {
         let mut invalidated_cursor_ids = Vec::new();
         self.cursors.retain(|key, v| {
-            let should_remove = v.session_id.as_ref() == Some(session);
+            let should_remove = v.lsid.as_ref() == Some(lsid);
             if should_remove {
                 invalidated_cursor_ids.push(key.id().into());
             }
@@ -157,7 +157,7 @@ mod tests {
         }
     }
 
-    fn make_entry(session_id: Option<SessionId>) -> CursorStoreEntry {
+    fn make_entry(lsid: Option<LogicalSessionId>) -> CursorStoreEntry {
         CursorStoreEntry {
             conn: None,
             cursor: Cursor {
@@ -168,7 +168,7 @@ mod tests {
             collection: "testcol".to_owned(),
             timestamp: Instant::now(),
             cursor_timeout: Duration::from_secs(600),
-            session_id,
+            lsid,
             transaction_number: Some(TransactionNumber::new(1)),
         }
     }
@@ -239,14 +239,14 @@ mod tests {
     #[test]
     fn store_invalidate_by_session() {
         let store = make_store();
-        let sid = SessionId::new(vec![1, 2, 3]);
+        let lsid = LogicalSessionId::new(vec![1, 2, 3]);
         store.add_cursor(
             key(1, &principal!("alice", 1)),
-            make_entry(Some(sid.clone())),
+            make_entry(Some(lsid.clone())),
         );
         store.add_cursor(key(2, &principal!("alice", 1)), make_entry(None));
 
-        let invalidated = store.invalidate_cursors_by_session(&sid);
+        let invalidated = store.invalidate_cursors_by_session(&lsid);
         assert_eq!(invalidated, vec![1_i64]);
         assert!(store.get_cursor(&key(1, &principal!("alice", 1))).is_none());
         assert!(store.get_cursor(&key(2, &principal!("alice", 1))).is_some());

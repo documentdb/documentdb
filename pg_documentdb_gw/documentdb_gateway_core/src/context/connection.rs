@@ -20,8 +20,8 @@ use crate::{
     auth::AuthState,
     configuration::DynamicConfiguration,
     context::{
-        session::SessionKey, Cursor, CursorKey, CursorRef, CursorStoreEntry, ServiceContext,
-        SessionId, TransactionNumber,
+        session::SessionKey, Cursor, CursorKey, CursorRef, CursorStoreEntry, LogicalSessionId,
+        ServiceContext, TransactionNumber,
     },
     error::Result,
     postgres::conn_mgmt::Connection,
@@ -37,7 +37,7 @@ pub struct ConnectionContext {
     pub auth_state: AuthState,
     pub requires_response: bool,
     pub client_information: Option<RawDocumentBuf>,
-    pub transaction: Option<(SessionId, TransactionNumber)>,
+    pub transaction: Option<(LogicalSessionId, TransactionNumber)>,
     pub telemetry_provider: Option<Box<dyn TelemetryProvider>>,
     pub ip_address: String,
     pub cipher_type: i32,
@@ -90,9 +90,9 @@ impl ConnectionContext {
         let key = CursorKey::new(id.into(), caller.clone());
 
         // If there is a transaction, validate that the transaction owns the cursor before using it
-        if let Some((session_id, _)) = self.transaction.as_ref() {
+        if let Some((lsid, _)) = self.transaction.as_ref() {
             let transaction_store = self.service_context.transaction_store();
-            let session_key = SessionKey::new(session_id.clone(), caller.clone());
+            let session_key = SessionKey::new(lsid.clone(), caller.clone());
             if let Some(entry) = transaction_store.transactions.get(&session_key) {
                 let (_, transaction) = entry.value();
                 if !transaction.contains_cursor(id.into()) {
@@ -121,7 +121,7 @@ impl ConnectionContext {
         db: &str,
         collection: &str,
         cursor_timeout: Duration,
-        session_id: Option<SessionId>,
+        lsid: Option<LogicalSessionId>,
         transaction_number: Option<TransactionNumber>,
         caller: &Principal,
     ) {
@@ -134,15 +134,15 @@ impl ConnectionContext {
             collection: collection.to_owned(),
             timestamp: Instant::now(),
             cursor_timeout,
-            session_id,
+            lsid,
             transaction_number,
         };
 
         // If there is a transaction, add it to the tracked cursors
-        if let Some((session_id, _)) = self.transaction.as_ref() {
+        if let Some((lsid, _)) = self.transaction.as_ref() {
             let transaction_store = self.service_context.transaction_store();
-            let session_key: crate::context::StoreKey<SessionId> =
-                SessionKey::new(session_id.clone(), caller.clone());
+            let session_key: crate::context::StoreKey<LogicalSessionId> =
+                SessionKey::new(lsid.clone(), caller.clone());
             if let Some(entry) = transaction_store.transactions.get(&session_key) {
                 let (_, transaction) = entry.value();
                 transaction.add_cursor(*key.id());

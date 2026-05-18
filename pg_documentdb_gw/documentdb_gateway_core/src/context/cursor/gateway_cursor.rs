@@ -12,7 +12,7 @@ use bson::RawDocumentBuf;
 use tokio::time::{Duration, Instant};
 
 use crate::{
-    context::CursorId, context::SessionId, context::TransactionNumber,
+    context::CursorId, context::LogicalSessionId, context::TransactionNumber,
     postgres::conn_mgmt::Connection,
 };
 
@@ -30,6 +30,6 @@ pub struct CursorStoreEntry {
     pub collection: String,
     pub timestamp: Instant,
     pub cursor_timeout: Duration,
-    pub session_id: Option<SessionId>,
+    pub lsid: Option<LogicalSessionId>,
     pub transaction_number: Option<TransactionNumber>,
 }

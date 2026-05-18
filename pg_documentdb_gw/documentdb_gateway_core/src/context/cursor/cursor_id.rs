@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-use crate::context::{SessionId, StoreKey, TransactionNumber};
+use crate::context::{LogicalSessionId, StoreKey, TransactionNumber};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CursorId(i64);
@@ -18,7 +18,7 @@ pub type CursorKey = StoreKey<CursorId>;
 #[derive(Debug)]
 pub struct CursorRef {
     cursor_id: CursorId,
-    session_id: Option<SessionId>,
+    lsid: Option<LogicalSessionId>,
     transaction_number: Option<TransactionNumber>,
 }
 
@@ -26,12 +26,12 @@ impl CursorRef {
     #[must_use]
     pub const fn new(
         cursor_id: CursorId,
-        session_id: Option<SessionId>,
+        lsid: Option<LogicalSessionId>,
         transaction_number: Option<TransactionNumber>,
     ) -> Self {
         Self {
             cursor_id,
-            session_id,
+            lsid,
             transaction_number,
         }
     }
@@ -42,8 +42,8 @@ impl CursorRef {
     }
 
     #[must_use]
-    pub const fn session_id(&self) -> Option<&SessionId> {
-        self.session_id.as_ref()
+    pub const fn lsid(&self) -> Option<&LogicalSessionId> {
+        self.lsid.as_ref()
     }
 
     #[must_use]

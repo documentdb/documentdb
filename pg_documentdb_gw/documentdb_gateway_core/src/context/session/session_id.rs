@@ -11,11 +11,11 @@ use std::fmt;
 use crate::context::StoreKey;
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SessionId(Vec<u8>);
+pub struct LogicalSessionId(Vec<u8>);
 
-pub type SessionKey = StoreKey<SessionId>;
+pub type SessionKey = StoreKey<LogicalSessionId>;
 
-impl SessionId {
+impl LogicalSessionId {
     #[must_use]
     pub const fn new(id: Vec<u8>) -> Self {
         Self(id)
@@ -27,33 +27,33 @@ impl SessionId {
     }
 }
 
-impl From<Vec<u8>> for SessionId {
+impl From<Vec<u8>> for LogicalSessionId {
     fn from(value: Vec<u8>) -> Self {
         Self(value)
     }
 }
 
-impl From<&[u8]> for SessionId {
+impl From<&[u8]> for LogicalSessionId {
     fn from(value: &[u8]) -> Self {
         Self(value.to_vec())
     }
 }
 
-impl From<SessionId> for Vec<u8> {
-    fn from(session_id: SessionId) -> Self {
-        session_id.0
+impl From<LogicalSessionId> for Vec<u8> {
+    fn from(lsid: LogicalSessionId) -> Self {
+        lsid.0
     }
 }
 
-impl fmt::Display for SessionId {
+impl fmt::Display for LogicalSessionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", hex::encode(&self.0))
     }
 }
 
-impl fmt::Debug for SessionId {
+impl fmt::Debug for LogicalSessionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SessionId({self})")
+        write!(f, "LogicalSessionId({self})")
     }
 }
 
@@ -64,44 +64,44 @@ mod tests {
     #[test]
     fn new_stores_bytes() {
         let bytes = vec![1, 2, 3, 4];
-        let id = SessionId::new(bytes.clone());
+        let id = LogicalSessionId::new(bytes.clone());
         assert_eq!(id.as_bytes(), &bytes);
     }
 
     #[test]
     fn from_vec_u8() {
         let bytes = vec![10, 20, 30];
-        let id: SessionId = bytes.clone().into();
+        let id: LogicalSessionId = bytes.clone().into();
         assert_eq!(id.as_bytes(), &bytes);
     }
 
     #[test]
     fn from_slice() {
         let bytes: &[u8] = &[5, 6, 7, 8];
-        let id: SessionId = bytes.into();
+        let id: LogicalSessionId = bytes.into();
         assert_eq!(id.as_bytes(), bytes);
     }
 
     #[test]
     fn into_vec_u8() {
         let bytes = vec![99, 100];
-        let id = SessionId::new(bytes.clone());
+        let id = LogicalSessionId::new(bytes.clone());
         let recovered: Vec<u8> = id.into();
         assert_eq!(recovered, bytes);
     }
 
     #[test]
     fn clone_produces_equal_instance() {
-        let id = SessionId::new(vec![1, 2, 3]);
+        let id = LogicalSessionId::new(vec![1, 2, 3]);
         let cloned = id.clone();
         assert_eq!(id, cloned);
     }
 
     #[test]
     fn equality() {
-        let a = SessionId::new(vec![1, 2, 3]);
-        let b = SessionId::new(vec![1, 2, 3]);
-        let c = SessionId::new(vec![4, 5, 6]);
+        let a = LogicalSessionId::new(vec![1, 2, 3]);
+        let b = LogicalSessionId::new(vec![1, 2, 3]);
+        let c = LogicalSessionId::new(vec![4, 5, 6]);
         assert_eq!(a, b);
         assert_ne!(a, c);
     }
@@ -111,10 +111,10 @@ mod tests {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
-        let a = SessionId::new(vec![1, 2, 3]);
-        let b = SessionId::new(vec![1, 2, 3]);
+        let a = LogicalSessionId::new(vec![1, 2, 3]);
+        let b = LogicalSessionId::new(vec![1, 2, 3]);
 
-        let hash = |val: &SessionId| {
+        let hash = |val: &LogicalSessionId| {
             let mut h = DefaultHasher::new();
             val.hash(&mut h);
             h.finish()
@@ -125,24 +125,24 @@ mod tests {
 
     #[test]
     fn debug_format_shows_hex() {
-        let id = SessionId::new(vec![0xDE, 0xAD, 0xBE, 0xEF]);
+        let id = LogicalSessionId::new(vec![0xDE, 0xAD, 0xBE, 0xEF]);
         let debug = format!("{id:?}");
-        assert_eq!(debug, "SessionId(deadbeef)");
+        assert_eq!(debug, "LogicalSessionId(deadbeef)");
     }
 
     #[test]
-    fn empty_session_id() {
-        let id = SessionId::new(vec![]);
+    fn empty_lsid() {
+        let id = LogicalSessionId::new(vec![]);
         assert!(id.as_bytes().is_empty());
-        assert_eq!(format!("{id:?}"), "SessionId()");
+        assert_eq!(format!("{id:?}"), "LogicalSessionId()");
     }
 
     #[test]
     fn can_be_used_as_hash_map_key() {
         use std::collections::HashMap;
 
-        let id1 = SessionId::new(vec![1, 2, 3]);
-        let id2 = SessionId::new(vec![4, 5, 6]);
+        let id1 = LogicalSessionId::new(vec![1, 2, 3]);
+        let id2 = LogicalSessionId::new(vec![4, 5, 6]);
         let mut map = HashMap::new();
         map.insert(id1.clone(), "first");
         map.insert(id2.clone(), "second");
