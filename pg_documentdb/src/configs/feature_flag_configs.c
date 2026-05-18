@@ -355,8 +355,8 @@ bool EnableObjectIdFuncExprConversion = DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVER
  * SECTION: Let support feature flags
  */
 
-/* Added in v109, Pending stabilization, enable on v113 */
-#define DEFAULT_ENABLE_OPERATOR_VARIABLES_IN_LOOKUP false
+/* Added in v109, enabled in v113, remove after v115 */
+#define DEFAULT_ENABLE_OPERATOR_VARIABLES_IN_LOOKUP true
 bool EnableOperatorVariablesInLookup =
 	DEFAULT_ENABLE_OPERATOR_VARIABLES_IN_LOOKUP;
 
