@@ -5182,9 +5182,34 @@ HandleSort(const bson_value_t *existingValue, Query *query,
 		 */
 		if (context->mongoCollection == NULL)
 		{
+			pfree(parseState);
 			return query;
 		}
 
+		/*
+		 * Only allow $natural when the query is a simple base-relation scan.
+		 * If this is a view / subquery / derived query, ignore $natural.
+		 */
+		if (list_length(query->rtable) != 1)
+		{
+			/* ignore $natural */
+			context->sortSpec.value_type = BSON_TYPE_EOD;
+			pfree(parseState);
+			return query;
+		}
+
+		RangeTblEntry *rte = linitial(query->rtable);
+		if (!(rte->rtekind == RTE_RELATION && rte->relkind == RELKIND_RELATION))
+		{
+			/* ignore $natural */
+			context->sortSpec.value_type = BSON_TYPE_EOD;
+			pfree(parseState);
+			return query;
+		}
+
+		/*
+		 * Safe: base table case -> use CTID
+		 */
 		Var *ctid_var = makeVar(1, SelfItemPointerAttributeNumber,
 								TIDOID, -1, 0, 0);
 		TargetEntry *tle_ctid = makeTargetEntry((Expr *) ctid_var,

@@ -306,3 +306,97 @@ ERROR:  Cycle detected in view: db.create_view_cycle_4 -> db.create_view_cycle_1
 -- create with long name
 SELECT documentdb_api.create_collection_view('db', FORMAT('{ "create": "create_view_cycle_4_%s", "viewOn": "create_view_cycle_1" }', repeat('1bc', 80))::documentdb_core.bson);
 ERROR:  Full namespace must not exceed 235 bytes.
+-- Crash fix: Natural sort on collection view
+SELECT documentdb_api.insert_one('db', 'targetCollection', '{ "_id" : 1, "a" : 2, "b" : 3 }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'targetCollection', '{ "_id" : 2, "a" : 1, "b" : 2 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'targetCollection', '{ "_id" : 3, "a" : 3, "b" : 1 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.create_collection_view('db', '{ "create": "targetViewToSort", "viewOn": "targetCollection", "pipeline": [ { "$sort": { "_id": 1 } } ] }');
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('db', '{ "find": "targetViewToSort", "projection": {}, "sort": { "$natural": 1 }}');
+                                            document                                            
+------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "3" }, "b" : { "$numberInt" : "1" } }
+(3 rows)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('db', '{ "find": "targetViewToSort", "projection": {}, "sort": { "$natural": -1 }}');
+                                            document                                            
+------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "3" }, "b" : { "$numberInt" : "1" } }
+(3 rows)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "targetViewToSort", "pipeline": [ { "$sort": { "$natural": 1 } } ] }');
+                                            document                                            
+------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "3" }, "b" : { "$numberInt" : "1" } }
+(3 rows)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "targetViewToSort", "pipeline": [ { "$sort": { "$natural": -1 } } ] }');
+                                            document                                            
+------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "3" }, "b" : { "$numberInt" : "1" } }
+(3 rows)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "targetViewToSort", "pipeline": [ { "$match": { "a": { "$gt": 1 } } }, { "$sort": { "$natural": 1 } } ] }');
+                                            document                                            
+------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "3" }, "b" : { "$numberInt" : "1" } }
+(2 rows)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "targetViewToSort", "pipeline": [ { "$match": { "a": { "$gt": 1 } } }, { "$sort": { "$natural": -1 } } ] }');
+                                            document                                            
+------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "3" }, "b" : { "$numberInt" : "1" } }
+(2 rows)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "targetViewToSort", "pipeline": [ { "$project": { "sum": { "$add": ["$a", "$b"] } } }, { "$sort": { "$natural": 1 } } ] }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "sum" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "2" }, "sum" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "3" }, "sum" : { "$numberInt" : "4" } }
+(3 rows)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "targetViewToSort", "pipeline": [ { "$project": { "sum": { "$add": ["$a", "$b"] } } }, { "$sort": { "$natural": -1 } } ] }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "sum" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "2" }, "sum" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "3" }, "sum" : { "$numberInt" : "4" } }
+(3 rows)
+
+SELECT drop_collection('db','targetCollection');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
