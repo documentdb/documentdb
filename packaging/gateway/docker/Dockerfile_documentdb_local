@@ -189,6 +189,7 @@ COPY --from=stage /home/documentdb/code/scripts/start_oss_server.sh /home/docume
 COPY --from=stage /home/documentdb/code/scripts/build_and_start_gateway.sh /home/documentdb/gateway/scripts/build_and_start_gateway.sh
 COPY --from=stage /home/documentdb/code/documentdb-local/scripts/emulator_entrypoint.sh /home/documentdb/gateway/scripts/emulator_entrypoint.sh
 COPY --from=stage /home/documentdb/code/scripts/utils.sh /home/documentdb/gateway/scripts/utils.sh
+COPY --from=stage /home/documentdb/code/scripts/preload_libraries.sh /home/documentdb/gateway/scripts/preload_libraries.sh
 COPY --from=stage /home/documentdb/code/scripts/setup_psqlrc.sh /home/documentdb/gateway/scripts/setup_psqlrc.sh
 # Copy initialization scripts
 COPY --from=stage /home/documentdb/code/documentdb-local/scripts/init_documentdb_data.sh /home/documentdb/gateway/scripts/init_documentdb_data.sh
