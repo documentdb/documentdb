@@ -105,6 +105,7 @@ COPY scripts/build_and_start_gateway.sh /home/documentdb/gateway/scripts/build_a
 COPY documentdb-local/scripts/emulator_entrypoint.sh /home/documentdb/gateway/scripts/emulator_entrypoint.sh
 COPY documentdb-local/scripts/init_documentdb_data.sh /home/documentdb/gateway/scripts/init_documentdb_data.sh
 COPY scripts/utils.sh /home/documentdb/gateway/scripts/utils.sh
+COPY scripts/preload_libraries.sh /home/documentdb/gateway/scripts/preload_libraries.sh
 COPY scripts/setup_psqlrc.sh /home/documentdb/gateway/scripts/setup_psqlrc.sh
 COPY documentdb-local/sample-data /home/documentdb/gateway/sample-data
 COPY packaging/test_packages/test_gateway.py /home/documentdb/gateway/scripts/test_gateway.py
