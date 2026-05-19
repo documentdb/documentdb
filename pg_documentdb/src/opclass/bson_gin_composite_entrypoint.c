@@ -55,7 +55,9 @@
 
 typedef enum RumIndexTransformOperation
 {
-	RumIndexTransform_IndexGenerateSkipBound = 1
+	RumIndexTransform_IndexGenerateSkipBound = 1,
+	RumIndexTransform_DetermineOrderByDirection = 2,
+	RumIndexTransform_OrderedScanRequiresDedup = 3,
 } RumIndexTransformOperation;
 
 
@@ -188,9 +190,11 @@ static int32_t GetIndexPathsFromOptionsWithLength(BsonGinCompositePathOptions *o
 												  int8_t *sortOrders);
 static void ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const
 											char **indexPaths,
-											uint32_t *indexPathsLengths, int32_t numPaths,
+											uint32_t *indexPathsLengths,
+											int8_t *sortOrders,
+											int32_t numPaths,
 											int32_t wildcardPathIndex,
-											bool *requiresOrderedScans,
+											ScanDirection *scanDirection,
 											VariableIndexBounds *variableBounds);
 static bytea * BuildTermForBounds(CompositeQueryRunData *runData,
 								  IndexTermCreateMetadata *singlePathMetadata,
@@ -198,9 +202,9 @@ static bytea * BuildTermForBounds(CompositeQueryRunData *runData,
 								  bool *partialMatch, const char **indexPaths,
 								  uint32_t *indexPathLengths, int8_t *sortOrders);
 static void ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
-									bool *isMultiKey, bool *isOrderedScan,
+									bool *isMultiKey,
 									bool *hasCorrelatedReducedTerms,
-									bool *isBackward, bool *supportsOrderedOperatorScans);
+									bool *supportsOrderedOperatorScans);
 static int32_t RunCompareOnBounds(CompositeIndexBounds *bounds,
 								  SerializedCompositeTermPair *termPair,
 								  bool hasEqualityPrefix, bool isBackwardScan,
@@ -418,17 +422,11 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	bool hasArrayPaths = true;
 
 	/* key that we're doing an ordered scan based off of search mode */
-	metaInfo->isOrderedScan = (*searchMode != GIN_SEARCH_MODE_DEFAULT);
-	metaInfo->isBackwardScan = (*searchMode == RUM_SEARCH_MODE_ORDERED_REVERSE);
 	bool isCorrelatedReducedScan = false;
 	bool supportsOrderedOperatorScans = false;
-	if (metaInfo->isOrderedScan)
-	{
-		*searchMode = GIN_SEARCH_MODE_DEFAULT;
-	}
 
 	/* Round 1, collect fixed index bounds and collect variable index bounds */
-	bool requiresOrderedScans = false;
+	ScanDirection scanDir = NoMovementScanDirection;
 	if (strategy == BSON_INDEX_STRATEGY_UNIQUE_EQUAL)
 	{
 		/* Extract query for unique equal is basically an equality on term generation
@@ -449,29 +447,58 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 		pgbsonelement singleElement;
 		PgbsonToSinglePgbsonElement(query, &singleElement);
 
-		ParseOperatorStrategy(indexPaths, indexPathLengths, numPaths,
+		ParseOperatorStrategy(indexPaths, indexPathLengths, sortOrders, numPaths,
 							  metaInfo->wildcardPathIndex, &singleElement, strategy,
-							  &requiresOrderedScans, &variableBounds);
+							  &scanDir, &variableBounds);
 	}
 	else
 	{
 		pgbsonelement singleElement;
 		ParseCompositeQuerySpec(query, &singleElement, &hasArrayPaths,
-								&metaInfo->isOrderedScan,
 								&isCorrelatedReducedScan,
-								&metaInfo->isBackwardScan, &supportsOrderedOperatorScans);
+								&supportsOrderedOperatorScans);
 		ParseBoundsForCompositeOperator(&singleElement, indexPaths, indexPathLengths,
-										numPaths,
+										sortOrders, numPaths,
 										metaInfo->wildcardPathIndex,
-										&requiresOrderedScans,
+										&scanDir,
 										&variableBounds);
 	}
 
-	if (requiresOrderedScans && !metaInfo->isOrderedScan)
+	metaInfo->hasArrayPaths = hasArrayPaths;
+	metaInfo->isOrderedScan = (*searchMode != GIN_SEARCH_MODE_DEFAULT);
+	metaInfo->isBackwardScan = (*searchMode == RUM_SEARCH_MODE_ORDERED_REVERSE);
+
+	if (ScanDirectionIsForward(scanDir))
 	{
-		/* An operator asked for an ordered scan - comply */
+		if (*searchMode == GIN_SEARCH_MODE_DEFAULT)
+		{
+			/* Notify physical index on ordering */
+			*searchMode = RUM_SEARCH_MODE_ORDERED;
+		}
+		else if (*searchMode == RUM_SEARCH_MODE_ORDERED_REVERSE)
+		{
+			ereport(ERROR, (errmsg("Invalid search mode - index requires reverse search, "
+								   "but operator class requested forward search")));
+		}
+
 		metaInfo->isOrderedScan = true;
-		*searchMode = RUM_SEARCH_MODE_ORDERED;
+		metaInfo->isBackwardScan = false;
+	}
+	else if (ScanDirectionIsBackward(scanDir))
+	{
+		if (*searchMode == GIN_SEARCH_MODE_DEFAULT)
+		{
+			/* Notify physical index on ordering */
+			*searchMode = RUM_SEARCH_MODE_ORDERED_REVERSE;
+		}
+		else if (*searchMode == RUM_SEARCH_MODE_ORDERED)
+		{
+			ereport(ERROR, (errmsg("Invalid search mode - index requires forward search, "
+								   "but operator class requested reverse search")));
+		}
+
+		metaInfo->isOrderedScan = true;
+		metaInfo->isBackwardScan = true;
 	}
 
 
@@ -2280,28 +2307,13 @@ gin_bson_get_composite_path_generated_terms(PG_FUNCTION_ARGS)
 }
 
 
-/*
- * Applies transforms from the index term to generate a new index term.
- * Currently, queries the compare values against the index, and if it has a
- * path that is unspecified, then generates a new lower or upper bound to continue
- * the search if applicable.
- */
-Datum
-gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
+static Datum
+CompositeIndexTermGenerateSkipBound(PG_FUNCTION_ARGS)
 {
 	bytea *compareKeyValue = PG_GETARG_BYTEA_PP(0);
 
 	/* bytea *queryKeyValue = PG_GETARG_BYTEA_PP(1); */
-
-	int32_t operationType = PG_GETARG_UINT16(2);
 	Pointer extraData = PG_GETARG_POINTER(3);
-
-	if (operationType != RumIndexTransform_IndexGenerateSkipBound)
-	{
-		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg(
-							"Composite index term transform only supports skip operation")));
-	}
 
 	CompositeQueryRunData *runData = (CompositeQueryRunData *) extraData;
 	SerializedCompositeTermPair serializedTerms[INDEX_MAX_KEYS] = { 0 };
@@ -2439,6 +2451,122 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 																		 ->numIndexPaths);
 	PG_FREE_IF_COPY(compareKeyValue, 0);
 	PG_RETURN_POINTER(serialized.indexTermVal);
+}
+
+
+static int32_t
+CompositeIndexDetermineOrderByDirectionCore(bytea *compositeScanOptions, Datum
+											orderByDatum)
+{
+	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
+	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
+	BsonGinCompositePathOptions *options =
+		(BsonGinCompositePathOptions *) compositeScanOptions;
+	int numPaths = GetIndexPathsFromOptions(
+		options,
+		indexPaths, sortOrders);
+
+	pgbson *sortSpec = DatumGetPgBson(orderByDatum);
+	pgbsonelement sortElement;
+	PgbsonToSinglePgbsonElement(sortSpec, &sortElement);
+
+	int sortAsc = BsonValueAsInt32(&sortElement.bsonValue);
+	for (int i = 0; i < numPaths; i++)
+	{
+		if (strcmp(sortElement.path, indexPaths[i]) == 0)
+		{
+			/* Found a path match - return scanDirection based on direction */
+			return sortAsc == sortOrders[i] ? ForwardScanDirection :
+				   BackwardScanDirection;
+		}
+	}
+
+	ereport(ERROR, (errmsg(
+						"Unable to determine sort direction - path in order by doesn't match any path in the index")));
+}
+
+
+static Datum
+CompositeIndexTermDetermineOrderByDirection(PG_FUNCTION_ARGS)
+{
+	Datum orderByDatum = PG_GETARG_DATUM(0);
+	bytea *compositeScanOptions = PG_GET_OPCLASS_OPTIONS();
+
+	int32_t scanDirection = CompositeIndexDetermineOrderByDirectionCore(
+		compositeScanOptions, orderByDatum);
+	return Int32GetDatum(scanDirection);
+}
+
+
+/*
+ * Applies transforms from the index term to generate a new index term.
+ * Currently, queries the compare values against the index, and if it has a
+ * path that is unspecified, then generates a new lower or upper bound to continue
+ * the search if applicable.
+ */
+Datum
+gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
+{
+	int32_t operationType = PG_GETARG_UINT16(2);
+
+	switch (operationType)
+	{
+		case RumIndexTransform_IndexGenerateSkipBound:
+		{
+			return CompositeIndexTermGenerateSkipBound(fcinfo);
+		}
+
+		case RumIndexTransform_DetermineOrderByDirection:
+		{
+			return CompositeIndexTermDetermineOrderByDirection(fcinfo);
+		}
+
+		case RumIndexTransform_OrderedScanRequiresDedup:
+		{
+			/* Get Extra_data first */
+			CompositeQueryRunData *runData = (CompositeQueryRunData *) PG_GETARG_POINTER(
+				1);
+
+			if (runData == NULL)
+			{
+				int32_t strategy = PG_GETARG_UINT16(3);
+				switch (strategy)
+				{
+					case BSON_INDEX_STRATEGY_IS_MULTIKEY:
+					case BSON_INDEX_STRATEGY_HAS_CORRELATED_REDUCED_TERMS:
+					case BSON_INDEX_STRATEGY_HAS_TRUNCATED_TERMS:
+					{
+						/* These strategies don't require recheck, so we need dedup for ordered scans */
+						PG_RETURN_BOOL(false);
+						break;
+					}
+
+					case BSON_INDEX_STRATEGY_UNIQUE_EQUAL:
+					{
+						/* Unique equality doesn't require dedup since there can only be one match */
+						PG_RETURN_BOOL(false);
+						break;
+					}
+
+					default:
+						ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+										errmsg(
+											"Composite index strategy requires rundata for check but it was missing %d",
+											strategy)));
+				}
+			}
+
+			/* If there's array paths, we need dedup for ordered scans */
+			PG_RETURN_BOOL(runData->metaInfo->hasArrayPaths);
+		}
+
+		default:
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg(
+								"Composite index term transform only supports skip operation")));
+		}
+	}
 }
 
 
@@ -3684,57 +3812,8 @@ SerializeBoundsStringForExplain(bytea *entry, void *extraData, PG_FUNCTION_ARGS,
 }
 
 
-ScanDirection
-DetermineCompositeScanDirection(bytea *compositeScanOptions,
-								ScanKey orderbys, int norderbys)
-{
-	if (norderbys == 0)
-	{
-		return ForwardScanDirection;
-	}
-
-
-	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
-	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
-	BsonGinCompositePathOptions *options =
-		(BsonGinCompositePathOptions *) compositeScanOptions;
-	int numPaths = GetIndexPathsFromOptions(
-		options,
-		indexPaths, sortOrders);
-
-	/* For the first key, match it to the appropriate path*/
-	switch (orderbys[0].sk_strategy)
-	{
-		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY:
-		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE:
-		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_INDEXTERM:
-		{
-			pgbson *sortSpec = DatumGetPgBson(orderbys[0].sk_argument);
-			pgbsonelement sortElement;
-			PgbsonToSinglePgbsonElement(sortSpec, &sortElement);
-
-			int sortAsc = BsonValueAsInt32(&sortElement.bsonValue);
-			for (int i = 0; i < numPaths; i++)
-			{
-				if (strcmp(sortElement.path, indexPaths[i]) == 0)
-				{
-					/* Found a path match - return scanDirection based on direction */
-					return sortAsc == sortOrders[i] ? ForwardScanDirection :
-						   BackwardScanDirection;
-				}
-			}
-
-			break;
-		}
-	}
-
-	ereport(ERROR, (errmsg(
-						"Unable to determine sort direction - path in order by doesn't match any path in the index")));
-}
-
-
 Datum
-FormCompositeDatumFromQuals(List *indexQuals, List *indexOrderBy, bool isMultiKey, bool
+FormCompositeDatumFromQuals(List *indexQuals, bool isMultiKey, bool
 							hasCorrelatedReducedTerm, bool supportsOperatorOrderedScans)
 {
 	ScanKeyData *scanKeys = palloc0(sizeof(ScanKeyData) * list_length(indexQuals));
@@ -3804,8 +3883,6 @@ FormCompositeDatumFromQuals(List *indexQuals, List *indexOrderBy, bool isMultiKe
 	/* TODO: Extract order by scan direction from index orderby */
 	if (!ModifyScanKeysForCompositeScan(scanKeys, list_length(indexQuals), &targetScanKey,
 										isMultiKey, hasCorrelatedReducedTerm,
-										list_length(indexOrderBy) > 0,
-										ForwardScanDirection,
 										supportsOperatorOrderedScans))
 	{
 		return (Datum) 0;
@@ -3828,7 +3905,6 @@ FormCompositeDatumFromQuals(List *indexQuals, List *indexOrderBy, bool isMultiKe
 bool
 ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetScanKey,
 							   bool hasArrayKeys, bool hasCorrelatedReducedTerms,
-							   bool hasOrderBys, ScanDirection scanDirection,
 							   bool supportsOrderedOperatorScans)
 {
 	pgbson_writer querySpecWriter;
@@ -3869,9 +3945,6 @@ ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetSca
 
 	PgbsonWriterEndArray(&querySpecWriter, &queryWriter);
 	PgbsonWriterAppendBool(&querySpecWriter, "m", 1, hasArrayKeys);
-	PgbsonWriterAppendBool(&querySpecWriter, "or", 2, hasOrderBys);
-	PgbsonWriterAppendBool(&querySpecWriter, "db", 2, ScanDirectionIsBackward(
-							   scanDirection));
 	if (hasCorrelatedReducedTerms)
 	{
 		PgbsonWriterAppendBool(&querySpecWriter, "cr", 2, hasCorrelatedReducedTerms);
@@ -3902,11 +3975,47 @@ ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetSca
 }
 
 
+int32_t
+GetScanTypeForScanDirection(ScanDirection scanDirection)
+{
+	switch (scanDirection)
+	{
+		case ForwardScanDirection:
+		{
+			return RUM_SEARCH_MODE_ORDERED;
+		}
+
+		case BackwardScanDirection:
+		{
+			return RUM_SEARCH_MODE_ORDERED_REVERSE;
+		}
+
+		case NoMovementScanDirection:
+		{
+			return GIN_SEARCH_MODE_DEFAULT;
+		}
+
+		default:
+		{
+			ereport(ERROR, (errmsg("Unknown scan direction %d", scanDirection)));
+		}
+	}
+}
+
+
+ScanDirection
+GetOrderByScanDirectionFromDatum(bytea *opClassoptions, Datum orderByDatum)
+{
+	return (ScanDirection) CompositeIndexDetermineOrderByDirectionCore(opClassoptions,
+																	   orderByDatum);
+}
+
+
 static void
 ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
-						bool *isMultiKey, bool *isOrderBy,
+						bool *isMultiKey,
 						bool *hasCorrelatedReducedTerms,
-						bool *isBackward, bool *supportsOrderedOperatorScans)
+						bool *supportsOrderedOperatorScans)
 {
 	bson_iter_t queryIter;
 	PgbsonInitIterator(querySpec, &queryIter);
@@ -3926,10 +4035,6 @@ ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 		{
 			*isMultiKey = bson_iter_bool(&queryIter);
 		}
-		else if (strcmp(key, "or") == 0)
-		{
-			*isOrderBy = *isOrderBy || bson_iter_bool(&queryIter);
-		}
 		else if (strcmp(key, "cr") == 0)
 		{
 			*hasCorrelatedReducedTerms = *hasCorrelatedReducedTerms || bson_iter_bool(
@@ -3939,10 +4044,6 @@ ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 		{
 			*supportsOrderedOperatorScans = *supportsOrderedOperatorScans ||
 											bson_iter_bool(&queryIter);
-		}
-		else if (strcmp(key, "db") == 0)
-		{
-			*isBackward = bson_iter_bool(&queryIter);
 		}
 		else
 		{
@@ -4882,8 +4983,9 @@ GetIndexPathsFromOptionsWithLength(BsonGinCompositePathOptions *options,
 
 static void
 ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **indexPaths,
-								uint32_t *indexPathsLengths, int32_t numPaths, int32_t
-								wildcardPathIndex, bool *requiresOrderedScans,
+								uint32_t *indexPathsLengths, int8_t *sortOrders, int32_t
+								numPaths,
+								int32_t wildcardPathIndex, ScanDirection *scanDirection,
 								VariableIndexBounds *variableBounds)
 {
 	if (singleElement->bsonValue.value_type != BSON_TYPE_ARRAY)
@@ -4934,8 +5036,9 @@ ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **index
 								queryStrategy, BsonValueToJsonForLogging(value))));
 		}
 
-		ParseOperatorStrategy(indexPaths, indexPathsLengths, numPaths, wildcardPathIndex,
-							  &queryElement, queryStrategy, requiresOrderedScans,
+		ParseOperatorStrategy(indexPaths, indexPathsLengths, sortOrders, numPaths,
+							  wildcardPathIndex,
+							  &queryElement, queryStrategy, scanDirection,
 							  variableBounds);
 	}
 }

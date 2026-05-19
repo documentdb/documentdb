@@ -30,7 +30,6 @@ typedef void (*TryExplainIndexFunc)(struct IndexScanDescData *scan,
 
 typedef bool (*GetMultikeyStatusFunc)(Relation indexRelation);
 typedef bool (*GetTruncationStatusFunc)(Relation indexRelation);
-typedef bool (*CanOrderInIndexScan)(struct IndexScanDescData *scan);
 typedef Datum (*GetCurrentIndexKeyFunc)(struct IndexScanDescData *scan);
 typedef void (*SkipTidsOnCurrentEntryFunc)(struct IndexScanDescData *scan, BlockNumber
 										   blockNo);
@@ -74,11 +73,6 @@ typedef struct
 
 	/* Optional function to that returns the truncation status of an index */
 	GetTruncationStatusFunc get_truncation_status;
-
-	/* An override function that helps determine whether or not the index scan
-	 * can support ordering with order by. An extension method for the indexamroutine
-	 */
-	CanOrderInIndexScan can_order_in_index_scans;
 
 	/* Indicates whether the index supports ordered operator scans */
 	bool supports_ordered_operator_scans;

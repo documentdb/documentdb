@@ -67,7 +67,8 @@ typedef struct CompositeRegexData
 static void ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 										  BsonIndexStrategy queryStrategy,
 										  const char *wildcardPath,
-										  bool *requiresOrdered,
+										  int8_t sortOrder,
+										  ScanDirection *scanDirection,
 										  VariableIndexBounds *indexBounds);
 static void ProcessBoundForQuery(CompositeSingleBound *bound,
 								 const char *termPath,
@@ -125,7 +126,7 @@ static void AddMultiBoundaryForNotLess(int32_t indexAttribute, const char *wildc
 static void AddMultiBoundaryForDollarRange(int32_t indexAttribute, const
 										   char *wildcardPath,
 										   pgbsonelement *queryElement,
-										   bool *requiresOrdered,
+										   int8_t sortOrder, ScanDirection *scanDirection,
 										   VariableIndexBounds *indexBounds);
 static CompositeIndexBoundsSet * AddMultiBoundaryForDollarRegex(int32_t indexAttribute,
 																const char *wildcardPath,
@@ -1052,10 +1053,10 @@ GetFirstElementFromQueryArray(const bson_value_t *arrayValue, bson_value_t *firs
 
 void
 ParseOperatorStrategy(const char **indexPaths, uint32_t *indexPathLengths,
-					  int32_t numPaths, int32_t wildcardIndex,
+					  int8_t *sortOrders, int32_t numPaths, int32_t wildcardIndex,
 					  pgbsonelement *queryElement,
 					  BsonIndexStrategy queryStrategy,
-					  bool *requiresOrderedScans,
+					  ScanDirection *scanDirection,
 					  VariableIndexBounds *indexBounds)
 {
 	/* First figure out which query path matches */
@@ -1090,7 +1091,35 @@ ParseOperatorStrategy(const char **indexPaths, uint32_t *indexPathLengths,
 	}
 
 	ParseOperatorStrategyWithPath(i, queryElement, queryStrategy, wildcardPath,
-								  requiresOrderedScans, indexBounds);
+								  sortOrders[i], scanDirection, indexBounds);
+}
+
+
+static void
+ParseSortOrderAndSetScanDirection(bson_value_t *queryvalue, int8_t sortOrder,
+								  ScanDirection *scanDirection)
+{
+	int32_t querySort = BsonValueAsInt32(queryvalue);
+	ScanDirection requiredDir;
+	if (querySort == sortOrder)
+	{
+		requiredDir = ForwardScanDirection;
+	}
+	else if (querySort == -sortOrder)
+	{
+		requiredDir = BackwardScanDirection;
+	}
+	else
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR), errmsg(
+							"Invalid sort order %d for index path with sort order %d",
+							querySort, sortOrder)));
+	}
+
+	if (*scanDirection == NoMovementScanDirection)
+	{
+		*scanDirection = requiredDir;
+	}
 }
 
 
@@ -1098,7 +1127,8 @@ static void
 ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 							  BsonIndexStrategy queryStrategy,
 							  const char *wildcardPath,
-							  bool *requiresOrderedScans,
+							  int8_t sortOrder,
+							  ScanDirection *scanDirection,
 							  VariableIndexBounds *indexBounds)
 {
 	bool isNegationOp = false;
@@ -1270,7 +1300,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		case BSON_INDEX_STRATEGY_DOLLAR_RANGE:
 		{
 			AddMultiBoundaryForDollarRange(i, wildcardPath, queryElement,
-										   requiresOrderedScans, indexBounds);
+										   sortOrder, scanDirection, indexBounds);
 			break;
 		}
 
@@ -1350,7 +1380,8 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_INDEXTERM:
 		{
 			/* It's a full scan */
-			*requiresOrderedScans = true;
+			ParseSortOrderAndSetScanDirection(&queryElement->bsonValue, sortOrder,
+											  scanDirection);
 			break;
 		}
 
@@ -2779,7 +2810,7 @@ static void
 AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 							   const char *wildcardPath,
 							   pgbsonelement *queryElement,
-							   bool *requiresOrderedScans,
+							   int8_t sortOrder, ScanDirection *scanDirection,
 							   VariableIndexBounds *indexBounds)
 {
 	DollarRangeParams *params = ParseQueryDollarRange(queryElement);
@@ -2789,7 +2820,11 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 		/* Don't update any bounds */
 		if (params->orderScanDirection != 0)
 		{
-			*requiresOrderedScans = true;
+			bson_value_t sortValue = { 0 };
+			sortValue.value_type = BSON_TYPE_INT32;
+			sortValue.value.v_int32 = params->orderScanDirection;
+
+			ParseSortOrderAndSetScanDirection(&sortValue, sortOrder, scanDirection);
 		}
 
 		return;
@@ -2879,20 +2914,21 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 										"Missing 'op' key in $elemMatch index operator")));
 				}
 
-				bool requiresOrderedIgnore = false;
+				ScanDirection scanDirIgnore = NoMovementScanDirection;
 				if (isTopLevelPath)
 				{
 					/* Top level path conditions are mergable */
 					ParseOperatorStrategyWithPath(indexAttribute, &innerElemMatchElement,
 												  queryStrategy, wildcardPath,
-												  &requiresOrderedIgnore, &localBounds);
+												  sortOrder, &scanDirIgnore,
+												  &localBounds);
 				}
 				else
 				{
 					/* deduced child path conditions are not mergeable */
 					ParseOperatorStrategyWithPath(indexAttribute, &innerElemMatchElement,
 												  queryStrategy, wildcardPath,
-												  &requiresOrderedIgnore, indexBounds);
+												  sortOrder, &scanDirIgnore, indexBounds);
 				}
 			}
 		}

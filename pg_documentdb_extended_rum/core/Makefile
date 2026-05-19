@@ -4,7 +4,7 @@ PGFILEDESC = "DocumentDB Extended RUM index access method core implementation"
 
 OSS_SRC_DIR = ../../
 
-SOURCES = $(wildcard src/*.c)
+SOURCES = $(wildcard src/*.c) $(wildcard src/roaring_bitmaps/*.c)
 OBJS = $(patsubst %.c,%.o,$(SOURCES)) $(WIN32RES)
 
 # INCLUDES = rum.h rumsort.h
@@ -18,6 +18,10 @@ ifeq ($(CC),gcc)
 else
     PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB) -Iinclude
 endif
+
+# Update to notify roaring to use the C atomics implementation (as opposed to c++): See roaring.h CROARING_ATOMIC_IMPL_C
+PG_CFLAGS += -DCROARING_ATOMIC_IMPL=3
+PG_CPPFLAGS += -DCROARING_ATOMIC_IMPL=3
 
 PG_CFLAGS += -Wno-sign-compare -Wno-type-limits
 PG_LDFLAGS += -Wl,-rpath=$(shell $(PG_CONFIG) --pkglibdir) -fno-lto

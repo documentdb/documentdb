@@ -16,28 +16,7 @@
 #include <nodes/pathnodes.h>
 #include "index_am/index_am_exports.h"
 
-typedef void *(*CreateIndexArrayTrackerState)(void);
-typedef bool (*IndexArrayTrackerAdd)(void *state, ItemPointer item);
-typedef void (*FreeIndexArrayTrackerState)(void *);
 typedef void (*UpdateMultikeyStatusFunc)(Relation index);
-
-/*
- * Adapter struct that provides function pointers to allow
- * for extensibility in managing index array state for index scans.
- * The current requirements on the interface is to provide an abstraction
- * that can be used to deduplicate array entries in the index scan.
- */
-typedef struct RumIndexArrayStateFuncs
-{
-	/* Create opaque state to manage entries in this specific index scan */
-	CreateIndexArrayTrackerState createState;
-
-	/* Add an item to the index scan and return whether or not it is new or existing */
-	IndexArrayTrackerAdd addItem;
-
-	/* Frees the temporary state used for the adding of items */
-	FreeIndexArrayTrackerState freeState;
-} RumIndexArrayStateFuncs;
 
 
 /* How to load the RUM library into the process */

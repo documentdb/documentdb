@@ -26,11 +26,7 @@
 #include "common/pg_prng.h"
 #endif
 #include "pg_documentdb_rum.h"
-
-typedef enum RumIndexTransformOperation
-{
-	RumIndexTransform_IndexGenerateSkipBound = 1
-} RumIndexTransformOperation;
+#include "pg_documentdb_rum_dedup.h"
 
 
 /* Scan bounds used in comparePartial initialization */
@@ -43,8 +39,8 @@ typedef struct RumItemScanEntryBounds
 /* GUC parameter */
 extern int RumFuzzySearchLimit;
 extern bool RumDisableFastScan;
-extern bool RumForceOrderedIndexScan;
 extern bool RumEnableSkipIntermediateEntry;
+extern const RumIndexArrayStateFuncs RoaringStateFuncs;
 
 static bool scanPage(RumState *rumstate, RumScanEntry entry, RumItem *item,
 					 bool equalOk);
@@ -1863,6 +1859,30 @@ getMinScanEntry(RumScanOpaque so)
 
 
 static void
+CheckAndAddDeduplicateState(RumScanOpaque so)
+{
+	RumScanEntry entry = so->orderByScanData->orderByEntry;
+	if (!so->rumstate.canOuterOrdering[entry->attnum - 1] ||
+		!(so->rumstate.outerOrderingFn[entry->attnum - 1].fn_nargs == 4))
+	{
+		return;
+	}
+
+	Datum requiresDedup = FunctionCall4Coll(
+		&so->rumstate.outerOrderingFn[entry->attnum - 1],
+		so->rumstate.supportCollation[entry->attnum - 1],
+		entry->queryKey,
+		PointerGetDatum(entry->extra_data),
+		UInt16GetDatum(RumIndexTransform_OrderedScanRequiresDedup),
+		UInt16GetDatum(entry->strategy));
+	if (DatumGetBool(requiresDedup))
+	{
+		so->orderByScanData->orderByDedupState = RoaringStateFuncs.createState();
+	}
+}
+
+
+static void
 startOrderedScanEntries(IndexScanDesc scan, RumState *rumstate, RumScanOpaque so)
 {
 	/* Now adjust the bounds based on the minimum value of the other scan keys */
@@ -1888,9 +1908,21 @@ startOrderedScanEntries(IndexScanDesc scan, RumState *rumstate, RumScanOpaque so
 		pfree(so->orderByScanData);
 	}
 
+	/* Ensure orderScanDirection is initialized */
+	if (ScanDirectionIsNoMovement(so->orderScanDirection))
+	{
+		so->orderScanDirection = ForwardScanDirection;
+	}
+
 	so->orderByScanData = palloc0(sizeof(RumOrderByScanData));
 	so->orderByScanData->orderByEntryPageCopy = palloc(BLCKSZ);
 	startScanEntryOrderedCore(so, minEntry, scan->xs_snapshot);
+
+	/* For ordered scans, the scan isn't ordered by TID
+	 * Ask the opclass to see if we need to deduplicate.
+	 * Note: This is set once per scan (not reset during skip scan moves).
+	 */
+	CheckAndAddDeduplicateState(so);
 }
 
 
@@ -1902,67 +1934,9 @@ startScan(IndexScanDesc scan)
 	uint32 i;
 	RumScanType scanType = RumFastScan;
 	MemoryContext oldCtx = MemoryContextSwitchTo(so->keyCtx);
-	bool isSupportedOrderedScan = false;
 
-	/* Validate that there's only 1 attnum in all the keys,
-	 * multiatt ordered scan is not supported
-	 * Ordered scan also requires comparePartial and
-	 * an ordering function on all keys.
-	 */
-	isSupportedOrderedScan = so->nkeys > 0;
-	for (i = 0; i < so->nkeys; i++)
+	if (!ScanDirectionIsNoMovement(so->orderScanDirection))
 	{
-		RumScanKey key = so->keys[i];
-		if (key->attnum != so->keys[0]->attnum)
-		{
-			isSupportedOrderedScan = false;
-			break;
-		}
-
-		if (!rumstate->canPartialMatch[key->attnum - 1] ||
-			!rumstate->canOrdering[key->attnum - 1] ||
-			rumstate->orderingFn[key->attnum - 1].fn_nargs != 4)
-		{
-			isSupportedOrderedScan = false;
-			break;
-		}
-	}
-
-	if (RumForceOrderedIndexScan && isSupportedOrderedScan)
-	{
-		scanType = RumOrderedScan;
-		startOrderedScanEntries(scan, rumstate, so);
-	}
-	else if ((so->norderbys > 0 || RumEnableOrderedOperatorScans) &&
-			 so->willSort && !rumstate->useAlternativeOrder)
-	{
-		scanType = RumOrderedScan;
-		startOrderedScanEntries(scan, rumstate, so);
-	}
-	else if (scan->parallel_scan != NULL && isSupportedOrderedScan)
-	{
-		scanType = RumOrderedScan;
-		startOrderedScanEntries(scan, rumstate, so);
-	}
-	else if (scan->xs_want_itup)
-	{
-		if (!isSupportedOrderedScan)
-		{
-			ereport(ERROR, (errmsg(
-								"Unexpected index only scan when ordered scan is not supported.")));
-		}
-
-		/* If we want to return index tuples, we can use ordered scan */
-		scanType = RumOrderedScan;
-		startOrderedScanEntries(scan, rumstate, so);
-	}
-	else if (isSupportedOrderedScan &&
-			 so->totalentries == 1 && so->entries[0]->isPartialMatch)
-	{
-		/* We can simply use an ordered scan if there's only 1 entry
-		 * This would happen for any scenario that is not needing a
-		 * consistent check intersection.
-		 */
 		scanType = RumOrderedScan;
 		startOrderedScanEntries(scan, rumstate, so);
 	}
@@ -4446,7 +4420,7 @@ rumgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	 */
 	if (RumIsNewKey(scan))
 	{
-		rumNewScanKey(scan);
+		rumNewScanKey(scan, NoMovementScanDirection);
 	}
 
 	if (RumIsVoidRes(scan))
@@ -4672,7 +4646,7 @@ reverseScan(IndexScanDesc scan)
 	int i, j;
 
 	freeScanKeys(so);
-	rumNewScanKey(scan);
+	rumNewScanKey(scan, NoMovementScanDirection);
 
 	for (i = 0; i < so->nkeys; i++)
 	{
@@ -4692,6 +4666,46 @@ reverseScan(IndexScanDesc scan)
 }
 
 
+inline static bool
+RumGetTupleDoSimpleScan(IndexScanDesc scan, RumScanOpaque so)
+{
+	bool recheck = false;
+	bool recheckOrderby = false;
+	if (scan->kill_prior_tuple && RumEnableSupportDeadIndexItems)
+	{
+		/* Remember it for later. (We'll deal with all such
+		 * tuples at once right before leaving the index page.)
+		 */
+		if (so->killedItems == NULL)
+		{
+			so->killedItems = (ItemPointerData *) palloc(MaxTIDsPerRumPage *
+														 sizeof(ItemPointerData));
+		}
+
+		if (so->numKilled < MaxTIDsPerRumPage)
+		{
+			so->killedItems[so->numKilled++] = so->item.iptr;
+		}
+	}
+
+	if (scanGetItem(scan, &so->item, &so->item, &recheck, &recheckOrderby))
+	{
+		scan->xs_heaptid = so->item.iptr;
+		scan->xs_recheck = recheck;
+		scan->xs_recheckorderby = recheckOrderby;
+
+		if (scan->xs_want_itup && so->projectIndexTupleData)
+		{
+			scan->xs_itup = so->projectIndexTupleData->iscan_tuple;
+		}
+
+		return true;
+	}
+
+	return false;
+}
+
+
 bool
 rumgettuple(IndexScanDesc scan, ScanDirection direction)
 {
@@ -4701,31 +4715,19 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 	RumSortItem *item;
 	bool should_free;
 
-#if PG_VERSION_NUM >= 120000
-#define GET_SCAN_TID(scan) ((scan)->xs_heaptid)
-#define SET_SCAN_TID(scan, tid) ((scan)->xs_heaptid = (tid))
-#else
-#define GET_SCAN_TID(scan) ((scan)->xs_ctup.t_self)
-#define SET_SCAN_TID(scan, tid) ((scan)->xs_ctup.t_self = (tid))
-#endif
-
 	if (so->firstCall)
 	{
-		if (!ScanDirectionIsNoMovement(direction))
-		{
-			so->orderScanDirection = direction;
-		}
-
 		/*
 		 * Set up the scan keys, and check for unsatisfiable query.
 		 */
 		if (RumIsNewKey(scan))
 		{
-			rumNewScanKey(scan);
+			rumNewScanKey(scan, direction);
 		}
 
 		so->firstCall = false;
-		ItemPointerSetInvalid(&GET_SCAN_TID(scan));
+		so->getTupleScanType = RumGetTupleTidOrderedScan;
+		ItemPointerSetInvalid(&scan->xs_heaptid);
 
 		if (RumIsVoidRes(scan))
 		{
@@ -4766,13 +4768,17 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 
 		if (so->scanType == RumOrderedScan)
 		{
-			so->useSimpleScan = true;
+			so->getTupleScanType =
+				so->orderByScanData->orderByDedupState ? RumGetTupleSimpleDedupScan :
+				RumGetTupleSimpleScan;
 		}
 		else if (so->norderbys == 0 &&
 				 so->scanType != RumFullScan && !so->rumstate.useAlternativeOrder)
 		{
-			/* We don't search here. */
-			so->useSimpleScan = true;
+			/* We don't search here: This is a TID ordered regular scan so we don't
+			 * need dedup here.
+			 */
+			so->getTupleScanType = RumGetTupleSimpleScan;
 		}
 		else if (so->naturalOrder == NoMovementScanDirection)
 		{
@@ -4788,102 +4794,100 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 		}
 	}
 
-	if (so->useSimpleScan)
+	switch (so->getTupleScanType)
 	{
-		if (scan->kill_prior_tuple && RumEnableSupportDeadIndexItems)
+		case RumGetTupleSimpleScan:
 		{
-			/* Remember it for later. (We'll deal with all such
-			 * tuples at once right before leaving the index page.)
-			 */
-			if (so->killedItems == NULL)
-			{
-				so->killedItems = (ItemPointerData *) palloc(MaxTIDsPerRumPage *
-															 sizeof(ItemPointerData));
-			}
-
-			if (so->numKilled < MaxTIDsPerRumPage)
-			{
-				so->killedItems[so->numKilled++] = so->item.iptr;
-			}
+			return RumGetTupleDoSimpleScan(scan, so);
 		}
 
-		if (scanGetItem(scan, &so->item, &so->item, &recheck, &recheckOrderby))
+		case RumGetTupleSimpleDedupScan:
 		{
-			SET_SCAN_TID(scan, so->item.iptr);
-			scan->xs_recheck = recheck;
-			scan->xs_recheckorderby = recheckOrderby;
-
-			if (scan->xs_want_itup && so->projectIndexTupleData)
+			while (RumGetTupleDoSimpleScan(scan, so))
 			{
-				scan->xs_itup = so->projectIndexTupleData->iscan_tuple;
+				if (!RoaringStateFuncs.addItem(so->orderByScanData->orderByDedupState,
+											   &so->item.iptr))
+				{
+					/* else, get the next tuple
+					 * Ensure that we reset kill_prior_tuple since this is the duplicate path.
+					 */
+					so->numDuplicates++;
+					scan->kill_prior_tuple = false;
+					continue;
+				}
+
+				scan->xs_heaptid = so->item.iptr;
+				return true;
 			}
 
-			return true;
+			return false;
 		}
 
-		return false;
-	}
-
-	if (so->naturalOrder != NoMovementScanDirection)
-	{
-		if (scanGetItem(scan, &so->item, &so->item, &recheck, &recheckOrderby))
+		default:
+		case RumGetTupleTidOrderedScan:
 		{
-			SET_SCAN_TID(scan, so->item.iptr);
-			scan->xs_recheck = recheck;
-			scan->xs_recheckorderby = recheckOrderby;
-
-			return true;
-		}
-		else if (so->secondPass == false)
-		{
-			reverseScan(scan);
-			so->secondPass = true;
-			return rumgettuple(scan, direction);
-		}
-
-		return false;
-	}
-
-	item = rum_tuplesort_getrum(so->sortstate, true, &should_free);
-	while (item)
-	{
-		uint32 i,
-			   j = 0;
-
-		if (rumCompareItemPointers(&GET_SCAN_TID(scan), &item->iptr) == 0)
-		{
-			if (should_free)
+			if (so->naturalOrder != NoMovementScanDirection)
 			{
-				pfree(item);
+				if (scanGetItem(scan, &so->item, &so->item, &recheck, &recheckOrderby))
+				{
+					scan->xs_heaptid = so->item.iptr;
+					scan->xs_recheck = recheck;
+					scan->xs_recheckorderby = recheckOrderby;
+
+					return true;
+				}
+				else if (so->secondPass == false)
+				{
+					reverseScan(scan);
+					so->secondPass = true;
+					return rumgettuple(scan, direction);
+				}
+
+				return false;
 			}
+
 			item = rum_tuplesort_getrum(so->sortstate, true, &should_free);
-			continue;
-		}
-
-		SET_SCAN_TID(scan, item->iptr);
-		scan->xs_recheck = item->recheck;
-		scan->xs_recheckorderby = false;
-
-		for (i = 0; i < so->nkeys; i++)
-		{
-			if (!so->keys[i]->orderBy)
+			while (item)
 			{
-				continue;
+				uint32 i,
+					   j = 0;
+
+				if (rumCompareItemPointers(&scan->xs_heaptid, &item->iptr) == 0)
+				{
+					if (should_free)
+					{
+						pfree(item);
+					}
+					item = rum_tuplesort_getrum(so->sortstate, true, &should_free);
+					continue;
+				}
+
+				scan->xs_heaptid = item->iptr;
+				scan->xs_recheck = item->recheck;
+				scan->xs_recheckorderby = false;
+
+				for (i = 0; i < so->nkeys; i++)
+				{
+					if (!so->keys[i]->orderBy)
+					{
+						continue;
+					}
+					scan->xs_orderbyvals[j] = Float8GetDatum(item->data[j]);
+					scan->xs_orderbynulls[j] = false;
+
+					j++;
+				}
+
+				if (should_free)
+				{
+					pfree(item);
+				}
+				return true;
 			}
-			scan->xs_orderbyvals[j] = Float8GetDatum(item->data[j]);
-			scan->xs_orderbynulls[j] = false;
 
-			j++;
+			return false;
 		}
-
-		if (should_free)
-		{
-			pfree(item);
-		}
-		return true;
 	}
-
-	return false;
 }
 
 

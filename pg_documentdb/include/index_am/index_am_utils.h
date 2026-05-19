@@ -76,7 +76,6 @@ SkipTidsOnCurrentEntryFunc GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily
 
 bool GetCompositeOpClassWithProps(Relation indexRelation,
 								  bool *supportsOrderedOperatorScans,
-								  GetMultikeyStatusFunc *multiKeyStatusFunc,
-								  CanOrderInIndexScan *isIndexScanOrdered);
+								  GetMultikeyStatusFunc *multiKeyStatusFunc);
 
 #endif

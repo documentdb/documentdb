@@ -30,7 +30,6 @@
 #include "infrastructure/cursor_store.h"
 #include "infrastructure/job_management.h"
 #include "background_worker/background_worker_job.h"
-#include "index_am/roaring_bitmap_adapter.h"
 #include "utils/error_utils.h"
 
 /* --------------------------------------------------------- */
