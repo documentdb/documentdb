@@ -589,105 +589,248 @@ $cmd$);
 
 
 -- ======================================================================
--- SECTION 13: $in on truncated strings
+-- SECTION 13: $elemMatch with truncation + collation
 -- ======================================================================
 
--- 13.1: $in with short strings — index SHOULD be used
+SELECT documentdb_api.insert_one('trunc_db','trunc_elemmatch', '{"_id": 1, "tags": ["short", "Short", "SHORT"]}', NULL);
+SELECT documentdb_api.insert_one('trunc_db','trunc_elemmatch', '{"_id": 2, "tags": ["another_short", "ANOTHER_SHORT"]}', NULL);
+SELECT documentdb_api.insert_one('trunc_db','trunc_elemmatch',
+  '{"_id": 3, "tags": ["this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB"]}', NULL);
+SELECT documentdb_api.insert_one('trunc_db','trunc_elemmatch',
+  '{"_id": 4, "tags": ["short", "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA"]}', NULL);
+SELECT documentdb_api.insert_one('trunc_db','trunc_elemmatch',
+  '{"_id": 5, "tags": ["This_Is_A_Long_String_That_Will_Definitely_Exceed_The_Index_Term_Truncation_Limit_AAAA"]}', NULL);
+SELECT documentdb_api.insert_one('trunc_db','trunc_elemmatch',
+  '{"_id": 6, "tags": ["boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix", "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_beta_suffix"]}', NULL);
+SELECT documentdb_api.insert_one('trunc_db','trunc_elemmatch', '{"_id": 7, "tags": [42, null, "short"]}', NULL);
+SELECT documentdb_api.insert_one('trunc_db','trunc_elemmatch', '{"_id": 8, "tags": []}', NULL);
+SELECT documentdb_api.insert_one('trunc_db','trunc_elemmatch', '{"_id": 9, "other": "value"}', NULL);
+SELECT documentdb_api.insert_one('trunc_db','trunc_elemmatch',
+  '{"_id": 10, "tags": ["this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB"]}', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'trunc_db',
+  '{
+    "createIndexes": "trunc_elemmatch",
+    "indexes": [{
+      "key": {"tags": 1},
+      "name": "idx_tags_en_s1_trunc",
+      "collation": {"locale": "en", "strength": 1},
+      "enableCompositeTerm": true
+    }]
+  }',
+  TRUE
+);
+
+-- 13.1: $elemMatch $eq on short string
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "short" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "short" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 13.2: $elemMatch $eq on long string that exceeds truncation limit
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 13.3: RECHECK FALSE-POSITIVE TEST
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 13.4: $elemMatch $gt on long string near truncation boundary
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$gt": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$gt": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 13.5: $elemMatch $lt on long string
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$lt": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$lt": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 13.6: $elemMatch $eq on boundary string
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 13.7: $elemMatch with range on truncated strings
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$gte": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "$lte": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$gte": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "$lte": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 13.8: $elemMatch $ne on truncated long string
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$ne": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$ne": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 13.9: $elemMatch $not $gt on truncated strings
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$not": { "$gt": "short" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$not": { "$gt": "short" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 13.10: $elemMatch with non-string type
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": 42 } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": 42 } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 13.11: $elemMatch with mismatched collation on truncated index
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "short" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "short" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
+$cmd$);
+
+-- 13.12: $elemMatch with degenerate range ($gte/$lte same value) on short string
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$gte": "short", "$lte": "short" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$gte": "short", "$lte": "short" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 13.13: $elemMatch $eq with no collation on truncated index
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "short" } } }, "sort": { "_id": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "short" } } }, "sort": { "_id": 1 } }')
+$cmd$);
+
+-- 13.14: $elemMatch $type: "string" on truncated index
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$type": "string" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$type": "string" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 13.15: $elemMatch $exists: true on truncated index
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$exists": true } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$exists": true } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 13.16: $elemMatch three-way on truncated: $gte long + $lte long + $ne long (exercises recheck with $ne within truncated range)
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$gte": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "$lte": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB", "$ne": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$gte": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "$lte": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB", "$ne": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 13.17: $elemMatch $not: {$eq} on truncated string
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$not": { "$eq": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$not": { "$eq": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 13.18: $elemMatch empty range on truncated strings
+SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$gte": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "$lt": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$gte": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "$lt": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+
+-- ======================================================================
+-- SECTION 14: $in on truncated strings
+-- ======================================================================
+
+-- 14.1: $in with short strings — index SHOULD be used
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["short_string", "another_short"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["short_string", "another_short"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
 
--- 13.2: $in case-insensitive short strings — "SHORT_STRING" matches short_string + Short_String
+-- 14.2: $in case-insensitive short strings — "SHORT_STRING" matches short_string + Short_String
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["SHORT_STRING"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 
--- 13.3: $in with long truncated strings — both AAAA and BBBB variants
+-- 14.3: $in with long truncated strings — both AAAA and BBBB variants
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_BBBB"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_BBBB"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
 
--- 13.4: $in with only AAAA truncated string — case-insensitive should also match _id:22
+-- 14.4: $in with only AAAA truncated string — case-insensitive should also match _id:22
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 
--- 13.5: $in with truncated string (UPPERCASE) — case-insensitive
+-- 14.5: $in with truncated string (UPPERCASE) — case-insensitive
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["THIS_IS_A_LONG_STRING_THAT_WILL_DEFINITELY_EXCEED_THE_INDEX_TERM_TRUNCATION_LIMIT_AND_THE_DIFFERENCE_IS_AT_THE_VERY_END_AAAA"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 
--- 13.6: $in with boundary strings — differ at truncation point
+-- 14.6: $in with boundary strings — differ at truncation point
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut", "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_beta_suffix_after_cut"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut", "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_beta_suffix_after_cut"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
 
--- 13.7: $in with prefix_match strings — differ before truncation point
+-- 14.7: $in with prefix_match strings — differ before truncation point
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
 
--- 13.8: $in mixed short + long + numeric + null
+-- 14.8: $in mixed short + long + numeric + null
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["short_string", "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", 12345, null] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["short_string", "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", 12345, null] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
 
--- 13.9: $in with no collation — index should NOT be used
+-- 14.9: $in with no collation — index should NOT be used
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["short_string"] } }, "sort": { "_id": 1 } }')
 $cmd$);
 
--- 13.10: $in with mismatched collation — index should NOT be used
+-- 14.10: $in with mismatched collation — index should NOT be used
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["short_string"] } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
 $cmd$);
 
--- 13.11: multi-element $in non-string with mismatched collation — index NOT used
+-- 14.11: multi-element $in non-string with mismatched collation — index NOT used
 --        (array is collation-aware regardless of element types)
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": [12345, null] } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 2 } }')
 $cmd$);
 
--- 13.12: $in nonexistent truncated string — empty result
+-- 14.12: $in nonexistent truncated string — empty result
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_CCCC"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 
 
 -- ======================================================================
--- SECTION 14: $nin on truncated strings
+-- SECTION 15: $nin on truncated strings
 -- ======================================================================
 
--- 14.1: $nin with short strings — index SHOULD be used
+-- 15.1: $nin with short strings — index SHOULD be used
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["short_string", "another_short"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["short_string", "another_short"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
 
--- 14.2: $nin "SHORT_STRING" case-insensitive — excludes short_string + Short_String
+-- 15.2: $nin "SHORT_STRING" case-insensitive — excludes short_string + Short_String
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["SHORT_STRING"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 
--- 14.3: $nin with long truncated strings — excludes both AAAA variants
+-- 15.3: $nin with long truncated strings — excludes both AAAA variants
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
 
--- 14.4: $nin with boundary strings
+-- 15.4: $nin with boundary strings
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
 
--- 14.5: $nin mixed short + long + numeric — complex exclusion
+-- 15.5: $nin mixed short + long + numeric — complex exclusion
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["short_string", "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", 12345] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["short_string", "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", 12345] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
 
--- 14.6: $nin with mismatched collation — index should NOT be used
+-- 15.6: $nin with mismatched collation — index should NOT be used
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["short_string"] } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
 $cmd$);
 
--- 14.7: $nin "zebra" (not in collection) — nothing excluded
+-- 15.7: $nin "zebra" (not in collection) — nothing excluded
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["zebra"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 
 

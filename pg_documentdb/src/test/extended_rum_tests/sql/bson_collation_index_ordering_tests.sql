@@ -1776,6 +1776,165 @@ RESET documentdb.enableExtendedExplainPlans;
 RESET enable_seqscan;
 
 
+-- =============================================================================
+-- Section 28: $elemMatch with ordered scan + collation
+-- =============================================================================
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 1, "a": ["Apple", "banana", "Cherry"]}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 2, "a": ["apple", "BANANA", "cherry"]}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 3, "a": ["Dog", "elephant", "FOX"]}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 4, "a": [42, "apple", null]}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 5, "a": []}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 6, "a": ["cherry", "CHERRY", "Cherry"]}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 7, "a": [null, "banana"]}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 8, "a": "apple"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 9, "other": "value"}', NULL);
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_elemmatch_coll', '{"_id": 10, "a": ["grape"]}', NULL);
+
+-- Ascending index
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_elemmatch_coll",
+    "indexes": [{
+      "key": { "a": 1 },
+      "name": "idx_ord_em_asc_s1",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+-- Descending index
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_elemmatch_coll",
+    "indexes": [{
+      "key": { "a": -1 },
+      "name": "idx_ord_em_desc_s1",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+SET enable_seqscan TO OFF;
+
+-- 28a: $elemMatch $eq "apple" with matching collation + sort {_id: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "apple" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "apple" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28b: $elemMatch $eq "apple" + sort by collated field {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "apple" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "apple" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28c: $elemMatch range + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lte": "cherry" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lte": "cherry" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28d: $elemMatch $eq + descending sort {a: -1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "cherry" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "cherry" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28e: $elemMatch $gt (open upper bound) + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gt": "cherry" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gt": "cherry" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28f: $elemMatch $lt (open lower bound) + sort {a: -1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$lt": "banana" } } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$lt": "banana" } } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28g: $elemMatch with $not $gt + sort {_id: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$not": { "$gt": "cherry" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$not": { "$gt": "cherry" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28h: $elemMatch $ne + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$ne": "apple" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$ne": "apple" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28i: $elemMatch with mismatched collation + sort
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "apple" } } }, "sort": { "a": 1 }, "collation": { "locale": "de", "strength": 1 } }')
+$cmd$);
+
+-- 28j: $elemMatch with non-string value + sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": 42 } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": 42 } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28k: $elemMatch on all-case-variants + sort to verify tie ordering
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28l: $elemMatch $exists: true + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$exists": true } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$exists": true } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28m: $elemMatch $type: "string" + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$type": "string" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$type": "string" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28n: $elemMatch $not: {$eq: "apple"} + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$not": { "$eq": "apple" } } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$not": { "$eq": "apple" } } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28o: $elemMatch three-way ($gt + $lt + $ne) + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gt": "apple", "$lt": "fox", "$ne": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gt": "apple", "$lt": "fox", "$ne": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28p: $elemMatch empty range + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lt": "banana" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lt": "banana" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28q: $elemMatch point range + sort {a: -1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lte": "banana" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lte": "banana" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 28r: $elemMatch $type + $gte + sort {a: 1}
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$type": "string", "$gte": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$type": "string", "$gte": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+RESET documentdb.max_non_ordered_term_scan_threshold;
+RESET documentdb.enableExtendedExplainPlans;
+RESET enable_seqscan;
+
+
 DROP SCHEMA collation_ordered_test_schema CASCADE;
 
 RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;

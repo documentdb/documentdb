@@ -266,6 +266,73 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dis
 END;
 
 -- ======================================================================
+-- SECTION 9: $elemMatch on sharded collection with collation
+-- ======================================================================
+
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','elemmatch_d', '{"_id": 1, "items": ["Apple", "banana", "Cherry"]}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','elemmatch_d', '{"_id": 2, "items": ["apple", "BANANA", "cherry"]}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','elemmatch_d', '{"_id": 3, "items": ["APPLE", "Apple", "apple"]}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','elemmatch_d', '{"_id": 4, "items": ["Dog", "elephant", "FOX"]}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','elemmatch_d', '{"_id": 5, "items": [42, "apple", null]}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','elemmatch_d', '{"_id": 6, "items": []}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','elemmatch_d', '{"_id": 7, "other": "value"}', NULL);
+
+SELECT documentdb_api.shard_collection('coll_ops_idx_dist_explain_db', 'elemmatch_d', '{ "_id": "hashed" }', false);
+
+BEGIN;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_ops_idx_dist_explain_db',
+  '{ "createIndexes": "elemmatch_d",
+     "indexes": [{ "key": {"items": 1}, "name": "idx_items_en_s1_d",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+END;
+
+-- 9.1: UPPERCASE needle vs case-mixed sharded data — index used per shard
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "elemmatch_d", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+END;
+
+-- 9.2: numeric needle bypasses collation — index still used across shards
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "elemmatch_d", "filter": { "items": { "$elemMatch": { "$eq": 42 } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+END;
+
+-- 9.3: mixed-case range across shards — both bounds collation-aware
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_ops_idx_dist_explain_db', '{ "aggregate": "elemmatch_d", "pipeline": [ { "$match": { "items": { "$elemMatch": { "$gte": "Banana", "$lte": "Dog" } } } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+END;
+
+-- 9.4: mismatched query collation — index pushdown declined; runtime fallback
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "elemmatch_d", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
+$cmd$);
+END;
+
+-- ======================================================================
 -- Cleanup
 -- ======================================================================
 

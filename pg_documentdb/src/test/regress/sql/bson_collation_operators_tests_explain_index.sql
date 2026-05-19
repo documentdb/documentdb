@@ -2458,6 +2458,286 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 $cmd$);
 
 -- ======================================================================
+-- Section 23: $elemMatch with collation — scalar arrays
+-- ======================================================================
+
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_coll', '{"_id": 1,  "items": ["Apple", "banana", "Cherry"]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_coll', '{"_id": 2,  "items": ["apple", "BANANA", "cherry"]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_coll', '{"_id": 3,  "items": ["APPLE", "Apple", "apple"]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_coll', '{"_id": 4,  "items": ["Dog", "elephant", "FOX"]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_coll', '{"_id": 5,  "items": [42, "apple", null]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_coll', '{"_id": 6,  "items": ["cherry", "CHERRY", "Cherry"]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_coll', '{"_id": 7,  "items": []}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_coll', '{"_id": 8,  "items": "apple"}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_coll', '{"_id": 9,  "other": "value"}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_coll', '{"_id": 10, "items": [true, "Banana", false]}', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_operators_index_explain_db',
+  '{ "createIndexes": "elemmatch_coll",
+     "indexes": [{ "key": {"items": 1}, "name": "idx_items_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
+-- 35.1: UPPERCASE needle vs case-mixed data at en/s1
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 35.2: same query at strength=3 — case-sensitive
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }')
+$cmd$);
+
+-- 35.3: no query collation — binary fallback
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 } }')
+$cmd$);
+
+-- 35.4: mismatched locale (de vs en index)
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
+$cmd$);
+
+-- 35.5: mixed-case needle "ApPlE" at en/s1
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$eq": "ApPlE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 35.6: numeric needle bypasses collation
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$eq": 42 } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 35.7: $ne with mixed-case needle
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$ne": "Cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 35.8: inclusive range $gte "Banana" $lte "Dog"
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$gte": "Banana", "$lte": "Dog" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 35.9: exclusive range $gt "Cherry" $lt "Fox"
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$gt": "Cherry", "$lt": "Fox" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 35.10: $not $gt "Cherry"
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$not": { "$gt": "Cherry" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 35.11: multi-bound merge $gte "Apple" + $gt "Banana" + $lt "Fox"
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$gte": "Apple", "$gt": "Banana", "$lt": "Fox" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 35.12: $type bypasses collation
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$type": "string" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 35.13: $type combined with collation-aware bound
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$type": "string", "$gte": "Cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 35.14: $exists bypasses collation
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$exists": true } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 35.15: regular single-path index — $elemMatch with collated query must NOT push down
+SET documentdb.defaultUseCompositeOpClass TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_operators_index_explain_db',
+  '{ "createIndexes": "elemmatch_single_path",
+     "indexes": [{ "key": {"items": 1}, "name": "idx_items_single_path" }] }', TRUE);
+SET documentdb.defaultUseCompositeOpClass TO on;
+
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_single_path', '{"_id": 1, "items": ["Apple", "banana"]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_single_path', '{"_id": 2, "items": ["apple", "BANANA"]}', NULL);
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_single_path", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+
+-- ======================================================================
+-- Section 24: $elemMatch with collation — nested object arrays
+-- ======================================================================
+
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_obj', '{"_id": 1, "a": [{"name": "Apple", "qty": 5}, {"name": "banana", "qty": 10}]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_obj', '{"_id": 2, "a": [{"name": "APPLE", "qty": 3}]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_obj', '{"_id": 3, "a": [{"name": "apple", "qty": 1}, {"name": "Banana", "qty": 100}]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_obj', '{"_id": 4, "a": [{"name": "Dog", "qty": 8}]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_obj', '{"_id": 5, "a": [{"name": 42, "qty": "abc"}]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_obj', '{"_id": 6, "other": "value"}', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_operators_index_explain_db',
+  '{ "createIndexes": "elemmatch_obj",
+     "indexes": [{ "key": {"a.name": 1}, "name": "idx_aname_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
+-- 36.1: case-folded equality on nested field
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_obj", "filter": { "a": { "$elemMatch": { "name": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 36.2: cross-element guard — predicates must apply to the same element
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_obj", "filter": { "a": { "$elemMatch": { "name": "apple", "qty": { "$gt": 4 } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 36.3: range on nested-object field
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_obj", "filter": { "a": { "$elemMatch": { "name": { "$gte": "Banana", "$lt": "Fox" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 36.4: mismatched query collation falls back to runtime
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_obj", "filter": { "a": { "$elemMatch": { "name": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
+$cmd$);
+
+
+-- ======================================================================
+-- Section 25: $elemMatch with collation — index variants
+-- ======================================================================
+
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_compound', '{"_id": 1, "tags": ["Apple", "banana"], "category": "Fruit"}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_compound', '{"_id": 2, "tags": ["APPLE"],            "category": "fruit"}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_compound', '{"_id": 3, "tags": ["Carrot"],           "category": "Veggie"}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_compound', '{"_id": 4, "tags": ["dog"],              "category": "animal"}', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_operators_index_explain_db',
+  '{ "createIndexes": "elemmatch_compound",
+     "indexes": [{ "key": {"tags": 1, "category": 1}, "name": "idx_tags_cat_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
+-- 37.1: compound pushdown — $elemMatch on multikey prefix + $eq on tail
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_compound", "filter": { "tags": { "$elemMatch": { "$eq": "APPLE" } }, "category": "Fruit" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 37.2: mismatched collation — compound index NOT used
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_compound", "filter": { "tags": { "$elemMatch": { "$eq": "APPLE" } }, "category": "Fruit" }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
+$cmd$);
+
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_desc', '{"_id": 1, "v": ["Apple", "Cherry"]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_desc', '{"_id": 2, "v": ["banana", "DATE"]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_desc', '{"_id": 3, "v": ["FOX", "elephant"]}', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_operators_index_explain_db',
+  '{ "createIndexes": "elemmatch_desc",
+     "indexes": [{ "key": {"v": -1}, "name": "idx_v_desc_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
+-- 37.3: equality on a descending collated index
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_desc", "filter": { "v": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 37.4: range on a descending collated index
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_desc", "filter": { "v": { "$elemMatch": { "$gte": "Banana", "$lte": "Elephant" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+
+-- ======================================================================
+-- Section 26: $elemMatch with collation — locale-specific equivalence
+-- ======================================================================
+
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_es', '{"_id": 1, "a": ["niño", "Niño"]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_es', '{"_id": 2, "a": ["nino"]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_es', '{"_id": 3, "a": ["nylon"]}', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_operators_index_explain_db',
+  '{ "createIndexes": "elemmatch_es",
+     "indexes": [{ "key": {"a": 1}, "name": "idx_a_es_s1",
+                   "collation": {"locale": "es", "strength": 1} }] }', TRUE);
+
+-- 38.1: $eq "ÑIÑO" at es/s1 — ñ ≠ n at primary level
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_es", "filter": { "a": { "$elemMatch": { "$eq": "ÑIÑO" } } }, "sort": { "_id": 1 }, "collation": { "locale": "es", "strength": 1 } }')
+$cmd$);
+
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_de', '{"_id": 1, "a": ["straße", "STRASSE"]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_de', '{"_id": 2, "a": ["Strasse"]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_de', '{"_id": 3, "a": ["string"]}', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_operators_index_explain_db',
+  '{ "createIndexes": "elemmatch_de",
+     "indexes": [{ "key": {"a": 1}, "name": "idx_a_de_s1",
+                   "collation": {"locale": "de", "strength": 1} }] }', TRUE);
+
+-- 38.2: $eq "Strasse" at de/s1 — ß == ss with case-fold
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_de", "filter": { "a": { "$elemMatch": { "$eq": "Strasse" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
+$cmd$);
+
+-- 38.3: cross-locale mismatch — query es against de-indexed collection
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_de", "filter": { "a": { "$elemMatch": { "$eq": "Strasse" } } }, "sort": { "_id": 1 }, "collation": { "locale": "es", "strength": 1 } }')
+$cmd$);
+
+
+-- ======================================================================
+-- Section 27: $elemMatch with collation — combinators and nested
+-- ======================================================================
+
+-- 39.1: $or of two $elemMatch predicates
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "$or": [ { "items": { "$elemMatch": { "$eq": "APPLE" } } }, { "items": { "$elemMatch": { "$gt": "Elephant" } } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 39.2: $and of $elemMatch + $eq on different field
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_compound", "filter": { "$and": [ { "tags": { "$elemMatch": { "$eq": "APPLE" } } }, { "category": "FRUIT" } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_nested', '{"_id": 1, "matrix": [{"vals": ["Apple", "Banana"]}, {"vals": ["Cherry"]}]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_nested', '{"_id": 2, "matrix": [{"vals": ["APPLE", "BANANA"]}]}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','elemmatch_nested', '{"_id": 3, "matrix": [{"vals": ["dog"]}, {"vals": ["FOX"]}]}', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_operators_index_explain_db',
+  '{ "createIndexes": "elemmatch_nested",
+     "indexes": [{ "key": {"matrix.vals": 1}, "name": "idx_matrix_vals_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
+-- 39.3: nested $elemMatch — outer on matrix, inner on vals
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_nested", "filter": { "matrix": { "$elemMatch": { "vals": { "$elemMatch": { "$eq": "APPLE" } } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+
+-- ======================================================================
+-- Section 28: $elemMatch with collation — edge cases
+-- ======================================================================
+
+-- 40.1: empty range — bounds collapse to no elements
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$gt": "Cherry", "$lt": "Cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 40.2: $in inside $elemMatch is a runtime filter
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$in": ["APPLE", "FOX"] } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- 40.3: $not:{$eq} ≡ $ne sanity under collation
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$not": { "$eq": "Cherry" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- ======================================================================
 -- Cleanup
 -- ======================================================================
 

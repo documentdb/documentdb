@@ -69,7 +69,8 @@ static void ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 										  const char *wildcardPath,
 										  int8_t sortOrder,
 										  ScanDirection *scanDirection,
-										  VariableIndexBounds *indexBounds);
+										  VariableIndexBounds *indexBounds,
+										  const char *indexCollation);
 static void ProcessBoundForQuery(CompositeSingleBound *bound,
 								 const char *termPath,
 								 uint32_t termPathLength, const
@@ -127,7 +128,8 @@ static void AddMultiBoundaryForDollarRange(int32_t indexAttribute, const
 										   char *wildcardPath,
 										   pgbsonelement *queryElement,
 										   int8_t sortOrder, ScanDirection *scanDirection,
-										   VariableIndexBounds *indexBounds);
+										   VariableIndexBounds *indexBounds,
+										   const char *indexCollation);
 static CompositeIndexBoundsSet * AddMultiBoundaryForDollarRegex(int32_t indexAttribute,
 																const char *wildcardPath,
 																pgbsonelement *
@@ -1057,7 +1059,8 @@ ParseOperatorStrategy(const char **indexPaths, uint32_t *indexPathLengths,
 					  pgbsonelement *queryElement,
 					  BsonIndexStrategy queryStrategy,
 					  ScanDirection *scanDirection,
-					  VariableIndexBounds *indexBounds)
+					  VariableIndexBounds *indexBounds,
+					  const char *indexCollation)
 {
 	/* First figure out which query path matches */
 	int32_t i = 0;
@@ -1091,7 +1094,8 @@ ParseOperatorStrategy(const char **indexPaths, uint32_t *indexPathLengths,
 	}
 
 	ParseOperatorStrategyWithPath(i, queryElement, queryStrategy, wildcardPath,
-								  sortOrders[i], scanDirection, indexBounds);
+								  sortOrders[i], scanDirection, indexBounds,
+								  indexCollation);
 }
 
 
@@ -1129,12 +1133,12 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 							  const char *wildcardPath,
 							  int8_t sortOrder,
 							  ScanDirection *scanDirection,
-							  VariableIndexBounds *indexBounds)
+							  VariableIndexBounds *indexBounds,
+							  const char *indexCollation)
 {
 	bool isNegationOp = false;
 
 	/* Now that we have the index path, add or update the bounds */
-	const char *indexCollation = NULL;
 	switch (queryStrategy)
 	{
 		/* Single bound operators */
@@ -1300,7 +1304,8 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		case BSON_INDEX_STRATEGY_DOLLAR_RANGE:
 		{
 			AddMultiBoundaryForDollarRange(i, wildcardPath, queryElement,
-										   sortOrder, scanDirection, indexBounds);
+										   sortOrder, scanDirection, indexBounds,
+										   indexCollation);
 			break;
 		}
 
@@ -2811,7 +2816,8 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 							   const char *wildcardPath,
 							   pgbsonelement *queryElement,
 							   int8_t sortOrder, ScanDirection *scanDirection,
-							   VariableIndexBounds *indexBounds)
+							   VariableIndexBounds *indexBounds,
+							   const char *indexCollation)
 {
 	DollarRangeParams *params = ParseQueryDollarRange(queryElement);
 
@@ -2921,14 +2927,15 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 					ParseOperatorStrategyWithPath(indexAttribute, &innerElemMatchElement,
 												  queryStrategy, wildcardPath,
 												  sortOrder, &scanDirIgnore,
-												  &localBounds);
+												  &localBounds, indexCollation);
 				}
 				else
 				{
 					/* deduced child path conditions are not mergeable */
 					ParseOperatorStrategyWithPath(indexAttribute, &innerElemMatchElement,
 												  queryStrategy, wildcardPath,
-												  sortOrder, &scanDirIgnore, indexBounds);
+												  sortOrder, &scanDirIgnore, indexBounds,
+												  indexCollation);
 				}
 			}
 		}
@@ -2944,8 +2951,6 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 			CompositeIndexBoundsSet *singleBounds = CreateAndRegisterSingleIndexBoundsSet(
 				&finalBounds, indexAttribute, wildcardPath);
 
-			/* TODO (COLLATION) */
-			const char *indexCollation = NULL;
 			int initialVariableBoundsCount = list_length(localBounds.variableBoundsList);
 			localBounds.variableBoundsList =
 				MergeSingleVariableBounds(localBounds.variableBoundsList,

@@ -514,9 +514,136 @@ END;
 RESET documentdb_api.forceUseIndexIfAvailable;
 RESET documentdb.defaultUseCompositeOpClass;
 -- ======================================================================
+-- SECTION 10: $elemMatch on sharded collection with collation
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_op_dist_db','elemmatch_d', '{"_id": 1, "items": ["Apple", "banana", "Cherry"]}', NULL);
+psql:sql/bson_collation_operators_tests_dist_core.sql:241: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','elemmatch_d', '{"_id": 2, "items": ["apple", "BANANA", "cherry"]}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','elemmatch_d', '{"_id": 3, "items": ["APPLE", "Apple", "apple"]}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','elemmatch_d', '{"_id": 4, "items": ["Dog", "elephant", "FOX"]}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','elemmatch_d', '{"_id": 5, "items": [42, "apple", null]}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','elemmatch_d', '{"_id": 6, "items": []}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','elemmatch_d', '{"_id": 7, "other": "value"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('coll_op_dist_db', 'elemmatch_d', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+BEGIN;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_op_dist_db',
+  '{ "createIndexes": "elemmatch_d",
+     "indexes": [{ "key": {"items": 1}, "name": "idx_items_en_s1_d",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+COMMIT;
+-- 10.1: UPPERCASE needle vs case-mixed sharded data
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "elemmatch_d", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                         document                                         
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ "Apple", "banana", "Cherry" ] }
+ { "_id" : { "$numberInt" : "2" }, "items" : [ "apple", "BANANA", "cherry" ] }
+ { "_id" : { "$numberInt" : "3" }, "items" : [ "APPLE", "Apple", "apple" ] }
+ { "_id" : { "$numberInt" : "5" }, "items" : [ { "$numberInt" : "42" }, "apple", null ] }
+(4 rows)
+
+END;
+-- 10.2: Numeric needle bypasses collation — only doc 5
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "elemmatch_d", "filter": { "items": { "$elemMatch": { "$eq": 42 } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                                         document                                         
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "items" : [ { "$numberInt" : "42" }, "apple", null ] }
+(1 row)
+
+END;
+-- 10.3: mixed-case range across shards $gte "Banana" $lte "Dog"
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_pipeline('coll_op_dist_db', '{ "aggregate": "elemmatch_d", "pipeline": [ { "$match": { "items": { "$elemMatch": { "$gte": "Banana", "$lte": "Dog" } } } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                                   document                                    
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ "Apple", "banana", "Cherry" ] }
+ { "_id" : { "$numberInt" : "2" }, "items" : [ "apple", "BANANA", "cherry" ] }
+ { "_id" : { "$numberInt" : "4" }, "items" : [ "Dog", "elephant", "FOX" ] }
+(3 rows)
+
+END;
+-- 10.4: mismatched query collation (de vs en index) — runtime fallback
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "elemmatch_d", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
+                                         document                                         
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ "Apple", "banana", "Cherry" ] }
+ { "_id" : { "$numberInt" : "2" }, "items" : [ "apple", "BANANA", "cherry" ] }
+ { "_id" : { "$numberInt" : "3" }, "items" : [ "APPLE", "Apple", "apple" ] }
+ { "_id" : { "$numberInt" : "5" }, "items" : [ { "$numberInt" : "42" }, "apple", null ] }
+(4 rows)
+
+END;
+-- ======================================================================
 -- CLEANUP
 -- ======================================================================
 SELECT documentdb_api.drop_collection('coll_op_dist_db', 'compound_d');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_op_dist_db', 'elemmatch_d');
  drop_collection 
 ---------------------------------------------------------------------
  t
