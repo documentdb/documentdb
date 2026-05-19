@@ -49,8 +49,6 @@ extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
 
-extern const RumIndexArrayStateFuncs RoaringStateFuncs;
-
 bool RumHasMultiKeyPaths = false;
 
 
@@ -59,9 +57,8 @@ bool RumHasMultiKeyPaths = false;
 /* --------------------------------------------------------- */
 extern BsonIndexAmEntry RumIndexAmEntry;
 static bool loaded_rum_routine = false;
+static bool loaded_documentdb_rum_routine = false;
 static IndexAmRoutine rum_index_routine = { 0 };
-
-const RumIndexArrayStateFuncs *IndexArrayStateFuncs = &RoaringStateFuncs;
 
 static GetMultikeyStatusFunc rum_index_multi_key_get_func = NULL;
 static UpdateMultikeyStatusFunc rum_index_multi_key_update_func = NULL;
@@ -84,12 +81,6 @@ typedef struct DocumentDBRumIndexState
 	IndexMultiKeyStatus multiKeyStatus;
 
 	bool hasCorrelatedReducedTerms;
-
-	void *indexArrayState;
-
-	int32_t numDuplicates;
-
-	ScanDirection scanDirection;
 } DocumentDBRumIndexState;
 
 
@@ -109,8 +100,6 @@ typedef struct IndexCostsData
 	int numBoundaryQuals;
 	double dataPagesProportionFetched;
 } IndexCostsData;
-
-typedef const RumIndexArrayStateFuncs *(*GetIndexArrayStateFuncsFunc)(void);
 
 extern Datum gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS);
 
@@ -193,7 +182,6 @@ typedef enum RumFunctionCatalog
 	RumFunction_Ts_Join_Pos,
 	RumFunction_Extract_Tsvector,
 	RumFunction_TryExplainRumIndex,
-	RumFunction_CanRumIndexScanOrdered,
 	RumFunction_RumGetMultiKeyStatus,
 	RumFunction_RumUpdateMultiKeyStatus,
 	RumFunction_SetUnredactedLogHook,
@@ -215,7 +203,6 @@ static const char *RumFunctionArray[RumFunction_Max] =
 	[RumFunction_Ts_Join_Pos] = "rum_ts_join_pos",
 	[RumFunction_Extract_Tsvector] = "rum_extract_tsvector",
 	[RumFunction_TryExplainRumIndex] = "try_explain_rum_index",
-	[RumFunction_CanRumIndexScanOrdered] = "can_rum_index_scan_ordered",
 	[RumFunction_RumGetMultiKeyStatus] = "rum_get_multi_key_status",
 	[RumFunction_RumUpdateMultiKeyStatus] = "rum_update_multi_key_status",
 	[RumFunction_SetUnredactedLogHook] = "SetRumUnredactedLogEmitHook",
@@ -237,7 +224,6 @@ static const char *DocumentDBRumFunctionArray[RumFunction_Max] =
 	[RumFunction_Ts_Join_Pos] = "documentdb_extended_rum_ts_join_pos",
 	[RumFunction_Extract_Tsvector] = "documentdb_extended_rum_extract_tsvector",
 	[RumFunction_TryExplainRumIndex] = "try_explain_documentdb_rum_index",
-	[RumFunction_CanRumIndexScanOrdered] = "can_documentdb_rum_index_scan_ordered",
 	[RumFunction_RumGetMultiKeyStatus] = "documentdb_rum_get_multi_key_status",
 	[RumFunction_RumUpdateMultiKeyStatus] = "documentdb_rum_update_multi_key_status",
 	[RumFunction_SetUnredactedLogHook] = "DocumentDBSetRumUnredactedLogEmitHook",
@@ -261,7 +247,6 @@ PG_FUNCTION_INFO_V1(documentdb_rum_extract_tsvector);
 
 
 extern void SetDocumentDBFunctionNames(const char *explainRumIndexFunc,
-									   const char *canRumIndexScanOrdered,
 									   const char *getMultiKeyStatus,
 									   const char *updateMultiKeyStatus,
 									   const char *orderedCostEstimateFunc);
@@ -343,13 +328,11 @@ documentdb_rum_extract_tsvector(PG_FUNCTION_ARGS)
 
 void
 SetDocumentDBFunctionNames(const char *explainRumIndexFunc,
-						   const char *canRumIndexScanOrdered,
 						   const char *getMultiKeyStatus,
 						   const char *updateMultiKeyStatus,
 						   const char *orderedCostEstimateFunc)
 {
 	RumFunctionArray[RumFunction_TryExplainRumIndex] = explainRumIndexFunc;
-	RumFunctionArray[RumFunction_CanRumIndexScanOrdered] = canRumIndexScanOrdered;
 	RumFunctionArray[RumFunction_RumGetMultiKeyStatus] = getMultiKeyStatus;
 	RumFunctionArray[RumFunction_RumUpdateMultiKeyStatus] = updateMultiKeyStatus;
 	RumFunctionArray[RumFunction_RumOrderedCostEstimate] = orderedCostEstimateFunc;
@@ -433,6 +416,7 @@ LoadRumRoutine(void)
 	}
 
 	const char **functionCatalog;
+	bool loadedDocumentDbRum = false;
 	switch (DocumentDBRumLibraryLoadOption)
 	{
 		case RumLibraryLoadOption_RequireDocumentDBRum:
@@ -443,6 +427,7 @@ LoadRumRoutine(void)
 												functionCatalog[RumFunction_AmHandler],
 												!missingOk,
 												ignoreLibFileHandle);
+			loadedDocumentDbRum = true;
 			ereport(LOG, (errmsg(
 							  "Loaded documentdb_rumhandler successfully via pg_documentdb_extended_rum")));
 			break;
@@ -456,7 +441,6 @@ LoadRumRoutine(void)
 												functionCatalog[RumFunction_AmHandler],
 												missingOk,
 												ignoreLibFileHandle);
-
 			if (rumhandler == NULL)
 			{
 				rumLibPath = "$libdir/rum";
@@ -465,12 +449,14 @@ LoadRumRoutine(void)
 													functionCatalog[RumFunction_AmHandler],
 													!missingOk,
 													ignoreLibFileHandle);
+				loadedDocumentDbRum = false;
 				ereport(LOG,
 						(errmsg(
 							 "Loaded documentdb_rum handler successfully via rum as a fallback")));
 			}
 			else
 			{
+				loadedDocumentDbRum = true;
 				ereport(LOG,
 						(errmsg(
 							 "Loaded documentdb_rumhandler successfully via pg_documentdb_extended_rum")));
@@ -487,6 +473,7 @@ LoadRumRoutine(void)
 												functionCatalog[RumFunction_AmHandler],
 												!missingOk,
 												ignoreLibFileHandle);
+			loadedDocumentDbRum = false;
 			ereport(LOG, (errmsg("Loaded documentdb_rum handler successfully via rum")));
 			break;
 		}
@@ -504,6 +491,7 @@ LoadRumRoutine(void)
 	Datum rumHandlerDatum = rumhandler(fcinfo);
 	IndexAmRoutine *indexRoutine = (IndexAmRoutine *) DatumGetPointer(rumHandlerDatum);
 	rum_index_routine = *indexRoutine;
+	loaded_documentdb_rum_routine = loadedDocumentDbRum;
 
 	/* Load required C functions */
 	rum_extract_tsquery_func =
@@ -547,16 +535,6 @@ LoadRumRoutine(void)
 	if (explain_index_func != NULL && !DisableExtendedRumExplainPlans)
 	{
 		RumIndexAmEntry.add_explain_output = explain_index_func;
-	}
-
-	CanOrderInIndexScan scanOrderedFunc =
-		load_external_function(rumLibPath,
-							   functionCatalog[RumFunction_CanRumIndexScanOrdered],
-							   !missingOk,
-							   ignoreLibFileHandle);
-	if (scanOrderedFunc != NULL)
-	{
-		RumIndexAmEntry.can_order_in_index_scans = scanOrderedFunc;
 	}
 
 	OrderedCostEstimateCoreFunc costEstimateFunc =
@@ -1077,7 +1055,6 @@ extension_rumbeginscan_core(Relation rel, int nkeys, int norderbys,
 		DocumentDBRumIndexState *outerScanState = palloc0(
 			sizeof(DocumentDBRumIndexState));
 		scan->opaque = outerScanState;
-		outerScanState->scanDirection = ForwardScanDirection;
 
 		/* Don't yet start inner scan here - instead wait until rescan to begin */
 		return scan;
@@ -1104,13 +1081,6 @@ extension_rumendscan_core(IndexScanDesc scan, IndexAmRoutine *coreRoutine)
 	{
 		DocumentDBRumIndexState *outerScanState =
 			(DocumentDBRumIndexState *) scan->opaque;
-
-		if (outerScanState->indexArrayState != NULL && IndexArrayStateFuncs != NULL)
-		{
-			/* free the state */
-			IndexArrayStateFuncs->freeState(outerScanState->indexArrayState);
-			outerScanState->indexArrayState = NULL;
-		}
 
 		if (outerScanState->innerScan)
 		{
@@ -1145,10 +1115,8 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 {
 	bool supportsOrderedOperatorScans = false;
 	GetMultikeyStatusFunc multiKeyStatusFunc = NULL;
-	CanOrderInIndexScan isIndexScanOrdered = NULL;
 	if (GetCompositeOpClassWithProps(scan->indexRelation,
-									 &supportsOrderedOperatorScans, &multiKeyStatusFunc,
-									 &isIndexScanOrdered))
+									 &supportsOrderedOperatorScans, &multiKeyStatusFunc))
 	{
 		/* Copy the scan keys to our scan */
 		if (scankey && scan->numberOfKeys > 0)
@@ -1193,16 +1161,8 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 			}
 		}
 
-		ScanKey innerOrderBy = NULL;
-		int32_t nInnerorderbys = 0;
-		innerOrderBy = orderbys;
-		nInnerorderbys = norderbys;
-
-		outerScanState->scanDirection =
-			DetermineCompositeScanDirection(
-				scan->indexRelation->rd_opcoptions[0],
-				orderbys, norderbys);
-
+		ScanKey innerOrderBy = orderbys;
+		int32_t nInnerorderbys = norderbys;
 		ScanKey innerScanKey = scankey;
 		int32_t nInnerScanKeys = nscankeys;
 
@@ -1215,8 +1175,6 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 										   outerScanState->multiKeyStatus ==
 										   IndexMultiKeyStatus_HasArrays,
 										   outerScanState->hasCorrelatedReducedTerms,
-										   nInnerorderbys > 0,
-										   outerScanState->scanDirection,
 										   supportsOrderedOperatorScans))
 		{
 			innerScanKey = &outerScanState->compositeKey;
@@ -1240,33 +1198,6 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 							  innerScanKey, nInnerScanKeys,
 							  innerOrderBy,
 							  nInnerorderbys);
-
-		if (isIndexScanOrdered(outerScanState->innerScan) || nInnerorderbys > 0)
-		{
-			if (outerScanState->multiKeyStatus == IndexMultiKeyStatus_HasArrays)
-			{
-				if (IndexArrayStateFuncs != NULL)
-				{
-					if (outerScanState->indexArrayState != NULL)
-					{
-						/* free the state */
-						IndexArrayStateFuncs->freeState(outerScanState->indexArrayState);
-					}
-
-					outerScanState->indexArrayState = IndexArrayStateFuncs->createState();
-				}
-				else if (nInnerorderbys > 0)
-				{
-					ereport(ERROR, (errmsg(
-										"Cannot push down order by on path with arrays")));
-				}
-			}
-		}
-		else if (outerScanState->innerScan->xs_want_itup)
-		{
-			ereport(ERROR, (errmsg(
-								"Cannot use index only scan on a non-ordered index scan")));
-		}
 	}
 	else
 	{
@@ -1353,39 +1284,10 @@ extension_rumgettuple_core(IndexScanDesc scan, ScanDirection direction,
 
 		/* Push this to the inner scan */
 		outerScanState->innerScan->kill_prior_tuple = scan->kill_prior_tuple;
-		if (outerScanState->indexArrayState == NULL)
-		{
-			/* No arrays, or we don't support dedup - just return the basics */
-			return GetOneTupleCore(outerScanState, scan, outerScanState->scanDirection,
-								   coreRoutine);
-		}
-		else
-		{
-			bool result = GetOneTupleCore(outerScanState, scan,
-										  outerScanState->scanDirection, coreRoutine);
-			while (result)
-			{
-				/* if we could add it to the bitmap, return */
-				if (IndexArrayStateFuncs->addItem(outerScanState->indexArrayState,
-												  &scan->xs_heaptid))
-				{
-					return true;
-				}
-				else
-				{
-					outerScanState->numDuplicates++;
-				}
 
-				/* else, get the next tuple
-				 * Ensure that we reset kill_prior_tuple since this is the duplicate path.
-				 */
-				outerScanState->innerScan->kill_prior_tuple = false;
-				result = GetOneTupleCore(outerScanState, scan,
-										 outerScanState->scanDirection, coreRoutine);
-			}
-
-			return result;
-		}
+		/* No arrays, or we don't support dedup - just return the basics */
+		return GetOneTupleCore(outerScanState, scan, direction,
+							   coreRoutine);
 	}
 	else
 	{
@@ -1563,7 +1465,8 @@ RumGetTruncationStatus(Relation indexRelation)
 
 
 static List *
-GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum, bool hasOrderBy,
+GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum, ScanDirection
+						 scanDirection,
 						 List **rawPerPathBounds)
 {
 	uint32_t nentries = 0;
@@ -1572,8 +1475,7 @@ GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum, bool hasOr
 
 	/* From the composite keys, get the lower bounds of the scans */
 	/* Call extract_query to get the index details */
-	int32_t ginScanType = hasOrderBy ? GIN_SEARCH_MODE_ALL :
-						  GIN_SEARCH_MODE_DEFAULT;
+	int32_t ginScanType = GetScanTypeForScanDirection(scanDirection);
 	LOCAL_FCINFO(fcinfo, 7);
 	fcinfo->flinfo = palloc(sizeof(FmgrInfo));
 	fmgr_info_copy(fcinfo->flinfo,
@@ -1648,15 +1550,28 @@ ExplainCompositeProperties(void *state, GetMultikeyStatusFunc multiKeyStatusFunc
 		writeBoolFunc("hasTruncation", true, state);
 	}
 
-	Datum compositeDatum = FormCompositeDatumFromQuals(indexQuals, indexOrderBy,
+	Datum compositeDatum = FormCompositeDatumFromQuals(indexQuals,
 													   isMultiKey, hasCorrelatedTerms,
 													   supportsOrderedOperatorScans);
 	if (compositeDatum != 0)
 	{
+		ScanDirection scanDir = NoMovementScanDirection;
+		if (list_length(indexOrderBy) > 0)
+		{
+			scanDir = ForwardScanDirection;
+			OpExpr *orderByExpr = (OpExpr *) linitial(indexOrderBy);
+			Expr *expr = lsecond(orderByExpr->args);
+			if (IsA(expr, Const))
+			{
+				Datum orderByConstDatum = ((Const *) expr)->constvalue;
+				scanDir = GetOrderByScanDirectionFromDatum(index_rel->rd_opcoptions[0],
+														   orderByConstDatum);
+			}
+		}
+
 		List *rawPerPathBounds = NIL;
 		List *boundsList = GetIndexBoundsForExplain(index_rel, compositeDatum,
-													list_length(indexOrderBy) > 0,
-													&rawPerPathBounds);
+													scanDir, &rawPerPathBounds);
 		if (rawPerPathBounds != NIL)
 		{
 			writeStringListFunc("startBounds", boundsList, state);
@@ -1754,9 +1669,8 @@ ExplainRawCompositeScanToWriter(Relation index_rel, List *indexQuals, List *inde
 {
 	bool supportsOrderedOperatorScans = false;
 	GetMultikeyStatusFunc multiKeyStatusFunc = NULL;
-	CanOrderInIndexScan isIndexScanOrdered = NULL;
 	if (!GetCompositeOpClassWithProps(index_rel, &supportsOrderedOperatorScans,
-									  &multiKeyStatusFunc, &isIndexScanOrdered))
+									  &multiKeyStatusFunc))
 	{
 		return;
 	}
@@ -1790,9 +1704,8 @@ ExplainRawCompositeScan(Relation index_rel, List *indexQuals, List *indexOrderBy
 {
 	bool supportsOrderedOperatorScans = false;
 	GetMultikeyStatusFunc multiKeyStatusFunc = NULL;
-	CanOrderInIndexScan isIndexScanOrdered = NULL;
 	if (!GetCompositeOpClassWithProps(index_rel, &supportsOrderedOperatorScans,
-									  &multiKeyStatusFunc, &isIndexScanOrdered))
+									  &multiKeyStatusFunc))
 	{
 		return;
 	}
@@ -1842,11 +1755,20 @@ ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 
 	if (outerScanState->compositeKey.sk_argument != (Datum) 0)
 	{
+		ScanDirection scanDir = NoMovementScanDirection;
+		if (scan->numberOfOrderBys > 0)
+		{
+			scanDir = ForwardScanDirection;
+			scanDir = GetOrderByScanDirectionFromDatum(
+				scan->indexRelation->rd_opcoptions[0],
+				scan->orderByData[0].sk_argument);
+		}
+
 		List *rawPerPathBounds = NIL;
 		List *boundsList = GetIndexBoundsForExplain(
 			scan->indexRelation,
 			outerScanState->compositeKey.sk_argument,
-			scan->numberOfOrderBys > 0, &rawPerPathBounds);
+			scanDir, &rawPerPathBounds);
 
 		if (rawPerPathBounds != NIL)
 		{
@@ -1857,18 +1779,6 @@ ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 		{
 			writerFuncs->writeStringList("indexBounds", boundsList, state);
 		}
-	}
-
-	if (outerScanState->numDuplicates > 0)
-	{
-		/* If we have duplicates, explain the number of duplicates */
-		writerFuncs->writeInteger("numDuplicates", "entries",
-								  outerScanState->numDuplicates, state);
-	}
-
-	if (ScanDirectionIsBackward(outerScanState->scanDirection))
-	{
-		writerFuncs->writeBool("isBackwardScan", true, state);
 	}
 
 	/* Explain the inner scan using underlying am */

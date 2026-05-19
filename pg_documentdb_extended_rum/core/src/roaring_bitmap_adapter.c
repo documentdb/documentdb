@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
- * src/bitmap_utils/roaring_bitmap_adapter.c
+ * src/roaring_bitmap_adapter.c
  *
  * Implementation of the bitmap adapters for the extension use cases.
  * This is currently adapted for the Rum Index for deduplicating array entries.
@@ -10,9 +10,9 @@
 
 #include <postgres.h>
 #include <storage/itemptr.h>
-#include "../roaring_bitmaps/roaring.h"
-#include "index_am/roaring_bitmap_adapter.h"
-#include "index_am/documentdb_rum.h"
+#include "roaring_bitmaps/roaring.h"
+#include "roaring_bitmap_adapter.h"
+#include "pg_documentdb_rum_dedup.h"
 
 
 typedef struct RoaringBitmapState

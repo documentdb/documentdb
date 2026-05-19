@@ -22,9 +22,11 @@
 #endif
 #include <storage/lwlock.h>
 #include "pg_documentdb_rum.h"
+#include "pg_documentdb_rum_dedup.h"
 
 extern int RumParallelScanTrancheId;
 extern const char *RumParallelScanTrancheName;
+extern const RumIndexArrayStateFuncs RoaringStateFuncs;
 
 #if PG_VERSION_NUM >= 180000
 #define ParallelScanGetOpaque(x) OffsetToPointer((void *) x, \
@@ -68,7 +70,6 @@ typedef struct ExplainWriterFuncs
 extern PGDLLEXPORT void try_explain_documentdb_rum_index(IndexScanDesc scan,
 														 void *state,
 														 ExplainWriterFuncs *funcs);
-extern PGDLLEXPORT bool can_documentdb_rum_index_scan_ordered(IndexScanDesc scan);
 
 IndexScanDesc
 rumbeginscan(Relation rel, int nkeys, int norderbys)
@@ -90,6 +91,7 @@ rumbeginscan(Relation rel, int nkeys, int norderbys)
 	so->sortedEntries = NULL;
 	so->orderByScanData = NULL;
 	so->scanLoops = 0;
+	so->numDuplicates = 0;
 	so->killedItems = NULL;
 	so->numKilled = 0;
 	so->killedItemsSkipped = 0;
@@ -511,6 +513,12 @@ freeScanKeys(RumScanOpaque so)
 			pfree(so->orderByScanData->orderByEntryPageCopy);
 		}
 
+		if (so->orderByScanData->orderByDedupState)
+		{
+			RoaringStateFuncs.freeState(so->orderByScanData->orderByDedupState);
+			so->orderByScanData->orderByDedupState = NULL;
+		}
+
 		pfree(so->orderByScanData);
 		so->orderByScanData = NULL;
 	}
@@ -544,9 +552,8 @@ freeScanKeys(RumScanOpaque so)
 
 
 static void
-initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch, bool
-			requiresOrderedScan,
-			bool hasParallel)
+initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch,
+			bool supportedOrderedIndexScans)
 {
 	Datum *queryValues;
 	int32 nQueryValues = 0;
@@ -555,13 +562,9 @@ initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch, bool
 	bool *nullFlags = NULL;
 	bool setSearchMode = false;
 	int32 searchMode = GIN_SEARCH_MODE_DEFAULT;
-	bool indexSupportsOrdering = so->rumstate.canOrdering[skey->sk_attno - 1] &&
-								 so->rumstate.orderingFn[skey->sk_attno - 1].fn_nargs ==
-								 4;
 
 	/* Only apply the search mode when it's safe */
-	if ((requiresOrderedScan || RumForceOrderedIndexScan ||
-		 hasParallel) && indexSupportsOrdering)
+	if (!ScanDirectionIsNoMovement(so->orderScanDirection))
 	{
 		/* Let extractQuery know we're doing an ordered scan */
 		setSearchMode = true;
@@ -605,7 +608,7 @@ initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch, bool
 	if (searchMode == RUM_SEARCH_MODE_ORDERED ||
 		searchMode == RUM_SEARCH_MODE_ORDERED_REVERSE)
 	{
-		if (!indexSupportsOrdering)
+		if (!supportedOrderedIndexScans)
 		{
 			ereport(ERROR, (errmsg(
 								"index does not support ordered scans, but ordering was requested")));
@@ -827,15 +830,74 @@ adjustScanDirection(RumScanOpaque so)
 }
 
 
+static bool
+IsSupportedOrderedScan(IndexScanDesc scan, RumState *rumstate,
+					   bool *crossKeySummarizationSupported)
+{
+	int i;
+	bool isSupportedOrderedScan = scan->numberOfKeys > 0;
+	bool isCrossKeySummarizationSupported = scan->numberOfKeys > 0;
+	AttrNumber firstAttnum = InvalidAttrNumber;
+	for (i = 0; i < scan->numberOfKeys; i++)
+	{
+		AttrNumber attnum = scan->keyData[i].sk_attno;
+		if (firstAttnum == InvalidAttrNumber)
+		{
+			firstAttnum = attnum;
+
+			if (!rumstate->canPartialMatch[attnum - 1])
+			{
+				isSupportedOrderedScan = false;
+			}
+
+			if (!rumstate->canOrdering[attnum - 1] ||
+				rumstate->orderingFn[attnum - 1].fn_nargs != 4)
+			{
+				isSupportedOrderedScan = false;
+			}
+
+			if (!rumstate->canOuterOrdering[attnum - 1] ||
+				rumstate->outerOrderingFn[attnum - 1].fn_nargs != 4)
+			{
+				isSupportedOrderedScan = false;
+				isCrossKeySummarizationSupported = false;
+				break;
+			}
+		}
+
+		if (attnum != firstAttnum)
+		{
+			isSupportedOrderedScan = false;
+			isCrossKeySummarizationSupported = false;
+			break;
+		}
+	}
+
+	if (scan->numberOfOrderBys > 0)
+	{
+		for (i = 0; i < scan->numberOfOrderBys && isSupportedOrderedScan; i++)
+		{
+			AttrNumber att = scan->orderByData[i].sk_attno;
+			if (att != firstAttnum)
+			{
+				isSupportedOrderedScan = false;
+				break;
+			}
+		}
+	}
+
+	*crossKeySummarizationSupported = isCrossKeySummarizationSupported;
+	return isSupportedOrderedScan;
+}
+
+
 void
-rumNewScanKey(IndexScanDesc scan)
+rumNewScanKey(IndexScanDesc scan, ScanDirection scanDirection)
 {
 	RumScanOpaque so = (RumScanOpaque) scan->opaque;
 	int i;
 	bool checkEmptyEntry = false;
 	bool hasPartialMatch = false;
-	bool requiresOrderedScan = scan->numberOfOrderBys > 0 || scan->xs_want_itup;
-	bool hasParallel = scan->parallel_scan != NULL;
 	MemoryContext oldCtx;
 	enum
 	{
@@ -846,7 +908,7 @@ rumNewScanKey(IndexScanDesc scan)
 	hasAddOnFilter = haofNone;
 
 	so->naturalOrder = NoMovementScanDirection;
-	so->useSimpleScan = false;
+	so->getTupleScanType = RumGetTupleTidOrderedScan;
 	so->secondPass = false;
 	so->orderByHasRecheck = false;
 	so->entriesIncrIndex = -1;
@@ -870,10 +932,87 @@ rumNewScanKey(IndexScanDesc scan)
 
 	so->isVoidRes = false;
 
+	/* Determine order scan direction */
+	ScanDirection determinedDirection = NoMovementScanDirection;
+
+	so->orderScanDirection = NoMovementScanDirection;
+	bool crossKeySummarizationSupported = false;
+	bool supportedOrderedIndexScans = IsSupportedOrderedScan(scan, &so->rumstate,
+															 &
+															 crossKeySummarizationSupported);
+	if (scan->numberOfOrderBys > 0 && supportedOrderedIndexScans)
+	{
+		for (i = 0; i < scan->numberOfOrderBys; i++)
+		{
+			AttrNumber att = scan->orderByData[i].sk_attno;
+			Datum orderByDatum = scan->orderByData[i].sk_argument;
+			uint16 strategy = scan->orderByData[i].sk_strategy;
+
+			Datum recheckDatum = FunctionCall4Coll(
+				&so->rumstate.outerOrderingFn[att - 1],
+				so->rumstate.supportCollation[att - 1],
+				orderByDatum,
+				UInt16GetDatum(strategy),
+				UInt16GetDatum(RumIndexTransform_DetermineOrderByDirection),
+				(Datum) 0);
+			ScanDirection curDirection = DatumGetInt32(recheckDatum);
+			if (determinedDirection == NoMovementScanDirection)
+			{
+				determinedDirection = curDirection;
+			}
+			else if (curDirection != determinedDirection)
+			{
+				ereport(ERROR, (errmsg(
+									"could not determine scan direction from ORDER BY keys, got inconsistent results")));
+			}
+		}
+
+		/* Ordering is supported based on op-class - set orderScanDirection */
+		if (determinedDirection != NoMovementScanDirection)
+		{
+			so->orderScanDirection = determinedDirection;
+		}
+		else if (!ScanDirectionIsNoMovement(scanDirection))
+		{
+			so->orderScanDirection = scanDirection;
+		}
+		else
+		{
+			so->orderScanDirection = ForwardScanDirection;
+		}
+	}
+
+	if (ScanDirectionIsNoMovement(scanDirection))
+	{
+		scanDirection = ForwardScanDirection;
+	}
+
+	if (ScanDirectionIsNoMovement(so->orderScanDirection))
+	{
+		/* Determine if there's other cases to do ordered scans */
+		if (RumForceOrderedIndexScan && supportedOrderedIndexScans)
+		{
+			so->orderScanDirection = scanDirection;
+		}
+		else if (scan->parallel_scan != NULL && supportedOrderedIndexScans)
+		{
+			so->orderScanDirection = scanDirection;
+		}
+		else if (scan->xs_want_itup)
+		{
+			if (!supportedOrderedIndexScans)
+			{
+				ereport(ERROR, (errmsg(
+									"Unexpected index only scan when ordered scan is not supported.")));
+			}
+
+			so->orderScanDirection = scanDirection;
+		}
+	}
+
 	for (i = 0; i < scan->numberOfKeys; i++)
 	{
-		initScanKey(so, &scan->keyData[i], &hasPartialMatch, requiresOrderedScan,
-					hasParallel);
+		initScanKey(so, &scan->keyData[i], &hasPartialMatch, supportedOrderedIndexScans);
 		if (so->isVoidRes)
 		{
 			break;
@@ -894,6 +1033,20 @@ rumNewScanKey(IndexScanDesc scan)
 		checkEmptyEntry = true;
 	}
 
+	/* Now that the scan keys are filled, check again to see if we can promote to ordered scan */
+	if (ScanDirectionIsNoMovement(so->orderScanDirection) &&
+		supportedOrderedIndexScans &&
+		so->nkeys == 1 &&
+		so->keys[0]->nentries == 1 &&
+		hasPartialMatch)
+	{
+		/* We can simply use an ordered scan if there's only 1 entry
+		 * This would happen for any scenario that is not needing a
+		 * consistent check intersection.
+		 */
+		so->orderScanDirection = scanDirection;
+	}
+
 	if (scan->numberOfOrderBys > 0)
 	{
 		/* Store the first order by key index here */
@@ -901,8 +1054,7 @@ rumNewScanKey(IndexScanDesc scan)
 		so->orderByKeyIndex = so->nkeys;
 		for (i = 0; i < scan->numberOfOrderBys; i++)
 		{
-			initScanKey(so, &scan->orderByData[i], NULL, requiresOrderedScan,
-						hasParallel);
+			initScanKey(so, &scan->orderByData[i], NULL, supportedOrderedIndexScans);
 		}
 	}
 
@@ -1301,8 +1453,11 @@ rum_parallel_scan_start_notify(IndexScanDesc scan)
 
 	LWLockAcquire(&psdata->rum_ps_lock, LW_EXCLUSIVE);
 	psdata->parallel_scan_state = RumParallelScanState_StartScanDone;
+
+	/* Can't do parallel scans if there's a need to dedup TIDs across pages */
 	psdata->isParallelScanEligible = so->scanType == RumOrderedScan &&
-									 ScanDirectionIsForward(so->orderScanDirection);
+									 ScanDirectionIsForward(so->orderScanDirection) &&
+									 so->orderByScanData->orderByDedupState == NULL;
 	psdata->rum_ps_current_page = InvalidBlockNumber;
 	isParallelEnabled = psdata->isParallelScanEligible;
 	LWLockRelease(&psdata->rum_ps_lock);
@@ -1367,34 +1522,6 @@ rumrestrpos(PG_FUNCTION_ARGS)
 }
 
 
-PGDLLEXPORT bool
-can_documentdb_rum_index_scan_ordered(IndexScanDesc scan)
-{
-	RumScanOpaque so = (RumScanOpaque) scan->opaque;
-	bool isSupportedOrderedScan = scan->numberOfKeys > 0;
-	int i = 0;
-	for (i = 0; i < scan->numberOfKeys; i++)
-	{
-		AttrNumber keyAttr = scan->keyData[i].sk_attno;
-		if (keyAttr != scan->keyData[i].sk_attno)
-		{
-			isSupportedOrderedScan = false;
-			break;
-		}
-
-		if (!so->rumstate.canPartialMatch[keyAttr - 1] ||
-			!so->rumstate.canOrdering[keyAttr - 1] ||
-			so->rumstate.orderingFn[keyAttr - 1].fn_nargs != 4)
-		{
-			isSupportedOrderedScan = false;
-			break;
-		}
-	}
-
-	return isSupportedOrderedScan;
-}
-
-
 extern PGDLLEXPORT void
 try_explain_documentdb_rum_index(IndexScanDesc scan,
 								 void *state, ExplainWriterFuncs *funcs)
@@ -1404,6 +1531,21 @@ try_explain_documentdb_rum_index(IndexScanDesc scan,
 	List *entryList = NIL;
 	const char *scanType = "unknown";
 	RumScanOpaque so = (RumScanOpaque) scan->opaque;
+
+
+	if (so->numDuplicates > 0)
+	{
+		/* If we have duplicates, explain the number of duplicates */
+		funcs->writeInteger("numDuplicates", "entries",
+							so->numDuplicates, state);
+	}
+
+	if (so->scanType == RumOrderedScan &&
+		so->orderScanDirection == BackwardScanDirection)
+	{
+		funcs->writeBool("isBackwardScan", true, state);
+	}
+
 	funcs->writeInteger("innerScanLoops", "loops", so->scanLoops, state);
 
 	if (so->killedItemsSkipped > 0)

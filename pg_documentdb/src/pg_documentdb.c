@@ -14,7 +14,6 @@
 #include "bson_init.h"
 #include "utils/feature_counter.h"
 #include "documentdb_api_init.h"
-#include "index_am/roaring_bitmap_adapter.h"
 
 PG_MODULE_MAGIC;
 PG_FUNCTION_INFO_V1(test_bson_mem_vtable_uses_palloc);
@@ -66,7 +65,6 @@ _PG_init(void)
 
 	DocumentDB_InstallBsonMemVTablesLocal();
 
-	RegisterRoaringBitmapHooks();
 	InitApiConfigurations("documentdb", "documentdb");
 	InitializeSharedMemoryHooks();
 	MarkGUCPrefixReserved("documentdb");

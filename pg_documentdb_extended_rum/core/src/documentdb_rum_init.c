@@ -17,6 +17,7 @@
 #include "utils/guc.h"
 #include "miscadmin.h"
 #include "pg_documentdb_rum.h"
+#include "roaring_bitmap_adapter.h"
 
 PG_MODULE_MAGIC;
 
@@ -80,6 +81,8 @@ DocumentDBRumInitCore(const char *rumGucPrefix,
 					  const char *documentDBRumGucPrefix)
 {
 	InitializeRumVacuumState();
+
+	RegisterRoaringBitmapHooks();
 
 	/* Define custom GUC variables. (if any) */
 	if (DocumentDBRumLoadCommonGUCs)

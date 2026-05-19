@@ -51,7 +51,6 @@ static void LoadBaseIndexAmRoutine(void);
 
 extern PGDLLIMPORT void try_explain_documentdb_rum_index(IndexScanDesc scan, void *state,
 														 ExplainWriterFuncs *funcs);
-extern PGDLLIMPORT bool can_documentdb_rum_index_scan_ordered(IndexScanDesc scan);
 extern PGDLLIMPORT Datum documentdb_rumhandler(PG_FUNCTION_ARGS);
 extern PGDLLIMPORT bool documentdb_rum_get_multi_key_status(Relation indexRelation);
 extern PGDLLIMPORT void documentdb_rum_update_multi_key_status(Relation indexRelation);
@@ -81,7 +80,6 @@ static BsonIndexAmEntry DocumentDBIndexAmEntry = {
 	.get_opclass_internal_catalog_schema = GetDocumentDBCatalogSchema,
 	.get_multikey_status = documentdb_rum_get_multi_key_status,
 	.get_truncation_status = RumGetTruncationStatus,
-	.can_order_in_index_scans = can_documentdb_rum_index_scan_ordered,
 	.supports_ordered_operator_scans = true,
 	.create_indexes_support_funcs = NULL,
 	.get_current_index_key = documentdb_rum_get_current_index_key,

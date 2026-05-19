@@ -21,7 +21,7 @@ bool CompositePathHasFirstColumnSpecified(IndexPath *indexPath);
 char *SerializeBoundsStringForExplain(bytea * entry, void *extraData, PG_FUNCTION_ARGS,
 									  List **rawPathBounds);
 
-Datum FormCompositeDatumFromQuals(List *indexQuals, List *indexOrderBy, bool isMultiKey,
+Datum FormCompositeDatumFromQuals(List *indexQuals, bool isMultiKey,
 								  bool hasCorrelatedReducedTerm,
 								  bool supportsOperatorOrderedScans);
 char * SerializeCompositeIndexKeyForExplain(bytea *entry);
@@ -29,8 +29,8 @@ void SerializeCompositeIndexKeyForExplainToWriter(bytea *entry, pgbson_writer *w
 bool ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey
 									targetScanKey, bool hasArrayKeys, bool
 									hasCorrelatedReducedTerms,
-									bool hasOrderBys, ScanDirection scanDirection,
 									bool supportsOrderedOperatorScans);
-ScanDirection DetermineCompositeScanDirection(bytea *compositeScanOptions,
-											  ScanKey orderbys, int norderbys);
+
+int32_t GetScanTypeForScanDirection(ScanDirection scanDirection);
+ScanDirection GetOrderByScanDirectionFromDatum(bytea *opClassoptions, Datum orderByDatum);
  #endif

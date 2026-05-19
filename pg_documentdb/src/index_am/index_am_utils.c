@@ -24,7 +24,6 @@ static int BsonNumAlternateAmEntries = 0;
 static const char * GetRumCatalogSchema(void);
 static const char * GetRumInternalSchemaV2(void);
 
-static bool RumScanOrderedFalse(IndexScanDesc scan);
 static inline void ValidateCreateIndexesSupportFuncs(
 	CreateIndexesSupportFuncs *createIndexSupport);
 
@@ -49,7 +48,6 @@ BsonIndexAmEntry RumIndexAmEntry = {
 	.get_opclass_internal_catalog_schema = GetRumInternalSchemaV2,
 	.get_multikey_status = NULL,
 	.get_truncation_status = RumGetTruncationStatus,
-	.can_order_in_index_scans = RumScanOrderedFalse,
 	.supports_ordered_operator_scans = false,
 	.create_indexes_support_funcs = NULL,
 	.get_current_index_key = NULL,
@@ -525,8 +523,7 @@ GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily)
 bool
 GetCompositeOpClassWithProps(Relation indexRelation,
 							 bool *supportsOrderedOperatorScans,
-							 GetMultikeyStatusFunc *multiKeyStatusFunc,
-							 CanOrderInIndexScan *canOrderInIndexScans)
+							 GetMultikeyStatusFunc *multiKeyStatusFunc)
 {
 	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(
 		indexRelation->rd_rel->relam);
@@ -547,7 +544,6 @@ GetCompositeOpClassWithProps(Relation indexRelation,
 	{
 		*supportsOrderedOperatorScans = amEntry->supports_ordered_operator_scans;
 		*multiKeyStatusFunc = amEntry->get_multikey_status;
-		*canOrderInIndexScans = amEntry->can_order_in_index_scans;
 		return true;
 	}
 
@@ -618,11 +614,4 @@ static const char *
 GetRumInternalSchemaV2(void)
 {
 	return ApiInternalSchemaNameV2;
-}
-
-
-static bool
-RumScanOrderedFalse(IndexScanDesc scan)
-{
-	return false;
 }

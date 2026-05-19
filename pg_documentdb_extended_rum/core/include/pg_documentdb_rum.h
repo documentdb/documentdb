@@ -873,6 +873,14 @@ typedef enum
 	RumOrderedScan, /* documentdb: This is new */
 }   RumScanType;
 
+
+typedef enum RumIndexTransformOperation
+{
+	RumIndexTransform_IndexGenerateSkipBound = 1,
+	RumIndexTransform_DetermineOrderByDirection = 2,
+	RumIndexTransform_OrderedScanRequiresDedup = 3,
+} RumIndexTransformOperation;
+
 /* Struct that holds information for projecting an index tuple. */
 typedef struct RumProjectIndexTupleData
 {
@@ -895,7 +903,17 @@ typedef struct RumOrderByScanData
 	IndexTuple boundEntryTuple;
 	RumBtreeData orderByBtree;
 	bool canSkipConsistentCheck;
+	void *orderByDedupState;
 } RumOrderByScanData;
+
+typedef enum RumGetTupleScanType
+{
+	RumGetTupleTidOrderedScan = 0,
+
+	RumGetTupleSimpleScan,
+
+	RumGetTupleSimpleDedupScan,
+} RumGetTupleScanType;
 
 typedef struct RumScanOpaqueData
 {
@@ -934,6 +952,7 @@ typedef struct RumScanOpaqueData
 
 	/* on a regular scan, how many loops of scans were done. */
 	uint32_t scanLoops;
+	uint32_t numDuplicates;
 
 	/* In an ordered scan, the key pointing to the order by key */
 	int32_t orderByKeyIndex;
@@ -945,7 +964,7 @@ typedef struct RumScanOpaqueData
 	bool recheckCurrentItemOrderBy;
 
 	/* documentdb: whether or not to use a simple scanGetNextItem in rumgettuple */
-	bool useSimpleScan;
+	RumGetTupleScanType getTupleScanType;
 
 	/* LP_DEAD stuff */
 	ItemPointerData *killedItems;
@@ -968,7 +987,7 @@ extern void rumrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 					  ScanKey orderbys, int norderbys);
 extern Datum rummarkpos(PG_FUNCTION_ARGS);
 extern Datum rumrestrpos(PG_FUNCTION_ARGS);
-extern void rumNewScanKey(IndexScanDesc scan);
+extern void rumNewScanKey(IndexScanDesc scan, ScanDirection scanDirection);
 extern void freeScanKeys(RumScanOpaque so);
 
 #if PG_VERSION_NUM >= 180000

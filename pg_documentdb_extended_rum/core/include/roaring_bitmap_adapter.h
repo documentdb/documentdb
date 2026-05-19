@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) 2025 documentdb.  All rights reserved.
  *
- * include/bitmap_utils/roaring_bitmap_adapter.h
+ * include/roaring_bitmap_adapter.h
  *
  * adapter for bitmap functions
  *

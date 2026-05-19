@@ -164,6 +164,7 @@ typedef struct CompositeQueryMetaInfo
 	int32_t wildcardPathIndex;
 	CompositeOrderedScanEntryData *orderedScanEntryData;
 	bool isOrderedScan;
+	bool hasArrayPaths;
 	const char *collation;
 } CompositeQueryMetaInfo;
 
@@ -204,10 +205,10 @@ bool UpdateBoundsForTruncation(CompositeQueryRunData *runData,
 							   int8_t *sortOrders);
 
 void ParseOperatorStrategy(const char **indexPaths, uint32_t *indexPathLengths,
-						   int32_t numPaths, int32_t wildcardIndex,
+						   int8_t *sortOrders, int32_t numPaths, int32_t wildcardIndex,
 						   pgbsonelement *queryElement,
 						   BsonIndexStrategy queryStrategy,
-						   bool *requiresOrderedScans,
+						   ScanDirection *scanDirection,
 						   VariableIndexBounds *indexBounds);
 
 void UpdateRunDataForVariableBounds(CompositeQueryRunData *runData,
