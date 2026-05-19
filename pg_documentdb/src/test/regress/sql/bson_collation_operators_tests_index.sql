@@ -284,6 +284,49 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
 );
 SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('coll_op_db', '{"listIndexes": "bson_types_coll"}');
 
+-- $elemMatch collated indexes (sections 23–28 in core).
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_op_db',
+  '{ "createIndexes": "elemmatch_coll",
+     "indexes": [{ "key": {"items": 1}, "name": "idx_items_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_op_db',
+  '{ "createIndexes": "elemmatch_obj",
+     "indexes": [{ "key": {"a.name": 1}, "name": "idx_aname_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_op_db',
+  '{ "createIndexes": "elemmatch_compound",
+     "indexes": [{ "key": {"tags": 1, "category": 1}, "name": "idx_tags_cat_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_op_db',
+  '{ "createIndexes": "elemmatch_desc",
+     "indexes": [{ "key": {"v": -1}, "name": "idx_v_desc_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_op_db',
+  '{ "createIndexes": "elemmatch_es",
+     "indexes": [{ "key": {"a": 1}, "name": "idx_a_es_s1",
+                   "collation": {"locale": "es", "strength": 1} }] }', TRUE);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_op_db',
+  '{ "createIndexes": "elemmatch_de",
+     "indexes": [{ "key": {"a": 1}, "name": "idx_a_de_s1",
+                   "collation": {"locale": "de", "strength": 1} }] }', TRUE);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_op_db',
+  '{ "createIndexes": "elemmatch_nested",
+     "indexes": [{ "key": {"matrix.vals": 1}, "name": "idx_matrix_vals_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
 -- ======================================================================
 -- Run operator-strategy queries with indexes in place.
 -- ======================================================================

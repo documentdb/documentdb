@@ -209,7 +209,8 @@ void ParseOperatorStrategy(const char **indexPaths, uint32_t *indexPathLengths,
 						   pgbsonelement *queryElement,
 						   BsonIndexStrategy queryStrategy,
 						   ScanDirection *scanDirection,
-						   VariableIndexBounds *indexBounds);
+						   VariableIndexBounds *indexBounds,
+						   const char *indexCollation);
 
 void UpdateRunDataForVariableBounds(CompositeQueryRunData *runData,
 									PathScanTermMap *termMap,

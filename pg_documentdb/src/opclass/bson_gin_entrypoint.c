@@ -1700,6 +1700,17 @@ IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 		}
 
 		/*
+		 * $elemMatch on composite indexes is handled earlier by
+		 * ProcessElemMatchOperator, which decomposes it into inner
+		 * operators ($eq, $gt, etc.) that each pass through this
+		 * function individually.
+		 */
+		case BSON_INDEX_STRATEGY_DOLLAR_ELEMMATCH:
+		{
+			return false;
+		}
+
+		/*
 		 * $regex is not collation-aware.
 		 * TODO (COLLATION): Consider creating bounds (eg: [>= "", < MaxString]).
 		 */
@@ -1718,7 +1729,6 @@ IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 		}
 
 		/* TODO (COLLATION): To be supported */
-		case BSON_INDEX_STRATEGY_DOLLAR_ELEMMATCH:
 		case BSON_INDEX_STRATEGY_DOLLAR_RANGE:
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY:
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE:

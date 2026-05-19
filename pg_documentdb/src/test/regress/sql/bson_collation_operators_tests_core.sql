@@ -1009,6 +1009,167 @@ SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "de_locale",
 SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "de_locale", "filter": { "a": { "$eq": "STRASSE" } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
 
 -- ======================================================================
+-- Section 23: $elemMatch with collation — scalar arrays
+-- ======================================================================
+
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_coll', '{"_id": 1,  "items": ["Apple", "banana", "Cherry"]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_coll', '{"_id": 2,  "items": ["apple", "BANANA", "cherry"]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_coll', '{"_id": 3,  "items": ["APPLE", "Apple", "apple"]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_coll', '{"_id": 4,  "items": ["Dog", "elephant", "FOX"]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_coll', '{"_id": 5,  "items": [42, "apple", null]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_coll', '{"_id": 6,  "items": ["cherry", "CHERRY", "Cherry"]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_coll', '{"_id": 7,  "items": []}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_coll', '{"_id": 8,  "items": "apple"}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_coll', '{"_id": 9,  "other": "value"}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_coll', '{"_id": 10, "items": [true, "Banana", false]}', NULL);
+
+-- 23.1: $elemMatch $eq with case-folding at strength=1
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 23.2: same query at strength=3 — case-sensitive
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 3 } }');
+
+-- 23.3: no query collation — binary fallback
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 } }');
+
+-- 23.4: mismatched locale (de vs en index)
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
+
+-- 23.5: mixed-case needle "ApPlE" at en/s1
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$eq": "ApPlE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 23.6: numeric needle bypasses collation
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$eq": 42 } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 23.7: $ne with mixed-case needle
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$ne": "Cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 23.8: inclusive range $gte "Banana" $lte "Dog"
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$gte": "Banana", "$lte": "Dog" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 23.9: exclusive range $gt "Cherry" $lt "Fox"
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$gt": "Cherry", "$lt": "Fox" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 23.10: $not $gt "Cherry"
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$not": { "$gt": "Cherry" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 23.11: multi-bound merge $gte "Apple" + $gt "Banana" + $lt "Fox"
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$gte": "Apple", "$gt": "Banana", "$lt": "Fox" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 23.12: $type bypasses collation
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$type": "string" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 23.13: $type combined with collation-aware bound
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$type": "string", "$gte": "Cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 23.14: $exists: true bypasses collation
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$exists": true } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+
+-- ======================================================================
+-- Section 24: $elemMatch with collation — nested object arrays
+-- ======================================================================
+
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_obj', '{"_id": 1, "a": [{"name": "Apple", "qty": 5}, {"name": "banana", "qty": 10}]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_obj', '{"_id": 2, "a": [{"name": "APPLE", "qty": 3}]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_obj', '{"_id": 3, "a": [{"name": "apple", "qty": 1}, {"name": "Banana", "qty": 100}]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_obj', '{"_id": 4, "a": [{"name": "Dog", "qty": 8}]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_obj', '{"_id": 5, "a": [{"name": 42, "qty": "abc"}]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_obj', '{"_id": 6, "other": "value"}', NULL);
+
+-- 24.1: case-folded equality on nested field
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_obj", "filter": { "a": { "$elemMatch": { "name": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 24.2: cross-element guard — predicates must apply to the same element
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_obj", "filter": { "a": { "$elemMatch": { "name": "apple", "qty": { "$gt": 4 } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 24.3: range on a nested-object field
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_obj", "filter": { "a": { "$elemMatch": { "name": { "$gte": "Banana", "$lt": "Fox" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 24.4: mismatched query collation falls back to runtime evaluation
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_obj", "filter": { "a": { "$elemMatch": { "name": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
+
+
+-- ======================================================================
+-- Section 25: $elemMatch with collation — index variants
+-- ======================================================================
+
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_compound', '{"_id": 1, "tags": ["Apple", "banana"], "category": "Fruit"}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_compound', '{"_id": 2, "tags": ["APPLE"],            "category": "fruit"}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_compound', '{"_id": 3, "tags": ["Carrot"],           "category": "Veggie"}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_compound', '{"_id": 4, "tags": ["dog"],              "category": "animal"}', NULL);
+
+-- 25.1: compound pushdown — $elemMatch on multikey prefix + $eq on tail
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_compound", "filter": { "tags": { "$elemMatch": { "$eq": "APPLE" } }, "category": "Fruit" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 25.2: mismatched collation — compound index NOT used
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_compound", "filter": { "tags": { "$elemMatch": { "$eq": "APPLE" } }, "category": "Fruit" }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
+
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_desc', '{"_id": 1, "v": ["Apple", "Cherry"]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_desc', '{"_id": 2, "v": ["banana", "DATE"]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_desc', '{"_id": 3, "v": ["FOX", "elephant"]}', NULL);
+
+-- 25.3: equality on a descending collated index
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_desc", "filter": { "v": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 25.4: range on a descending collated index
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_desc", "filter": { "v": { "$elemMatch": { "$gte": "Banana", "$lte": "Elephant" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+
+-- ======================================================================
+-- Section 26: $elemMatch with collation — locale-specific equivalence
+-- ======================================================================
+
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_es', '{"_id": 1, "a": ["niño", "Niño"]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_es', '{"_id": 2, "a": ["nino"]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_es', '{"_id": 3, "a": ["nylon"]}', NULL);
+
+-- 26.1: $eq "ÑIÑO" at es/s1 — ñ ≠ n at primary level
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_es", "filter": { "a": { "$elemMatch": { "$eq": "ÑIÑO" } } }, "sort": { "_id": 1 }, "collation": { "locale": "es", "strength": 1 } }');
+
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_de', '{"_id": 1, "a": ["straße", "STRASSE"]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_de', '{"_id": 2, "a": ["Strasse"]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_de', '{"_id": 3, "a": ["string"]}', NULL);
+
+-- 26.2: $eq "Strasse" at de/s1 — ß == ss with case-fold
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_de", "filter": { "a": { "$elemMatch": { "$eq": "Strasse" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
+
+-- 26.3: cross-locale mismatch — query es against de-indexed collection
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_de", "filter": { "a": { "$elemMatch": { "$eq": "Strasse" } } }, "sort": { "_id": 1 }, "collation": { "locale": "es", "strength": 1 } }');
+
+
+-- ======================================================================
+-- Section 27: $elemMatch with collation — combinators and nested
+-- ======================================================================
+
+-- 27.1: $or of two $elemMatch predicates
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "$or": [ { "items": { "$elemMatch": { "$eq": "APPLE" } } }, { "items": { "$elemMatch": { "$gt": "Elephant" } } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 27.2: $and of $elemMatch + $eq on different field
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_compound", "filter": { "$and": [ { "tags": { "$elemMatch": { "$eq": "APPLE" } } }, { "category": "FRUIT" } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_nested', '{"_id": 1, "matrix": [{"vals": ["Apple", "Banana"]}, {"vals": ["Cherry"]}]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_nested', '{"_id": 2, "matrix": [{"vals": ["APPLE", "BANANA"]}]}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','elemmatch_nested', '{"_id": 3, "matrix": [{"vals": ["dog"]}, {"vals": ["FOX"]}]}', NULL);
+
+-- 27.3: nested $elemMatch — outer on matrix, inner on vals
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_nested", "filter": { "matrix": { "$elemMatch": { "vals": { "$elemMatch": { "$eq": "APPLE" } } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+
+-- ======================================================================
+-- Section 28: $elemMatch with collation — edge cases
+-- ======================================================================
+
+-- 28.1: empty range — bounds collapse to no elements
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$gt": "Cherry", "$lt": "Cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 28.2: $in inside $elemMatch — runtime filter, not pushed to collated index
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$in": ["APPLE", "FOX"] } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- 28.3: $not:{$eq} ≡ $ne under collation
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$not": { "$eq": "Cherry" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- ======================================================================
 -- CLEANUP
 -- ======================================================================
 -- ======================================================================
@@ -1260,6 +1421,13 @@ SELECT documentdb_api.drop_collection('coll_op_db', 'bson_types_coll');
 SELECT documentdb_api.drop_collection('coll_op_db', 'accent_coll');
 SELECT documentdb_api.drop_collection('coll_op_db', 'compound_field');
 SELECT documentdb_api.drop_collection('coll_op_db', 'de_locale');
+SELECT documentdb_api.drop_collection('coll_op_db', 'elemmatch_coll');
+SELECT documentdb_api.drop_collection('coll_op_db', 'elemmatch_compound');
+SELECT documentdb_api.drop_collection('coll_op_db', 'elemmatch_de');
+SELECT documentdb_api.drop_collection('coll_op_db', 'elemmatch_desc');
+SELECT documentdb_api.drop_collection('coll_op_db', 'elemmatch_es');
+SELECT documentdb_api.drop_collection('coll_op_db', 'elemmatch_nested');
+SELECT documentdb_api.drop_collection('coll_op_db', 'elemmatch_obj');
 SELECT documentdb_api.drop_collection('coll_op_db', 'es_locale');
 SELECT documentdb_api.drop_collection('coll_op_db', 'insensitive_ops');
 SELECT documentdb_api.drop_collection('coll_op_db', 'mixed_types');

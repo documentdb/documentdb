@@ -195,7 +195,8 @@ static void ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const
 											int32_t numPaths,
 											int32_t wildcardPathIndex,
 											ScanDirection *scanDirection,
-											VariableIndexBounds *variableBounds);
+											VariableIndexBounds *variableBounds,
+											const char *indexCollation);
 static bytea * BuildTermForBounds(CompositeQueryRunData *runData,
 								  IndexTermCreateMetadata *singlePathMetadata,
 								  IndexTermCreateMetadata *compositeMetadata,
@@ -449,7 +450,8 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 
 		ParseOperatorStrategy(indexPaths, indexPathLengths, sortOrders, numPaths,
 							  metaInfo->wildcardPathIndex, &singleElement, strategy,
-							  &scanDir, &variableBounds);
+							  &scanDir, &variableBounds,
+							  metaInfo->collation);
 	}
 	else
 	{
@@ -461,7 +463,8 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 										sortOrders, numPaths,
 										metaInfo->wildcardPathIndex,
 										&scanDir,
-										&variableBounds);
+										&variableBounds,
+										metaInfo->collation);
 	}
 
 	metaInfo->hasArrayPaths = hasArrayPaths;
@@ -4986,7 +4989,8 @@ ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **index
 								uint32_t *indexPathsLengths, int8_t *sortOrders, int32_t
 								numPaths,
 								int32_t wildcardPathIndex, ScanDirection *scanDirection,
-								VariableIndexBounds *variableBounds)
+								VariableIndexBounds *variableBounds,
+								const char *indexCollation)
 {
 	if (singleElement->bsonValue.value_type != BSON_TYPE_ARRAY)
 	{
@@ -5039,7 +5043,7 @@ ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **index
 		ParseOperatorStrategy(indexPaths, indexPathsLengths, sortOrders, numPaths,
 							  wildcardPathIndex,
 							  &queryElement, queryStrategy, scanDirection,
-							  variableBounds);
+							  variableBounds, indexCollation);
 	}
 }
 

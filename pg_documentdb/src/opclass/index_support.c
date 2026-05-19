@@ -5770,9 +5770,16 @@ IsSupportedElemMatchExpr(Node *elemMatchExpr, bytea *options,
 	Node *operand = lsecond(innerArgs);
 	Datum innerQueryValue = ((Const *) operand)->constvalue;
 
-	/* Check if the index is valid for the function */
-	if (!ValidateIndexForQualifierValue(options, innerQueryValue,
-										innerOperator->indexStrategy))
+	/* Check if the index is valid for the function. The inner Const BSON encodes
+	 * any collation alongside the qualifier element, so use it as the single source
+	 * of truth rather than relying on a separately-passed collation.
+	 */
+	pgbsonelement queryElement;
+	const char *innerCollation = PgbsonToSinglePgbsonElementWithCollation(
+		DatumGetPgBson(innerQueryValue), &queryElement);
+
+	if (!ValidateIndexForQualifierElement(options, &queryElement,
+										  innerCollation, innerOperator->indexStrategy))
 	{
 		return false;
 	}
@@ -5781,8 +5788,6 @@ IsSupportedElemMatchExpr(Node *elemMatchExpr, bytea *options,
 	 * this since we need to skip the recheck.
 	 * TODO: If we can get the recheck skipped here, we can support this here too.
 	 */
-	pgbsonelement queryElement;
-	PgbsonToSinglePgbsonElement(DatumGetPgBson(innerQueryValue), &queryElement);
 	StringView queryPath = {
 		.string = queryElement.path,
 		.length = queryElement.pathLength
@@ -5907,12 +5912,14 @@ ProcessElemMatchOperator(bytea *options, Datum queryValue, const
 {
 	pgbson *queryBson = DatumGetPgBson(queryValue);
 	pgbsonelement argElement = { 0 };
-	PgbsonToSinglePgbsonElement(queryBson, &argElement);
+	const char *queryCollation = PgbsonToSinglePgbsonElementWithCollation(queryBson,
+																		  &argElement);
 
 
 	BsonQueryOperatorContext context = { 0 };
 	BsonQueryOperatorContextCommonBuilder(&context);
 	context.documentExpr = linitial(args);
+	context.collationString = queryCollation;
 
 	/* Convert the pgbson query into a query AST that processes bson */
 	Expr *expr = CreateQualForBsonExpression(&argElement.bsonValue,
