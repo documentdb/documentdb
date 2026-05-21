@@ -253,6 +253,10 @@ bool EnableCursorPlanBeforeRestrictionPathUpdate =
 #define DEFAULT_ENABLE_DYNAMIC_CURSORS false
 bool EnableDynamicCursors = DEFAULT_ENABLE_DYNAMIC_CURSORS;
 
+/* Added in v114, enabled in v114, remove after v120 */
+#define DEFAULT_ENABLE_INDEX_PATH_KEY_SUMMARIZATION true
+bool EnableIndexPathKeySummarization = DEFAULT_ENABLE_INDEX_PATH_KEY_SUMMARIZATION;
+
 /*
  * SECTION: Aggregation & Query feature flags
  */
@@ -608,6 +612,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to enable dynamic cursors for aggregation query rewrites."),
 		NULL, &EnableDynamicCursors,
 		DEFAULT_ENABLE_DYNAMIC_CURSORS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableIndexPathKeySummarization", newGucPrefix),
+		gettext_noop(
+			"Whether or not to enable summarization of index path keys."),
+		NULL, &EnableIndexPathKeySummarization,
+		DEFAULT_ENABLE_INDEX_PATH_KEY_SUMMARIZATION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

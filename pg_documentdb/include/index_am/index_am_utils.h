@@ -69,9 +69,11 @@ bool GetIndexAmSupportsIndexOnlyScan(Oid indexAm, Oid opFamilyOid,
 void TryExplainByIndexAm(struct IndexScanDescData *scan, ExplainWriterFuncs *writeFuncs,
 						 void *writerState);
 
-GetCurrentIndexKeyFunc GetIndexKeyCurrentKeyFunc(Oid relam, Oid opFamily);
+GetCurrentIndexKeyFunc GetIndexKeyCurrentKeyFunc(Oid relam, Oid opFamily,
+												 bool *pathKeySummarizationForced);
 
-SkipTidsOnCurrentEntryFunc GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily);
+SkipTidsOnCurrentEntryFunc GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily,
+														 bool *pathKeySummarizationForced);
 
 
 bool GetCompositeOpClassWithProps(Relation indexRelation,

@@ -52,6 +52,7 @@ BsonIndexAmEntry RumIndexAmEntry = {
 	.create_indexes_support_funcs = NULL,
 	.get_current_index_key = NULL,
 	.skip_tids_on_current_entry = NULL,
+	.force_path_key_summarization = false,
 };
 
 /*
@@ -481,7 +482,7 @@ GetIndexSupportsBackwardsScan(Oid relam, bool *indexCanOrder)
 
 
 GetCurrentIndexKeyFunc
-GetIndexKeyCurrentKeyFunc(Oid relam, Oid opFamily)
+GetIndexKeyCurrentKeyFunc(Oid relam, Oid opFamily, bool *pathKeySummarizationForced)
 {
 	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relam);
 
@@ -493,6 +494,7 @@ GetIndexKeyCurrentKeyFunc(Oid relam, Oid opFamily)
 	if (amEntry->is_order_by_supported &&
 		amEntry->get_composite_path_op_family_oid() == opFamily)
 	{
+		*pathKeySummarizationForced = amEntry->force_path_key_summarization;
 		return amEntry->get_current_index_key;
 	}
 
@@ -501,7 +503,7 @@ GetIndexKeyCurrentKeyFunc(Oid relam, Oid opFamily)
 
 
 SkipTidsOnCurrentEntryFunc
-GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily)
+GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily, bool *pathKeySummarizationForced)
 {
 	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relam);
 
@@ -513,6 +515,7 @@ GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily)
 	if (amEntry->is_order_by_supported &&
 		amEntry->get_composite_path_op_family_oid() == opFamily)
 	{
+		*pathKeySummarizationForced = amEntry->force_path_key_summarization;
 		return amEntry->skip_tids_on_current_entry;
 	}
 

@@ -84,6 +84,7 @@ static BsonIndexAmEntry DocumentDBIndexAmEntry = {
 	.create_indexes_support_funcs = NULL,
 	.get_current_index_key = documentdb_rum_get_current_index_key,
 	.skip_tids_on_current_entry = documentdb_rum_skip_tids_on_current_entry,
+	.force_path_key_summarization = true,
 };
 static DocumentDBRumOidCacheData Cache = { 0 };
 static bool has_custom_routine = false;
@@ -134,16 +135,8 @@ static IndexScanDesc
 extension_documentdb_extended_rumbeginscan(Relation rel, int nkeys, int norderbys)
 {
 	EnsureDocumentDBExtendedRumLib();
-	return extension_rumbeginscan_core(rel, nkeys, norderbys,
-									   &core_rum_routine);
-}
-
-
-static void
-extension_documentdb_extended_rumendscan(IndexScanDesc scan)
-{
-	EnsureDocumentDBExtendedRumLib();
-	extension_rumendscan_core(scan, &core_rum_routine);
+	return extension_documentdb_rumbeginscan_core(rel, nkeys, norderbys,
+												  &core_rum_routine);
 }
 
 
@@ -153,25 +146,8 @@ extension_documentdb_extended_rumrescan(IndexScanDesc scan, ScanKey scankey, int
 										ScanKey orderbys, int norderbys)
 {
 	EnsureDocumentDBExtendedRumLib();
-	extension_rumrescan_core(scan, scankey, nscankeys,
-							 orderbys, norderbys, &core_rum_routine);
-}
-
-
-static int64
-extension_documentdb_extended_rumgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
-{
-	EnsureDocumentDBExtendedRumLib();
-	return extension_rumgetbitmap_core(scan, tbm, &core_rum_routine);
-}
-
-
-static bool
-extension_documentdb_extended_rumgettuple(IndexScanDesc scan, ScanDirection direction)
-{
-	EnsureDocumentDBExtendedRumLib();
-	return extension_rumgettuple_core(scan, direction,
-									  &core_rum_routine);
+	extension_documentdb_rumrescan_core(scan, scankey, nscankeys,
+										orderbys, norderbys, &core_rum_routine);
 }
 
 
@@ -354,10 +330,7 @@ documentdb_extended_rumhandler(PG_FUNCTION_ARGS)
 	*amroutine = core_rum_routine;
 
 	amroutine->ambeginscan = extension_documentdb_extended_rumbeginscan;
-	amroutine->amendscan = extension_documentdb_extended_rumendscan;
 	amroutine->amrescan = extension_documentdb_extended_rumrescan;
-	amroutine->amgetbitmap = extension_documentdb_extended_rumgetbitmap;
-	amroutine->amgettuple = extension_documentdb_extended_rumgettuple;
 	amroutine->ambuild = extension_documentdb_extended_rumbuild;
 	amroutine->aminsert = extension_documentdb_extended_ruminsert;
 	amroutine->amcostestimate = extension_documentdb_extended_rumcostestimate;
