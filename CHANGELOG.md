@@ -1,5 +1,6 @@
 ### documentdb v0.114-0 (Unreleased) ###
 * Fix crash when `$natural` sort on non-base relations that are already sorted by pipeline. *[Bugfix]* (#532)
+* Fix schema validation propagation and ensure correct caching of the parsed validator across calls. *[Bugfix]*
 
 ### documentdb v0.113-0 (Unreleased) ###
 * Add `EnableSortPushToAccumulator` GUC to control pushing sort order into accumulator in `$sortGroup` stage *[Perf]*

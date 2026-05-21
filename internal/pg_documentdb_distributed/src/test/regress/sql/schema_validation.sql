@@ -4,6 +4,7 @@ SET documentdb.next_collection_id TO 177700;
 SET documentdb.next_collection_index_id TO 177700;
 
 -- create a collection and insert a document
+set documentdb.enableSchemaValidation = false;
 SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"a": {"bsonType": "int"}}}}, "validationLevel": "strict", "validationAction": "error"}');
 set documentdb.enableSchemaValidation = true;
 SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"a": {"bsonType": "int"}}}}, "validationLevel": "strict", "validationAction": "error"}');

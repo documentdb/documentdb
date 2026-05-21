@@ -1,2 +1,3 @@
 test: multinode/basic_crud
 test: multinode/roles_reference_table
+test: multinode/schema_validation_update_multi

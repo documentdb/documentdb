@@ -261,22 +261,21 @@ bson_dollar_merge_add_object_id(PG_FUNCTION_ARGS)
 	{
 		pgbson *schemaValidatorInfo = PG_GETARG_MAYBE_NULL_PGBSON(2);
 
-		if (!IsPgbsonEmptyDocument(schemaValidatorInfo))
+		if (schemaValidatorInfo != NULL && !IsPgbsonEmptyDocument(schemaValidatorInfo))
 		{
-			int argPositions = 2;
-			SetCachedFunctionState(
-				stateForSchemaValidation,
-				ExprEvalState,
-				argPositions,
-				AssignSchemaValidationState,
-				schemaValidatorInfo,
-				CurrentMemoryContext);
-			if (stateForSchemaValidation == NULL)
+			SchemaValidationCache *cache = NULL;
+			int argPosition = 2;
+			SetCachedFunctionState(cache, SchemaValidationCache, argPosition,
+								   PopulateSchemaValidationCache,
+								   schemaValidatorInfo);
+
+			if (cache == NULL)
 			{
-				stateForSchemaValidation = palloc0(sizeof(ExprEvalState));
-				AssignSchemaValidationState(stateForSchemaValidation, schemaValidatorInfo,
-											CurrentMemoryContext);
+				cache = palloc0(sizeof(SchemaValidationCache));
+				PopulateSchemaValidationCache(cache, schemaValidatorInfo);
 			}
+
+			stateForSchemaValidation = cache->evalState;
 		}
 	}
 
@@ -330,7 +329,7 @@ bson_dollar_merge_handle_when_matched(PG_FUNCTION_ARGS)
 	{
 		pgbson *schemaValidatorInfo = PG_GETARG_MAYBE_NULL_PGBSON(3);
 
-		if (!IsPgbsonEmptyDocument(schemaValidatorInfo))
+		if (schemaValidatorInfo != NULL && !IsPgbsonEmptyDocument(schemaValidatorInfo))
 		{
 			performSchemaValidation = true;
 			validationLevel = PG_ARGISNULL(4) ? ValidationLevel_Invalid : PG_GETARG_INT32(
@@ -538,23 +537,25 @@ bson_dollar_merge_handle_when_matched(PG_FUNCTION_ARGS)
 			performSchemaValidation = PgbsonEquals(sourceDocument, targetDocument) ?
 									  false : true;
 		}
-
 		if (performSchemaValidation)
 		{
-			pgbson *schemaValidatorInfo = PG_GETARG_PGBSON(3);
-			int argPositions = 3;
-			SetCachedFunctionState(
-				stateForSchemaValidation,
-				ExprEvalState,
-				argPositions,
-				AssignSchemaValidationState,
-				schemaValidatorInfo,
-				CurrentMemoryContext);
-			if (stateForSchemaValidation == NULL)
+			pgbson *schemaValidatorInfo = PG_GETARG_MAYBE_NULL_PGBSON(3);
+			if (schemaValidatorInfo != NULL && !IsPgbsonEmptyDocument(
+					schemaValidatorInfo))
 			{
-				stateForSchemaValidation = palloc0(sizeof(ExprEvalState));
-				AssignSchemaValidationState(stateForSchemaValidation, schemaValidatorInfo,
-											CurrentMemoryContext);
+				SchemaValidationCache *cache = NULL;
+				int argPosition = 3;
+				SetCachedFunctionState(cache, SchemaValidationCache, argPosition,
+									   PopulateSchemaValidationCache,
+									   schemaValidatorInfo);
+
+				if (cache == NULL)
+				{
+					cache = palloc0(sizeof(SchemaValidationCache));
+					PopulateSchemaValidationCache(cache, schemaValidatorInfo);
+				}
+
+				stateForSchemaValidation = cache->evalState;
 			}
 		}
 	}
