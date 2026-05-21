@@ -19,10 +19,13 @@ extern bool EnableSchemaValidation;
 #define FAILED_VALIDATION_PLAN_EXECUTOR_ERROR_MSG \
 	"PlanExecutor error during aggregation :: caused by :: Document failed validation"
 
+typedef struct SchemaValidationCache
+{
+	ExprEvalState *evalState;
+} SchemaValidationCache;
+
 ExprEvalState * PrepareForSchemaValidation(pgbson *schemaValidationInfo, MemoryContext
 										   memoryContext);
-void AssignSchemaValidationState(ExprEvalState *state, pgbson *schemaValidationInfo,
-								 MemoryContext memoryContext);
 void ValidateSchemaOnDocumentInsert(ExprEvalState *evalState, const
 									bson_value_t *document, const char *errMsg);
 
@@ -31,6 +34,9 @@ void ValidateSchemaOnDocumentUpdate(ValidationLevels validationLevelText,
 									const pgbson *sourceDocument,
 									const pgbson *targetDocument,
 									const char *errMsg);
+
+/* Populate function for schema validation cache */
+void PopulateSchemaValidationCache(SchemaValidationCache *cache, pgbson *validator);
 
 /* Inline function that determines whether to perform schema validation */
 static inline bool

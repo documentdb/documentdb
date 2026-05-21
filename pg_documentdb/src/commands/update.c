@@ -312,8 +312,8 @@ static UpdateAllMatchingDocsResult UpdateAllMatchingDocuments(MongoCollection *c
 															  bool
 															  hasShardKeyValueFilter,
 															  int64 shardKeyHash,
-															  ExprEvalState *
-															  stateForSchemaValidation,
+															  pgbson *
+															  schemaValidator,
 															  bool *hasOnlyObjectIdFilter);
 static void CallUpdateOne(MongoCollection *collection, UpdateOneParams *updateOneParams,
 						  int64 shardKeyHash, text *transactionId,
@@ -1688,11 +1688,14 @@ ProcessUpdate(MongoCollection *collection, UpdateSpec *updateSpec,
 		 * operation, so we ignore transactionId.
 		 */
 		bool hasOnlyObjectIdFilter = false;
+		pgbson *validatorInfo = EnableSchemaValidation && stateForSchemaValidation !=
+								NULL ?
+								collection->schemaValidator.validator : NULL;
 
 		UpdateAllMatchingDocsResult updateAllResult = UpdateAllMatchingDocuments(
 			collection, &updateSpec->updateOneParams,
 			hasShardKeyValueFilter,
-			shardKeyHash, stateForSchemaValidation,
+			shardKeyHash, validatorInfo,
 			&hasOnlyObjectIdFilter);
 		result->rowsMatched = updateAllResult.matchedDocs;
 		result->rowsModified = updateAllResult.rowsUpdated;
@@ -1799,7 +1802,7 @@ static UpdateAllMatchingDocsResult
 UpdateAllMatchingDocuments(MongoCollection *collection,
 						   UpdateOneParams *currentUpdate,
 						   bool hasShardKeyValueFilter, int64 shardKeyHash,
-						   ExprEvalState *schemaValidationExprEvalState,
+						   pgbson *schemaValidator,
 						   bool *hasOnlyObjectIdFilter)
 {
 	const char *tableName = collection->tableName;
@@ -1890,10 +1893,10 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 		additionalArgs = ", ctid, tableoid";
 	}
 
-	if (EnableSchemaValidation && schemaValidationExprEvalState != NULL)
+	if (EnableSchemaValidation && schemaValidator != NULL)
 	{
 		/*
-		 * If schemaValidationExprEvalState is not NULL, we need to validate the document against the schema.
+		 * If schemaValidator is not NULL, we need to validate the document against the schema.
 		 * We do this by calling the schema_validation_against_update function which will return true if the document matches the schema.
 		 * We then use this result to determine if the document should be updated or not.
 		 * We use the same approach as above, but we add a CTE to validate the document against the schema.
@@ -1991,17 +1994,23 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 			argCount++;
 		}
 
+		/* Use bson overload when version >= 0.114.0, otherwise bytea version */
+		const char *schemaValidatorTypeCast = IsClusterVersionAtleast(DocDB_V0, 114, 0) ?
+											  FullBsonTypeName : "bytea";
+
 		if (collection->schemaValidator.validationLevel == ValidationLevel_Moderate)
 		{
 			appendStringInfo(&updateQuery,
-							 "), v as (select object_id, shard_key_value, newDocument, %s.schema_validation_against_update($%d, filtered_documents.newDocument, filtered_documents.document, true) from filtered_documents), ",
-							 ApiInternalSchemaName, nextSqlArgIndex);
+							 "), v as (select object_id, shard_key_value, newDocument, %s.schema_validation_against_update($%d::%s, filtered_documents.newDocument, filtered_documents.document, true) from filtered_documents), ",
+							 ApiInternalSchemaName,
+							 nextSqlArgIndex, schemaValidatorTypeCast);
 		}
 		else
 		{
 			appendStringInfo(&updateQuery,
-							 "), v as (select object_id, shard_key_value, newDocument, %s.schema_validation_against_update($%d, filtered_documents.newDocument, filtered_documents.document, false) from filtered_documents), ",
-							 ApiInternalSchemaName, nextSqlArgIndex);
+							 "), v as (select object_id, shard_key_value, newDocument, %s.schema_validation_against_update($%d::%s, filtered_documents.newDocument, filtered_documents.document, false) from filtered_documents), ",
+							 ApiInternalSchemaName,
+							 nextSqlArgIndex, schemaValidatorTypeCast);
 		}
 
 		validationLevelArgIndex = nextSqlArgIndex - 1;
@@ -2145,16 +2154,22 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 														  objectIdFilter));
 	}
 
-	/* set the schema validation state, if any */
+	/* set the schema validation rule, if any */
 	if (validationLevelArgIndex != -1)
 	{
-		bytea *input_bytea = (bytea *) palloc(VARHDRSZ + sizeof(ExprEvalState));
-		SET_VARSIZE(input_bytea, VARHDRSZ + sizeof(ExprEvalState));
-		memcpy(VARDATA(input_bytea), schemaValidationExprEvalState,
-			   sizeof(ExprEvalState));
-
-		argTypes[validationLevelArgIndex] = BYTEAOID;
-		argValues[validationLevelArgIndex] = PointerGetDatum(input_bytea);
+		if (IsClusterVersionAtleast(DocDB_V0, 114, 0))
+		{
+			/* New version: pass bson validator */
+			argTypes[validationLevelArgIndex] = BsonTypeId();
+			argValues[validationLevelArgIndex] = PointerGetDatum(schemaValidator);
+		}
+		else
+		{
+			/* Old version: pass bytea converted from pgbson */
+			argTypes[validationLevelArgIndex] = BYTEAOID;
+			argValues[validationLevelArgIndex] = PointerGetDatum(CastPgbsonToBytea(
+																	 schemaValidator));
+		}
 	}
 
 	bool readOnly = false;
