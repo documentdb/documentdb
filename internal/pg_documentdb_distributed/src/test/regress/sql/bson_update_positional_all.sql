@@ -122,3 +122,23 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": 2 } 
 -- Test Set 24: $positional with adding new fields
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": 2 } }', '{ "": { "$set": {"a.c.$[]": 1 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": 2 } }', '{ "": { "$set": {"c.$[]": 1 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+
+-- Test Set 25: $[] on empty array must be a no-op
+-- EC1: $set with $[] on top-level empty array
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [] }', '{ "": { "$set": { "a.$[]": 1 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- EC2: $inc with $[] on empty array
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [] }', '{ "": { "$inc": { "a.$[]": 1 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- EC3: $set with $[] on non-empty array (non-regression: must still update all elements)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1, 2] }', '{ "": { "$set": { "a.$[]": 5 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- EC4: nested $[] where the inner array is empty
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [{"b": []}] }', '{ "": { "$set": { "a.$[].b.$[]": 1 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- EC5: double $[] on empty outer array
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [] }', '{ "": { "$inc": { "a.$[].$[]": 1 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- EC6: numeric index backfill on empty array (must still work after fix)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [] }', '{ "": { "$set": { "a.2": 9 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- EC7: numeric index 0 on empty array (must still work after fix)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [] }', '{ "": { "$set": { "a.0": 9 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- EC8: $[identifier] on empty array must also be a no-op
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [] }', '{ "": { "$set": { "a.$[x]": 1 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- EC9: $[] on empty array alongside a change to another field (modified flag must reflect only the real change)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [], "b": 1 }', '{ "": { "$set": { "a.$[]": 1 }, "$inc": { "b": 1 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
