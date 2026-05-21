@@ -37,10 +37,17 @@ void LoadRumRoutine(void);
 
 IndexScanDesc extension_rumbeginscan_core(Relation rel, int nkeys, int norderbys,
 										  IndexAmRoutine *coreRoutine);
+IndexScanDesc extension_documentdb_rumbeginscan_core(Relation rel, int nkeys, int
+													 norderbys,
+													 IndexAmRoutine *coreRoutine);
 void extension_rumendscan_core(IndexScanDesc scan, IndexAmRoutine *coreRoutine);
 void extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 							  ScanKey orderbys, int norderbys,
 							  IndexAmRoutine *coreRoutine);
+void extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int
+										 nscankeys,
+										 ScanKey orderbys, int norderbys,
+										 IndexAmRoutine *coreRoutine);
 int64 extension_rumgetbitmap_core(IndexScanDesc scan, TIDBitmap *tbm,
 								  IndexAmRoutine *coreRoutine);
 bool extension_rumgettuple_core(IndexScanDesc scan, ScanDirection direction,
@@ -115,6 +122,6 @@ void RecordCostEstimateForIndex(Oid indexOid, Oid relOid, Cost indexStartupCost,
 
 Datum DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan);
 void DocumentDBRumSkipTidsForCurrentEntry(IndexScanDesc scan, SkipTidsOnCurrentEntryFunc
-										  skipTidsFunc,
+										  skipTidsFunc, bool pathKeySummarizationForced,
 										  ItemPointer userContinuationState);
 #endif

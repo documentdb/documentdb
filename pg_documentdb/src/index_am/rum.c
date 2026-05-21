@@ -48,6 +48,7 @@ extern bool DisableExtendedRumExplainPlans;
 extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
+extern bool EnableIndexPathKeySummarization;
 
 bool RumHasMultiKeyPaths = false;
 
@@ -116,9 +117,14 @@ static IndexMultiKeyStatus CheckIndexHasArrays(Relation indexRelation,
 											   IndexAmRoutine *coreRoutine);
 
 static IndexScanDesc extension_rumbeginscan(Relation rel, int nkeys, int norderbys);
+static IndexScanDesc extension_documentdb_rumbeginscan(Relation rel, int nkeys, int
+													   norderbys);
 static void extension_rumendscan(IndexScanDesc scan);
 static void extension_rumrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 								ScanKey orderbys, int norderbys);
+static void extension_documentdb_rumrescan(IndexScanDesc scan, ScanKey scankey, int
+										   nscankeys,
+										   ScanKey orderbys, int norderbys);
 static int64 extension_amgetbitmap(IndexScanDesc scan,
 								   TIDBitmap *tbm);
 static bool extension_amgettuple(IndexScanDesc scan,
@@ -362,11 +368,21 @@ GetRumIndexHandler(PG_FUNCTION_ARGS)
 		indexRoutine->amoptsprocnum = RUMNProcs + 1;
 	}
 
-	indexRoutine->ambeginscan = extension_rumbeginscan;
-	indexRoutine->amrescan = extension_rumrescan;
-	indexRoutine->amgetbitmap = extension_amgetbitmap;
-	indexRoutine->amgettuple = extension_amgettuple;
-	indexRoutine->amendscan = extension_rumendscan;
+	if (EnableIndexPathKeySummarization &&
+		loaded_documentdb_rum_routine)
+	{
+		indexRoutine->ambeginscan = extension_documentdb_rumbeginscan;
+		indexRoutine->amrescan = extension_documentdb_rumrescan;
+	}
+	else
+	{
+		indexRoutine->ambeginscan = extension_rumbeginscan;
+		indexRoutine->amrescan = extension_rumrescan;
+		indexRoutine->amgetbitmap = extension_amgetbitmap;
+		indexRoutine->amgettuple = extension_amgettuple;
+		indexRoutine->amendscan = extension_rumendscan;
+	}
+
 	indexRoutine->amcostestimate = extension_rumcostestimate;
 	indexRoutine->ambuild = extension_rumbuild;
 	indexRoutine->aminsert = extension_ruminsert;
@@ -1066,6 +1082,33 @@ extension_rumbeginscan_core(Relation rel, int nkeys, int norderbys,
 }
 
 
+static IndexScanDesc
+extension_documentdb_rumbeginscan(Relation rel, int nkeys, int norderbys)
+{
+	EnsureRumLibLoaded();
+	return extension_documentdb_rumbeginscan_core(rel, nkeys, norderbys,
+												  &rum_index_routine);
+}
+
+
+IndexScanDesc
+extension_documentdb_rumbeginscan_core(Relation rel, int nkeys, int norderbys,
+									   IndexAmRoutine *coreRoutine)
+{
+	if (IsCompositeOpClass(rel))
+	{
+		/* Ask for 1 more key (storage for summarization key) */
+		IndexScanDesc scan = coreRoutine->ambeginscan(rel, nkeys + 1, norderbys);
+		scan->numberOfKeys = nkeys;
+		return scan;
+	}
+	else
+	{
+		return coreRoutine->ambeginscan(rel, nkeys, norderbys);
+	}
+}
+
+
 static void
 extension_rumendscan(IndexScanDesc scan)
 {
@@ -1198,6 +1241,110 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 							  innerScanKey, nInnerScanKeys,
 							  innerOrderBy,
 							  nInnerorderbys);
+	}
+	else
+	{
+		coreRoutine->amrescan(scan, scankey, nscankeys, orderbys, norderbys);
+	}
+}
+
+
+static void
+extension_documentdb_rumrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
+							   ScanKey orderbys, int norderbys)
+{
+	EnsureRumLibLoaded();
+	extension_documentdb_rumrescan_core(scan, scankey, nscankeys,
+										orderbys, norderbys, &rum_index_routine);
+}
+
+
+static bool
+IsCompositeScanEligible(ScanKey scanKey, int nscankeys)
+{
+	if (nscankeys == 0)
+	{
+		return false;
+	}
+
+	/* the runtime will order scan keys by attnum
+	 * If the first and last scan keys are not the same att - skip.
+	 */
+	if (scanKey[0].sk_attno != 1 ||
+		scanKey[0].sk_attno != scanKey[nscankeys - 1].sk_attno)
+	{
+		return false;
+	}
+
+	if (scanKey[0].sk_strategy == BSON_INDEX_STRATEGY_UNIQUE_EQUAL)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+
+void
+extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
+									ScanKey orderbys, int norderbys,
+									IndexAmRoutine *coreRoutine)
+{
+	bool supportsOrderedOperatorScans = false;
+	GetMultikeyStatusFunc multiKeyStatusFunc = NULL;
+	if (IsCompositeScanEligible(scankey, nscankeys) &&
+		GetCompositeOpClassWithProps(scan->indexRelation,
+									 &supportsOrderedOperatorScans, &multiKeyStatusFunc))
+	{
+		int numColumns = GetCompositeOpClassPathCount(
+			scan->indexRelation->rd_opcoptions[0]);
+		IndexMultiKeyStatus indexHasArrays = IndexMultiKeyStatus_Unknown;
+		bool hasCorrelatedReducedTerms = false;
+		if (multiKeyStatusFunc != NULL)
+		{
+			indexHasArrays = multiKeyStatusFunc(scan->indexRelation);
+		}
+		else
+		{
+			indexHasArrays = CheckIndexHasArrays(scan->indexRelation, coreRoutine);
+		}
+
+		/* Check if we are producing reduced index terms in this index */
+		BsonGinCompositePathOptions *options =
+			(BsonGinCompositePathOptions *) scan->indexRelation->rd_opcoptions[0];
+		if (options->enableCompositeReducedCorrelatedTerms &&
+			indexHasArrays == IndexMultiKeyStatus_HasArrays && numColumns > 1)
+		{
+			/* Check if we have correlated reduced terms */
+			hasCorrelatedReducedTerms = CheckIndexHasReducedTerms(
+				scan->indexRelation, coreRoutine);
+		}
+
+		/* There are 2 paths here, regular queries, or unique order by
+		 * If this is a unique order by, we need to modify the scan keys
+		 * for both paths.
+		 */
+		ScanKeyData compositeKey = { 0 };
+		if (ModifyScanKeysForCompositeScan(scankey, nscankeys,
+										   &compositeKey,
+										   indexHasArrays ==
+										   IndexMultiKeyStatus_HasArrays,
+										   hasCorrelatedReducedTerms,
+										   supportsOrderedOperatorScans))
+		{
+			int numscankeys = 1;
+			coreRoutine->amrescan(scan, &compositeKey, numscankeys, orderbys, norderbys);
+
+			/* scan->scanKeyData[0] will now be the composite keys - copy the remaining from 1-> N
+			 * This is fine since we requested 1 extra key on beginscan
+			 */
+			memmove(&scan->keyData[1], scankey,
+					nscankeys * sizeof(ScanKeyData));
+		}
+		else
+		{
+			coreRoutine->amrescan(scan, scankey, nscankeys, orderbys, norderbys);
+		}
 	}
 	else
 	{
@@ -1465,8 +1612,8 @@ RumGetTruncationStatus(Relation indexRelation)
 
 
 static List *
-GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum, ScanDirection
-						 scanDirection,
+GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum,
+						 ScanDirection scanDirection,
 						 List **rawPerPathBounds)
 {
 	uint32_t nentries = 0;
@@ -1734,17 +1881,21 @@ static void
 ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 						 ExplainWriterFuncs *writerFuncs)
 {
-	DocumentDBRumIndexState *outerScanState =
-		(DocumentDBRumIndexState *) scan->opaque;
+	bool hasMultiKey = RumGetMultiKeyStatusSlow(scan->indexRelation);
 
-	writerFuncs->writeBool("isMultiKey",
-						   outerScanState->multiKeyStatus ==
-						   IndexMultiKeyStatus_HasArrays,
-						   state);
+	writerFuncs->writeBool("isMultiKey", hasMultiKey, state);
 
-	if (outerScanState->hasCorrelatedReducedTerms)
+	BsonGinCompositePathOptions *options =
+		(BsonGinCompositePathOptions *) scan->indexRelation->rd_opcoptions[0];
+	if (options->enableCompositeReducedCorrelatedTerms && hasMultiKey)
 	{
-		writerFuncs->writeBool("hasCorrelatedTerms", true, state);
+		/* Check if we have correlated reduced terms */
+		bool hasCorrelatedReducedTerms = CheckIndexHasReducedTerms(
+			scan->indexRelation, &rum_index_routine);
+		if (hasCorrelatedReducedTerms)
+		{
+			writerFuncs->writeBool("hasCorrelatedTerms", true, state);
+		}
 	}
 
 	bool hasTruncation = RumGetTruncationStatus(scan->indexRelation);
@@ -1753,7 +1904,23 @@ ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 		writerFuncs->writeBool("hasTruncation", true, state);
 	}
 
-	if (outerScanState->compositeKey.sk_argument != (Datum) 0)
+	Datum compositeKey = (Datum) 0;
+	IndexScanDesc innerScan = scan;
+	if (scan->keyData[0].sk_argument != (Datum) 0 &&
+		scan->keyData[0].sk_strategy == BSON_INDEX_STRATEGY_COMPOSITE_QUERY)
+	{
+		innerScan = scan;
+		compositeKey = scan->keyData[0].sk_argument;
+	}
+	else
+	{
+		DocumentDBRumIndexState *outerScanState =
+			(DocumentDBRumIndexState *) scan->opaque;
+		compositeKey = outerScanState->compositeKey.sk_argument;
+		innerScan = outerScanState->innerScan;
+	}
+
+	if (compositeKey != (Datum) 0)
 	{
 		ScanDirection scanDir = NoMovementScanDirection;
 		if (scan->numberOfOrderBys > 0)
@@ -1767,7 +1934,7 @@ ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 		List *rawPerPathBounds = NIL;
 		List *boundsList = GetIndexBoundsForExplain(
 			scan->indexRelation,
-			outerScanState->compositeKey.sk_argument,
+			compositeKey,
 			scanDir, &rawPerPathBounds);
 
 		if (rawPerPathBounds != NIL)
@@ -1782,7 +1949,7 @@ ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 	}
 
 	/* Explain the inner scan using underlying am */
-	TryExplainByIndexAm(outerScanState->innerScan, writerFuncs, state);
+	TryExplainByIndexAm(innerScan, writerFuncs, state);
 }
 
 
@@ -2058,23 +2225,34 @@ DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan)
 							"GetCurrentIndexKeyFunc not supported for non ordered indexes")));
 	}
 
+	bool pathKeySummarizationForced = false;
 	GetCurrentIndexKeyFunc getCurrentIndexKey =
 		GetIndexKeyCurrentKeyFunc(scan->indexRelation->rd_rel->relam,
-								  scan->indexRelation->rd_opfamily[0]);
+								  scan->indexRelation->rd_opfamily[0],
+								  &pathKeySummarizationForced);
 	if (getCurrentIndexKey == NULL)
 	{
 		ereport(ERROR, (errmsg(
 							"Index AM does not support get_current_index_key for index")));
 	}
 
-	DocumentDBRumIndexState *state = scan->opaque;
-	return getCurrentIndexKey(state->innerScan);
+	bool isPathSummarizationScan =
+		scan->indexRelation->rd_indam->ambeginscan == extension_documentdb_rumbeginscan;
+	if (isPathSummarizationScan || pathKeySummarizationForced)
+	{
+		return getCurrentIndexKey(scan);
+	}
+	else
+	{
+		DocumentDBRumIndexState *state = scan->opaque;
+		return getCurrentIndexKey(state->innerScan);
+	}
 }
 
 
 void
 DocumentDBRumSkipTidsForCurrentEntry(IndexScanDesc scan, SkipTidsOnCurrentEntryFunc
-									 skipTidsFunc,
+									 skipTidsFunc, bool pathKeySummarizationForced,
 									 ItemPointer userContinuationState)
 {
 	if (!IsCompositeOpClass(scan->indexRelation))
@@ -2088,7 +2266,17 @@ DocumentDBRumSkipTidsForCurrentEntry(IndexScanDesc scan, SkipTidsOnCurrentEntryF
 		return;
 	}
 
-	DocumentDBRumIndexState *state = scan->opaque;
-	skipTidsFunc(state->innerScan, BlockIdGetBlockNumber(
-					 &userContinuationState->ip_blkid));
+	bool isPathSummarizationScan =
+		scan->indexRelation->rd_indam->ambeginscan == extension_documentdb_rumbeginscan;
+	if (isPathSummarizationScan || pathKeySummarizationForced)
+	{
+		skipTidsFunc(scan, BlockIdGetBlockNumber(
+						 &userContinuationState->ip_blkid));
+	}
+	else
+	{
+		DocumentDBRumIndexState *state = scan->opaque;
+		skipTidsFunc(state->innerScan, BlockIdGetBlockNumber(
+						 &userContinuationState->ip_blkid));
+	}
 }

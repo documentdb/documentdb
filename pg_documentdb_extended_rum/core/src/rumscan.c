@@ -96,6 +96,7 @@ rumbeginscan(Relation rel, int nkeys, int norderbys)
 	so->numKilled = 0;
 	so->killedItemsSkipped = 0;
 	so->orderByKeyIndex = -1;
+	so->scanNumberOfKeys = nkeys;
 	so->orderScanDirection = ForwardScanDirection;
 	so->tempCtx = RumContextCreate(CurrentMemoryContext,
 								   "Rum scan temporary context");
@@ -831,14 +832,15 @@ adjustScanDirection(RumScanOpaque so)
 
 
 static bool
-IsSupportedOrderedScan(IndexScanDesc scan, RumState *rumstate,
+IsSupportedOrderedScan(IndexScanDesc scan, int numKeys,
+					   RumState *rumstate,
 					   bool *crossKeySummarizationSupported)
 {
 	int i;
-	bool isSupportedOrderedScan = scan->numberOfKeys > 0;
-	bool isCrossKeySummarizationSupported = scan->numberOfKeys > 0;
+	bool isSupportedOrderedScan = numKeys > 0;
+	bool isCrossKeySummarizationSupported = numKeys > 0;
 	AttrNumber firstAttnum = InvalidAttrNumber;
-	for (i = 0; i < scan->numberOfKeys; i++)
+	for (i = 0; i < numKeys; i++)
 	{
 		AttrNumber attnum = scan->keyData[i].sk_attno;
 		if (firstAttnum == InvalidAttrNumber)
@@ -926,7 +928,7 @@ rumNewScanKey(IndexScanDesc scan, ScanDirection scanDirection)
 
 	/* if no scan keys provided, allocate extra EVERYTHING RumScanKey */
 	so->keys = (RumScanKey *)
-			   palloc((Max(scan->numberOfKeys, 1) + scan->numberOfOrderBys) *
+			   palloc((Max(so->scanNumberOfKeys, 1) + scan->numberOfOrderBys) *
 					  sizeof(*so->keys));
 	so->nkeys = 0;
 
@@ -937,9 +939,9 @@ rumNewScanKey(IndexScanDesc scan, ScanDirection scanDirection)
 
 	so->orderScanDirection = NoMovementScanDirection;
 	bool crossKeySummarizationSupported = false;
-	bool supportedOrderedIndexScans = IsSupportedOrderedScan(scan, &so->rumstate,
-															 &
-															 crossKeySummarizationSupported);
+	bool supportedOrderedIndexScans =
+		IsSupportedOrderedScan(scan, so->scanNumberOfKeys, &so->rumstate,
+							   &crossKeySummarizationSupported);
 	if (scan->numberOfOrderBys > 0 && supportedOrderedIndexScans)
 	{
 		for (i = 0; i < scan->numberOfOrderBys; i++)
@@ -1010,7 +1012,7 @@ rumNewScanKey(IndexScanDesc scan, ScanDirection scanDirection)
 		}
 	}
 
-	for (i = 0; i < scan->numberOfKeys; i++)
+	for (i = 0; i < so->scanNumberOfKeys; i++)
 	{
 		initScanKey(so, &scan->keyData[i], &hasPartialMatch, supportedOrderedIndexScans);
 		if (so->isVoidRes)
@@ -1478,10 +1480,11 @@ rumrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 
 	freeScanKeys(so);
 
-	if (scankey && scan->numberOfKeys > 0)
+	if (scankey && nscankeys > 0)
 	{
 		memmove(scan->keyData, scankey,
-				scan->numberOfKeys * sizeof(ScanKeyData));
+				nscankeys * sizeof(ScanKeyData));
+		so->scanNumberOfKeys = nscankeys;
 	}
 	if (orderbys && scan->numberOfOrderBys > 0)
 	{

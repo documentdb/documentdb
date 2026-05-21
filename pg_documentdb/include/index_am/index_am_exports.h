@@ -85,6 +85,9 @@ typedef struct
 
 	/* Optional function to skip TIDs on the current entry */
 	SkipTidsOnCurrentEntryFunc skip_tids_on_current_entry;
+
+	/* Whether or not the indexam has forced pathkey summarization */
+	bool force_path_key_summarization;
 } BsonIndexAmEntry;
 
 /*

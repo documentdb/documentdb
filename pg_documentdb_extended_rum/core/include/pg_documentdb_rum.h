@@ -977,6 +977,9 @@ typedef struct RumScanOpaqueData
 
 	/* Index only scan metadata. */
 	RumProjectIndexTupleData *projectIndexTupleData;
+
+	/* Cached number of keys per rescan */
+	uint32_t scanNumberOfKeys;
 }   RumScanOpaqueData;
 
 typedef RumScanOpaqueData *RumScanOpaque;
