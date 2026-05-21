@@ -2311,7 +2311,7 @@ HandleUnresolvedArrayFields(const BsonUpdateIntermediatePathNode *tree,
 	/* we need to walk the arrays in index order and handle each field that way. */
 	/* to do that, we need the maximal array index we need to handle. */
 	const BsonPathNode *child;
-	int32_t maxIndex = 0;
+	int32_t maxIndex = INT32_MIN;
 	bool modified = false;
 
 	/* First walk the tree and figure out the max index that needs to be written */
@@ -2349,7 +2349,7 @@ HandleUnresolvedArrayFields(const BsonUpdateIntermediatePathNode *tree,
 	bson_value_t nullValue;
 	nullValue.value_type = BSON_TYPE_NULL;
 
-	if (maxIndex - currentMaxIndex > 1500000)
+	if (maxIndex > currentMaxIndex && maxIndex - currentMaxIndex > 1500000)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTBACKFILLARRAY), errmsg(
 							"Backfilling is not possible for more than 1500000 elements.")));
