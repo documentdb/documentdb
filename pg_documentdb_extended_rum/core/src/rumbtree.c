@@ -19,9 +19,6 @@
 
 #include "pg_documentdb_rum.h"
 
-extern bool RumTrackIncompleteSplit;
-extern bool RumFixIncompleteSplit;
-extern bool RumInjectPageSplitIncomplete;
 
 static void rumFinishOldSplit(RumBtree btree, RumBtreeStack *stack, BlockNumber rootBlkno,
 							  RumStatsData *buildStats, int access);
@@ -123,7 +120,7 @@ rumReFindLeafPage(RumBtree btree, RumBtreeStack *stack)
 	}
 
 	/* Traverse tree downwards. */
-	stack = rumFindLeafPage(btree, stack);
+	stack = rumFindLeafPage(btree, stack, false);
 	return stack;
 }
 
@@ -132,7 +129,7 @@ rumReFindLeafPage(RumBtree btree, RumBtreeStack *stack)
  * Locates leaf page contained tuple
  */
 RumBtreeStack *
-rumFindLeafPage(RumBtree btree, RumBtreeStack *stack)
+rumFindLeafPage(RumBtree btree, RumBtreeStack *stack, bool rootConflictCheck)
 {
 	bool isfirst = true;
 	BlockNumber rootBlkno;
@@ -142,6 +139,11 @@ rumFindLeafPage(RumBtree btree, RumBtreeStack *stack)
 		stack = rumPrepareFindLeafPage(btree, RUM_ROOT_BLKNO);
 	}
 	rootBlkno = stack->blkno;
+
+	if (rootConflictCheck)
+	{
+		CheckForSerializableConflictIn(btree->index, NULL, rootBlkno);
+	}
 
 	for (;;)
 	{
@@ -187,8 +189,16 @@ rumFindLeafPage(RumBtree btree, RumBtreeStack *stack)
 				break;
 			}
 
-			stack->buffer = rumStep(stack->buffer, btree->index, access,
-									ForwardScanDirection);
+			if (btree->searchMode)
+			{
+				stack->buffer = rumStep(stack->buffer, btree->index, access,
+										ForwardScanDirection);
+			}
+			else
+			{
+				stack->buffer = rumStepForInsert(stack->buffer, btree->index, access);
+			}
+
 			stack->blkno = rightlink;
 			page = BufferGetPage(stack->buffer);
 			if (RumFixIncompleteSplit && !btree->searchMode &&
@@ -238,12 +248,9 @@ rumFindLeafPage(RumBtree btree, RumBtreeStack *stack)
 }
 
 
-/*
- * Step from current page.
- */
-Buffer
-rumStep(Buffer buffer, Relation index, int lockmode,
-		ScanDirection scanDirection)
+inline static Buffer
+rumStepCore(Buffer buffer, Relation index, int lockmode, ScanDirection scanDirection,
+			bool forInsert)
 {
 	Buffer nextbuffer;
 	Page page = BufferGetPage(buffer);
@@ -261,9 +268,25 @@ rumStep(Buffer buffer, Relation index, int lockmode,
 		return InvalidBuffer;
 	}
 
-	nextbuffer = ReadBuffer(index, blkno);
-	UnlockReleaseBuffer(buffer);
-	LockBuffer(nextbuffer, lockmode);
+	if (scanDirection == ForwardScanDirection &&
+		forInsert &&
+		RumEnableBtreeLockOrder)
+	{
+		/* The next page is locked first, before releasing the current page. This is
+		 * crucial to prevent concurrent VACUUM from deleting a page that we are about
+		 * to step to.
+		 */
+		nextbuffer = ReadBuffer(index, blkno);
+		LockBuffer(nextbuffer, lockmode);
+		UnlockReleaseBuffer(buffer);
+	}
+	else
+	{
+		/* Non-insert path or backward scan: no lock coupling needed */
+		nextbuffer = ReadBuffer(index, blkno);
+		UnlockReleaseBuffer(buffer);
+		LockBuffer(nextbuffer, lockmode);
+	}
 
 	/* Sanity check that the page we stepped to is of similar kind. */
 	page = BufferGetPage(nextbuffer);
@@ -283,6 +306,26 @@ rumStep(Buffer buffer, Relation index, int lockmode,
 	}
 
 	return nextbuffer;
+}
+
+
+Buffer
+rumStepForInsert(Buffer buffer, Relation index, int lockmode)
+{
+	bool forInsert = true;
+	return rumStepCore(buffer, index, lockmode, ForwardScanDirection, forInsert);
+}
+
+
+/*
+ * Step from current page.
+ */
+Buffer
+rumStep(Buffer buffer, Relation index, int lockmode,
+		ScanDirection scanDirection)
+{
+	bool forInsert = false;
+	return rumStepCore(buffer, index, lockmode, scanDirection, forInsert);
 }
 
 
@@ -418,8 +461,7 @@ rumFindParents(RumBtree btree, RumBtreeStack *stack,
 
 				break;
 			}
-			buffer = rumStep(buffer, btree->index, RUM_EXCLUSIVE,
-							 ForwardScanDirection);
+			buffer = rumStepForInsert(buffer, btree->index, RUM_EXCLUSIVE);
 			page = BufferGetPage(buffer);
 
 			/* finish any incomplete splits, as above */
@@ -455,6 +497,29 @@ rumFindParents(RumBtree btree, RumBtreeStack *stack,
 		blkno = leftmostBlkno;
 		buffer = ReadBuffer(btree->index, blkno);
 	}
+}
+
+
+static void
+resetIncompleteSplitOnChild(GenericXLogState *state, RumBtree btree, Buffer childbuf)
+{
+	Page childpage;
+
+	if (!BufferIsValid(childbuf))
+	{
+		return;
+	}
+	if (btree->rumstate->isBuild)
+	{
+		childpage = BufferGetPage(childbuf);
+	}
+	else
+	{
+		childpage = GenericXLogRegisterBuffer(state, childbuf, 0);
+	}
+
+	RumPageGetOpaque(childpage)->flags &= ~RUM_INCOMPLETE_SPLIT;
+	MarkBufferDirty(childbuf);
 }
 
 
@@ -611,6 +676,13 @@ rumPlaceToPage(RumBtree btree, RumBtreeStack *stack,
 								   BufferGetBlockNumber(stack->buffer),
 								   BufferGetBlockNumber(rbuffer));
 
+			/*
+			 * Reset INCOMPLETE_SPLIT on the child before GenericXLogFinish.
+			 * Root split uses 4 buffers: stack->buffer (root), rbuffer (right),
+			 * lbuffer (left), and childbuf. At the GenericXLog limit.
+			 */
+			resetIncompleteSplitOnChild(state, btree, childbuf);
+
 			if (btree->rumstate->isBuild)
 			{
 				START_CRIT_SECTION();
@@ -721,6 +793,23 @@ rumPlaceToPage(RumBtree btree, RumBtreeStack *stack,
 			}
 			PageRestoreTempPage(newlpage, lpage);
 
+			/*
+			 * Reset INCOMPLETE_SPLIT on the child before GenericXLogFinish
+			 * so that the child flag clear is atomic with the parent split.
+			 *
+			 * IMPORTANT: GenericXLog supports at most MAX_GENERIC_XLOG_PAGES (4)
+			 * buffers per record. This non-root split path can register up to
+			 * exactly 4:
+			 *   1. stack->buffer (left/original page)
+			 *   2. rbuffer (new right page)
+			 *   3. rightrightBuffer (right-right sibling, when it exists)
+			 *   4. childbuf (child whose INCOMPLETE_SPLIT flag is cleared)
+			 *
+			 * This is at the limit. DO NOT register additional buffers in this
+			 * GenericXLog record without restructuring the operation.
+			 */
+			resetIncompleteSplitOnChild(state, btree, childbuf);
+
 			if (btree->rumstate->isBuild)
 			{
 				MarkBufferDirty(rbuffer);
@@ -747,34 +836,32 @@ rumPlaceToPage(RumBtree btree, RumBtreeStack *stack,
 
 		if (RumInjectPageSplitIncomplete)
 		{
-			ereport(ERROR, (errmsg("Injecting failure in the middle of split")));
-		}
+			bool shouldInject = true;
 
-		/* If childbuf is passed, then reset the incomplete split here */
-		if (BufferIsValid(childbuf))
-		{
-			Page childpage;
-			if (btree->rumstate->isBuild)
+			/*
+			 * When internal-only mode is enabled, only inject on internal
+			 * page splits where childbuf is valid (i.e., this is a parent
+			 * split triggered by rumFinishSplit while fixing a child's
+			 * incomplete split). Applies to both entry and data btrees.
+			 * Skip root splits (done=true) since they don't set
+			 * INCOMPLETE_SPLIT and the page pointer may be stale.
+			 */
+			if (RumInjectSplitEntryInternalOnly)
 			{
-				START_CRIT_SECTION();
-				childpage = BufferGetPage(childbuf);
-			}
-			else
-			{
-				state = GenericXLogStart(btree->index);
-				childpage = GenericXLogRegisterBuffer(state, childbuf, 0);
+				if (done)
+				{
+					shouldInject = false;
+				}
+				else
+				{
+					shouldInject = !RumPageIsLeaf(page) &&
+								   BufferIsValid(childbuf);
+				}
 			}
 
-			RumPageGetOpaque(childpage)->flags &= ~RUM_INCOMPLETE_SPLIT;
-			MarkBufferDirty(childbuf);
-
-			if (btree->rumstate->isBuild)
+			if (shouldInject)
 			{
-				END_CRIT_SECTION();
-			}
-			else
-			{
-				GenericXLogFinish(state);
+				elog(ERROR, "Injecting failure in the middle of split");
 			}
 		}
 
@@ -834,8 +921,8 @@ rumFinishSplit(RumBtree btree, RumBtreeStack *stack, BlockNumber rootBlkNo,
 				break;
 			}
 
-			parent->buffer = rumStep(parent->buffer, btree->index, RUM_EXCLUSIVE,
-									 ForwardScanDirection);
+			parent->buffer = rumStepForInsert(parent->buffer, btree->index,
+											  RUM_EXCLUSIVE);
 			parent->blkno = BufferGetBlockNumber(parent->buffer);
 			page = BufferGetPage(parent->buffer);
 
@@ -1274,8 +1361,8 @@ rumInsertValueOld(Relation index, RumBtree btree, RumBtreeStack *stack,
 				break;
 			}
 
-			parent->buffer = rumStep(parent->buffer, btree->index,
-									 RUM_EXCLUSIVE, ForwardScanDirection);
+			parent->buffer = rumStepForInsert(parent->buffer, btree->index,
+											  RUM_EXCLUSIVE);
 			parent->blkno = rightlink;
 			page = BufferGetPage(parent->buffer);
 		}

@@ -636,10 +636,12 @@ typedef struct RumBtreeData
 }   RumBtreeData;
 
 extern RumBtreeStack * rumPrepareFindLeafPage(RumBtree btree, BlockNumber blkno);
-extern RumBtreeStack * rumFindLeafPage(RumBtree btree, RumBtreeStack *stack);
+extern RumBtreeStack * rumFindLeafPage(RumBtree btree, RumBtreeStack *stack,
+									   bool rootConflictCheck);
 extern RumBtreeStack * rumReFindLeafPage(RumBtree btree, RumBtreeStack *stack);
 extern Buffer rumStep(Buffer buffer, Relation index, int lockmode,
 					  ScanDirection scanDirection);
+extern Buffer rumStepForInsert(Buffer buffer, Relation index, int lockmode);
 extern void freeRumBtreeStack(RumBtreeStack *stack);
 extern void rumInsertValue(Relation index, RumBtree btree, RumBtreeStack *stack,
 						   RumStatsData *buildStats);
@@ -1145,6 +1147,7 @@ extern PGDLLIMPORT bool RumSkipResetOnDeadEntryPage;
 extern PGDLLIMPORT bool RumEnableOrderedOperatorScans;
 extern PGDLLIMPORT int RumDefaultPageFillFactor;
 extern PGDLLIMPORT bool RumEnablePageFillFactor;
+extern PGDLLIMPORT bool RumEnableBtreeLockOrder;
 
 /* Gucs used by tests */
 extern PGDLLIMPORT bool RumForceOrderedIndexScan;
@@ -1152,6 +1155,7 @@ extern PGDLLIMPORT int RumParallelIndexWorkersOverride;
 extern PGDLLIMPORT int RumDataPageIntermediateSplitSize;
 extern PGDLLIMPORT bool RumThrowErrorOnInvalidDataPage;
 extern PGDLLIMPORT bool RumInjectPageSplitIncomplete;
+extern PGDLLIMPORT bool RumInjectSplitEntryInternalOnly;
 
 /*
  * Functions for reading ItemPointers with additional information. Used in

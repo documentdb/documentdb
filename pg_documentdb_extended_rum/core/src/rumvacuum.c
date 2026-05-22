@@ -922,7 +922,7 @@ CheckAndPruneEmptyRumPage(RumState *rumState, BufferAccessStrategy bufferStrateg
 	btreeEntry.searchMode = false;
 
 	/* Do a search based on the item to locate the buffer */
-	stack = rumFindLeafPage(&btreeEntry, NULL);
+	stack = rumFindLeafPage(&btreeEntry, NULL, false);
 	bufferNeedsUnlock = true;
 
 	/* If we didn't land on the same page we started with, bail */

@@ -1735,6 +1735,7 @@ rumInsertItemPointers(RumState *rumstate,
 					  RumStatsData *buildStats)
 {
 	BlockNumber rootBlkno;
+	bool rootConflictCheck = true;
 
 	Assert(gdi->stack);
 	rootBlkno = gdi->stack->blkno;
@@ -1749,7 +1750,7 @@ rumInsertItemPointers(RumState *rumstate,
 			gdi->stack = rumPrepareFindLeafPage(&gdi->btree, rootBlkno);
 		}
 
-		gdi->stack = rumFindLeafPage(&gdi->btree, gdi->stack);
+		gdi->stack = rumFindLeafPage(&gdi->btree, gdi->stack, rootConflictCheck);
 
 		if (gdi->btree.findItem(&(gdi->btree), gdi->stack))
 		{
@@ -1792,6 +1793,6 @@ rumScanBeginPostingTree(RumPostingTreeScan *gdi, RumItem *item)
 		gdi->btree.nitem = 1;
 	}
 
-	gdi->stack = rumFindLeafPage(&gdi->btree, gdi->stack);
+	gdi->stack = rumFindLeafPage(&gdi->btree, gdi->stack, false);
 	return gdi->stack->buffer;
 }
