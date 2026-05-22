@@ -1059,7 +1059,9 @@ ExtensionCursorScanExplainCustomScan(CustomScanState *node, List *ancestors,
 							 0, es);
 	}
 
+	ExplainOpenGroup("custom_scan", "IndexDetails", false, es);
 	WalkAndExplainScanState((PlanState *) extensionCursorScanState->innerScanState, es);
+	ExplainCloseGroup("custom_scan", "IndexDetails", false, es);
 }
 
 
