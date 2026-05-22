@@ -44,6 +44,11 @@ PGDLLEXPORT bool RumFixIncompleteSplit = RUM_DEFAULT_FIX_INCOMPLETE_SPLIT;
 PGDLLEXPORT bool RumInjectPageSplitIncomplete =
 	RUM_DEFAULT_ENABLE_INJECT_PAGE_SPLIT_INCOMPLETE;
 
+/* TestingConfig */
+#define RUM_DEFAULT_INJECT_SPLIT_ENTRY_INTERNAL_ONLY false
+PGDLLEXPORT bool RumInjectSplitEntryInternalOnly =
+	RUM_DEFAULT_INJECT_SPLIT_ENTRY_INTERNAL_ONLY;
+
 /* rumentrypage.c */
 /* SystemConfig */
 #define RUM_DEFAULT_FILL_FACTOR 50
@@ -144,6 +149,10 @@ PGDLLEXPORT bool RumEnableOrderedOperatorScans =
 PGDLLEXPORT bool RumEnablePageFillFactor =
 	RUM_DEFAULT_ENABLE_PAGE_FILL_FACTOR;
 
+/* FeatureFlag: Added in v113, Enabled in v113, remove after v125 */
+#define RUM_DEFAULT_ENABLE_BTREE_LOCK_ORDER true
+PGDLLEXPORT bool RumEnableBtreeLockOrder = RUM_DEFAULT_ENABLE_BTREE_LOCK_ORDER;
+
 PGDLLEXPORT rum_format_log_hook rum_unredacted_log_emit_hook = NULL;
 
 
@@ -243,6 +252,15 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumInjectPageSplitIncomplete,
 		RUM_DEFAULT_ENABLE_INJECT_PAGE_SPLIT_INCOMPLETE,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.inject_split_entry_internal_only", documentDBRumGucPrefix),
+		"Test GUC - only inject split failure on entry internal page splits (when childbuf is valid)",
+		NULL,
+		&RumInjectSplitEntryInternalOnly,
+		RUM_DEFAULT_INJECT_SPLIT_ENTRY_INTERNAL_ONLY,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 
@@ -370,6 +388,15 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumEnablePageFillFactor,
 		RUM_DEFAULT_ENABLE_PAGE_FILL_FACTOR,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_btree_lock_order", documentDBRumGucPrefix),
+		"Sets whether or not to enable using the btree lock order in rum index operations",
+		NULL,
+		&RumEnableBtreeLockOrder,
+		RUM_DEFAULT_ENABLE_BTREE_LOCK_ORDER,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 

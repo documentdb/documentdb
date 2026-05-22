@@ -801,7 +801,7 @@ restartScanEntry:
 						entry->queryKey, entry->queryCategory,
 						rumstate);
 	btreeEntry.searchMode = true;
-	stackEntry = rumFindLeafPage(&btreeEntry, NULL);
+	stackEntry = rumFindLeafPage(&btreeEntry, NULL, false);
 	page = BufferGetPage(stackEntry->buffer);
 	needUnlock = true;
 
@@ -1731,7 +1731,7 @@ startScanEntryOrderedCore(RumScanOpaque so, RumScanEntry minScanEntry, Snapshot 
 						entryToUse, entry->queryCategory,
 						rumstate);
 	orderedBtree->searchMode = true;
-	stackEntry = rumFindLeafPage(orderedBtree, NULL);
+	stackEntry = rumFindLeafPage(orderedBtree, NULL, false);
 	page = BufferGetPage(stackEntry->buffer);
 	needUnlock = true;
 

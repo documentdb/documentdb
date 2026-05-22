@@ -407,7 +407,7 @@ rumEntryInsert(RumState *rumstate,
 
 	rumPrepareEntryScan(&btree, attnum, key, category, rumstate);
 
-	stack = rumFindLeafPage(&btree, NULL);
+	stack = rumFindLeafPage(&btree, NULL, false);
 	page = BufferGetPage(stack->buffer);
 
 	if (btree.findItem(&btree, stack))
