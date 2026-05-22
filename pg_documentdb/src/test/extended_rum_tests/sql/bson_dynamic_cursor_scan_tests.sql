@@ -392,6 +392,32 @@ SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1, "cursor.id"
 SET enable_indexscan TO on;
 SET enable_seqscan TO on;
 
+-- ===========================================================================
+-- Test: EXPLAIN ANALYZE FORMAT JSON with dynamic cursors and aggregation
+-- rewrite enabled. Validates that the output is valid JSON.
+-- ===========================================================================
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+
+-- Validate that EXPLAIN ANALYZE FORMAT JSON output is valid JSON by casting to jsonb.
+-- We avoid printing the raw output since explain plans are not stable across PG versions.
+DO $$
+DECLARE
+    v_plan text;
+    v_json jsonb;
+BEGIN
+    EXECUTE 'EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, FORMAT JSON)
+        SELECT document FROM bson_aggregation_find(''dyncursordb'',
+            ''{ "find": "dyncursor_coll", "filter": {}, "projection": { "_id": 1 }, "batchSize": 3 }'')'
+    INTO v_plan;
+
+    v_json := v_plan::jsonb;
+    RAISE NOTICE 'EXPLAIN FORMAT JSON is valid JSON: true';
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'EXPLAIN FORMAT JSON is valid JSON: false - %', SQLERRM;
+END $$;
+
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
+
 -- Restore defaults
 SET documentdb.enablePrimaryKeyCursorScan TO off;
 SET documentdb.enableCursorPlanBeforeRestrictionPathUpdate TO off;
