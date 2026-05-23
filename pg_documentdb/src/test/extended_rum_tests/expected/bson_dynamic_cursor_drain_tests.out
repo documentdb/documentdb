@@ -73,13 +73,14 @@ $cmd$, true);
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: false
-   indexBounds: ["a": [3, MaxKey]]
+   indexBounds: ["a": [MinKey, MaxKey]]
+   minKey: [3]
    innerScanLoops: 498 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 995)]
    ->  Index Scan using a_1 on documents_9401 collection (actual rows=995 loops=1)
          Index Cond: ((document @>= '{ "a" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "a" : { "minIndexOp" : { "$binary" : { "base64" : "LAAAAAUQAAMAAAA=", "subType" : "00" } } } }'::bson) AND (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-(12 rows)
+(13 rows)
 
 DROP TABLE drain_explain_resp;
 -- ---------------------------------------------------------------------------
@@ -124,13 +125,14 @@ $cmd$, true);
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: false
-   indexBounds: ["a": [13, MaxKey]]
+   indexBounds: ["a": [MinKey, MaxKey]]
+   minKey: [13]
    innerScanLoops: 488 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 975)]
    ->  Index Scan using a_1 on documents_9401 collection (actual rows=975 loops=1)
          Index Cond: ((document @>= '{ "a" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "a" : { "minIndexOp" : { "$binary" : { "base64" : "LAAAAAUQAA0AAAA=", "subType" : "00" } } } }'::bson) AND (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-(12 rows)
+(13 rows)
 
 DROP TABLE drain_explain_resp;
 -- ---------------------------------------------------------------------------
@@ -175,13 +177,14 @@ $cmd$, true);
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: false
-   indexBounds: ["a": [25, MaxKey]]
+   indexBounds: ["a": [MinKey, MaxKey]]
+   minKey: [25]
    innerScanLoops: 476 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 951)]
    ->  Index Scan using a_1 on documents_9401 collection (actual rows=951 loops=1)
          Index Cond: ((document @>= '{ "a" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "a" : { "minIndexOp" : { "$binary" : { "base64" : "LAAAAAUQABkAAAA=", "subType" : "00" } } } }'::bson) AND (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-(12 rows)
+(13 rows)
 
 DROP TABLE drain_explain_resp;
 -- ---------------------------------------------------------------------------
@@ -210,13 +213,14 @@ $cmd$, true);
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: false
-   indexBounds: ["a": [3, MaxKey]]
+   indexBounds: ["a": [MinKey, MaxKey]]
+   minKey: [3]
    innerScanLoops: 498 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 995)]
    ->  Index Scan using a_1 on documents_9401 collection (actual rows=995 loops=1)
          Index Cond: ((document @>= '{ "a" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "a" : { "minIndexOp" : { "$binary" : { "base64" : "LAAAAAUQAAMAAAA=", "subType" : "00" } } } }'::bson) AND (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-(12 rows)
+(13 rows)
 
 SET enable_bitmapscan TO on;
 SET enable_indexscan TO on;
@@ -264,14 +268,15 @@ $cmd$, true);
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: false
-   indexBounds: ["a": [3, MaxKey]]
+   indexBounds: ["a": [MinKey, MaxKey]]
+   minKey: [3]
    innerScanLoops: 498 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 995)]
    ->  Index Only Scan using a_1 on documents_9401 collection (actual rows=995 loops=1)
          Index Cond: ((document @>= '{ "a" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "a" : { "minIndexOp" : { "$binary" : { "base64" : "LAAAAAUQAAMAAAA=", "subType" : "00" } } } }'::bson))
          Heap Fetches: xxx
-(13 rows)
+(14 rows)
 
 DROP TABLE drain_explain_resp;
 -- ---------------------------------------------------------------------------
@@ -317,14 +322,15 @@ $cmd$, true);
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: false
-   indexBounds: ["a": [13, MaxKey]]
+   indexBounds: ["a": [MinKey, MaxKey]]
+   minKey: [13]
    innerScanLoops: 488 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 975)]
    ->  Index Only Scan using a_1 on documents_9401 collection (actual rows=975 loops=1)
          Index Cond: ((document @>= '{ "a" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "a" : { "minIndexOp" : { "$binary" : { "base64" : "LAAAAAUQAA0AAAA=", "subType" : "00" } } } }'::bson))
          Heap Fetches: xxx
-(13 rows)
+(14 rows)
 
 DROP TABLE drain_explain_resp;
 -- ---------------------------------------------------------------------------
@@ -370,14 +376,15 @@ $cmd$, true);
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: false
-   indexBounds: ["a": [25, MaxKey]]
+   indexBounds: ["a": [MinKey, MaxKey]]
+   minKey: [25]
    innerScanLoops: 476 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 951)]
    ->  Index Only Scan using a_1 on documents_9401 collection (actual rows=951 loops=1)
          Index Cond: ((document @>= '{ "a" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "a" : { "minIndexOp" : { "$binary" : { "base64" : "LAAAAAUQABkAAAA=", "subType" : "00" } } } }'::bson))
          Heap Fetches: xxx
-(13 rows)
+(14 rows)
 
 DROP TABLE drain_explain_resp;
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
@@ -964,13 +971,14 @@ $cmd$, true);
    indexName: c_1
    indexKey: {"c": 1}
    isMultiKey: false
-   indexBounds: ["c": ["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx0", MaxKey]]
+   indexBounds: ["c": [MinKey, MaxKey]]
+   minKey: ["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx0"]
    innerScanLoops: 2 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1000)]
    ->  Index Scan using c_1 on documents_9401 collection (actual rows=1000 loops=1)
          Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "c" : { "minIndexOp" : { "$binary" : { "base64" : "VAMAAAUCAMoAAAB4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eDAA", "subType" : "00" } } } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-(12 rows)
+(13 rows)
 
 DROP TABLE drain_explain_resp_c;
 -- ---------------------------------------------------------------------------
@@ -1015,13 +1023,14 @@ $cmd$, true);
    indexName: c_1
    indexKey: {"c": 1}
    isMultiKey: false
-   indexBounds: ["c": ["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx0", MaxKey]]
+   indexBounds: ["c": [MinKey, MaxKey]]
+   minKey: ["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx0"]
    innerScanLoops: 2 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1000)]
    ->  Index Scan using c_1 on documents_9401 collection (actual rows=1000 loops=1)
          Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "c" : { "minIndexOp" : { "$binary" : { "base64" : "VAMAAAUCAMoAAAB4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eDAA", "subType" : "00" } } } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-(12 rows)
+(13 rows)
 
 DROP TABLE drain_explain_resp_c;
 -- ---------------------------------------------------------------------------
@@ -1066,13 +1075,14 @@ $cmd$, true);
    indexName: c_1
    indexKey: {"c": 1}
    isMultiKey: false
-   indexBounds: ["c": ["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx0", MaxKey]]
+   indexBounds: ["c": [MinKey, MaxKey]]
+   minKey: ["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx0"]
    innerScanLoops: 2 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1000)]
    ->  Index Scan using c_1 on documents_9401 collection (actual rows=988 loops=1)
          Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "c" : { "minIndexOp" : { "$binary" : { "base64" : "VAMAAAUCAMoAAAB4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eDAA", "subType" : "00" } } } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-(12 rows)
+(13 rows)
 
 DROP TABLE drain_explain_resp_c;
 -- ---------------------------------------------------------------------------
@@ -1117,13 +1127,14 @@ $cmd$, true);
    indexName: c_1
    indexKey: {"c": 1}
    isMultiKey: false
-   indexBounds: ["c": ["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx0", MaxKey]]
+   indexBounds: ["c": [MinKey, MaxKey]]
+   minKey: ["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx0"]
    innerScanLoops: 2 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1000)]
    ->  Index Scan using c_1 on documents_9401 collection (actual rows=907 loops=1)
          Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "c" : { "minIndexOp" : { "$binary" : { "base64" : "VAMAAAUCAMoAAAB4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eDAA", "subType" : "00" } } } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-(12 rows)
+(13 rows)
 
 DROP TABLE drain_explain_resp_c;
 -- ---------------------------------------------------------------------------
@@ -1168,13 +1179,14 @@ $cmd$, true);
    indexName: c_1
    indexKey: {"c": 1}
    isMultiKey: false
-   indexBounds: ["c": ["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx1", MaxKey]]
+   indexBounds: ["c": [MinKey, MaxKey]]
+   minKey: ["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx1"]
    innerScanLoops: 1 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 500)]
    ->  Index Scan using c_1 on documents_9401 collection (actual rows=500 loops=1)
          Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "c" : { "minIndexOp" : { "$binary" : { "base64" : "VAMAAAUCAMoAAAB4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eDEA", "subType" : "00" } } } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-(12 rows)
+(13 rows)
 
 DROP TABLE drain_explain_resp_c;
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;

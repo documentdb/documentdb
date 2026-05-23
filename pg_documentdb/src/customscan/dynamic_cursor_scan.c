@@ -1128,8 +1128,18 @@ ExtensionCursorScanNextWithIndexContinuation(CustomScanState *node)
 	SkipTidsOnCurrentEntryFunc skipTidsFunc = NULL;
 	bool pathKeySummarizationForced = false;
 	double numSkipped = 0;
+
+	/*
+	 * Dynamic cursor scans always use ForwardScanDirection. The comparison
+	 * logic below relies on this: cmp > 0 means we've passed the
+	 * continuation, cmp < 0 means we're before it.
+	 */
+	Assert(ScanDirectionIsForward(ps->ps.state->es_direction));
+
 	while (true)
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		slot = ps->ps.ExecProcNode((PlanState *) ps);
 
 		if (TupIsNull(slot))
@@ -1165,10 +1175,18 @@ ExtensionCursorScanNextWithIndexContinuation(CustomScanState *node)
 		int cmp = CompareSerializedBsonIndexTerms(currentKeyBytes,
 												  scanState->indexContinuation,
 												  collation, &isComparisonValidIgnore);
-		if (cmp != 0)
+		if (cmp > 0)
 		{
 			/* We passed the continuation (continuation point got deleted) */
 			break;
+		}
+		else if (cmp < 0)
+		{
+			/* Current entry is before the continuation in index order.
+			 * This can happen when the AM's ordered scan starts from a
+			 * lower bound that precedes the continuation key. Keep
+			 * scanning forward until we reach or pass it. */
+			continue;
 		}
 
 		/* Still at the same key - skip forward if TID < required TID

@@ -1614,7 +1614,7 @@ RumGetTruncationStatus(Relation indexRelation)
 static List *
 GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum,
 						 ScanDirection scanDirection,
-						 List **rawPerPathBounds)
+						 List **rawPerPathBounds, const char **minBounds)
 {
 	uint32_t nentries = 0;
 	bool *partialMatch = NULL;
@@ -1654,7 +1654,8 @@ GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum,
 		char *serializedBound = SerializeBoundsStringForExplain(entry,
 																extraData[i],
 																fcinfo,
-																&rawPathBoundsInner);
+																&rawPathBoundsInner,
+																minBounds);
 		boundsList = lappend(boundsList, serializedBound);
 		if (rawPathBoundsInner != NIL)
 		{
@@ -1672,7 +1673,8 @@ ExplainCompositeProperties(void *state, GetMultikeyStatusFunc multiKeyStatusFunc
 						   List *indexQuals, List *indexOrderBy, bool
 						   supportsOrderedOperatorScans,
 						   void (*writeBoolFunc)(const char *, bool, void *),
-						   void (*writeStringListFunc)(const char *, List *, void *))
+						   void (*writeStringListFunc)(const char *, List *, void *),
+						   void (*writeStringFunc)(const char *, const char *, void *))
 {
 	bool isMultiKey = multiKeyStatusFunc ? multiKeyStatusFunc(index_rel) :
 					  RumGetMultiKeyStatusSlow(index_rel);
@@ -1717,8 +1719,10 @@ ExplainCompositeProperties(void *state, GetMultikeyStatusFunc multiKeyStatusFunc
 		}
 
 		List *rawPerPathBounds = NIL;
+		const char *minBounds = NULL;
 		List *boundsList = GetIndexBoundsForExplain(index_rel, compositeDatum,
-													scanDir, &rawPerPathBounds);
+													scanDir, &rawPerPathBounds,
+													&minBounds);
 		if (rawPerPathBounds != NIL)
 		{
 			writeStringListFunc("startBounds", boundsList, state);
@@ -1727,6 +1731,11 @@ ExplainCompositeProperties(void *state, GetMultikeyStatusFunc multiKeyStatusFunc
 		else
 		{
 			writeStringListFunc("indexBounds", boundsList, state);
+		}
+
+		if (minBounds != NULL)
+		{
+			writeStringFunc("minKey", minBounds, state);
 		}
 	}
 }
@@ -1841,7 +1850,8 @@ ExplainRawCompositeScanToWriter(Relation index_rel, List *indexQuals, List *inde
 							   indexOrderBy,
 							   supportsOrderedOperatorScans,
 							   PgbsonExplainWriterWriteBool,
-							   PgbsonExplainWriterWriteStringList);
+							   PgbsonExplainWriterWriteStringList,
+							   PgbsonExplainWriterWriteString);
 }
 
 
@@ -1873,7 +1883,8 @@ ExplainRawCompositeScan(Relation index_rel, List *indexQuals, List *indexOrderBy
 							   enableCompositeReducedCorrelatedTerms, indexQuals,
 							   indexOrderBy,
 							   supportsOrderedOperatorScans,
-							   ExplainWriterWriteBool, ExplainWriterWriteStringList);
+							   ExplainWriterWriteBool, ExplainWriterWriteStringList,
+							   ExplainWriterWriteString);
 }
 
 
@@ -1932,10 +1943,11 @@ ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 		}
 
 		List *rawPerPathBounds = NIL;
+		const char *minBounds = NULL;
 		List *boundsList = GetIndexBoundsForExplain(
 			scan->indexRelation,
 			compositeKey,
-			scanDir, &rawPerPathBounds);
+			scanDir, &rawPerPathBounds, &minBounds);
 
 		if (rawPerPathBounds != NIL)
 		{
@@ -1945,6 +1957,11 @@ ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 		else
 		{
 			writerFuncs->writeStringList("indexBounds", boundsList, state);
+		}
+
+		if (minBounds != NULL)
+		{
+			writerFuncs->writeString("minKey", minBounds, state);
 		}
 	}
 
