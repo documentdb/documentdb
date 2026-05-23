@@ -19,7 +19,7 @@ bool GetEqualityRangePredicatesForIndexPath(struct IndexPath *indexPath, void *o
 											nonEqualityPrefixes[INDEX_MAX_KEYS]);
 bool CompositePathHasFirstColumnSpecified(IndexPath *indexPath);
 char *SerializeBoundsStringForExplain(bytea * entry, void *extraData, PG_FUNCTION_ARGS,
-									  List **rawPathBounds);
+									  List **rawPathBounds, const char **minBounds);
 
 Datum FormCompositeDatumFromQuals(List *indexQuals, bool isMultiKey,
 								  bool hasCorrelatedReducedTerm,

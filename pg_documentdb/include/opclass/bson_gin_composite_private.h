@@ -82,7 +82,6 @@ typedef struct VariableIndexBounds
 
 	/* OPTIONAL: row level bounds that are applied to the query */
 	CompositeRowBounds *minBounds;
-	CompositeRowBounds *maxBounds;
 } VariableIndexBounds;
 
 /* A processed set of index bounds for a given path
@@ -160,6 +159,7 @@ typedef struct CompositeQueryMetaInfo
 	int32_t numScanKeys;
 	bool hasMultipleScanKeysPerPath;
 	bool isBackwardScan;
+	bool hasMinMaxBounds;
 	PathScanKeyMap *scanKeyMap;
 	int32_t wildcardPathIndex;
 	CompositeOrderedScanEntryData *orderedScanEntryData;
@@ -194,6 +194,7 @@ bool IsValidRecheckForIndexValue(SerializedCompositeTermPair *compareTerm,
 
 bytea * BuildLowerBoundTermFromIndexBounds(CompositeQueryRunData *runData,
 										   IndexTermCreateMetadata *metadata,
+										   CompositeRowBounds *minBounds,
 										   bool *hasInequalityMatch, const
 										   char **indexPaths,
 										   uint32_t *indexPathLengths,

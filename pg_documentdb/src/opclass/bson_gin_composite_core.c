@@ -176,6 +176,7 @@ GetTermElementPath(CompositeQueryRunData *runData, int pathIndex, uint32_t *path
 bytea *
 BuildLowerBoundTermFromIndexBounds(CompositeQueryRunData *runData,
 								   IndexTermCreateMetadata *baseMetadata,
+								   CompositeRowBounds *minBounds,
 								   bool *hasInequalityMatch, const char **indexPaths,
 								   uint32_t *indexPathLengths, int8_t *sortOrders)
 {
@@ -202,6 +203,21 @@ BuildLowerBoundTermFromIndexBounds(CompositeQueryRunData *runData,
 							&runData->indexBounds[i].upperBound.bound))
 		{
 			runData->indexBounds[i].isEqualityBound = true;
+		}
+
+		/* If there's a min/max bounds honor that first */
+		if (minBounds != NULL)
+		{
+			if (minBounds->bounds[i].serializedTerm != NULL)
+			{
+				lowerBoundDatums[i] = minBounds->bounds[i].serializedTerm;
+				*hasInequalityMatch = true;
+				continue;
+			}
+		}
+
+		if (runData->indexBounds[i].isEqualityBound)
+		{
 			lowerBoundDatums[i] = runData->indexBounds[i].lowerBound.serializedTerm;
 			continue;
 		}
@@ -2771,9 +2787,10 @@ AddMultiBoundaryForDollarType(int32_t indexAttribute, const char *wildcardPath,
 }
 
 
-static CompositeRowBounds *
+static void
 CreateMinOrMaxBounds(int32_t indexAttribute, const char *wildcardPath,
-					 bson_value_t *indexKey, bool isBoundInclusive)
+					 bson_value_t *indexKey, bool isBoundInclusive,
+					 CompositeRowBounds *lowerBounds)
 {
 	if (indexAttribute != 0)
 	{
@@ -2794,20 +2811,35 @@ CreateMinOrMaxBounds(int32_t indexAttribute, const char *wildcardPath,
 							BsonTypeName(indexKey->value_type))));
 	}
 
-	CompositeRowBounds *bounds = (CompositeRowBounds *) palloc(
-		sizeof(CompositeRowBounds));
 	bytea *indexTerm = (bytea *) indexKey->value.v_binary.data;
 
-	BsonIndexTerm terms[INDEX_MAX_KEYS] = { 0 };
-	InitializeBsonIndexTerm(indexTerm, terms);
+	SerializedCompositeTermPair terms[INDEX_MAX_KEYS] = { 0 };
+	int32_t numTerms = LazyInitializeSerializedCompositeIndexTerm(indexTerm, terms);
 
-	for (int i = 0; i < INDEX_MAX_KEYS; i++)
+	/*
+	 * Only set bounds on the first column of the composite key.
+	 * Composite index ordering is lexicographic: when column N
+	 * transitions, column N+1 restarts from the beginning.  Setting
+	 * independent per-column bounds for N > 0 would incorrectly
+	 * exclude entries where a later column has a "lower" value
+	 * than the continuation but an earlier column has advanced.
+	 * The skip logic in ExtensionCursorScanNextWithIndexContinuation
+	 * handles positioning within the correct composite key range.
+	 *
+	 * For descending first columns the bound direction is inverted:
+	 * a $min lower-bound acts as an upper-bound in the scan and
+	 * vice-versa.
+	 */
+	for (int32_t i = 0; i < numTerms; i++)
 	{
-		bounds->bounds[i].bound = terms[i].element.bsonValue;
-		bounds->bounds[i].isBoundInclusive = isBoundInclusive;
+		InitializeBsonIndexTermIfNeeded(&terms[i]);
+		if (terms[i].term.element.bsonValue.value_type != BSON_TYPE_EOD)
+		{
+			lowerBounds->bounds[i].serializedTerm = terms[i].serializedTerm;
+			lowerBounds->bounds[i].bound = terms[i].term.element.bsonValue;
+			lowerBounds->bounds[i].isBoundInclusive = isBoundInclusive;
+		}
 	}
-
-	return bounds;
 }
 
 
@@ -2845,24 +2877,19 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 		}
 
 		bool isBoundInclusive = true;
-		indexBounds->minBounds = CreateMinOrMaxBounds(indexAttribute, wildcardPath,
-													  &params->minOrMaxIndexKey,
-													  isBoundInclusive);
+		indexBounds->minBounds = palloc0(sizeof(CompositeRowBounds));
+		CreateMinOrMaxBounds(indexAttribute, wildcardPath,
+							 &params->minOrMaxIndexKey,
+							 isBoundInclusive,
+							 indexBounds->minBounds);
+
 		return;
 	}
 
 	if (params->isMaxIndexKey)
 	{
-		if (indexBounds->maxBounds != NULL)
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-								"Multiple $max index operators on the same index are not allowed")));
-		}
-
-		bool isBoundInclusive = false;
-		indexBounds->maxBounds = CreateMinOrMaxBounds(indexAttribute, wildcardPath,
-													  &params->minOrMaxIndexKey,
-													  isBoundInclusive);
+		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg(
+							"$max index operator is not supported yet")));
 		return;
 	}
 

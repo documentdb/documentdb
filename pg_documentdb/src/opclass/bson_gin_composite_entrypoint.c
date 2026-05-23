@@ -200,6 +200,7 @@ static void ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const
 static bytea * BuildTermForBounds(CompositeQueryRunData *runData,
 								  IndexTermCreateMetadata *singlePathMetadata,
 								  IndexTermCreateMetadata *compositeMetadata,
+								  CompositeRowBounds *minBounds,
 								  bool *partialMatch, const char **indexPaths,
 								  uint32_t *indexPathLengths, int8_t *sortOrders);
 static void ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
@@ -526,6 +527,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 
 	/* These are the scan keys to validate in consistent checks */
 	runData->metaInfo->numScanKeys = list_length(variableBounds.variableBoundsList);
+	runData->metaInfo->hasMinMaxBounds = variableBounds.minBounds != NULL;
 	PathScanTermMap pathScanTermMap[INDEX_MAX_KEYS] = { 0 };
 	bool hasMultipleScanKeysPerPath = false;
 	if (runData->metaInfo->numScanKeys > 0)
@@ -643,9 +645,8 @@ ProcessStandardCompositeQueryEntries(int32_t totalPathTerms,
 
 	if (variableBounds->variableBoundsList == NIL)
 	{
-		UpdateRunDataForMinMaxBounds(runData, variableBounds->minBounds,
-									 variableBounds->maxBounds);
 		bytea *term = BuildTermForBounds(runData, singlePathMetadata, compositeMetadata,
+										 variableBounds->minBounds,
 										 &(*partialmatch)[0], indexPaths,
 										 indexPathLengths, sortOrders);
 		extraDataArray[0] = (Pointer) runData;
@@ -665,10 +666,9 @@ ProcessStandardCompositeQueryEntries(int32_t totalPathTerms,
 					   runData->metaInfo->numIndexPaths));
 			UpdateRunDataForVariableBounds(runDataCopy, pathScanTermMap, variableBounds,
 										   currentTerm);
-			UpdateRunDataForMinMaxBounds(runDataCopy, variableBounds->minBounds,
-										 variableBounds->maxBounds);
 			bytea *term = BuildTermForBounds(runDataCopy, singlePathMetadata,
 											 compositeMetadata,
+											 variableBounds->minBounds,
 											 &(*partialmatch)[i], indexPaths,
 											 indexPathLengths, sortOrders);
 
@@ -768,9 +768,8 @@ ProcessOrderedCompositeQueryEntries(int32_t totalPathTerms,
 
 	if (variableBounds->variableBoundsList == NIL)
 	{
-		UpdateRunDataForMinMaxBounds(runData, variableBounds->minBounds,
-									 variableBounds->maxBounds);
 		bytea *term = BuildTermForBounds(runData, singlePathMetadata, compositeMetadata,
+										 variableBounds->minBounds,
 										 &(*partialmatch)[0], indexPaths,
 										 indexPathLengths, sortOrders);
 		extraDataArray[0] = (Pointer) runData;
@@ -889,12 +888,10 @@ ProcessOrderedCompositeQueryEntries(int32_t totalPathTerms,
 		 */
 		int32_t unsatisfiableIndex = -1;
 		UpdateRunDataForOrderedBounds(runData, data, &unsatisfiableIndex);
-		UpdateRunDataForMinMaxBounds(runData, variableBounds->minBounds,
-									 variableBounds->maxBounds);
-
 		bool partialMatchInnerIgnore = false;
 		bytea *term = BuildTermForBounds(runData, singlePathMetadata,
 										 compositeMetadata,
+										 variableBounds->minBounds,
 										 &partialMatchInnerIgnore, indexPaths,
 										 indexPathLengths, sortOrders);
 
@@ -2366,24 +2363,24 @@ CompositeIndexTermGenerateSkipBound(PG_FUNCTION_ARGS)
 		Datum usedKey = (Datum) 0;
 		if (runData->metaInfo->orderedScanEntryData != NULL)
 		{
+			CompositeOrderedScanEntryData *entryData =
+				runData->metaInfo->orderedScanEntryData;
 			BsonGinCompositePathOptions *options =
 				(BsonGinCompositePathOptions *) PG_GET_OPCLASS_OPTIONS();
 			IndexTermCreateMetadata compositeMetadata = GetCompositeIndexTermMetadata(
 				options);
 
+			/* don't apply rowBounds in skipPath */
+			CompositeRowBounds *minBounds = NULL;
 			bool hasInequalityMatch = false;
-			bytea *lowerBoundTerm = BuildLowerBoundTermFromIndexBounds(runData,
-																	   &compositeMetadata,
-																	   &hasInequalityMatch,
-																	   runData->metaInfo->
-																	   orderedScanEntryData
-																	   ->indexPaths,
-																	   runData->metaInfo->
-																	   orderedScanEntryData
-																	   ->indexPathLengths,
-																	   runData->metaInfo->
-																	   orderedScanEntryData
-																	   ->sortOrders);
+			bytea *lowerBoundTerm =
+				BuildLowerBoundTermFromIndexBounds(runData,
+												   &compositeMetadata,
+												   minBounds,
+												   &hasInequalityMatch,
+												   entryData->indexPaths,
+												   entryData->indexPathLengths,
+												   entryData->sortOrders);
 			usedKey = PointerGetDatum(lowerBoundTerm);
 		}
 
@@ -3709,8 +3706,9 @@ SerializeOneBound(StringInfo s, const char *indexPath,
 
 char *
 SerializeBoundsStringForExplain(bytea *entry, void *extraData, PG_FUNCTION_ARGS,
-								List **rawBounds)
+								List **rawBounds, const char **minBounds)
 {
+	*minBounds = NULL;
 	if (extraData == NULL)
 	{
 		return "";
@@ -3730,6 +3728,34 @@ SerializeBoundsStringForExplain(bytea *entry, void *extraData, PG_FUNCTION_ARGS,
 	if (numPaths != runData->metaInfo->numIndexPaths)
 	{
 		return "";
+	}
+
+	if (runData->metaInfo->hasMinMaxBounds && entry != NULL)
+	{
+		StringInfo min = makeStringInfo();
+		BsonIndexTerm minTerm[INDEX_MAX_KEYS] = { 0 };
+		InitializeCompositeIndexTerm(entry, minTerm);
+
+		appendStringInfoString(min, "[");
+		const char *separator = "";
+		for (int i = 0; i < runData->metaInfo->numIndexPaths; i++)
+		{
+			appendStringInfo(min, "%s", separator);
+			separator = ", ";
+			if (minTerm[i].element.bsonValue.value_type == BSON_TYPE_EOD ||
+				minTerm[i].element.bsonValue.value_type == BSON_TYPE_MINKEY)
+			{
+				appendStringInfoString(min, "MinKey");
+			}
+			else
+			{
+				appendStringInfo(min, "%s", BsonValueToJsonForLogging(
+									 &minTerm[i].element.bsonValue));
+			}
+		}
+
+		appendStringInfoString(min, "]");
+		*minBounds = min->data;
 	}
 
 	StringInfo s = makeStringInfo();
@@ -5052,6 +5078,7 @@ static bytea *
 BuildTermForBounds(CompositeQueryRunData *runData,
 				   IndexTermCreateMetadata *singlePathMetadata,
 				   IndexTermCreateMetadata *compositeMetadata,
+				   CompositeRowBounds *minBounds,
 				   bool *partialMatch, const char **indexPaths,
 				   uint32_t *indexPathLengths, int8_t *sortOrders)
 {
@@ -5064,10 +5091,12 @@ BuildTermForBounds(CompositeQueryRunData *runData,
 	bool hasInequalityMatch = false;
 	bytea *lowerBoundTerm = BuildLowerBoundTermFromIndexBounds(runData,
 															   compositeMetadata,
+															   minBounds,
 															   &hasInequalityMatch,
 															   indexPaths,
 															   indexPathLengths,
 															   sortOrders);
+
 	*partialMatch = hasInequalityMatch;
 	return lowerBoundTerm;
 }
