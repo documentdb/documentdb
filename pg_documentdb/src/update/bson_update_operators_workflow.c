@@ -2151,6 +2151,13 @@ IsNodeMatchForIteratorPath(const BsonPathNode *node,
 										   node->field.length,
 										   node->field.string)));
 				}
+
+				/*
+				 * Compare array indices numerically so that padded-zero paths
+				 * like "0000" correctly match the canonical key "0".
+				 */
+				int32_t fieldPathIndex = StringViewToPositiveInteger(fieldPath);
+				return arrayIndex == fieldPathIndex;
 			}
 
 			/* Standard fields match based on field path. */
