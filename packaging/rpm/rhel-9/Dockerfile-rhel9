@@ -66,9 +66,12 @@ RUN dnf -y install \
         clang-devel \
         llvm-devel
 
-# PostgreSQL 16+ with JIT enabled expects LLVM tools in /usr/lib64/llvm20/bin
-# On RHEL 9, LLVM binaries are in /usr/bin, so create a simple symlink
-RUN mkdir -p /usr/lib64/llvm20 && ln -s /usr/bin /usr/lib64/llvm20/bin
+# PostgreSQL with JIT enabled expects LLVM tools in a versioned bin directory.
+# PG16 was built against LLVM20; PG17.10+/PG18 from PGDG are built against LLVM21.
+# On RHEL 9, llvm-toolset places binaries in /usr/bin, so symlink both versioned paths to it.
+RUN mkdir -p /usr/lib64/llvm20 /usr/lib64/llvm21 && \
+    ln -s /usr/bin /usr/lib64/llvm20/bin && \
+    ln -s /usr/bin /usr/lib64/llvm21/bin
 
 RUN rpmdev-setuptree
 
