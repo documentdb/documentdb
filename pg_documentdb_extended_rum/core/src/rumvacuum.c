@@ -79,10 +79,10 @@ typedef struct RumPostingTreeDeleteEntry
 	bool entryDeleted;
 } RumPostingTreeDeleteEntry;
 
-static IndexBulkDeleteResult * rumbulkdeleteNew(IndexVacuumInfo *info,
-												IndexBulkDeleteResult *stats,
-												IndexBulkDeleteCallback callback,
-												void *callback_state);
+static IndexBulkDeleteResult * rumBulkDeleteDiskOrdered(IndexVacuumInfo *info,
+														IndexBulkDeleteResult *stats,
+														IndexBulkDeleteCallback callback,
+														void *callback_state);
 static void LogFinalVacuumState(Relation index, RumVacuumStatistics *stats,
 								bool isNewBulkDelete, bool isVacuumCleanup);
 
@@ -108,9 +108,9 @@ IsCurrentVacuumCycleId(RumVacuumState *gvs, Page page)
  * Returns the number of alive items.
  */
 static OffsetNumber
-rumVacuumPostingList(RumVacuumState *gvs, OffsetNumber attnum, Pointer src,
-					 OffsetNumber nitem, Pointer *cleaned,
-					 Size size, Size *newSize)
+rumFilterDeadTidsInPostingList(RumVacuumState *gvs, OffsetNumber attnum, Pointer src,
+							   OffsetNumber nitem, Pointer *cleaned,
+							   Size size, Size *newSize)
 {
 	OffsetNumber i,
 				 nAliveItems = 0;
@@ -288,8 +288,12 @@ RumVacFormTuple(RumState *rumstate,
 
 
 static bool
-rumVacuumLeafPage(RumVacuumState *gvs, OffsetNumber attnum, Page page, Buffer buffer,
-				  bool isRoot, OffsetNumber *maxOffsetAfterPrune)
+rumCleanPostingTreeLeafTids(RumVacuumState *gvs,
+							OffsetNumber attnum,
+							Page page,
+							Buffer buffer,
+							bool isRoot,
+							OffsetNumber *maxOffsetAfterPrune)
 {
 	bool hasVoidPage = false;
 	OffsetNumber newMaxOff,
@@ -297,10 +301,12 @@ rumVacuumLeafPage(RumVacuumState *gvs, OffsetNumber attnum, Page page, Buffer bu
 	Pointer cleaned = NULL;
 	Size newSize;
 
-	newMaxOff = rumVacuumPostingList(gvs, attnum,
-									 RumDataPageGetData(page), oldMaxOff, &cleaned,
-									 RumDataPageSize - RumDataPageReadFreeSpaceValue(
-										 page), &newSize);
+	newMaxOff = rumFilterDeadTidsInPostingList(gvs, attnum,
+											   RumDataPageGetData(page), oldMaxOff,
+											   &cleaned,
+											   RumDataPageSize -
+											   RumDataPageReadFreeSpaceValue(
+												   page), &newSize);
 
 	/* saves changes about deleted tuple ... */
 	if (oldMaxOff != newMaxOff)
@@ -530,9 +536,12 @@ typedef struct DataPageDeleteStack
  * scans posting tree and deletes empty pages
  */
 static bool
-rumScanToDelete(RumVacuumState *gvs, BlockNumber blkno, bool isRoot,
-				DataPageDeleteStack *parent, OffsetNumber myoff,
-				int *numDeletedPages)
+rumPostingTreePruneEmptyPagesUnderRootLock(RumVacuumState *gvs,
+										   BlockNumber blkno,
+										   bool isRoot,
+										   DataPageDeleteStack *parent,
+										   OffsetNumber myoff,
+										   int *numDeletedPages)
 {
 	DataPageDeleteStack *me;
 	Buffer buffer;
@@ -578,8 +587,13 @@ rumScanToDelete(RumVacuumState *gvs, BlockNumber blkno, bool isRoot,
 		{
 			RumPostingItem *pitem = (RumPostingItem *) RumDataPageGetItem(page, i);
 
-			if (rumScanToDelete(gvs, PostingItemGetBlockNumber(pitem), false, me, i,
-								numDeletedPages))
+			if (rumPostingTreePruneEmptyPagesUnderRootLock(
+					gvs,
+					PostingItemGetBlockNumber(pitem),
+					false,
+					me,
+					i,
+					numDeletedPages))
 			{
 				i--;
 			}
@@ -664,8 +678,9 @@ FindLeftMostLeafDataPage(RumVacuumState *gvs, BlockNumber blkno, bool *isPageRoo
  * Returns the number of empty pages in the leaves.
  */
 static int
-rumVacuumPostingTreeLeavesNew(RumVacuumState *gvs, OffsetNumber attnum, BlockNumber blkno,
-							  int32_t *nonVoidPageCount)
+rumCleanPostingTreeLeavesTidsByRightlink(RumVacuumState *gvs, OffsetNumber attnum,
+										 BlockNumber blkno,
+										 int32_t *nonVoidPageCount)
 {
 	Buffer buffer;
 	Page page;
@@ -682,7 +697,8 @@ rumVacuumPostingTreeLeavesNew(RumVacuumState *gvs, OffsetNumber attnum, BlockNum
 	while (true)
 	{
 		OffsetNumber maxOffAfterPrune;
-		if (rumVacuumLeafPage(gvs, attnum, page, buffer, isPageRoot, &maxOffAfterPrune))
+		if (rumCleanPostingTreeLeafTids(gvs, attnum, page, buffer, isPageRoot,
+										&maxOffAfterPrune))
 		{
 			numVoidPages++;
 		}
@@ -711,15 +727,30 @@ rumVacuumPostingTreeLeavesNew(RumVacuumState *gvs, OffsetNumber attnum, BlockNum
 }
 
 
+/*
+ * Vacuum one posting tree end-to-end.
+ *
+ * Step 1: clean dead TIDs from all leaves (via rightlinks).
+ * Step 2: if any leaves became empty, prune empty pages (leaves and
+ *         internal pages) via a full tree DFS under root cleanup lock.
+ *
+ * The disk-ordered path (rumBulkDeleteDiskOrdered) defers step 2 to
+ * rumvacuumcleanup when inlineVacuumBulkDelDataPages is on; otherwise
+ * it still calls this bundled function via rumBulkDeleteOneEntryPage.
+ */
 static bool
-rumVacuumPostingTreeNew(RumVacuumState *gvs, OffsetNumber attnum, BlockNumber rootBlkno,
-						BlockNumber *blocks_done, uint32_t *postingTreePagesDeleted,
-						uint32_t *postingTreeEmptyPages)
+rumVacuumPostingTree(RumVacuumState *gvs,
+					 OffsetNumber attnum,
+					 BlockNumber rootBlkno,
+					 BlockNumber *blocks_done,
+					 uint32_t *postingTreePagesDeleted,
+					 uint32_t *postingTreeEmptyPages)
 {
 	int numDeletedPages = 0;
 	int nonVoidPageCount = 0;
-	int numVoidPages = rumVacuumPostingTreeLeavesNew(gvs, attnum, rootBlkno,
-													 &nonVoidPageCount);
+	int numVoidPages = rumCleanPostingTreeLeavesTidsByRightlink(gvs, attnum,
+																rootBlkno,
+																&nonVoidPageCount);
 	if (!RumVacuumSkipPrunePostingTreePages && numVoidPages > 0)
 	{
 		/*
@@ -742,8 +773,9 @@ rumVacuumPostingTreeNew(RumVacuumState *gvs, OffsetNumber attnum, BlockNumber ro
 		memset(&root, 0, sizeof(DataPageDeleteStack));
 		root.isRoot = true;
 
-		rumScanToDelete(gvs, rootBlkno, true, &root, InvalidOffsetNumber,
-						&numDeletedPages);
+		rumPostingTreePruneEmptyPagesUnderRootLock(gvs, rootBlkno, true, &root,
+												   InvalidOffsetNumber,
+												   &numDeletedPages);
 
 		ptr = root.child;
 
@@ -1213,10 +1245,13 @@ rumVacuumEntryPage(RumVacuumState *gvs, Buffer buffer, BlockNumber *roots,
 			Size cleanedSize;
 			Pointer cleaned = NULL;
 			uint32 newN =
-				rumVacuumPostingList(gvs, rumtuple_get_attrnum(&gvs->rumstate, itup),
-									 RumGetPosting(itup), RumGetNPosting(itup), &cleaned,
-									 IndexTupleSize(itup) - RumGetPostingOffset(itup),
-									 &cleanedSize);
+				rumFilterDeadTidsInPostingList(gvs, rumtuple_get_attrnum(&gvs->rumstate,
+																		 itup),
+											   RumGetPosting(itup), RumGetNPosting(itup),
+											   &cleaned,
+											   IndexTupleSize(itup) - RumGetPostingOffset(
+												   itup),
+											   &cleanedSize);
 
 			if (RumGetNPosting(itup) != newN)
 			{
@@ -1378,13 +1413,13 @@ rumFindLeftMostLeafPage(Relation index, BlockNumber blkno,
 
 
 static void
-rumVacuumSingleEntryPage(Page page, Buffer buffer, BlockNumber currentBlockNo,
-						 RumVacuumState *gvs, BlockNumber *blocks_done,
-						 uint32_t *numEmptyEntries, uint32_t *numPrunedEntries,
-						 uint32_t *numEmptyPostingTrees, uint32_t *numEmptyPages,
-						 uint32_t *prunedEmptyPostingRoots, uint32_t *numPrunedPages,
-						 uint32_t *postingTreePagesDeleted,
-						 uint32_t *postingTreeEmptyPages)
+rumBulkDeleteOneEntryPage(Page page, Buffer buffer, BlockNumber currentBlockNo,
+						  RumVacuumState *gvs, BlockNumber *blocks_done,
+						  uint32_t *numEmptyEntries, uint32_t *numPrunedEntries,
+						  uint32_t *numEmptyPostingTrees, uint32_t *numEmptyPages,
+						  uint32_t *prunedEmptyPostingRoots, uint32_t *numPrunedPages,
+						  uint32_t *postingTreePagesDeleted,
+						  uint32_t *postingTreeEmptyPages)
 {
 	Page resPage;
 	bool isEmptyPage = true;
@@ -1439,10 +1474,12 @@ rumVacuumSingleEntryPage(Page page, Buffer buffer, BlockNumber currentBlockNo,
 	{
 		for (i = 0; i < nRoot; i++)
 		{
-			bool isEmptyTree = rumVacuumPostingTreeNew(gvs, attnumOfPostingTree[i],
-													   rootOfPostingTree[i], blocks_done,
-													   postingTreePagesDeleted,
-													   postingTreeEmptyPages);
+			bool isEmptyTree = rumVacuumPostingTree(gvs,
+													attnumOfPostingTree[i],
+													rootOfPostingTree[i],
+													blocks_done,
+													postingTreePagesDeleted,
+													postingTreeEmptyPages);
 
 			if (isEmptyTree)
 			{
@@ -1528,9 +1565,9 @@ InitRumVacuumState(RumVacuumState *gvs, Relation rel, IndexBulkDeleteResult *sta
 
 
 static IndexBulkDeleteResult *
-rumbulkdeleteOld(IndexVacuumInfo *info,
-				 IndexBulkDeleteResult *stats, IndexBulkDeleteCallback callback,
-				 void *callback_state)
+rumBulkDeleteTreeOrdered(IndexVacuumInfo *info,
+						 IndexBulkDeleteResult *stats, IndexBulkDeleteCallback callback,
+						 void *callback_state)
 {
 	Relation index = info->index;
 	bool needLock;
@@ -1587,14 +1624,14 @@ rumbulkdeleteOld(IndexVacuumInfo *info,
 		BlockNumber currentBlockNo = blkno;
 
 		blkno = RumPageGetOpaque(page)->rightlink;
-		rumVacuumSingleEntryPage(page, buffer, currentBlockNo, &gvs, &blocks_done,
-								 &vacStats.numEmptyEntries, &vacStats.numPrunedEntries,
-								 &vacStats.numEmptyPostingTrees,
-								 &vacStats.numEmptyPages,
-								 &vacStats.prunedEmptyPostingRoots,
-								 &vacStats.numPrunedPages,
-								 &vacStats.numPostingTreePagesDeleted,
-								 &vacStats.numEmptyPostingTreePages);
+		rumBulkDeleteOneEntryPage(page, buffer, currentBlockNo, &gvs, &blocks_done,
+								  &vacStats.numEmptyEntries, &vacStats.numPrunedEntries,
+								  &vacStats.numEmptyPostingTrees,
+								  &vacStats.numEmptyPages,
+								  &vacStats.prunedEmptyPostingRoots,
+								  &vacStats.numPrunedPages,
+								  &vacStats.numPostingTreePagesDeleted,
+								  &vacStats.numEmptyPostingTreePages);
 
 		pgstat_progress_update_param(PROGRESS_SCAN_BLOCKS_DONE, blocks_done);
 		if (blkno == InvalidBlockNumber)        /* rightmost page */
@@ -1637,6 +1674,22 @@ LogFinalVacuumState(Relation index, RumVacuumStatistics *stats, bool isNewBulkDe
 }
 
 
+/*
+ * ambulkdelete callback dispatcher for RUM index.
+ *
+ * Picks between two outer walk strategies based on the RumEnableNewBulkDelete GUC:
+ *
+ * - If true, use rumBulkDeleteDiskOrdered: scans the relation by block number.
+ *   When inlineVacuumBulkDelDataPages is on, posting-tree leaf TID cleanup also happens
+ *   inline per data leaf and empty-page pruning is deferred to rumvacuumcleanup.
+ *   When inlineVacuumBulkDelDataPages is off, posting trees are vacuumed via the
+ *   bundled (TID cleanup + empty page pruning) rumVacuumPostingTree path.
+ *
+ * - If false, use rumBulkDeleteTreeOrdered: descends the entry tree, walks entry leaves
+ *   via rightlinks, and for each entry leaf, vacuums posting lists and posting trees before
+ *   moving to the next entry leaf.
+ *   Empty page pruning is attempted immediately after vacuuming each entry leaf.
+ */
 IndexBulkDeleteResult *
 rumbulkdelete(IndexVacuumInfo *info,
 			  IndexBulkDeleteResult *stats, IndexBulkDeleteCallback callback,
@@ -1644,11 +1697,11 @@ rumbulkdelete(IndexVacuumInfo *info,
 {
 	if (RumEnableNewBulkDelete)
 	{
-		return rumbulkdeleteNew(info, stats, callback, callback_state);
+		return rumBulkDeleteDiskOrdered(info, stats, callback, callback_state);
 	}
 	else
 	{
-		return rumbulkdeleteOld(info, stats, callback, callback_state);
+		return rumBulkDeleteTreeOrdered(info, stats, callback, callback_state);
 	}
 }
 
@@ -2017,8 +2070,8 @@ rum_end_vacuum_callback(int code, Datum arg)
 
 
 static void
-rum_vacuum_page_new(RumVacuumState *gvs, BlockNumber scanblkno,
-					RumVacuumStatistics *vacStats, BlockNumber *blocks_done)
+rumBulkDeleteDiskOrderedOnePage(RumVacuumState *gvs, BlockNumber scanblkno,
+								RumVacuumStatistics *vacStats, BlockNumber *blocks_done)
 {
 	Relation rel = gvs->index;
 	BlockNumber blkno,
@@ -2170,14 +2223,14 @@ backtrack:
 	/* Leaf entry page */
 	if (!RumPageIsData(page))
 	{
-		rumVacuumSingleEntryPage(page, buf, blkno, gvs, blocks_done,
-								 &vacStats->numEmptyEntries, &vacStats->numPrunedEntries,
-								 &vacStats->numEmptyPostingTrees,
-								 &vacStats->numEmptyPages,
-								 &vacStats->prunedEmptyPostingRoots,
-								 &vacStats->numPrunedPages,
-								 &vacStats->numPostingTreePagesDeleted,
-								 &vacStats->numEmptyPostingTreePages);
+		rumBulkDeleteOneEntryPage(page, buf, blkno, gvs, blocks_done,
+								  &vacStats->numEmptyEntries, &vacStats->numPrunedEntries,
+								  &vacStats->numEmptyPostingTrees,
+								  &vacStats->numEmptyPages,
+								  &vacStats->prunedEmptyPostingRoots,
+								  &vacStats->numPrunedPages,
+								  &vacStats->numPostingTreePagesDeleted,
+								  &vacStats->numEmptyPostingTreePages);
 	}
 	else if (RumPageIsData(page) && gvs->inlineVacuumBulkDelDataPages)
 	{
@@ -2186,8 +2239,8 @@ backtrack:
 
 		/* We don't know if it's a root page but pretend it is for now. */
 		bool isRoot = true;
-		rumVacuumLeafPage(gvs, postingTreeAttNum, page, buf, isRoot,
-						  &maxOffsetAfterVacuum);
+		rumCleanPostingTreeLeafTids(gvs, postingTreeAttNum, page, buf, isRoot,
+									&maxOffsetAfterVacuum);
 		UnlockReleaseBuffer(buf);
 	}
 	else
@@ -2209,9 +2262,9 @@ backtrack:
 
 
 static void
-rum_bulk_delete_new_core(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
-						 IndexBulkDeleteCallback callback, void *callback_state,
-						 RumVacuumCycleId cycleid)
+rumBulkDeleteDiskOrderedCore(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
+							 IndexBulkDeleteCallback callback, void *callback_state,
+							 RumVacuumCycleId cycleid)
 {
 	Relation rel = info->index;
 	RumVacuumState gvs;
@@ -2254,7 +2307,7 @@ rum_bulk_delete_new_core(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 		/* Iterate over pages, then loop back to recheck length */
 		for (; scanblkno < num_pages; scanblkno++)
 		{
-			rum_vacuum_page_new(&gvs, scanblkno, &vacStats, &blocks_done);
+			rumBulkDeleteDiskOrderedOnePage(&gvs, scanblkno, &vacStats, &blocks_done);
 
 			pgstat_progress_update_param(PROGRESS_SCAN_BLOCKS_DONE, scanblkno);
 		}
@@ -2271,9 +2324,9 @@ rum_bulk_delete_new_core(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 #pragma GCC diagnostic ignored "-Wclobbered"
 
 static IndexBulkDeleteResult *
-rumbulkdeleteNew(IndexVacuumInfo *info,
-				 IndexBulkDeleteResult *stats, IndexBulkDeleteCallback callback,
-				 void *callback_state)
+rumBulkDeleteDiskOrdered(IndexVacuumInfo *info,
+						 IndexBulkDeleteResult *stats, IndexBulkDeleteCallback callback,
+						 void *callback_state)
 {
 	Relation rel = info->index;
 	RumVacuumCycleId cycleid;
@@ -2291,7 +2344,7 @@ rumbulkdeleteNew(IndexVacuumInfo *info,
 	{
 		cycleid = rum_start_vacuum_cycle_id(rel);
 
-		rum_bulk_delete_new_core(info, stats, callback, callback_state, cycleid);
+		rumBulkDeleteDiskOrderedCore(info, stats, callback, callback_state, cycleid);
 	}
 	PG_END_ENSURE_ERROR_CLEANUP(rum_end_vacuum_callback, PointerGetDatum(rel));
 	rum_end_vacuum_cycle_id(rel);
@@ -2304,7 +2357,7 @@ rumbulkdeleteNew(IndexVacuumInfo *info,
 
 
 /*
- * This is a modified version of rumscantodelete where we only try to traverse down
+ * This is a modified version of rumPostingTreePruneEmptyPagesUnderRootLock where we only try to traverse down
  * to the target page to prune and delete the one page. We then traverse back up until
  * the root and prune any intermediate empty pages that we meet in the process.
  * Note - the root must be locked with a cleanup lock before entering this method.
