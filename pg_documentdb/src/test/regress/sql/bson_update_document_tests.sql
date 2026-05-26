@@ -890,3 +890,52 @@ SELECT documentdb_api_internal.update_bson_document('{"key": 1,"key2": 2,"f": {"
 --$rename working complex cases
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": 1,"key2": 2,"f": {"g": 1, "h": 1},"h":1}', '{ "": { "$rename": { "key": "f.g"} } }', '{}', NULL, NULL, NULL) as update_bson_document;
 SELECT documentdb_api_internal.update_bson_document('{"_id": 2, "key": 2,"x": {"y": 1, "z": 2}}', '{ "": { "$rename": { "key": "newName","x.y":"z","x.z":"k"} } }', '{}', NULL, NULL, NULL) as update_bson_document;
+
+-- Padded zero array indices in dot notation
+-- "x.0000" should be treated as array index 0
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [true, -1061940109]}', '{ "": { "$set": { "x.0000": false } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+
+-- "x.0000010" should be treated as array index 10
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [true, -1061940109]}', '{ "": { "$set": { "x.0000010": 999 } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+
+-- Combined padded zero indices in a single update
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [true, -1061940109]}', '{ "": { "$set": { "x.0000010": 999, "x.0000": false } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+
+-- "x.01" should be treated as array index 1
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": ["a", "b", "c"]}', '{ "": { "$set": { "x.01": "updated" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+
+-- $unset with padded zero index
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [10, 20, 30]}', '{ "": { "$unset": { "x.002": 1 } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+
+-- $inc with padded zero index
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [10, 20, 30]}', '{ "": { "$inc": { "x.001": 5 } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+
+-- $pull with padded zero index on nested array
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [[1,2,3], [4,5,6]]}', '{ "": { "$pull": { "x.001": 5 } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+
+-- $push into nested array via padded zero index
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [{"subarr": [1,2]}, {"subarr": [3,4]}]}', '{ "": { "$push": { "x.0001.subarr": 99 } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+
+-- $mul with padded zero index
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [2, 3, 4]}', '{ "": { "$mul": { "x.002": 10 } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+
+-- $min with padded zero index
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [10, 20, 30]}', '{ "": { "$min": { "x.002": 5 } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+
+-- $max with padded zero index
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [10, 20, 30]}', '{ "": { "$max": { "x.001": 99 } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+
+-- $addToSet with padded zero index on nested array
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [[1,2,3], [4,5,6]]}', '{ "": { "$addToSet": { "x.001": 7 } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+
+-- $pop with padded zero index
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [[1,2,3], [4,5,6]]}', '{ "": { "$pop": { "x.001": 1 } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+
+-- $bit with padded zero index
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [13, 7, 5]}', '{ "": { "$bit": { "x.001": { "and": 3 } } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+
+-- $pullAll with padded zero index on nested array
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [[1,2,3], [4,5,6,7]]}', '{ "": { "$pullAll": { "x.001": [5, 7] } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+
+-- $currentDate with padded zero index: verify x[1] was changed (not null, indicating update was applied)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [1, 2, 3]}', '{ "": { "$currentDate": { "x.001": true } } }', '{}', NULL, NULL, NULL) IS NOT NULL as update_bson_document;
