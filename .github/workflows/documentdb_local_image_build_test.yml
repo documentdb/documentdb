@@ -1,0 +1,132 @@
+name: DocumentDB local image build test
+run-name: ${{ github.event.pull_request.title || '' }}
+concurrency:
+  group: documentdb-local-image-build-test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'main'
+    paths-ignore:
+      - '.devcontainer/**'
+      - '**/*.md'
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths-ignore:
+      - '.devcontainer/**'
+      - '**/*.md'
+
+env:
+  IMAGE_REF: documentdb-local:image-build-test
+  # actions/upload-artifact@v4 is still built on Node.js 20, which the
+  # GitHub Actions runner will deprecate on 2026-06-02 (forced to Node.js
+  # 24) and remove on 2026-09-16. Opting in to Node.js 24 now avoids the
+  # deprecation warning and prevents future breakage when the default
+  # flips. See:
+  # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+# Matrix policy:
+#   - PG 17 (what `documentdb-local:latest` ships as) and PG 18 (the
+#     divergent case: no upstream `rum`, uses `documentdb_extended_rum`).
+#   - amd64 (ubuntu-22.04) and arm64 (ubuntu-22.04-arm) so both
+#     architectures of the published image are validated natively.
+# This gives 4 matrix legs. PG 15 / 16 are covered at the SQL/Rust layer
+# by gateway_tests.yml and regress_tests.yml; they add no unique signal
+# at this image layer.
+#
+# Each leg is a single job that builds the .deb, builds the docker image
+# from that .deb, then runs the Python image smoke test against it.
+# Build and test are intentionally NOT split across two jobs:
+#   1. There is no consumer of the built image outside its own test, so
+#      uploading/downloading an artifact only adds latency.
+#   2. With a `needs:` chain plus matrix, GitHub Actions skips the
+#      ENTIRE downstream matrix when any upstream leg fails, even with
+#      `fail-fast: false`. A single job per leg lets each (pg, arch)
+#      combination report independent build- or test-side failures.
+
+jobs:
+  build-and-test:
+    if: >
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch'
+    name: Image build+test PG${{ matrix.pg_version }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        pg_version: [17, 18]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Build Debian package
+        run: |
+          ./packaging/build_packages.sh \
+            --os deb13 \
+            --pg ${{ matrix.pg_version }} \
+            --output-dir downloaded-artifacts
+          ls -la downloaded-artifacts/
+
+      - name: Build documentdb-local image
+        run: |
+          set -euo pipefail
+          DEB_FILES=()
+          while IFS= read -r line; do
+            DEB_FILES+=("$line")
+          done < <(find downloaded-artifacts -maxdepth 1 -type f -name '*.deb' \
+                     ! -name '*dbgsym*' | sort)
+          if [ "${#DEB_FILES[@]}" -eq 0 ]; then
+            echo "No non-dbgsym .deb package found in downloaded-artifacts/" >&2
+            ls -la downloaded-artifacts/ >&2
+            exit 1
+          fi
+          if [ "${#DEB_FILES[@]}" -gt 1 ]; then
+            echo "Expected exactly 1 non-dbgsym .deb package, found ${#DEB_FILES[@]}:" >&2
+            printf '  %s\n' "${DEB_FILES[@]}" >&2
+            exit 1
+          fi
+          DEB_FILE="${DEB_FILES[0]}"
+          echo "Building ${IMAGE_REF} from ${DEB_FILE} for linux/${{ matrix.arch }}"
+          docker build \
+            --platform linux/${{ matrix.arch }} \
+            --build-arg BASE_IMAGE=debian:trixie-slim \
+            --build-arg POSTGRES_VERSION=${{ matrix.pg_version }} \
+            --build-arg "DEB_PACKAGE_REL_PATH=${DEB_FILE}" \
+            -t "$IMAGE_REF" \
+            -f packaging/gateway/docker/Dockerfile_documentdb_local .
+          docker image inspect "$IMAGE_REF" \
+            --format 'Built {{.RepoTags}} ({{.Architecture}}, size={{.Size}} bytes)'
+
+      - name: Run documentdb-local image test
+        env:
+          DOCUMENTDB_LOCAL_IMAGE: ${{ env.IMAGE_REF }}
+          DOCUMENTDB_LOCAL_LOG_DIR: .test-results/image-test
+        run: |
+          python3 -m unittest discover -v \
+            -s documentdb-local/scripts/documentdb_local_tests \
+            -p 'test_image.py'
+
+      - name: Upload container logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-test-logs-pg${{ matrix.pg_version }}-${{ matrix.arch }}
+          overwrite: true
+          # The Python test writes `docker logs <container>` to this
+          # directory BEFORE removing the container, so the artifact is
+          # populated regardless of whether the failure occurred in
+          # setUpClass, a test method, or tearDownClass.
+          path: .test-results/image-test/
+          retention-days: 7
+          if-no-files-found: ignore
