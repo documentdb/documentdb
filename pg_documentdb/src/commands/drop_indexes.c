@@ -714,15 +714,49 @@ DropIndexesArgExpandIndexNameList(uint64 collectionId, DropIndexesArg *dropIndex
 
 
 /*
- * DropPostgresIndex drops GIN index with indexId.
+ * DropPostgresIndex drops the index with indexId.
+ *
+ * If `unique` is true, we check whether the physical index is actually backed
+ * by a constraint (exclusion or primary key). If it is, we use ALTER TABLE
+ * DROP CONSTRAINT via SPI. If not (e.g., a background unique index build that
+ * failed before registering the constraint), we use DROP INDEX via the same
+ * path as non-unique indexes.
+ *
+ * This mirrors the logic in DropPostgresIndexWithSuffix.
  */
 void
 DropPostgresIndex(uint64 collectionId, int indexId, bool unique, bool concurrently,
 				  bool forceReadWrite, bool missingOk)
 {
-	char *cmd = CreateDropIndexCommand(collectionId, indexId, unique, concurrently,
-									   missingOk);
-	ExecuteDropIndexCommand(cmd, unique, concurrently, forceReadWrite);
+	bool isConstraint = false;
+
+	if (unique)
+	{
+		char indexName[NAMEDATALEN] = { 0 };
+		pg_sprintf(indexName, DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT, indexId);
+		Oid indexOid = get_relname_relid(indexName, ApiDataNamespaceOid());
+
+		if (OidIsValid(indexOid))
+		{
+			isConstraint = OidIsValid(get_index_constraint(indexOid));
+		}
+		else
+		{
+			if (missingOk)
+			{
+				/* Index doesn't exist — nothing to drop */
+				return;
+			}
+
+			ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+							errmsg("index with id %d does not exist for "
+								   "collection " UINT64_FORMAT, indexId, collectionId)));
+		}
+	}
+
+	char *cmd = CreateDropIndexCommand(collectionId, indexId, isConstraint,
+									   concurrently, missingOk);
+	ExecuteDropIndexCommand(cmd, isConstraint, concurrently, forceReadWrite);
 
 	if (concurrently)
 	{

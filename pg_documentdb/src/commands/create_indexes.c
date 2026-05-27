@@ -175,6 +175,7 @@ extern bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath;
 
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool SkipFailOnCollation;
+extern bool EnableNonBlockingUniqueIndexBuild;
 
 extern char *AlternateIndexHandler;
 
@@ -5145,8 +5146,10 @@ static void
 CreatePostgresIndex(uint64 collectionId, IndexDef *indexDef, int indexId,
 					bool concurrently, bool isTempCollection, bool isUnsharded)
 {
+	bool isBackgroundBuild = false;
 	char *cmd = CreatePostgresIndexCreationCmd(collectionId, indexDef, indexId,
-											   concurrently, isTempCollection);
+											   concurrently, isTempCollection,
+											   isBackgroundBuild);
 	const Oid userOid = InvalidOid;
 	bool useSerialExecution = isUnsharded;
 	ExecuteCreatePostgresIndexCmd(cmd, concurrently, userOid, useSerialExecution);
@@ -5158,20 +5161,32 @@ CreatePostgresIndex(uint64 collectionId, IndexDef *indexDef, int indexId,
  */
 char *
 CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int indexId,
-							   bool concurrently, bool isTempCollection)
+							   bool concurrently, bool isTempCollection,
+							   bool isBackgroundBuild)
 {
-	/*
-	 * TODO: "For a compound multikey index, each indexed document can have at
-	 *       most one indexed field whose value is an array".
-	 *       Need to ensure this is the case when building the index.
-	 *
-	 * TODO: Currently we don't know how to build unique RUM indexes concurrently.
-	 */
-
 	StringInfo cmdStr = makeStringInfo();
 	bool unique = indexDef->unique == BoolIndexOption_True;
 	bool sparse = indexDef->sparse == BoolIndexOption_True;
 	const BsonIndexAmEntry *indexAm = GetIndexAmHandlerByName(indexDef);
+
+	/*
+	 * For unique indexes, compute enableLargeIndexKeys upfront since
+	 * both the EXCLUDE constraint path and the background CREATE INDEX
+	 * path need the same value.
+	 */
+	bool uniqueEnableLargeIndexKeys = DefaultEnableLargeUniqueIndexKeys;
+	bool isBackgroundNonBlockingUnique = false;
+	if (unique)
+	{
+		/* We ignore enable large index keys being false deliberately. */
+		uniqueEnableLargeIndexKeys = uniqueEnableLargeIndexKeys ||
+									 indexDef->enableLargeIndexKeys ==
+									 BoolIndexOption_True;
+
+		isBackgroundNonBlockingUnique = EnableNonBlockingUniqueIndexBuild &&
+										isBackgroundBuild &&
+										IsCompositePathIndex(indexDef);
+	}
 
 	if (EnableExtendedIndexes &&
 		indexDef->amIndexOptions != NULL &&
@@ -5243,7 +5258,7 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 								   indexDef->indexDelegateAM->am_name)));
 		}
 	}
-	else if (unique)
+	else if (unique && !isBackgroundNonBlockingUnique)
 	{
 		if (isTempCollection)
 		{
@@ -5255,12 +5270,6 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 			appendStringInfo(cmdStr,
 							 "ALTER TABLE %s." DOCUMENT_DATA_TABLE_NAME_FORMAT,
 							 ApiDataSchemaName, collectionId);
-		}
-
-		bool enableLargeIndexKeys = DefaultEnableLargeUniqueIndexKeys;
-		if (indexDef->enableLargeIndexKeys == BoolIndexOption_True)
-		{
-			enableLargeIndexKeys = true;
 		}
 
 		bool enableNewIndexOpClass = IsCompositePathIndex(indexDef);
@@ -5279,7 +5288,7 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 											  indexDef->name,
 											  indexDef->defaultLanguage,
 											  indexDef->languageOverride,
-											  enableLargeIndexKeys,
+											  uniqueEnableLargeIndexKeys,
 											  useReducedWildcardTermGeneration,
 											  indexAm->get_opclass_catalog_schema(),
 											  indexAm->get_opclass_internal_catalog_schema(),
@@ -5396,8 +5405,17 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 							 ApiDataSchemaName, collectionId);
 		}
 
+		/*
+		 * When building a unique index in the background,
+		 * use the same large key and opclass settings as the blocking unique path.
+		 */
 		bool enableLargeIndexKeys = false;
-		if (IndexSupportsTruncation(indexDef) && indexDef->unique != BoolIndexOption_True)
+		if (isBackgroundNonBlockingUnique)
+		{
+			enableLargeIndexKeys = uniqueEnableLargeIndexKeys;
+		}
+		else if (IndexSupportsTruncation(indexDef) &&
+				 indexDef->unique != BoolIndexOption_True)
 		{
 			enableLargeIndexKeys = indexDef->enableLargeIndexKeys !=
 								   BoolIndexOption_False;
@@ -5408,7 +5426,8 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 		bool useReducedWildcardTermGeneration = ForceWildcardReducedTerm ||
 												(indexDef->enableReducedWildcardTerms ==
 												 BoolIndexOption_True);
-		bool buildAsUnique = indexDef->buildAsUnique == BoolIndexOption_True;
+		bool buildAsUnique = indexDef->buildAsUnique == BoolIndexOption_True ||
+							 isBackgroundNonBlockingUnique;
 		appendStringInfo(cmdStr,
 						 " USING %s_%s (%s) %s%s%s",
 						 ExtensionObjectPrefix,
@@ -6163,7 +6182,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 								lengthDelta)));
 		}
 
-		if (unique)
+		if (unique && !buildAsUnique)
 		{
 			appendStringInfo(indexExprStr, " WITH OPERATOR(%s.=?=)",
 							 ApiCatalogSchemaName);
@@ -6259,6 +6278,9 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 
 					if (unique)
 					{
+						/* buildAsUnique only applies to composite indexes which take a different path */
+						Assert(!buildAsUnique);
+
 						appendStringInfo(indexExprStr, " WITH OPERATOR(%s.=?=)",
 										 ApiCatalogSchemaName);
 
