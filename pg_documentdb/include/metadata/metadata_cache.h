@@ -230,6 +230,7 @@ Oid PostgresToDateFunctionId(void);
 Oid Float8EqualOperatorId(void);
 Oid Float8LessThanEqualOperatorId(void);
 Oid Float8GreaterThanEqualOperatorId(void);
+Oid Float4ToFloat8FunctionOid(void);
 Oid PostgresArrayAppendFunctionOid(void);
 Oid PostgresMakeIntervalFunctionId(void);
 Oid PostgresDateBinFunctionId(void);

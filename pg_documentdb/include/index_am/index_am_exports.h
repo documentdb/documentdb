@@ -35,6 +35,7 @@ typedef void (*SkipTidsOnCurrentEntryFunc)(struct IndexScanDescData *scan, Block
 										   blockNo);
 
 typedef struct CreateIndexesSupportFuncs CreateIndexesSupportFuncs;
+typedef struct QueryIndexPathSupportFuncs QueryIndexPathSupportFuncs;
 
 /*
  * Data structure for an alternative index acess method for indexing bosn.
@@ -79,6 +80,9 @@ typedef struct
 
 	/* Optional struct including create index support functions */
 	CreateIndexesSupportFuncs *create_indexes_support_funcs;
+
+	/* Optional struct including force index path support functions */
+	QueryIndexPathSupportFuncs *query_index_path_support_funcs;
 
 	/* Optional function to get the current index key */
 	GetCurrentIndexKeyFunc get_current_index_key;

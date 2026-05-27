@@ -1,10 +1,10 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
- * src/aggregation/bson_aggregation_vector_search.c
+ * src/aggregation/bson_aggregation_search.c
  *
  * Implementation of the backend query generation for pipelines
- * containing vector search stages.
+ * containing search stages.
  *
  *-------------------------------------------------------------------------
  */
@@ -39,8 +39,7 @@
 #include "opclass/bson_gin_index_mgmt.h"
 #include "utils/version_utils.h"
 
-#include "aggregation/bson_aggregation_pipeline.h"
-#include "aggregation/bson_aggregation_pipeline_private.h"
+#include "aggregation/bson_aggregation_search.h"
 
 #include "utils/feature_counter.h"
 #include "utils/hashset_utils.h"
@@ -54,17 +53,6 @@
 /* --------------------------------------------------------- */
 /* Data-types */
 /* --------------------------------------------------------- */
-
-typedef enum VectorSearchSpecType
-{
-	VectorSearchSpecType_Unknown = 0,
-
-	VectorSearchSpecType_CosmosSearch = 1,
-
-	VectorSearchSpecType_KnnBeta = 2,
-
-	VectorSearchSpecType_Native = 3
-} VectorSearchSpecType;
 
 /* Context used in replacing the expressions on filtered vector search */
 typedef struct
@@ -186,13 +174,13 @@ command_bson_document_add_score_field(PG_FUNCTION_ARGS)
 
 	pgbson_writer nestedWriter;
 	PgbsonWriterInit(&nestedWriter);
-	PgbsonWriterStartDocument(&finalDocWriter, VECTOR_METADATA_FIELD_NAME,
-							  VECTOR_METADATA_FIELD_NAME_STR_LEN, &nestedWriter);
+	PgbsonWriterStartDocument(&finalDocWriter, SEARCH_METADATA_FIELD_NAME,
+							  SEARCH_METADATA_FIELD_NAME_STR_LEN, &nestedWriter);
 
 	/* Include the score field */
 	PgbsonWriterAppendDouble(&nestedWriter,
-							 VECTOR_METADATA_SCORE_FIELD_NAME,
-							 VECTOR_METADATA_SCORE_FIELD_NAME_STR_LEN,
+							 SEARCH_METADATA_SCORE_FIELD_NAME,
+							 SEARCH_METADATA_SCORE_FIELD_NAME_STR_LEN,
 							 scoreField);
 
 	PgbsonWriterEndDocument(&finalDocWriter, &nestedWriter);
@@ -213,9 +201,6 @@ command_bson_search_param(PG_FUNCTION_ARGS)
 
 /*
  * Parses and handles the $search stage in the aggregation pipeline.
- * Converts the query to an
- * ORDER BY bson_extract_vector(document, 'spec') <=> bson_extract_vector(query, 'spec')
- * For additional details see query_operator.c
  */
 Query *
 HandleSearch(const bson_value_t *existingValue, Query *query,
@@ -225,7 +210,7 @@ HandleSearch(const bson_value_t *existingValue, Query *query,
 	if (rte->rtekind != RTE_RELATION || rte->tablesample != NULL ||
 		query->limitCount != NULL || context->stageNum != 0)
 	{
-		/* This is incompatible.vector search needs the base relation. */
+		/* This is incompatible. $search stage needs the base relation. */
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 						errmsg(
 							"$search must appear as the initial stage in the pipeline sequence.")));
@@ -235,8 +220,7 @@ HandleSearch(const bson_value_t *existingValue, Query *query,
 	EnsureTopLevelFieldValueType("$search", existingValue, BSON_TYPE_DOCUMENT);
 
 	/* The top level $search spec, parsing and validating */
-	VectorSearchSpecType searchSpecType = VectorSearchSpecType_Unknown;
-	pgbson *vectorSearchSpecPgbson = NULL;
+	DocumentDBSearchOptions searchOptions = { 0 };
 
 	bson_iter_t searchIterator;
 	BsonValueInitIterator(existingValue, &searchIterator);
@@ -244,72 +228,196 @@ HandleSearch(const bson_value_t *existingValue, Query *query,
 	while (bson_iter_next(&searchIterator))
 	{
 		const char *key = bson_iter_key(&searchIterator);
-		if (strcmp(key, "cosmosSearch") == 0)
+		const bson_value_t *value = bson_iter_value(&searchIterator);
+
+		if (strcmp(key, "index") == 0)
 		{
-			/* parse search options search */
-			EnsureTopLevelFieldType(key, &searchIterator, BSON_TYPE_DOCUMENT);
-			vectorSearchSpecPgbson = PgbsonInitFromDocumentBsonValue(bson_iter_value(
-																		 &searchIterator));
-			searchSpecType = VectorSearchSpecType_CosmosSearch;
+			if (!BSON_ITER_HOLDS_UTF8(&searchIterator))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"The option 'index' should always be a text value.")));
+			}
+			searchOptions.indexName = pnstrdup(value->value.v_utf8.str,
+											   value->value.v_utf8.len);
 		}
-		else if (strcmp(key, "knnBeta") == 0)
+		else if (strcmp(key, "count") == 0)
 		{
-			/* parse search options search */
-			EnsureTopLevelFieldType(key, &searchIterator, BSON_TYPE_DOCUMENT);
-			vectorSearchSpecPgbson = PgbsonInitFromDocumentBsonValue(bson_iter_value(
-																		 &searchIterator));
-			searchSpecType = VectorSearchSpecType_KnnBeta;
+			if (!BSON_ITER_HOLDS_DOCUMENT(&searchIterator))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"The option 'count' should always hold a document value.")));
+			}
+
+			bson_iter_t countIterator;
+			BsonValueInitIterator(value, &countIterator);
+
+			while (bson_iter_next(&countIterator))
+			{
+				const char *countKey = bson_iter_key(&countIterator);
+				const bson_value_t *countValue = bson_iter_value(&countIterator);
+
+				if (strcmp(countKey, "threshold") == 0)
+				{
+					EnsureTopLevelFieldType(countKey, &countIterator,
+											BSON_TYPE_INT32);
+					searchOptions.countOptions.threshold =
+						BsonValueAsInt32(countValue);
+
+					if (searchOptions.countOptions.threshold < 1)
+					{
+						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+										errmsg(
+											"The option 'count.threshold' should always be a positive integer value.")));
+					}
+				}
+				else if (strcmp(countKey, "type") == 0)
+				{
+					EnsureTopLevelFieldType(countKey, &countIterator,
+											BSON_TYPE_UTF8);
+					const char *countTypeStr = countValue->value.v_utf8.str;
+
+					if (strcmp(countTypeStr, "total") == 0)
+					{
+						searchOptions.countOptions.countType =
+							SEARCH_COUNT_TYPE_TOTAL;
+					}
+					else if (strcmp(countTypeStr, "lowerBound") == 0)
+					{
+						searchOptions.countOptions.countType =
+							SEARCH_COUNT_TYPE_LOWER_BOUND;
+					}
+					else
+					{
+						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+										errmsg(
+											"The option 'count.type' has unrecognized value: %s",
+											countTypeStr)));
+					}
+				}
+				else
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_UNRECOGNIZEDCOMMAND),
+									errmsg(
+										"Unrecognized 'count' option: %s",
+										countKey)));
+				}
+			}
+
+			if (searchOptions.countOptions.countType == SEARCH_COUNT_TYPE_TOTAL)
+			{
+				/* For total count, we do not have a threshold */
+				searchOptions.countOptions.threshold = -1;
+			}
+			else
+			{
+				/* For lower bound, set a default threshold if not provided */
+				if (searchOptions.countOptions.threshold <= 0)
+				{
+					searchOptions.countOptions.threshold = 1000;
+				}
+			}
 		}
-		else if (strcmp(key, "index") == 0 ||
-				 strcmp(key, "returnStoredSource") == 0)
+		else if (strcmp(key, "returnStoredSource") == 0)
 		{
 			/* We ignore these options */
 		}
 		else
 		{
-			/* What are these options today? */
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_UNRECOGNIZEDCOMMAND),
-							errmsg(
-								"Unrecognized $search option: %s, should be one of: cosmosSearch, knnBeta.",
-								key)));
+			/* check search operator */
+			const DocumentDBSearchOperatorDef *operator = GetSearchOperatorDefByName(key);
+			if (operator->operatorType != INVALID_SEARCH_OPERATOR_TYPE)
+			{
+				/* If we have already found a search operator in the spec, error out */
+				if (searchOptions.searchOperator != NULL)
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+									errmsg(
+										"The $search spec can only contain one search operator.")));
+				}
+
+				EnsureTopLevelFieldType(key, &searchIterator, BSON_TYPE_DOCUMENT);
+
+				searchOptions.operatorSpecBson = *value;
+				searchOptions.searchOperator = operator;
+			}
+			else
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_UNRECOGNIZEDCOMMAND),
+								errmsg(
+									"Unrecognized $search option: %s",
+									key)));
+			}
 		}
 	}
 
-	if (searchSpecType == VectorSearchSpecType_Unknown)
+	if (searchOptions.searchOperator == NULL ||
+		searchOptions.searchOperator->operatorType == INVALID_SEARCH_OPERATOR_TYPE)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
 						errmsg(
-							"Invalid search spec provided with one or more unsupported options, should be one of: cosmosSearch, knnBeta.")));
+							"Invalid search spec provided, must include one of the supported operators.")));
 	}
 
+	if (searchOptions.searchOperator->mutateFunc == NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+						errmsg(
+							"$search operator not supported: %s",
+							searchOptions.searchOperator->operatorName)));
+	}
 
-	/* The vector search spec, parsing and validating */
+	if (searchOptions.searchOperator->featureType != INVALID_SEARCH_OPERATOR_FEATURE_TYPE)
+	{
+		ReportFeatureUsage(searchOptions.searchOperator->featureType);
+	}
+
+	return searchOptions.searchOperator->mutateFunc(&searchOptions.operatorSpecBson,
+													&searchOptions, query, context);
+}
+
+
+Query *
+HandleSearchOperatorCosmos(const bson_value_t *existingValue,
+						   DocumentDBSearchOptions *searchOptions,
+						   Query *query,
+						   AggregationPipelineBuildContext *context)
+{
 	VectorSearchOptions vectorSearchOptions = { 0 };
 
-	vectorSearchOptions.searchSpecPgbson = vectorSearchSpecPgbson;
+	pgbson *searchSpecPgbson = PgbsonInitFromDocumentBsonValue(existingValue);
+	vectorSearchOptions.searchSpecPgbson = searchSpecPgbson;
+
+	/* TODO can be set with searchOptions->countOptions.threshold in the future */
 	vectorSearchOptions.resultCount = -1;
 	vectorSearchOptions.queryVectorLength = -1;
 
-	if (searchSpecType == VectorSearchSpecType_CosmosSearch)
-	{
-		ParseAndValidateCosmosSearchQuerySpec(vectorSearchSpecPgbson,
-											  &vectorSearchOptions);
-	}
-	else if (searchSpecType == VectorSearchSpecType_KnnBeta)
-	{
-		/* TODO: Track the usage of the knnBeta, if there is no usage, we will remove knnBeta later */
-		ReportFeatureUsage(FEATURE_STAGE_VECTOR_SEARCH_KNN);
-		ParseAndValidateKnnBetaQuerySpec(vectorSearchSpecPgbson,
-										 &vectorSearchOptions);
-	}
-	else
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
-						errmsg(
-							"Invalid search spec provided with one or more unsupported options, should be one of: cosmosSearch, knnBeta.")));
-	}
+	ParseAndValidateCosmosSearchQuerySpec(searchSpecPgbson,
+										  &vectorSearchOptions);
 
-	/* Handle the vector search spec */
+	return HandleVectorSearchCore(query, &vectorSearchOptions, context);
+}
+
+
+Query *
+HandleSearchOperatorKnnBeta(const bson_value_t *existingValue,
+							DocumentDBSearchOptions *searchOptions,
+							Query *query,
+							AggregationPipelineBuildContext *context)
+{
+	VectorSearchOptions vectorSearchOptions = { 0 };
+
+	pgbson *searchSpecPgbson = PgbsonInitFromDocumentBsonValue(existingValue);
+	vectorSearchOptions.searchSpecPgbson = searchSpecPgbson;
+
+	/* TODO can be set with searchOptions->countOptions.threshold in the future */
+	vectorSearchOptions.resultCount = -1;
+	vectorSearchOptions.queryVectorLength = -1;
+
+	ParseAndValidateKnnBetaQuerySpec(searchSpecPgbson,
+									 &vectorSearchOptions);
+
 	return HandleVectorSearchCore(query, &vectorSearchOptions, context);
 }
 
@@ -1344,7 +1452,8 @@ ParseAndValidateNativeVectorSearchSpec(const bson_value_t *nativeVectorSearchSpe
 		else if (strcmp(key, "path") == 0)
 		{
 			EnsureTopLevelFieldValueType("path", value, BSON_TYPE_UTF8);
-			vectorSearchOptions->searchPath = pstrdup(value->value.v_utf8.str);
+			vectorSearchOptions->searchPath = pnstrdup(value->value.v_utf8.str,
+													   value->value.v_utf8.len);
 
 			if (vectorSearchOptions->searchPath == NULL)
 			{
@@ -1750,7 +1859,8 @@ ParseAndValidateVectorQuerySpecCore(const pgbson *vectorSearchSpecPgbson,
 									"$path must be a text value")));
 			}
 
-			vectorSearchOptions->searchPath = pstrdup(value->value.v_utf8.str);
+			vectorSearchOptions->searchPath = pnstrdup(value->value.v_utf8.str,
+													   value->value.v_utf8.len);
 
 			if (vectorSearchOptions->searchPath == NULL)
 			{
@@ -1962,6 +2072,9 @@ static void
 ParseAndValidateKnnBetaQuerySpec(const pgbson *vectorSearchSpecPgbson,
 								 VectorSearchOptions *vectorSearchOptions)
 {
+	/* TODO: Track the usage of the knnBeta, if there is no usage, we will remove knnBeta later */
+	ReportFeatureUsage(FEATURE_STAGE_VECTOR_SEARCH_KNN);
+
 	ParseAndValidateVectorQuerySpecCore(vectorSearchSpecPgbson,
 										vectorSearchOptions);
 
