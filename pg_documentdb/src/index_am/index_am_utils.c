@@ -13,7 +13,9 @@
 #include "utils/feature_counter.h"
 #include "access/relscan.h"
 #include "index_am/documentdb_rum.h"
-#include "index_am/index_am_extend.h"
+#include "index_am/index_am_extend_create.h"
+#include "index_am/index_am_extend_query.h"
+#include "utils/documentdb_errors.h"
 
 #include <miscadmin.h>
 
@@ -26,6 +28,8 @@ static const char * GetRumInternalSchemaV2(void);
 
 static inline void ValidateCreateIndexesSupportFuncs(
 	CreateIndexesSupportFuncs *createIndexSupport);
+static inline void ValidateQueryIndexPathSupportFuncs(
+	QueryIndexPathSupportFuncs *queryIndexPathSupport);
 
 /* Left non-static for internal use */
 BsonIndexAmEntry RumIndexAmEntry = {
@@ -50,6 +54,7 @@ BsonIndexAmEntry RumIndexAmEntry = {
 	.get_truncation_status = RumGetTruncationStatus,
 	.supports_ordered_operator_scans = false,
 	.create_indexes_support_funcs = NULL,
+	.query_index_path_support_funcs = NULL,
 	.get_current_index_key = NULL,
 	.skip_tids_on_current_entry = NULL,
 	.force_path_key_summarization = false,
@@ -95,6 +100,11 @@ RegisterIndexAm(BsonIndexAmEntry indexAmEntry)
 	if (indexAmEntry.create_indexes_support_funcs != NULL)
 	{
 		ValidateCreateIndexesSupportFuncs(indexAmEntry.create_indexes_support_funcs);
+	}
+
+	if (indexAmEntry.query_index_path_support_funcs != NULL)
+	{
+		ValidateQueryIndexPathSupportFuncs(indexAmEntry.query_index_path_support_funcs);
 	}
 
 	BsonAlternateAmRegistry[BsonNumAlternateAmEntries++] = indexAmEntry;
@@ -268,6 +278,45 @@ IsExtendedIndexAmByName(const char *amName)
 
 	/* Unknown AM, assume not extended */
 	return false;
+}
+
+
+QueryExtendedIndexContext *
+MatchRestrictionPathExprByExtendedIndex(Expr *expr,
+										ReplaceExtensionFunctionContext *context)
+{
+	QueryExtendedIndexContext *matchedContext = NULL;
+
+	for (int i = 0; i < BsonNumAlternateAmEntries; i++)
+	{
+		if (BsonAlternateAmRegistry[i].query_index_path_support_funcs == NULL)
+		{
+			continue;
+		}
+
+		QueryIndexPathSupportFuncs *supportFuncs =
+			BsonAlternateAmRegistry[i].query_index_path_support_funcs;
+
+		void *queryState = supportFuncs->matchExprFunc(expr, context);
+		if (queryState != NULL)
+		{
+			if (matchedContext != NULL &&
+				matchedContext->indexAmEntry != &BsonAlternateAmRegistry[i])
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"Expr matched multiple extended index: '%s' and '%s'",
+									matchedContext->indexAmEntry->am_name,
+									BsonAlternateAmRegistry[i].am_name)));
+			}
+
+			matchedContext = palloc0(sizeof(QueryExtendedIndexContext));
+			matchedContext->indexAmEntry = &BsonAlternateAmRegistry[i];
+			matchedContext->indexAmQueryState = queryState;
+		}
+	}
+
+	return matchedContext;
 }
 
 
@@ -602,6 +651,78 @@ ValidateCreateIndexesSupportFuncs(CreateIndexesSupportFuncs *createIndexSupport)
 		ereport(ERROR, (errmsg(
 							"Cannot register an alternate index AM with create_indexes_support_funcs "
 							"but NULL is_extended_am_index_spec_func function")));
+	}
+}
+
+
+/*
+ * Validates that all required functions are provided in QueryIndexPathSupportFuncs.
+ */
+static inline void
+ValidateQueryIndexPathSupportFuncs(QueryIndexPathSupportFuncs *queryIndexPathSupport)
+{
+	if (queryIndexPathSupport->matchExprFunc == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"but NULL matchExprFunc function")));
+	}
+
+	if (queryIndexPathSupport->rewriteFuncExprFunc == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"but NULL rewriteFuncExprFunc function")));
+	}
+
+	if (queryIndexPathSupport->addExtendedQueryScanFunc == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"but NULL addExtendedQueryScanFunc function")));
+	}
+
+	if (queryIndexPathSupport->forceIndexSupportFuncs == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"but NULL forceIndexSupportFuncs")));
+	}
+
+	/* All the functions inside forceIndexSupportFuncs are mandatory and will be called by the planner */
+	if (queryIndexPathSupport->forceIndexSupportFuncs->updateIndexes == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"that has non-NULL forceIndexSupportFuncs but NULL updateIndexes function")));
+	}
+
+	if (queryIndexPathSupport->forceIndexSupportFuncs->matchIndexPath == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"that has non-NULL forceIndexSupportFuncs but NULL matchIndexPath function")));
+	}
+
+	if (queryIndexPathSupport->forceIndexSupportFuncs->alternatePath == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"that has non-NULL forceIndexSupportFuncs but NULL alternatePath function")));
+	}
+
+	if (queryIndexPathSupport->forceIndexSupportFuncs->enableForceIndexPushdown == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"that has non-NULL forceIndexSupportFuncs but NULL enableForceIndexPushdown function")));
+	}
+
+	if (queryIndexPathSupport->forceIndexSupportFuncs->noIndexHandler == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Cannot register an alternate index AM with query_index_path_support_funcs "
+							"that has non-NULL forceIndexSupportFuncs but NULL noIndexHandler function")));
 	}
 }
 

@@ -15,6 +15,7 @@
 #include <vector/vector_utilities.h>
 #include <optimizer/planner.h>
 #include "planner/mongo_query_operator.h"
+#include "planner/bson_index_force_pushdown_types.h"
 
 struct IndexOptInfo;
 
@@ -35,51 +36,6 @@ typedef struct ReplaceFunctionContextInput
 	Index rteIndex;
 } ReplaceFunctionContextInput;
 
-
-/* The operation type for forcing index pushdown */
-typedef enum ForceIndexOpType
-{
-	/* No index pushdown required */
-	ForceIndexOpType_None = 0,
-
-	/* Index pushdown required due to $text */
-	ForceIndexOpType_Text = 1,
-
-	/* Index pushdown required due to $geoNear */
-	ForceIndexOpType_GeoNear = 2,
-
-	/* Index pushdown required for a vectorSearch */
-	ForceIndexOpType_VectorSearch = 3,
-
-	/* Index pushdown required for a index hint */
-	ForceIndexOpType_IndexHint = 4,
-
-	/* Index pushdown required for a primary key lookup */
-	ForceIndexOpType_PrimaryKeyLookup = 5,
-
-	ForceIndexOpType_Max,
-} ForceIndexOpType;
-
-/*
- * Data used to enforce index to special query operators like $geoNear, $text etc
- */
-typedef struct ForceIndexQueryOperatorData
-{
-	/* Type of the mongo query operator used */
-	ForceIndexOpType type;
-
-	/*
-	 * If pushed to index by default by Postgres, then the it points to the index path otherwise NULL
-	 * In case this is NULL, we try to push to the available index
-	 */
-	IndexPath *path;
-
-	/*
-	 * Any operator specific metadata or state.
-	 * e.g. For $geoNear, it is the operatorExpression which is used for deciding the index pushdown
-	 */
-	void *opExtraState;
-} ForceIndexQueryOperatorData;
 
 /* Context persisted during walking the query for order by scenarios */
 typedef struct
@@ -143,9 +99,6 @@ List * ReplaceExtensionFunctionOperatorsInRestrictionPaths(List *restrictInfo,
 void ReplaceExtensionFunctionOperatorsInPaths(PlannerInfo *root, RelOptInfo *rel,
 											  List *pathsList, PlanParentType parentType,
 											  ReplaceExtensionFunctionContext *context);
-Path * ForceIndexForQueryOperators(PlannerInfo *root, RelOptInfo *rel,
-								   ReplaceExtensionFunctionContext *context);
-
 void ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel,
 									   RangeTblEntry *rte,
 									   Index rti,
