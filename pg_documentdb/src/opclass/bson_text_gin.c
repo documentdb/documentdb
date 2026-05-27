@@ -106,6 +106,32 @@ GetDefaultLanguage(BsonGinTextPathOptions *options)
 
 
 /*
+ * Replace dots with spaces so that dotted values like "foo.0.bat" are
+ * tokenized as separate search terms ("foo", "0", "bar") rather than
+ * being classified as a single host-type token by the PG parser.
+ * This matches the index side where dotted values are indexed as sub-terms.
+ */
+inline static char *
+SanitizeDotsForTextSearch(char *str, BsonGinTextPathOptions *indexOptions)
+{
+	bool dottedTermsEnabled = indexOptions != NULL &&
+							  indexOptions->enableDottedTerms;
+	if (dottedTermsEnabled && strchr(str, '.') != NULL)
+	{
+		char *sanitizedStr = pstrdup(str);
+		char *p = sanitizedStr;
+		while ((p = strchr(p, '.')) != NULL)
+		{
+			*p++ = ' ';
+		}
+		return sanitizedStr;
+	}
+
+	return str;
+}
+
+
+/*
  * Track short ISO code language map to the full language name
  * The full language name will be accepted as is. For the list of
  * supported languages
@@ -240,6 +266,10 @@ rum_bson_text_path_options(PG_FUNCTION_ARGS)
 	add_local_bool_reloption(relopts, "iswildcard",
 							 "Whether the path is a wildcard", isWildcardDefault,
 							 offsetof(BsonGinTextPathOptions, isWildcard));
+	add_local_bool_reloption(relopts, "enabledottedterms",
+							 "Whether to split dotted values into sub-terms",
+							 false,
+							 offsetof(BsonGinTextPathOptions, enableDottedTerms));
 	add_local_string_reloption(relopts, "weights",
 							   "The Paths and Weights for the index",
 							   NULL, &ValidateWeightsSpec, &FillWeightsSpec,
@@ -516,6 +546,8 @@ BsonTextGenerateTSQueryCore(const bson_value_t *queryValue, bytea *indexOptions,
 	BsonValidateAndExtractTextQuery(queryValue, &searchValue,
 									&languageOid, &caseSensitive, &diacriticSensitive);
 
+	BsonGinTextPathOptions *options = (BsonGinTextPathOptions *) indexOptions;
+
 	/* If language is provided, extract it */
 	if (languageOid != InvalidOid)
 	{
@@ -523,7 +555,6 @@ BsonTextGenerateTSQueryCore(const bson_value_t *queryValue, bytea *indexOptions,
 	}
 	else if (indexOptions != NULL)
 	{
-		BsonGinTextPathOptions *options = (BsonGinTextPathOptions *) indexOptions;
 		tsConfigOid = GetDefaultLanguage(options);
 	}
 	else
@@ -531,9 +562,13 @@ BsonTextGenerateTSQueryCore(const bson_value_t *queryValue, bytea *indexOptions,
 		tsConfigOid = getTSCurrentConfig(true);
 	}
 
+	char *searchStr = SanitizeDotsForTextSearch(searchValue.value.v_utf8.str,
+												options);
+
 	/* we have a valid ts_query string. */
 	/* first pass: we use the websearch_to_tsquery as it has the closest rules to native mongo; */
-	Datum textDatum = CStringGetTextDatum(searchValue.value.v_utf8.str);
+
+	Datum textDatum = CStringGetTextDatum(searchStr);
 
 	Datum result;
 	if (tsConfigOid != InvalidOid)
@@ -577,6 +612,10 @@ BsonTextGenerateTSQueryCore(const bson_value_t *queryValue, bytea *indexOptions,
 	}
 
 	QTNFree(node);
+	if (searchStr != searchValue.value.v_utf8.str)
+	{
+		pfree(searchStr);
+	}
 	return PointerGetDatum(query);
 }
 
@@ -1389,17 +1428,20 @@ GenerateTsVectorWithOptions(pgbson *document,
 
 			/* Generate text words */
 			ParsedText text = { 0 };
+			char *indexStr = term.element.bsonValue.value.v_utf8.str;
+			uint32 indexStrLen = term.element.bsonValue.value.v_utf8.len;
+			indexStr = SanitizeDotsForTextSearch(indexStr, options);
 
 			/* Random estimate of word count (see to_tsvector) */
-			text.lenwords = Max(term.element.bsonValue.value.v_utf8.len / 6, 2);
+			text.lenwords = Max(indexStrLen / 6, 2);
 			text.curwords = 0;
 			text.pos = 0;
 			text.words = (ParsedWord *) palloc(sizeof(ParsedWord) * text.lenwords);
 			parsetext(
 				languageOid,
 				&text,
-				term.element.bsonValue.value.v_utf8.str,
-				term.element.bsonValue.value.v_utf8.len);
+				indexStr,
+				indexStrLen);
 
 			/* make the tsvector from it */
 			TSVector vector = make_tsvector(&text);
@@ -1462,6 +1504,12 @@ GenerateTsVectorWithOptions(pgbson *document,
 					DatumGetTSVector(OidFunctionCall2(TsVectorConcatFunctionId(),
 													  PointerGetDatum(vector),
 													  PointerGetDatum(overallVector)));
+			}
+
+			if (indexStr != term.element.bsonValue.value.v_utf8.str)
+			{
+				pfree(indexStr);
+				indexStr = NULL;
 			}
 		}
 	}

@@ -148,6 +148,7 @@ typedef struct
 {
 	BsonGinIndexOptionsBase base;
 	bool isWildcard;
+	bool enableDottedTerms;
 	int defaultLanguage;
 	int weights;
 	int languageOverride;
