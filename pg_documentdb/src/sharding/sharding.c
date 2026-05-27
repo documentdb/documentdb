@@ -32,7 +32,7 @@
 #include "utils/guc_utils.h"
 #include "utils/version_utils.h"
 #include "utils/list_utils.h"
-#include "index_am/index_am_extend.h"
+#include "index_am/index_am_extend_create.h"
 #include "index_am/index_am_utils.h"
 #include "metadata/index.h"
 #include "commands/retryable_writes.h"

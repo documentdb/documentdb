@@ -67,7 +67,7 @@
 #include "vector/vector_common.h"
 #include "vector/vector_utilities.h"
 #include "index_am/index_am_utils.h"
-#include "index_am/index_am_extend.h"
+#include "index_am/index_am_extend_create.h"
 
 /* Return value of TryCreateCollectionIndexes */
 typedef struct

@@ -43,7 +43,7 @@
 #include "utils/hashset_utils.h"
 #include "infrastructure/job_management.h"
 #include "utils/error_utils.h"
-#include "index_am/index_am_extend.h"
+#include "index_am/index_am_extend_create.h"
 
 extern int MaxNumActiveUsersIndexBuilds;
 extern int IndexBuildScheduleInSec;

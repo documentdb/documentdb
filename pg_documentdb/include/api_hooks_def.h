@@ -253,6 +253,20 @@ typedef bool (*DefaultEnableCompositeOpClass_HookType)(void);
 extern DefaultEnableCompositeOpClass_HookType default_enable_composite_op_class_hook;
 
 /*
+ * Hook for resolving a search operator definition by operator name.
+ * Called when the built-in operator list does not contain a match,
+ * allowing extended index types to provide additional operators.
+ *
+ * Returns a pointer to the matching DocumentDBSearchOperatorDef, or NULL if
+ * no matching operator is found.
+ */
+typedef struct DocumentDBSearchOperatorDef DocumentDBSearchOperatorDef;
+typedef const DocumentDBSearchOperatorDef *(*ExtendedSearchOperatorDefByName_HookType)(
+	const char *key);
+extern ExtendedSearchOperatorDefByName_HookType extended_search_operator_def_by_name_hook;
+
+
+/*
  * Hook for creating a TTL metrics aggregation context before the TTL purge loop.
  * The MemoryContext parameter should be used for allocations that need to survive
  * across batch deletes.
