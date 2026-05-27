@@ -411,9 +411,14 @@ bool EnablePrepareUnique = DEFAULT_ENABLE_PREPARE_UNIQUE;
 #define DEFAULT_ENABLE_COLLMOD_UNIQUE true
 bool EnableCollModUnique = DEFAULT_ENABLE_COLLMOD_UNIQUE;
 
-/* Added in v113, Pending stabilization, enable in v116 */
-#define DEFAULT_ENABLE_UNIQUE_REINDEX false
+/* Added in v113, enabled in v113, remove after v120 */
+#define DEFAULT_ENABLE_UNIQUE_REINDEX true
 bool EnableUniqueReindex = DEFAULT_ENABLE_UNIQUE_REINDEX;
+
+/* Added in v114, enabled in v114, remove after v120 */
+#define DEFAULT_ENABLE_NON_BLOCKING_UNIQUE_INDEX_BUILD true
+bool EnableNonBlockingUniqueIndexBuild =
+	DEFAULT_ENABLE_NON_BLOCKING_UNIQUE_INDEX_BUILD;
 
 /* Added in v114, Pending stabilization, enable in v120 */
 #define DEFAULT_ENABLE_COMPACT_VACUUM_FULL false
@@ -807,6 +812,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Whether to enable unique reindex."),
 		NULL, &EnableUniqueReindex, DEFAULT_ENABLE_UNIQUE_REINDEX,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableNonBlockingUniqueIndexBuild", newGucPrefix),
+		gettext_noop(
+			"Whether to enable non-blocking background builds of unique indexes."),
+		NULL, &EnableNonBlockingUniqueIndexBuild,
+		DEFAULT_ENABLE_NON_BLOCKING_UNIQUE_INDEX_BUILD,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 
