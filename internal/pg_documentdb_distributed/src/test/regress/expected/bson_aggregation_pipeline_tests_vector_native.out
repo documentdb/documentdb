@@ -424,5 +424,5 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 (1 row)
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline_knnbeta", "pipeline": [ { "$search": { "unknowType": { "vector": [ 3.0, 4.9, 1.0 ], "k": 1, "path": "v" }  } } ], "cursor": {} }');
-ERROR:  Unrecognized $search option: unknowType, should be one of: cosmosSearch, knnBeta.
+ERROR:  Unrecognized $search option: unknowType
 set documentdb.enableVectorPreFilter = off;

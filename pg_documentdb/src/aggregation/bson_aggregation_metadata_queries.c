@@ -51,7 +51,7 @@
 
 #include "aggregation/bson_aggregation_pipeline_private.h"
 #include "api_hooks.h"
-#include "index_am/index_am_extend.h"
+#include "index_am/index_am_extend_create.h"
 
 static Query * GenerateBaseListCollectionsQuery(Datum databaseDatum, bool nameOnly,
 												bool addDistributedMetadata,

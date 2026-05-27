@@ -56,6 +56,7 @@
 #include "planner/documentdb_planner.h"
 #include "aggregation/bson_query_common.h"
 #include "index_am/documentdb_rum.h"
+#include "index_am/index_am_extend_query.h"
 
 typedef struct
 {
@@ -106,62 +107,6 @@ typedef struct
 	 */
 	List *runtimeDollarInRestrictionData;
 } PrimaryKeyLookupContext;
-
-typedef List *(*UpdateIndexList)(List *indexes,
-								 ReplaceExtensionFunctionContext *context);
-typedef bool (*MatchIndexPath)(IndexPath *path, void *state);
-typedef bool (*ModifyTreeToUseAlternatePath)(PlannerInfo *root, RelOptInfo *rel,
-											 ReplaceExtensionFunctionContext *context,
-											 MatchIndexPath matchIndexPath);
-typedef void (*NoIndexFoundHandler)(void);
-typedef bool (*EnableForceIndexPushdown)(PlannerInfo *root,
-										 ReplaceExtensionFunctionContext *context);
-
-/*
- * Force index pushdown operator support functions
- */
-typedef struct
-{
-	/*
-	 * Mongo query operator type
-	 */
-	ForceIndexOpType operator;
-
-	/*
-	 * Update the index list to filter out non-applicable
-	 * indexes and then try creating index paths agains to
-	 * push down to the now available index.
-	 */
-	UpdateIndexList updateIndexes;
-
-	/*
-	 * After a new set of paths are generated this function would
-	 * be called to match if the path is what the operator expects it
-	 * to be, usually the path is checked to be an index path and the operator
-	 * specific quals are pushed to the index
-	 */
-	MatchIndexPath matchIndexPath;
-
-	/*
-	 * If updating index list doesn't help in creating any interesting index
-	 * paths, then just ask the operator to do any necessary updates to the
-	 * query tree and try any alternate path, this can be any path based on
-	 * the query operator and should return true to notify that a valid
-	 * path exist.
-	 */
-	ModifyTreeToUseAlternatePath alternatePath;
-
-	/*
-	 * Control switch to enable/disbale the force index pushdown
-	 */
-	EnableForceIndexPushdown enableForceIndexPushdown;
-
-	/*
-	 * Handler when no applicable index was found
-	 */
-	NoIndexFoundHandler noIndexHandler;
-} ForceIndexSupportFuncs;
-
 
 /*
  * A single query predicate for an elemMatch call.
@@ -227,6 +172,7 @@ extern bool EnableIndexOnlyScanForCoveredAggregateTargets;
 extern bool EnableIndexOnlyScanForRangeMatch;
 extern bool EnableIndexOnlyScanForFindProject;
 extern bool EnableObjectIdFuncExprConversion;
+extern bool EnableExtendedIndexes;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -319,6 +265,16 @@ static void PrimaryKeyLookupUnableToFindIndex(void);
 static bool IndexClauseIsValidForIndexOnlyScan(const IndexClause *clause,
 											   bytea *indexOptions);
 
+static List * UpdateIndexListForExtendedIndex(List *existingIndex,
+											  ReplaceExtensionFunctionContext *context);
+static bool MatchIndexPathForExtendedIndex(IndexPath *path, void *matchContext);
+static bool TryUseAlternateIndexForExtendedIndex(PlannerInfo *root, RelOptInfo *rel,
+												 ReplaceExtensionFunctionContext *context,
+												 MatchIndexPath matchIndexPath);
+static void ThrowNoExtendedIndexFound(void);
+static bool EnableExtendedIndexForceIndexPushdown(PlannerInfo *root,
+												  ReplaceExtensionFunctionContext *context);
+
 static const ForceIndexSupportFuncs ForceIndexOperatorSupport[] =
 {
 	[ForceIndexOpType_None] = {
@@ -367,6 +323,14 @@ static const ForceIndexSupportFuncs ForceIndexOperatorSupport[] =
 		.alternatePath = &TryUseAlternateIndexForPrimaryKeyLookup,
 		.noIndexHandler = &PrimaryKeyLookupUnableToFindIndex,
 		.enableForceIndexPushdown = &DefaultTrueForceIndexPushdown
+	},
+	[ForceIndexOpType_ExtendedIndex] = {
+		.operator = ForceIndexOpType_ExtendedIndex,
+		.updateIndexes = &UpdateIndexListForExtendedIndex,
+		.matchIndexPath = &MatchIndexPathForExtendedIndex,
+		.alternatePath = &TryUseAlternateIndexForExtendedIndex,
+		.noIndexHandler = &ThrowNoExtendedIndexFound,
+		.enableForceIndexPushdown = &EnableExtendedIndexForceIndexPushdown
 	}
 };
 
@@ -815,28 +779,77 @@ IsOpExprShardKeyForUnshardedCollections(Expr *expr, uint64 collectionId)
 }
 
 
+/*
+ * This is used to ensure that incompatible force index operations are not used together in the same query.
+ */
 inline static void
-ThrowIfIncompatibleOpForIndexHint(ForceIndexOpType hintOpType, ForceIndexOpType opType)
+ThrowIfIncompatibleForceIndexOp(ForceIndexOpType currentType, ForceIndexOpType newType)
 {
-	if (hintOpType != ForceIndexOpType_IndexHint)
+	/* No conflict if no force-index op is active yet */
+	if (currentType == ForceIndexOpType_None)
 	{
 		return;
 	}
 
-	if (opType == ForceIndexOpType_Text)
+	/*
+	 * Identify the incompatible operator for index hint
+	 */
+	if (currentType == ForceIndexOpType_IndexHint ||
+		newType == ForceIndexOpType_IndexHint)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-						errmsg("$text queries cannot specify hint")));
+		ForceIndexOpType opType =
+			(currentType == ForceIndexOpType_IndexHint) ? newType : currentType;
+
+		if (opType == ForceIndexOpType_Text)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg("$text queries cannot specify hint")));
+		}
+		else if (opType == ForceIndexOpType_VectorSearch)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg("Vector search queries cannot specify hint")));
+		}
+		else if (opType == ForceIndexOpType_GeoNear)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg("GeoNear queries cannot specify hint")));
+		}
+		else if (EnableExtendedIndexes && opType == ForceIndexOpType_ExtendedIndex)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg("Extended index queries cannot specify hint")));
+		}
 	}
-	else if (opType == ForceIndexOpType_VectorSearch)
+
+	/*
+	 * Identify the incompatible operator for extended index
+	 */
+	if (EnableExtendedIndexes &&
+		(currentType == ForceIndexOpType_ExtendedIndex ||
+		 newType == ForceIndexOpType_ExtendedIndex))
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-						errmsg("Vector search queries cannot specify hint")));
-	}
-	else if (opType == ForceIndexOpType_GeoNear)
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-						errmsg("GeoNear queries cannot specify hint")));
+		ForceIndexOpType opType =
+			(currentType == ForceIndexOpType_ExtendedIndex) ? newType : currentType;
+
+		if (opType == ForceIndexOpType_Text)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"$text is not allowed in combination with extended index queries")));
+		}
+		else if (opType == ForceIndexOpType_VectorSearch)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"Vector search is not allowed in combination with extended index queries")));
+		}
+		else if (opType == ForceIndexOpType_GeoNear)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"$geoNear is not allowed in combination with extended index queries")));
+		}
 	}
 }
 
@@ -861,7 +874,7 @@ CheckNullTestForGeoSpatialForcePushdown(ReplaceExtensionFunctionContext *context
 			 * e.g. Sharded collections cases where ORDER BY is not pushed to the shards so we only
 			 * get the PFE of geospatial operators.
 			 */
-			ThrowIfIncompatibleOpForIndexHint(
+			ThrowIfIncompatibleForceIndexOp(
 				context->forceIndexQueryOpData.type, ForceIndexOpType_GeoNear);
 			context->forceIndexQueryOpData.type = ForceIndexOpType_GeoNear;
 		}
@@ -909,8 +922,8 @@ CheckRestrictionPathNodeForIndexOperation(Expr *currentExpr,
 								errmsg("Index sparse must be a constant value")));
 			}
 
-			ThrowIfIncompatibleOpForIndexHint(
-				ForceIndexOpType_IndexHint, context->forceIndexQueryOpData.type);
+			ThrowIfIncompatibleForceIndexOp(
+				context->forceIndexQueryOpData.type, ForceIndexOpType_IndexHint);
 			Const *secondConst = (Const *) secondNode;
 			IndexHintMatchContext *hintContext = palloc0(
 				sizeof(IndexHintMatchContext));
@@ -929,7 +942,7 @@ CheckRestrictionPathNodeForIndexOperation(Expr *currentExpr,
 			 * the forceIndexQueryOpData.type to vector search yet to keep compatibility.
 			 */
 			context->hasVectorSearchQuery = true;
-			ThrowIfIncompatibleOpForIndexHint(
+			ThrowIfIncompatibleForceIndexOp(
 				context->forceIndexQueryOpData.type, ForceIndexOpType_VectorSearch);
 		}
 		else if (funcExpr->funcid == ApiCursorStateFunctionId())
@@ -948,7 +961,7 @@ CheckRestrictionPathNodeForIndexOperation(Expr *currentExpr,
 														 MongoQueryOperatorInputType_Bson);
 			if (operator->postgresRuntimeFunctionOidLookup() == funcExpr->funcid)
 			{
-				ThrowIfIncompatibleOpForIndexHint(
+				ThrowIfIncompatibleForceIndexOp(
 					context->forceIndexQueryOpData.type, ForceIndexOpType_Text);
 				context->forceIndexQueryOpData.type = ForceIndexOpType_Text;
 			}
@@ -981,6 +994,39 @@ CheckRestrictionPathNodeForIndexOperation(Expr *currentExpr,
 										runtimeDollarIn);
 						}
 					}
+				}
+			}
+			else if (EnableExtendedIndexes)
+			{
+				/* otherwise check if this function matches an extended index AM */
+				QueryExtendedIndexContext *indexAmContext =
+					MatchRestrictionPathExprByExtendedIndex((Expr *) funcExpr, context);
+				if (indexAmContext != NULL)
+				{
+					ThrowIfIncompatibleForceIndexOp(
+						context->forceIndexQueryOpData.type,
+						ForceIndexOpType_ExtendedIndex);
+
+					/* Check if a different extended AM already claimed this context */
+					if (context->forceIndexQueryOpData.type ==
+						ForceIndexOpType_ExtendedIndex &&
+						context->forceIndexQueryOpData.opExtraState != NULL)
+					{
+						QueryExtendedIndexContext *existingContext =
+							(QueryExtendedIndexContext *) context->forceIndexQueryOpData.
+							opExtraState;
+						if (existingContext->indexAmEntry != indexAmContext->indexAmEntry)
+						{
+							ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+											errmsg(
+												"Conflicting extended index: '%s' and '%s'",
+												existingContext->indexAmEntry->am_name,
+												indexAmContext->indexAmEntry->am_name)));
+						}
+					}
+
+					context->forceIndexQueryOpData.type = ForceIndexOpType_ExtendedIndex;
+					context->forceIndexQueryOpData.opExtraState = indexAmContext;
 				}
 			}
 		}
@@ -1059,6 +1105,40 @@ CheckRestrictionPathNodeForIndexOperation(Expr *currentExpr,
 									equalityRestrictionData);
 					}
 				}
+			}
+		}
+		else if (EnableExtendedIndexes)
+		{
+			/* otherwise check if this operator matches an extended index AM */
+			QueryExtendedIndexContext *indexAmContext =
+				MatchRestrictionPathExprByExtendedIndex((Expr *) opExpr, context);
+			if (indexAmContext != NULL)
+			{
+				/* Check if the current force index type is already set and is not compatible */
+				ThrowIfIncompatibleForceIndexOp(
+					context->forceIndexQueryOpData.type,
+					ForceIndexOpType_ExtendedIndex);
+
+				/* Check if a different extended AM already claimed this context */
+				if (context->forceIndexQueryOpData.type ==
+					ForceIndexOpType_ExtendedIndex &&
+					context->forceIndexQueryOpData.opExtraState != NULL)
+				{
+					QueryExtendedIndexContext *existingContext =
+						(QueryExtendedIndexContext *) context->forceIndexQueryOpData.
+						opExtraState;
+					if (existingContext->indexAmEntry != indexAmContext->indexAmEntry)
+					{
+						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+										errmsg(
+											"Conflicting extended index: '%s' and '%s'",
+											existingContext->indexAmEntry->am_name,
+											indexAmContext->indexAmEntry->am_name)));
+					}
+				}
+
+				context->forceIndexQueryOpData.type = ForceIndexOpType_ExtendedIndex;
+				context->forceIndexQueryOpData.opExtraState = indexAmContext;
 			}
 		}
 	}
@@ -4706,6 +4786,30 @@ ProcessRestrictionInfoAndRewriteFuncExpr(Expr *clause,
 															args),
 														NULL);
 			}
+
+			/* Delegate to extended index AM rewrite hook if available */
+			if (EnableExtendedIndexes &&
+				context->forceIndexQueryOpData.type == ForceIndexOpType_ExtendedIndex &&
+				context->forceIndexQueryOpData.opExtraState != NULL)
+			{
+				QueryExtendedIndexContext *amContext =
+					(QueryExtendedIndexContext *)
+					context->forceIndexQueryOpData.opExtraState;
+				if (amContext->indexAmEntry != NULL &&
+					amContext->indexAmEntry->query_index_path_support_funcs != NULL)
+				{
+					QueryIndexPathSupportFuncs *support_funcs =
+						amContext->indexAmEntry->query_index_path_support_funcs;
+					Expr *rewritten =
+						support_funcs->rewriteFuncExprFunc(funcExpr, context,
+														   trimClauses);
+
+					if (rewritten != (Expr *) funcExpr)
+					{
+						return rewritten;
+					}
+				}
+			}
 		}
 	}
 	else if (IsA(clause, NullTest))
@@ -5739,6 +5843,132 @@ static void
 PrimaryKeyLookupUnableToFindIndex(void)
 {
 	/* Do nothing and fall back to current behavior/logic */
+}
+
+
+static List *
+UpdateIndexListForExtendedIndex(List *existingIndex,
+								ReplaceExtensionFunctionContext *context)
+{
+	if (!EnableExtendedIndexes)
+	{
+		return existingIndex;
+	}
+
+	if (context->forceIndexQueryOpData.type == ForceIndexOpType_ExtendedIndex &&
+		context->forceIndexQueryOpData.opExtraState != NULL)
+	{
+		QueryExtendedIndexContext *amContext =
+			(QueryExtendedIndexContext *) context->forceIndexQueryOpData.opExtraState;
+		if (amContext->indexAmEntry != NULL &&
+			amContext->indexAmEntry->query_index_path_support_funcs != NULL)
+		{
+			ForceIndexSupportFuncs *supportFuncs =
+				amContext->indexAmEntry->query_index_path_support_funcs->
+				forceIndexSupportFuncs;
+
+			return supportFuncs->updateIndexes(existingIndex, context);
+		}
+	}
+	return existingIndex;
+}
+
+
+static bool
+MatchIndexPathForExtendedIndex(IndexPath *path, void *matchContext)
+{
+	if (!EnableExtendedIndexes)
+	{
+		return false;
+	}
+
+	if (matchContext != NULL)
+	{
+		QueryExtendedIndexContext *amContext =
+			(QueryExtendedIndexContext *) matchContext;
+		if (amContext->indexAmEntry != NULL &&
+			amContext->indexAmEntry->query_index_path_support_funcs != NULL)
+		{
+			ForceIndexSupportFuncs *supportFuncs =
+				amContext->indexAmEntry->query_index_path_support_funcs->
+				forceIndexSupportFuncs;
+
+			return supportFuncs->matchIndexPath(path, matchContext);
+		}
+	}
+	return false;
+}
+
+
+static bool
+TryUseAlternateIndexForExtendedIndex(PlannerInfo *root, RelOptInfo *rel,
+									 ReplaceExtensionFunctionContext *context,
+									 MatchIndexPath matchIndexPath)
+{
+	if (!EnableExtendedIndexes)
+	{
+		return false;
+	}
+
+	if (context->forceIndexQueryOpData.type == ForceIndexOpType_ExtendedIndex &&
+		context->forceIndexQueryOpData.opExtraState != NULL)
+	{
+		QueryExtendedIndexContext *amContext =
+			(QueryExtendedIndexContext *) context->forceIndexQueryOpData.opExtraState;
+		if (amContext->indexAmEntry != NULL &&
+			amContext->indexAmEntry->query_index_path_support_funcs != NULL)
+		{
+			ForceIndexSupportFuncs *supportFuncs =
+				amContext->indexAmEntry->query_index_path_support_funcs->
+				forceIndexSupportFuncs;
+
+			return supportFuncs->alternatePath(root, rel, context, matchIndexPath);
+		}
+	}
+	return false;
+}
+
+
+static void
+ThrowNoExtendedIndexFound(void)
+{
+	if (!EnableExtendedIndexes)
+	{
+		return;
+	}
+
+	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INDEXNOTFOUND),
+					errmsg(
+						"Extended index required for this query but no index found.")));
+}
+
+
+static bool
+EnableExtendedIndexForceIndexPushdown(PlannerInfo *root,
+									  ReplaceExtensionFunctionContext *context)
+{
+	if (!EnableExtendedIndexes)
+	{
+		return false;
+	}
+
+	if (context->forceIndexQueryOpData.type == ForceIndexOpType_ExtendedIndex &&
+		context->forceIndexQueryOpData.opExtraState != NULL)
+	{
+		QueryExtendedIndexContext *amContext =
+			(QueryExtendedIndexContext *) context->forceIndexQueryOpData.opExtraState;
+		if (amContext->indexAmEntry != NULL &&
+			amContext->indexAmEntry->query_index_path_support_funcs != NULL)
+		{
+			ForceIndexSupportFuncs *supportFuncs =
+				amContext->indexAmEntry->query_index_path_support_funcs->
+				forceIndexSupportFuncs;
+
+			return supportFuncs->enableForceIndexPushdown(root, context);
+		}
+	}
+
+	return false;
 }
 
 
