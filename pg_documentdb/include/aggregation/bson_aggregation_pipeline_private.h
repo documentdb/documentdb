@@ -178,6 +178,14 @@ typedef struct
 	/* Whether or not it's a point read query */
 	bool isPointReadQuery;
 
+	/* Tracks shard key filter type applied in HandleMatch. */
+	enum
+	{
+		ShardKeyFilter_None = 0,
+		ShardKeyFilter_Equality = 1,
+		ShardKeyFilter_In = 2,
+	} shardKeyFilterAppliedType;
+
 	/*Parent Stage Name*/
 	ParentStageName parentStageName;
 } AggregationPipelineBuildContext;

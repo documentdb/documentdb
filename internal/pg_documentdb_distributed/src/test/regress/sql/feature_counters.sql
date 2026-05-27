@@ -311,3 +311,73 @@ SELECT document FROM bson_aggregation_pipeline('saop_feature', '{ "aggregate": "
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
 SELECT documentdb_api.drop_database('saop_feature');
+
+-- Test: Feature counter for cursor topology
+
+-- Reset feature counters
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Local unsharded: find on an unsharded collection (first page)
+SELECT documentdb_api.insert_one('topo_db', 'unshard_coll', '{"_id": 1, "a": 1}');
+SELECT documentdb_api.insert_one('topo_db', 'unshard_coll', '{"_id": 2, "a": 2}');
+SELECT document FROM bson_aggregation_find('topo_db', '{"find": "unshard_coll", "filter": {}}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Local unsharded: getMore path
+CREATE TEMP TABLE topo_first_page AS
+SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
+    commandSpec => '{"find": "unshard_coll", "filter": {}, "batchSize": 1}', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM topo_first_page \gset
+SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "4294967294"}, "collection": "unshard_coll"}'::bson,
+    continuationSpec => :'r1_continuation');
+DROP TABLE topo_first_page;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Sharded with shard key equality (first page)
+SELECT documentdb_api.shard_collection('topo_db', 'shard_coll', '{"sk": "hashed"}', false);
+SELECT documentdb_api.insert_one('topo_db', 'shard_coll', '{"_id": 1, "sk": "val1", "a": 1}');
+SELECT documentdb_api.insert_one('topo_db', 'shard_coll', '{"_id": 2, "sk": "val1", "a": 2}');
+SELECT document FROM bson_aggregation_find('topo_db', '{"find": "shard_coll", "filter": {"sk": "val1"}}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Sharded with shard key equality: getMore path
+CREATE TEMP TABLE topo_first_page AS
+SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
+    commandSpec => '{"find": "shard_coll", "filter": {"sk": "val1"}, "batchSize": 1}', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM topo_first_page \gset
+SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "4294967294"}, "collection": "shard_coll"}'::bson,
+    continuationSpec => :'r1_continuation');
+DROP TABLE topo_first_page;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Sharded with $in on shard key (first page and getMore)
+SELECT document FROM bson_aggregation_find('topo_db', '{"find": "shard_coll", "filter": {"sk": {"$in": ["val1", "val2"]}}}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+CREATE TEMP TABLE topo_first_page AS
+SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
+    commandSpec => '{"find": "shard_coll", "filter": {"sk": {"$in": ["val1", "val2"]}}, "batchSize": 1}', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM topo_first_page \gset
+SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "4294967294"}, "collection": "shard_coll"}'::bson,
+    continuationSpec => :'r1_continuation');
+DROP TABLE topo_first_page;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- General sharded (no shard key in filter) first page and getMore
+SELECT document FROM bson_aggregation_find('topo_db', '{"find": "shard_coll", "filter": {"a": 1}}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+CREATE TEMP TABLE topo_first_page AS
+SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
+    commandSpec => '{"find": "shard_coll", "filter": {}, "batchSize": 1}', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM topo_first_page \gset
+SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "4294967294"}, "collection": "shard_coll"}'::bson,
+    continuationSpec => :'r1_continuation');
+DROP TABLE topo_first_page;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+SELECT documentdb_api.drop_database('topo_db');

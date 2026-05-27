@@ -1258,6 +1258,53 @@ MutateQueryWithPipeline(Query *query, List *aggregationStages,
 }
 
 
+/*
+ * Sets the cursor topology on the QueryData based on the collection metadata
+ * and the shard key filter type applied during query generation.
+ */
+inline static void
+SetCursorTopology(QueryData *queryData,
+				  const AggregationPipelineBuildContext *context)
+{
+	if (context->mongoCollection == NULL)
+	{
+		return;
+	}
+
+	if (context->mongoCollection->shardKey == NULL)
+	{
+		queryData->cursorTopology = context->allowShardBaseTable ?
+									CursorTopology_LocalUnsharded :
+									CursorTopology_RemoteUnsharded;
+	}
+	else
+	{
+		switch (context->shardKeyFilterAppliedType)
+		{
+			case ShardKeyFilter_Equality:
+			{
+				queryData->cursorTopology =
+					CursorTopology_ShardedWithShardKeyEquality;
+				break;
+			}
+
+			case ShardKeyFilter_In:
+			{
+				queryData->cursorTopology =
+					CursorTopology_ShardedWithInOnShardKey;
+				break;
+			}
+
+			default:
+			{
+				queryData->cursorTopology = CursorTopology_GeneralSharded;
+				break;
+			}
+		}
+	}
+}
+
+
 inline static bool
 TryAddDynamicCursorQuery(CursorParamKind cursorParamKind, QueryData *queryData,
 						 Query *query, AggregationPipelineBuildContext *context)
@@ -1517,6 +1564,7 @@ GenerateAggregationQuery(text *database, pgbson *aggregationSpec, QueryData *que
 	}
 
 	queryData->namespaceName = context.namespaceName;
+	SetCursorTopology(queryData, &context);
 
 	/* This is validated *after* the pipeline parsing happens */
 	if (!hasCursor && !explain && cursorParamKind != CursorParamKind_Persistent)
@@ -2033,6 +2081,7 @@ default_find_case:
 	}
 
 	queryData->namespaceName = context.namespaceName;
+	SetCursorTopology(queryData, &context);
 	if (context.isPointReadQuery &&
 		context.allowShardBaseTable && queryData->batchSize >= 1)
 	{
@@ -4263,6 +4312,13 @@ AddShardKeyAndIdFilters(const bson_value_t *existingValue, Query *query,
 			{
 				hasShardKeyFilters = true;
 				existingQuals = lappend(existingQuals, shardKeyFilters);
+
+				/* Track whether shard key targeting is equality or $in */
+				bool isInFilter = IsA(shardKeyFilters, BoolExpr) &&
+								  ((BoolExpr *) shardKeyFilters)->boolop == OR_EXPR;
+				context->shardKeyFilterAppliedType = isInFilter ?
+													 ShardKeyFilter_In :
+													 ShardKeyFilter_Equality;
 			}
 		}
 	}
