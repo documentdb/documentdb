@@ -425,6 +425,26 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	/* Feature mapping region - Role CRUD */
 	[FEATURE_ROLE_CREATE] = "role_create",
 
+	/* Feature mapping region - Search operators */
+	[FEATURE_SEARCH_OPERATOR_AUTO_COMPLETE] = "search_operator_auto_complete",
+	[FEATURE_SEARCH_OPERATOR_COMPOUND] = "search_operator_compound",
+	[FEATURE_SEARCH_OPERATOR_COSMOS_SEARCH] = "search_operator_cosmos_search",
+	[FEATURE_SEARCH_OPERATOR_EMBEDDED_DOCUMENT] = "search_operator_embedded_document",
+	[FEATURE_SEARCH_OPERATOR_EQUALS] = "search_operator_equals",
+	[FEATURE_SEARCH_OPERATOR_EXISTS] = "search_operator_exists",
+	[FEATURE_SEARCH_OPERATOR_GEO_SHAPE] = "search_operator_geo_shape",
+	[FEATURE_SEARCH_OPERATOR_GEO_WITHIN] = "search_operator_geo_within",
+	[FEATURE_SEARCH_OPERATOR_IN] = "search_operator_in",
+	[FEATURE_SEARCH_OPERATOR_KNN_BETA] = "search_operator_knn_beta",
+	[FEATURE_SEARCH_OPERATOR_MORELIKETHIS] = "search_operator_morelikethis",
+	[FEATURE_SEARCH_OPERATOR_NEAR] = "search_operator_near",
+	[FEATURE_SEARCH_OPERATOR_PHRASE] = "search_operator_phrase",
+	[FEATURE_SEARCH_OPERATOR_QUERY_STRING] = "search_operator_query_string",
+	[FEATURE_SEARCH_OPERATOR_RANGE] = "search_operator_range",
+	[FEATURE_SEARCH_OPERATOR_REGEX] = "search_operator_regex",
+	[FEATURE_SEARCH_OPERATOR_TEXT] = "search_operator_text",
+	[FEATURE_SEARCH_OPERATOR_WILDCARD] = "search_operator_wildcard",
+
 	/* Feature Mapping region - Aggregation stages */
 	[FEATURE_STAGE_ADD_FIELDS] = "add_fields",
 	[FEATURE_STAGE_BUCKET] = "bucket",

@@ -393,6 +393,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the <float8> * <float8> operator */
 	Oid Float8MultiplyOperatorId;
 
+	/* OID of the float4 to float8 cast function */
+	Oid Float4ToFloat8FunctionOid;
+
 	/* OID of gin_bson_exclusion_pre_consistent function */
 	Oid BsonExclusionPreconsistentFunctionId;
 
@@ -6206,6 +6209,30 @@ Float8MultiplyOperatorId(void)
 	}
 
 	return Cache.Float8MultiplyOperatorId;
+}
+
+
+/*
+ * returns the OID of the float4 to float8 cast function
+ */
+Oid
+Float4ToFloat8FunctionOid(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (Cache.Float4ToFloat8FunctionOid == InvalidOid)
+	{
+		List *functionNameList = list_make2(makeString("pg_catalog"),
+											makeString("float8"));
+
+		Oid paramOids[1] = { FLOAT4OID };
+		bool missingOK = false;
+
+		Cache.Float4ToFloat8FunctionOid =
+			LookupFuncName(functionNameList, 1, paramOids, missingOK);
+	}
+
+	return Cache.Float4ToFloat8FunctionOid;
 }
 
 
