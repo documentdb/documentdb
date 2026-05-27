@@ -1,21 +1,20 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
- * include/index_am/index_am_extend.h
+ * include/index_am/index_am_extend_create.h
  *
- * Common declarations for extended index access method utilities.
+ * Declarations for extending index creation for an index access method
  *
  *-------------------------------------------------------------------------
  */
 
-#ifndef INDEX_AM_EXTEND_H
-#define INDEX_AM_EXTEND_H
+#ifndef INDEX_AM_EXTEND_CREATE_H
+#define INDEX_AM_EXTEND_CREATE_H
 
 #include <postgres.h>
 #include <utils/rel.h>
-#include "index_am/index_am_exports.h"
+
 #include "commands/create_indexes.h"
-#include "opclass/bson_index_support.h"
 
 #define EXTENDED_INDEX_SPEC_FLAG_FIELD_NAME "isExtendedIndex"
 #define EXTENDED_INDEX_SPEC_FLAG_FIELD_NAME_LENGTH 15

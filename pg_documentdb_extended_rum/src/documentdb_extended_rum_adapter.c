@@ -82,6 +82,7 @@ static BsonIndexAmEntry DocumentDBIndexAmEntry = {
 	.get_truncation_status = RumGetTruncationStatus,
 	.supports_ordered_operator_scans = true,
 	.create_indexes_support_funcs = NULL,
+	.query_index_path_support_funcs = NULL,
 	.get_current_index_key = documentdb_rum_get_current_index_key,
 	.skip_tids_on_current_entry = documentdb_rum_skip_tids_on_current_entry,
 	.force_path_key_summarization = true,

@@ -980,7 +980,7 @@ ERROR:  $score must be a document value.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$search": { "knnBeta": { "vector": [ 3.0, 5.0, 1.1 ], "k": 1, "path": "v", "score": {} }  } } ], "cursor": {} }');
 ERROR:  Similarity index was not found for a vector similarity search query.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$search": { "unknowType": { "vector": [ 3.0, 4.9, 1.0 ], "k": 1, "path": "v" }  } } ], "cursor": {} }');
-ERROR:  Unrecognized $search option: unknowType, should be one of: cosmosSearch, knnBeta.
+ERROR:  Unrecognized $search option: unknowType
 -- non supported vector index type
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "aggregation_pipeline_vector", "indexes": [ { "key": { "v": "cosmosSearch" }, "name": "idx_vector", "cosmosSearchOptions": { "kind": "vector-diskann", "similarity": "COS", "dimensions": 3 } } ] }');
 ERROR:  Error in specification { "key" : { "v" : "cosmosSearch" }, "name" : "idx_vector", "cosmosSearchOptions" : { "kind" : "vector-diskann", "similarity" : "COS", "dimensions" : 3 } }:Invalid search index kind vector-diskann

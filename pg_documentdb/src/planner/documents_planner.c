@@ -53,6 +53,7 @@
 #include "planner/documents_custom_planner.h"
 #include "index_am/index_am_utils.h"
 #include "index_am/documentdb_rum.h"
+#include "index_am/index_am_extend_query.h"
 
 
 typedef enum DocumentDbQueryFlag
@@ -135,6 +136,7 @@ extern bool EnableCursorsOnAggregationQueryRewrite;
 extern bool EnableCompositeParallelIndexScan;
 extern bool ForceParallelScanIfAvailable;
 extern bool EnableCursorPlanBeforeRestrictionPathUpdate;
+extern bool EnableExtendedIndexes;
 extern bool EnableDynamicCursors;
 
 planner_hook_type ExtensionPreviousPlannerHook = NULL;
@@ -549,6 +551,25 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 			textIndexData->query != (Datum) 0)
 		{
 			AddExtensionQueryScanForTextQuery(root, rel, rte, textIndexData);
+		}
+	}
+	else if (EnableExtendedIndexes &&
+			 indexContext.forceIndexQueryOpData.type == ForceIndexOpType_ExtendedIndex)
+	{
+		if (indexContext.forceIndexQueryOpData.opExtraState != NULL)
+		{
+			QueryExtendedIndexContext *amContext =
+				(QueryExtendedIndexContext *) indexContext.forceIndexQueryOpData.
+				opExtraState;
+
+			if (amContext->indexAmEntry != NULL &&
+				amContext->indexAmEntry->query_index_path_support_funcs != NULL)
+			{
+				QueryIndexPathSupportFuncs *supportFuncs =
+					amContext->indexAmEntry->query_index_path_support_funcs;
+
+				supportFuncs->addExtendedQueryScanFunc(root, rel, rti, rte, amContext);
+			}
 		}
 	}
 
