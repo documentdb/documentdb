@@ -83,7 +83,7 @@ Indexes:
     "documents_rum_index_69502" documentdb_rum (document bson_rum_single_path_ops (path=a, tl='2699'))
     "documents_rum_index_69503" documentdb_rum (document bson_rum_single_path_ops (path=b, tl='2691'), document bson_rum_single_path_ops (path=c, tl='2691'))
     "documents_rum_index_69504" documentdb_rum (document documentdb_rum_hashed_ops (path=d))
-    "documents_rum_index_69505" documentdb_rum (document bson_rum_text_path_ops (weights='', iswildcard='true'))
+    "documents_rum_index_69505" documentdb_rum (document bson_rum_text_path_ops (weights='', iswildcard='true', enabledottedterms='true'))
     "documents_rum_index_69506" documentdb_rum (document bson_rum_single_path_ops (path=f, tl='2699'))
     "documents_rum_index_69507" documentdb_rum (document bson_rum_single_path_ops (path=g, iswildcard='true', tl='2699'))
     "documents_rum_index_69508" documentdb_rum (document bson_rum_single_path_ops (path=h, tl='2699'))
