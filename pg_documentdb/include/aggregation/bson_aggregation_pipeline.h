@@ -82,6 +82,21 @@ typedef enum CursorParamKind
 } CursorParamKind;
 
 /*
+ * Tracks the collection topology relevant to cursor behavior.
+ * This is set during initial query generation and then reported
+ * during getMore operations.
+ */
+typedef enum CursorTopology
+{
+	CursorTopology_Unknown = 0,
+	CursorTopology_LocalUnsharded,
+	CursorTopology_RemoteUnsharded,
+	CursorTopology_ShardedWithShardKeyEquality,
+	CursorTopology_ShardedWithInOnShardKey,
+	CursorTopology_GeneralSharded,
+} CursorTopology;
+
+/*
  * Tracks the overall query spec data
  * that can be extracted from the query.
  * Used in cursor management to page and
@@ -105,6 +120,11 @@ typedef struct
 	const char *namespaceName;
 
 	QueryCursorType cursorKind;
+
+	/*
+	 * The collection topology for this cursor query.
+	 */
+	CursorTopology cursorTopology;
 
 	/*
 	 * The requested batchSize in the query request.
