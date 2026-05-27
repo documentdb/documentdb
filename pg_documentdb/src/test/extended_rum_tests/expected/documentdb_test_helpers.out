@@ -320,6 +320,20 @@ BEGIN
   END LOOP;
 END
 $$;
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.change_index_jobs_status(active_status boolean)
+RETURNS void
+AS $$
+DECLARE
+    job_id integer;
+BEGIN
+    FOR job_id IN (SELECT jobid FROM cron.job WHERE jobname LIKE 'documentdb_index_%' order by jobid)
+    LOOP
+        UPDATE cron.job SET active = active_status WHERE jobid = job_id;
+        RAISE NOTICE 'Processing job_id: %', job_id;
+    END LOOP;
+END;
+$$
+LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION documentdb_api_internal.rum_prune_empty_entries_on_index(index_relid regclass)
 RETURNS void
 LANGUAGE c

@@ -246,7 +246,7 @@ IndexDetails *
 FindIndexWithSpecOptions(uint64 collectionId, const IndexSpec *targetIndexSpec)
 {
 	const char *cmdStr = FormatSqlQuery(
-		"SELECT index_id, index_spec, %s.index_build_is_in_progress(index_id)"
+		"SELECT index_id, index_spec, %s.index_build_is_in_progress(index_id), index_is_valid "
 		"FROM %s.collection_indexes "
 		"WHERE collection_id = $1 AND %s.index_spec_options_are_equivalent(index_spec, $2) AND"
 		" (index_is_valid OR %s.index_build_is_in_progress(index_id))",
@@ -268,9 +268,9 @@ FindIndexWithSpecOptions(uint64 collectionId, const IndexSpec *targetIndexSpec)
 
 	bool readOnly = true;
 
-	int numValues = 3;
-	bool isNull[3];
-	Datum results[3];
+	int numValues = 4;
+	bool isNull[4];
+	Datum results[4];
 	ExtensionExecuteMultiValueQueryWithArgsViaSPI(cmdStr, argCount, argTypes,
 												  argValues, argNulls, readOnly,
 												  SPI_OK_SELECT, results, isNull,
@@ -285,6 +285,7 @@ FindIndexWithSpecOptions(uint64 collectionId, const IndexSpec *targetIndexSpec)
 	indexDetails->indexSpec = *DatumGetIndexSpec(results[1]);
 	indexDetails->collectionId = collectionId;
 	indexDetails->isIndexBuildInProgress = DatumGetBool(results[2]);
+	indexDetails->isIndexValid = DatumGetBool(results[3]);
 
 	return indexDetails;
 }
@@ -300,7 +301,7 @@ IndexIdGetIndexDetailsCore(int indexId, bool includeCurrentTransactions)
 {
 	const char *cmdStr =
 		FormatSqlQuery(
-			"SELECT collection_id, index_spec, %s.index_build_is_in_progress(index_id)"
+			"SELECT collection_id, index_spec, %s.index_build_is_in_progress(index_id), index_is_valid"
 			" FROM %s.collection_indexes WHERE index_id = $1",
 			ApiInternalSchemaName, ApiCatalogSchemaName);
 
@@ -319,9 +320,9 @@ IndexIdGetIndexDetailsCore(int indexId, bool includeCurrentTransactions)
 	 */
 	bool readOnly = !includeCurrentTransactions;
 
-	int numValues = 3;
-	bool isNull[3];
-	Datum results[3];
+	int numValues = 4;
+	bool isNull[4];
+	Datum results[4];
 	ExtensionExecuteMultiValueQueryWithArgsViaSPI(cmdStr, argCount, argTypes,
 												  argValues, argNulls, readOnly,
 												  SPI_OK_SELECT, results, isNull,
@@ -336,6 +337,7 @@ IndexIdGetIndexDetailsCore(int indexId, bool includeCurrentTransactions)
 	indexDetails->collectionId = DatumGetInt64(results[0]);
 	indexDetails->indexSpec = *DatumGetIndexSpec(results[1]);
 	indexDetails->isIndexBuildInProgress = DatumGetBool(results[2]);
+	indexDetails->isIndexValid = DatumGetBool(results[3]);
 
 	return indexDetails;
 }
@@ -345,6 +347,20 @@ IndexDetails *
 IndexIdGetIndexDetails(int indexId)
 {
 	bool includeCurrentTransactions = false;
+	return IndexIdGetIndexDetailsCore(indexId, includeCurrentTransactions);
+}
+
+
+/*
+ * IndexIdGetIndexDetailsWithCurrentTxns is the same as IndexIdGetIndexDetails
+ * but pushes a fresh snapshot to see all recently committed data. Use this in
+ * background worker contexts where the transaction snapshot may be stale relative
+ * to data found via a readOnly=false queue query.
+ */
+IndexDetails *
+IndexIdGetIndexDetailsWithCurrentTxns(int indexId)
+{
+	bool includeCurrentTransactions = true;
 	return IndexIdGetIndexDetailsCore(indexId, includeCurrentTransactions);
 }
 
@@ -681,9 +697,9 @@ CollectionIdGetIndexesCore(uint64 collectionId, bool excludeIdIndex,
 	StringInfo cmdStr = makeStringInfo();
 	appendStringInfo(cmdStr,
 					 "SELECT array_agg(a.index_id), array_agg(a.index_spec), "
-					 " array_agg(a.index_build_in_progress) FROM (");
+					 " array_agg(a.index_build_in_progress), array_agg(a.index_is_valid) FROM (");
 
-	appendStringInfo(cmdStr, " SELECT index_id, index_spec");
+	appendStringInfo(cmdStr, " SELECT index_id, index_spec, index_is_valid");
 	if (includeIndexBuilds)
 	{
 		appendStringInfo(cmdStr,
@@ -720,9 +736,9 @@ CollectionIdGetIndexesCore(uint64 collectionId, bool excludeIdIndex,
 	appendStringInfo(cmdStr, " ORDER BY index_id) a");
 
 	bool readOnly = true;
-	int numValues = 3;
-	bool isNull[3];
-	Datum results[3];
+	int numValues = 4;
+	bool isNull[4];
+	Datum results[4];
 	if (enableNestedDistribution)
 	{
 		int nArgs = 0;
@@ -767,6 +783,11 @@ CollectionIdGetIndexesCore(uint64 collectionId, bool excludeIdIndex,
 	ArrayExtractDatums(indexBuildInProgressArray, BOOLOID, &buildProgressElems, nulls,
 					   &nProgressElems);
 
+	ArrayType *indexIsValidArray = DatumGetArrayTypeP(results[3]);
+	Datum *isValidElems = NULL;
+	int nValidElems = 0;
+	ArrayExtractDatums(indexIsValidArray, BOOLOID, &isValidElems, nulls, &nValidElems);
+
 	List *indexesList = NIL;
 
 	for (int i = 0; i < nelems; i++)
@@ -777,6 +798,7 @@ CollectionIdGetIndexesCore(uint64 collectionId, bool excludeIdIndex,
 		indexDetail->indexSpec = *DatumGetIndexSpec(elems[i]);
 		indexDetail->collectionId = collectionId;
 		indexDetail->isIndexBuildInProgress = DatumGetBool(buildProgressElems[i]);
+		indexDetail->isIndexValid = DatumGetBool(isValidElems[i]);
 		indexesList = lappend(indexesList, (void *) indexDetail);
 	}
 
@@ -1004,7 +1026,7 @@ IndexDetails *
 IndexNameGetIndexDetails(uint64 collectionId, const char *indexName)
 {
 	const char *cmdStr = FormatSqlQuery(
-		"SELECT index_id, index_spec, %s.index_build_is_in_progress(index_id) "
+		"SELECT index_id, index_spec, %s.index_build_is_in_progress(index_id), index_is_valid "
 		"FROM %s.collection_indexes WHERE collection_id = $1 AND"
 		" (index_spec).index_name = $2 AND"
 		" (index_is_valid OR %s.index_build_is_in_progress(index_id))",
@@ -1080,6 +1102,7 @@ IndexKeyGetMatchingIndexesCore(const char *cmdStr, uint64 collectionId, const
 		indexDetails->indexSpec = *DatumGetIndexSpec(indexSpecArrayElems[i]);
 		indexDetails->collectionId = collectionId;
 		indexDetails->isIndexBuildInProgress = indexBuildProgressArrayElems[i];
+		indexDetails->isIndexValid = !indexBuildProgressArrayElems[i];
 
 		keyMatchedIndexDetailsList = lappend(keyMatchedIndexDetailsList, indexDetails);
 	}
