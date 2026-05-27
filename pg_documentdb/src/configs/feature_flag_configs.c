@@ -227,6 +227,10 @@ bool EnablePartialMatchHasRecheck = DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK;
 #define DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TERMS true
 bool EnableSkipDottedFieldIndexTerms = DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TERMS;
 
+/* Added in v114, enabled in v114, remove after v116 */
+#define DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS true
+bool EnableDottedValueTextIndexTerms = DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS;
+
 /*
  * SECTION: Planner feature flags
  */
@@ -734,6 +738,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to skip generating index terms for fields with dotted names (e.g. literal \"a.b\" field)."),
 		NULL, &EnableSkipDottedFieldIndexTerms,
 		DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TERMS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableDottedValueTextIndexTerms", newGucPrefix),
+		gettext_noop(
+			"Whether to enable generating index terms for dotted values (e.g. \"foo.bar\")."),
+		NULL, &EnableDottedValueTextIndexTerms,
+		DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
