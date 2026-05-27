@@ -1376,6 +1376,14 @@ UpdatePostgresIndexesForPrepareUnique(List *indexOids, bool prepareUnique)
 						errmsg("prepareUnique can only be set to true")));
 	}
 
+	/* We need an active snapshot to register the constraint. */
+	bool snapshotPushed = false;
+	if (!ActiveSnapshotSet())
+	{
+		PushActiveSnapshot(GetTransactionSnapshot());
+		snapshotPushed = true;
+	}
+
 	foreach(cell, indexOids)
 	{
 		Oid currentIndexOid = lfirst_oid(cell);
@@ -1413,6 +1421,11 @@ UpdatePostgresIndexesForPrepareUnique(List *indexOids, bool prepareUnique)
 		table_close(heapRelation, AccessShareLock);
 
 		RegisterExclusionInPgIndexCatalog(currentIndexOid);
+	}
+
+	if (snapshotPushed)
+	{
+		PopActiveSnapshot();
 	}
 }
 

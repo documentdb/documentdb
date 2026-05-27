@@ -295,7 +295,8 @@ List * CheckForConflictsAndPruneExistingIndexes(uint64 collectionId,
 												List **inBuildIndexIds);
 char * CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int
 									  indexId,
-									  bool concurrently, bool isTempCollection);
+									  bool concurrently, bool isTempCollection,
+									  bool isBackgroundBuild);
 void ExecuteCreatePostgresIndexCmd(char *cmd, bool concurrently, const Oid userOid,
 								   bool useSerialExecution);
 void UpdateIndexStatsForPostgresIndex(uint64 collectionId, List *indexIdList);
