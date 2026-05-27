@@ -221,3 +221,25 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "create_indexes_text", "indexes": [ { "key": { "$**": "text" }, "name": "idx1", "weights": { "a": 2, "b": 3, "c": 4, "d": 5 } } ] }', true);
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "create_indexes_text", "indexes": [ { "key": { "f": "text" }, "name": "idx2", "default_language": "de" } ] }', true);
+
+-- Validate enableDottedTerms opclass option with GUC on/off
+CALL documentdb_api.drop_indexes('db', '{ "dropIndexes": "create_indexes_text", "index": "a_text" }');
+
+-- Create text index with GUC off: enabledottedterms should NOT appear in PG index options
+SET documentdb.enableDottedValueTextIndexTerms to off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "create_indexes_text", "indexes": [ { "key": { "a": "text" }, "name": "a_text" } ] }', true);
+\d documentdb_data.documents_6770
+CALL documentdb_api.drop_indexes('db', '{ "dropIndexes": "create_indexes_text", "index": "a_text" }');
+
+-- Create text index with GUC on: enabledottedterms=true should appear in PG index options
+SET documentdb.enableDottedValueTextIndexTerms to on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "create_indexes_text", "indexes": [ { "key": { "a": "text" }, "name": "a_text" } ] }', true);
+\d documentdb_data.documents_6770
+CALL documentdb_api.drop_indexes('db', '{ "dropIndexes": "create_indexes_text", "index": "a_text" }');
+
+-- Wildcard text index with GUC on: enabledottedterms=true should also appear
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "create_indexes_text", "indexes": [ { "key": { "$**": "text" }, "name": "idx_wild_dotted" } ] }', true);
+\d documentdb_data.documents_6770
+CALL documentdb_api.drop_indexes('db', '{ "dropIndexes": "create_indexes_text", "index": "idx_wild_dotted" }');
+
+RESET documentdb.enableDottedValueTextIndexTerms;
