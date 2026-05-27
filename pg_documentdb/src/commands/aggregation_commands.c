@@ -185,6 +185,8 @@ static Datum HandleFirstPageRequest(pgbson *querySpec, int64_t cursorId,
 
 static int64_t GenerateCursorId(int64_t inputValue);
 
+static void ReportCursorTopologyFeatureUsage(CursorTopology topology);
+
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -450,6 +452,10 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 					timeSystemVariables,
 					numIterations);
 			}
+
+			/* We don't report the cursor topology for persisted cursors,
+			 * as the query is not regenerated during getmore and querydata is not set. */
+
 			break;
 		}
 
@@ -494,6 +500,8 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 					pg_unreachable();
 				}
 			}
+
+			ReportCursorTopologyFeatureUsage(queryData.cursorTopology);
 
 			HTAB *cursorMap = CreateCursorHashSet();
 			BuildContinuationMap(cursorSpec, cursorMap);
@@ -555,6 +563,8 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 				}
 			}
 
+			ReportCursorTopologyFeatureUsage(queryData.cursorTopology);
+
 			bool isDynamicStreaming = false;
 			QueryCursorPlanResult *planResult = PlanDynamicQueryAndDetermineCursorType(
 				query, &isDynamicStreaming);
@@ -605,6 +615,7 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 			query = GenerateAggregationQuery(database,
 											 getMoreInfo.querySpec, &queryData,
 											 cursorParams, setStatementTimeout);
+			ReportCursorTopologyFeatureUsage(queryData.cursorTopology);
 			HTAB *cursorMap = CreateTailableCursorHashSet();
 			BuildTailableCursorContinuationMap(cursorSpec, cursorMap);
 			int numIterations = 0;
@@ -1119,6 +1130,9 @@ HandleFirstPageRequest(pgbson *querySpec, int64_t cursorId,
 		}
 	}
 
+	/* Report cursor topology feature counter */
+	ReportCursorTopologyFeatureUsage(queryData->cursorTopology);
+
 	/* See sql/udfs/commands_crud/query_cursors_aggregate--latest.sql */
 	AttrNumber maxOutAttrNum = 4;
 	TupleDesc tupleDesc = ConstructCursorResultTupleDesc(maxOutAttrNum);
@@ -1126,6 +1140,52 @@ HandleFirstPageRequest(pgbson *querySpec, int64_t cursorId,
 	return PostProcessCursorPage(&cursorDoc, &arrayWriter, &writer, cursorId,
 								 continuationDoc, persistConnection,
 								 postBatchResumeToken, tupleDesc);
+}
+
+
+/*
+ * Reports the feature counter for the given cursor topology.
+ */
+static void
+ReportCursorTopologyFeatureUsage(CursorTopology topology)
+{
+	switch (topology)
+	{
+		case CursorTopology_LocalUnsharded:
+		{
+			ReportFeatureUsage(FEATURE_CURSOR_TOPOLOGY_LOCAL_UNSHARDED);
+			break;
+		}
+
+		case CursorTopology_RemoteUnsharded:
+		{
+			ReportFeatureUsage(FEATURE_CURSOR_TOPOLOGY_REMOTE_UNSHARDED);
+			break;
+		}
+
+		case CursorTopology_ShardedWithShardKeyEquality:
+		{
+			ReportFeatureUsage(FEATURE_CURSOR_TOPOLOGY_SHARDED_WITH_SHARD_KEY_EQUALITY);
+			break;
+		}
+
+		case CursorTopology_ShardedWithInOnShardKey:
+		{
+			ReportFeatureUsage(FEATURE_CURSOR_TOPOLOGY_SHARDED_WITH_IN_ON_SHARD_KEY);
+			break;
+		}
+
+		case CursorTopology_GeneralSharded:
+		{
+			ReportFeatureUsage(FEATURE_CURSOR_TOPOLOGY_GENERAL_SHARDED);
+			break;
+		}
+
+		default:
+		{
+			break;
+		}
+	}
 }
 
 
