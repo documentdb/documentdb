@@ -497,7 +497,7 @@ SELECT documentdb_api.insert_one('db','dropdups_ignore','{"_id": "2", "a": "dup"
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently(p_arg=>'{"createIndexes": "dropdups_ignore", "indexes": [{"key": {"a": 1}, "name": "dropdups_ignore_idx_1", "dropDups": true, "unique": true }]}', p_database_name=>'db', p_skip_check_collection_create=>true);
 ERROR:  could not create exclusion constraint "documents_rum_index_11032_110068"
-DETAIL:  Key (document, (ROW(shard_key_value, document)::documentdb_api_catalog.shard_key_and_document))=({ "_id" : "1", "a" : "dup" }, (11004,"{ ""_id"" : ""1"", ""a"" : ""dup"" }")) conflicts with key (document, (ROW(shard_key_value, document)::documentdb_api_catalog.shard_key_and_document))=({ "_id" : "2", "a" : "dup" }, (11004,"{ ""_id"" : ""2"", ""a"" : ""dup"" }")).
+DETAIL:  Key (document, (ROW(shard_key_value, document)::shard_key_and_document))=({ "_id" : "1", "a" : "dup" }, (11004,"{ ""_id"" : ""1"", ""a"" : ""dup"" }")) conflicts with key (document, (ROW(shard_key_value, document)::shard_key_and_document))=({ "_id" : "2", "a" : "dup" }, (11004,"{ ""_id"" : ""2"", ""a"" : ""dup"" }")).
 CONTEXT:  SQL statement "ALTER TABLE documentdb_data.documents_11004 ADD CONSTRAINT documents_rum_index_11032 EXCLUDE USING documentdb_rum ( document documentdb_api_catalog.bson_rum_single_path_ops(path='a',generateNotFoundTerm=true) WITH OPERATOR(documentdb_api_catalog.=?=), ((shard_key_value, document)::documentdb_api_catalog.shard_key_and_document) documentdb_api_catalog.bson_rum_exclusion_ops(path='a') WITH OPERATOR(documentdb_api_catalog.=)) "
 select documentdb_api.delete('db', '{"delete":"dropdups_ignore", "deletes":[{"q":{"_id": "2"}, "limit": 0 } ] }');
                                          delete                                         
@@ -618,7 +618,7 @@ SELECT indexdef FROM pg_indexes, c1 where tablename = 'documents' || '_' || c1.c
                                                                                                                               indexdef                                                                                                                              
 ---------------------------------------------------------------------
  CREATE UNIQUE INDEX collection_pk_11007 ON documentdb_data.documents_11007 USING btree (shard_key_value, object_id)
- CREATE INDEX documents_rum_index_11045 ON documentdb_data.documents_11007 USING documentdb_rum (document bson_rum_text_path_ops (weights='{ "a" : 1.0 }'))
+ CREATE INDEX documents_rum_index_11045 ON documentdb_data.documents_11007 USING documentdb_rum (document bson_rum_text_path_ops (weights='{ "a" : 1.0 }', enabledottedterms='true'))
  CREATE INDEX documents_rum_index_11046 ON documentdb_data.documents_11007 USING documentdb_rum (document documentdb_rum_hashed_ops (path=a))
  CREATE INDEX documents_rum_index_11047 ON documentdb_data.documents_11007 USING documentdb_rum (document bson_rum_single_path_ops (path=a, generatenotfoundterm='true'), (ROW(shard_key_value, document)::shard_key_and_document) bson_rum_exclusion_ops (path=a))
 (4 rows)
