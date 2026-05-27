@@ -21,6 +21,7 @@
 #include "utils/query_utils.h"
 #include "utils/documentdb_errors.h"
 #include "vector/vector_spec.h"
+#include "customscan/bson_custom_query_scan.h"
 
 extern bool DefaultUseCompositeOpClass;
 extern bool EnableExtendedIndexes;
@@ -80,6 +81,9 @@ PasswordValidation_HookType
 
 DefaultEnableCompositeOpClass_HookType
 	default_enable_composite_op_class_hook = NULL;
+
+ExtendedSearchOperatorDefByName_HookType
+	extended_search_operator_def_by_name_hook = NULL;
 
 CreateTtlMetricsContext_HookType
 	create_ttl_metrics_context_hook = NULL;
