@@ -69,6 +69,8 @@
 #include "index_am/index_am_utils.h"
 #include "index_am/index_am_extend_create.h"
 
+extern bool EnableDottedValueTextIndexTerms;
+
 /* Return value of TryCreateCollectionIndexes */
 typedef struct
 {
@@ -5837,6 +5839,12 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		languageOverrideValue = quote_literal_cstr(languageOverride);
 	}
 
+	char *enableDottedTermsOption = "";
+	if (EnableDottedValueTextIndexTerms && IsClusterVersionAtleast(DocDB_V0, 114, 0))
+	{
+		enableDottedTermsOption = ",enabledottedterms=true";
+	}
+
 	bool firstColumnWritten = false;
 	char indexTermSizeLimitArg[22] = { 0 };
 	bool enableTruncation = enableLargeIndexKeys || ForceIndexTermTruncation;
@@ -6330,7 +6338,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 					}
 
 					appendStringInfo(indexExprStr,
-									 "%s document %s.bson_%s_text_path_ops(weights=%s%s%s%s%s%s)",
+									 "%s document %s.bson_%s_text_path_ops(weights=%s%s%s%s%s%s%s)",
 									 firstColumnWritten ? "," : "",
 									 indexAmOpClassCatalogSchema,
 									 indexAmSuffix,
@@ -6338,7 +6346,8 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 															indexDefKey->textPathList)),
 									 indexKeyPath->isWildcard ? ", iswildcard=true" : "",
 									 languageOptionKey, languageOptionValue,
-									 languageOverrideKey, languageOverrideValue);
+									 languageOverrideKey, languageOverrideValue,
+									 enableDottedTermsOption);
 					textOptionsIndexWritten = true;
 					break;
 				}
@@ -6387,7 +6396,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		if (indexDefKey->hasTextIndexes && !textOptionsIndexWritten)
 		{
 			appendStringInfo(indexExprStr,
-							 "%s document %s.bson_%s_text_path_ops(weights=%s%s%s%s%s%s)",
+							 "%s document %s.bson_%s_text_path_ops(weights=%s%s%s%s%s%s%s)",
 							 firstColumnWritten ? "," : "",
 							 indexAmOpClassCatalogSchema,
 							 indexAmSuffix,
@@ -6395,7 +6404,8 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 													indexDefKey->textPathList)),
 							 indexDefKey->isWildcard ? ", iswildcard=true" : "",
 							 languageOptionKey, languageOptionValue,
-							 languageOverrideKey, languageOverrideValue);
+							 languageOverrideKey, languageOverrideValue,
+							 enableDottedTermsOption);
 		}
 	}
 
