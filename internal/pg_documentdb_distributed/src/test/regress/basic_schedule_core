@@ -135,6 +135,7 @@ test: commands_create_unique_index_stats
 
 # run sequentially since it touches the index queue
 test: commands_collmod_reindex
+test: commands_create_indexes_background_unique_dist
 
 # Not to be run concurrently with other tests to prevent flakiness
 test: feature_counters
