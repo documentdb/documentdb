@@ -30,5 +30,4 @@ ALTER SYSTEM RESET documentdb.indexBuildsScheduledOnBgWorker;
 SELECT pg_reload_conf();
 
 -- Reset -- so that other tests do not get impacted
-SELECT change_index_jobs_schema.change_index_jobs_status(false);
-DROP SCHEMA change_index_jobs_schema CASCADE;
+SELECT documentdb_distributed_test_helpers.change_index_jobs_status(false);
