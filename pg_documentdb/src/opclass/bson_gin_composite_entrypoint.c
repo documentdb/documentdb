@@ -1801,6 +1801,28 @@ SetBoundaryStoppingValueGreaterThan(bool hasEqualityPrefix, bytea *serializedter
 
 
 /*
+ * CompareSerializedBsonIndexTerms returns a sort-order comparison that negates
+ * the result for descending terms. However, RunCompareOnBounds expects a
+ * natural-order comparison (larger values always yield a positive result)
+ * because it handles the descending direction separately via
+ * SetBoundaryStoppingValueLessThan/GreaterThan. This wrapper reverses the
+ * negation for descending terms so bounds checks work correctly.
+ */
+static inline int32_t
+CompareSerializedTermsNaturalOrder(bytea *indexTerm, bytea *boundTerm,
+								   const char *collation, bool *isComparisonValid)
+{
+	int32_t cmp = CompareSerializedBsonIndexTerms(indexTerm, boundTerm,
+												  collation, isComparisonValid);
+	if (IsSerializedTermValueDescending(indexTerm))
+	{
+		cmp = -cmp;
+	}
+	return cmp;
+}
+
+
+/*
  * When running compare_partial, we first check if the current term matches
  * based purely on the lower and upper bounds.
  * Returns 0 if true, -1/1 if we need to bail.
@@ -1820,7 +1842,7 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, SerializedCompositeTermPair *te
 		int32_t compareBounds;
 		if (EnableComparableTerms && !isWildCardMatch)
 		{
-			compareBounds = CompareSerializedBsonIndexTerms(
+			compareBounds = CompareSerializedTermsNaturalOrder(
 				termPair->serializedTerm, bounds->lowerBound.serializedTerm,
 				collation, &isComparisonValid);
 		}
@@ -1872,7 +1894,7 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, SerializedCompositeTermPair *te
 		int32_t compareBounds;
 		if (EnableComparableTerms && !isWildCardMatch)
 		{
-			compareBounds = CompareSerializedBsonIndexTerms(
+			compareBounds = CompareSerializedTermsNaturalOrder(
 				termPair->serializedTerm, bounds->lowerBound.serializedTerm,
 				collation, &isComparisonValid);
 		}
@@ -1951,7 +1973,7 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, SerializedCompositeTermPair *te
 		int32_t compareBounds;
 		if (EnableComparableTerms && !isWildCardMatch)
 		{
-			compareBounds = CompareSerializedBsonIndexTerms(
+			compareBounds = CompareSerializedTermsNaturalOrder(
 				termPair->serializedTerm, bounds->upperBound.serializedTerm,
 				collation, &isComparisonValid);
 		}
