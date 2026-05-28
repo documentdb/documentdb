@@ -598,7 +598,7 @@ UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 		return false;
 	}
 
-	if (!IsClusterVersionAtleast(DocDB_V0, 113, 0))
+	if (!IsClusterVersionAtleast(DocDB_V0, 112, 1))
 	{
 		ereport(ERROR, (errmsg(
 							"Dynamic streaming cursors require cluster version at least 0.113.0")));
