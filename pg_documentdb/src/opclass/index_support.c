@@ -502,7 +502,7 @@ dollar_support_object_id(PG_FUNCTION_ARGS)
 			Oid operatorOid = InvalidOid;
 
 			/* TODO(object_id_funcs): Make this more generalizable. Also move to bson_dollar_selectivity.c */
-			if (IsClusterVersionAtleast(DocDB_V0, 114, 0) &&
+			if (IsClusterVersionAtleast(DocDB_V0, 112, 1) &&
 				req->funcid == BsonRegexObjectIdMatchFunctionId())
 			{
 				const MongoIndexOperatorInfo *operator =
@@ -1745,7 +1745,7 @@ IsFuncExprTrimmable(const FuncExpr *funcExpr)
 {
 	return funcExpr->funcid == BsonIndexHintFunctionOid() ||
 		   funcExpr->funcid == BsonFullScanFunctionOid() ||
-		   (IsClusterVersionAtleast(DocDB_V0, 113, 0) &&
+		   (IsClusterVersionAtleast(DocDB_V0, 112, 1) &&
 			funcExpr->funcid == ApiCursorTrackerFunctionId());
 }
 
@@ -4775,7 +4775,7 @@ ProcessRestrictionInfoAndRewriteFuncExpr(Expr *clause,
 			 * Also TODO: Int he indexrestrictinfo of the btree index, leave the funcExpr as is
 			 * so that it can evaluate on object_id to support things like IX only SCAN
 			 */
-			if (IsClusterVersionAtleast(DocDB_V0, 114, 0) &&
+			if (IsClusterVersionAtleast(DocDB_V0, 112, 1) &&
 				EnableObjectIdFuncExprConversion &&
 				funcExpr->funcid == BsonRegexObjectIdMatchFunctionId())
 			{
@@ -6459,7 +6459,7 @@ static Expr *
 HandleSupportRequestForBtreeObjectIdCondition(SupportRequestIndexCondition *req)
 {
 	/* TODO(object_id_funcs): Make this more general purpose */
-	if (IsClusterVersionAtleast(DocDB_V0, 114, 0) &&
+	if (IsClusterVersionAtleast(DocDB_V0, 112, 1) &&
 		req->funcid == BsonRegexObjectIdMatchFunctionId())
 	{
 		return HandleRegexBtreeIdPushdown(req);
@@ -6496,7 +6496,7 @@ HandleSupportRequestForRegularObjectIdCondition(SupportRequestIndexCondition *re
 		return NULL;
 	}
 
-	if (IsClusterVersionAtleast(DocDB_V0, 114, 0) &&
+	if (IsClusterVersionAtleast(DocDB_V0, 112, 1) &&
 		req->funcid == BsonRegexObjectIdMatchFunctionId())
 	{
 		/* Check if the index is valid for the function */
