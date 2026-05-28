@@ -19,6 +19,11 @@ else
     PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB) -Iinclude
 endif
 
+ifeq ($(RUM_BUILT_IN_RMGR_MODE), yes)
+    PG_CPPFLAGS += -DRUM_BUILT_IN_RMGR_MODE
+    PG_CFLAGS += -DRUM_BUILT_IN_RMGR_MODE
+endif
+
 # Update to notify roaring to use the C atomics implementation (as opposed to c++): See roaring.h CROARING_ATOMIC_IMPL_C
 PG_CFLAGS += -DCROARING_ATOMIC_IMPL=3
 PG_CPPFLAGS += -DCROARING_ATOMIC_IMPL=3

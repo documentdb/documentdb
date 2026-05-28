@@ -35,6 +35,18 @@ PGDLLEXPORT bool RumThrowErrorOnInvalidDataPage =
 #define RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT true
 PGDLLEXPORT bool RumTrackIncompleteSplit = RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT;
 
+/* FeatureFlag: Added in v114, enabled in v114, remove after v125 */
+#define RUM_DEFAULT_ALLOW_REPLACE_ON_INSERT_TUPLE true
+PGDLLEXPORT bool RumAllowReplaceOnInsertTuple = RUM_DEFAULT_ALLOW_REPLACE_ON_INSERT_TUPLE;
+
+/* TestingConfig: This is not ready for real consumption */
+#define RUM_DEFAULT_ENABLE_XLOG_INSERT_ENTRY false
+PGDLLEXPORT bool RumEnableXlogInsertEntry = RUM_DEFAULT_ENABLE_XLOG_INSERT_ENTRY;
+
+/* TestingConfig: This is not ready for real consumption */
+#define RUM_DEFAULT_ENABLE_CUSTOM_XLOG_RMRG false
+PGDLLEXPORT bool EnableCustomXlogRmgr = RUM_DEFAULT_ENABLE_CUSTOM_XLOG_RMRG;
+
 /* FeatureFlag: Added in v108, enabled in v108, remove after v121 */
 #define RUM_DEFAULT_FIX_INCOMPLETE_SPLIT true
 PGDLLEXPORT bool RumFixIncompleteSplit = RUM_DEFAULT_FIX_INCOMPLETE_SPLIT;
@@ -361,6 +373,30 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumTrackIncompleteSplit,
 		RUM_DEFAULT_TRACK_INCOMPLETE_SPLIT,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+	DefineCustomBoolVariable(
+		psprintf("%s.allow_replace_on_insert_tuple", documentDBRumGucPrefix),
+		"Sets whether or not to allow replacing an existing tuple on insert",
+		NULL,
+		&RumAllowReplaceOnInsertTuple,
+		RUM_DEFAULT_ALLOW_REPLACE_ON_INSERT_TUPLE,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_xlog_insert_entry", documentDBRumGucPrefix),
+		"Sets whether or not to enable XLOG insert entry",
+		NULL,
+		&RumEnableXlogInsertEntry,
+		RUM_DEFAULT_ENABLE_XLOG_INSERT_ENTRY,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_custom_xlog_rmgr", documentDBRumGucPrefix),
+		"Sets whether or not to enable the custom XLOG resource manager",
+		NULL,
+		&EnableCustomXlogRmgr,
+		RUM_DEFAULT_ENABLE_CUSTOM_XLOG_RMRG,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 

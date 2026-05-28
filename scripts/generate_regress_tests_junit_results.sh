@@ -173,7 +173,226 @@ process_files() {
             grep -E "test.*\.\.\.|\.\.\.*ok|\.\.\.*FAILED|\.\.\.*PASSED|^ok [0-9]|^not ok [0-9]" "$file_path" | head -5 | sed 's/^/DEBUG: PATTERN|/' >&2 || log_debug "No pattern matches found"
         fi
 
-        # Use awk to parse the file
+        # Detect if file is prove TAP output (contains "wallclock secs" or "t/*.pl ..")
+        local is_prove_output=0
+        if grep -qE 'wallclock secs|^t/.*\.pl[[:space:]]+\.\.' "$file_path" 2>/dev/null; then
+            is_prove_output=1
+            log_verbose "Detected prove TAP format in: $file_path"
+        fi
+
+        if [[ $is_prove_output -eq 1 ]]; then
+            # Parse prove TAP output format (from Perl prove harness)
+            # Emits one JUnit testcase per .pl test file.
+            # Passing file: "t/001_test.pl .. ok"
+            # Failing file: "t/001_test.pl (Wstat: N Tests: N Failed: N)" in summary
+            # Timing: "Files=N, Tests=N, N wallclock secs (...)"
+            awk -v file_path="$file_path" -v verbose="$VERBOSE" -v debug="$DEBUG" '
+            BEGIN {
+                current_file = ""
+                total_wallclock = 0
+                prove_file_count = 0
+                in_summary = 0
+                result_fail_seen = 0
+                pending_diagnostics = ""
+            }
+
+            # Collect diagnostic and failure lines for context
+            # These appear before the file result line, so buffer them as "pending"
+            /^#[[:space:]]+Failed test/ {
+                pending_diagnostics = pending_diagnostics $0 "\n"
+                next
+            }
+            /^#[[:space:]]+(at |got:|expected:)/ {
+                pending_diagnostics = pending_diagnostics $0 "\n"
+                next
+            }
+            /^# Looks like you failed/ {
+                pending_diagnostics = pending_diagnostics $0 "\n"
+                next
+            }
+
+            # Match prove file result: "t/something.pl .. ok" or "t/something.pl .. "
+            # May have leading whitespace when prove aligns output
+            /[[:space:]]*t\/.*\.pl[[:space:]]+\.\./ {
+                # Extract filename: strip leading whitespace, then take up to " .."
+                fname = $0
+                sub(/^[[:space:]]+/, "", fname)
+                sub(/[[:space:]]+\.\..*$/, "", fname)
+                if (fname ~ /^t\/.*\.pl$/) {
+                    current_file = fname
+                    prove_file_count++
+
+                    # Attach any buffered diagnostics to this file
+                    if (pending_diagnostics != "") {
+                        fail_details[current_file] = pending_diagnostics fail_details[current_file]
+                        pending_diagnostics = ""
+                    }
+
+                    if ($0 ~ /\.\.[[:space:]]*\.?[[:space:]]*ok/) {
+                        file_status[current_file] = "ok"
+                        if (debug == 1) {
+                            printf "DEBUG: prove file PASS: %s\n", current_file > "/dev/stderr"
+                        }
+                    } else {
+                        file_status[current_file] = "pending"
+                    }
+                }
+                next
+            }
+
+            # Match "not ok N - description" lines (subtest failures)
+            /^not ok [0-9]+/ {
+                if (current_file != "") {
+                    file_status[current_file] = "failed"
+                    fail_details[current_file] = fail_details[current_file] $0 "\n"
+                }
+                next
+            }
+
+            # Match "Dubious" and "Failed N/M subtests" lines
+            /^Dubious,/ || /^Failed [0-9]+\/[0-9]+ subtests/ {
+                if (current_file != "") {
+                    fail_details[current_file] = fail_details[current_file] $0 "\n"
+                }
+                next
+            }
+
+            # Detect "Test Summary Report" section
+            /^Test Summary Report/ {
+                in_summary = 1
+                next
+            }
+            /^---+$/ && in_summary == 1 { next }
+
+            # Parse summary entries: "t/file.pl (Wstat: N Tests: N Failed: N)"
+            in_summary && /^t\/.*\.pl[[:space:]]+\(Wstat:/ {
+                # Extract filename
+                fname = $0
+                sub(/[[:space:]]+\(Wstat:.*$/, "", fname)
+
+                # Extract Tests and Failed counts
+                line = $0
+                tests_val = ""
+                failed_val = ""
+                if (match(line, /Tests:[[:space:]]*[0-9]+/)) {
+                    tests_val = substr(line, RSTART, RLENGTH)
+                    sub(/Tests:[[:space:]]*/, "", tests_val)
+                }
+                if (match(line, /Failed:[[:space:]]*[0-9]+/)) {
+                    failed_val = substr(line, RSTART, RLENGTH)
+                    sub(/Failed:[[:space:]]*/, "", failed_val)
+                }
+
+                if (fname ~ /^t\/.*\.pl$/) {
+                    # If this file was not seen in the file result lines, count it
+                    if (!(fname in file_status)) {
+                        prove_file_count++
+                    }
+                    file_status[fname] = "failed"
+                    summary_tests[fname] = tests_val
+                    summary_failures[fname] = failed_val
+                    # Update current_file so subsequent detail lines attach here
+                    current_file = fname
+                    if (debug == 1) {
+                        printf "DEBUG: prove summary FAIL: %s (tests=%s, failed=%s)\n", fname, tests_val, failed_val > "/dev/stderr"
+                    }
+                }
+                next
+            }
+
+            # Collect additional summary detail lines
+            in_summary && /^[[:space:]]+(Failed test|Non-zero exit status|Parse errors)/ {
+                if (current_file != "") {
+                    fail_details[current_file] = fail_details[current_file] $0 "\n"
+                }
+                next
+            }
+
+            # Parse total timing: "Files=N, Tests=N, N wallclock secs"
+            /^Files=[0-9]+, Tests=[0-9]+,/ {
+                line = $0
+                # Extract wallclock value: number (possibly decimal) before "wallclock secs"
+                if (match(line, /[0-9]+\.?[0-9]*[[:space:]]+wallclock secs/)) {
+                    wc = substr(line, RSTART, RLENGTH)
+                    sub(/[[:space:]]+wallclock secs/, "", wc)
+                    total_wallclock = wc + 0
+                }
+                in_summary = 0
+                next
+            }
+
+            # Detect "Result: FAIL"
+            /^Result:[[:space:]]+FAIL/ {
+                result_fail_seen = 1
+                next
+            }
+
+            END {
+                if (prove_file_count == 0) {
+                    if (debug == 1) {
+                        printf "DEBUG: No prove test files found in %s\n", file_path > "/dev/stderr"
+                    }
+
+                    # If Result: FAIL was seen but no files parsed, emit a synthetic failure
+                    if (result_fail_seen) {
+                        duration_sec = total_wallclock > 0 ? total_wallclock : 0
+                        duration_ms = int(duration_sec * 1000)
+                        printf "%s|%s|%.3f|%d|%s|\n", "prove_run", "failed", duration_sec, duration_ms, file_path
+                    }
+                } else {
+                    # Distribute wallclock evenly across files
+                    per_file_time = total_wallclock / prove_file_count
+
+                    for (f in file_status) {
+                        status = file_status[f]
+                        # Treat "pending" (no explicit ok, no summary failure) as failed
+                        if (status == "pending") status = "failed"
+
+                        duration_sec = per_file_time
+                        duration_ms = int(duration_sec * 1000)
+
+                        # Build test name from filename (strip t/ and .pl)
+                        test_name = f
+                        gsub(/^t\//, "", test_name)
+                        gsub(/\.pl$/, "", test_name)
+
+                        # Encode failure details if present
+                        encoded = ""
+                        if (status == "failed") {
+                            details = ""
+                            if (fail_details[f] != "") details = details fail_details[f]
+                            if (f in summary_tests) {
+                                details = details "Tests: " summary_tests[f] ", Failed: " summary_failures[f] "\n"
+                            }
+                            if (details != "") {
+                                # Use a file-based approach for reliable base64 encoding
+                                tmpf = "/tmp/prove_details_" ENVIRON["PPID"] "_" systime()
+                                printf "%s", details > tmpf
+                                close(tmpf)
+                                bcmd = "base64 -w 0 < " tmpf
+                                bcmd | getline encoded
+                                close(bcmd)
+                                system("rm -f " tmpf)
+                            }
+                        }
+
+                        printf "%s|%s|%.3f|%d|%s|%s\n", test_name, status, duration_sec, duration_ms, file_path, encoded
+
+                        if (verbose == 1) {
+                            printf "  Found prove test: %s (%s, %.1fs)\n", test_name, status, duration_sec > "/dev/stderr"
+                        }
+                    }
+                }
+
+                if (debug == 1) {
+                    printf "DEBUG: prove format - %d files, wallclock=%.1f, result_fail=%d\n", prove_file_count, total_wallclock, result_fail_seen > "/dev/stderr"
+                }
+                if (verbose == 1) {
+                    printf "  Found %d prove test file results\n", prove_file_count > "/dev/stderr"
+                }
+            }' "$file_path" >> "$temp_file" || true
+        else
+        # Use awk to parse pg_regress / TAP format with duration
         awk -v file_path="$file_path" -v verbose="$VERBOSE" -v debug="$DEBUG" -v diffs_file="$diffs_temp_file" '
         BEGIN {
             file_tests = 0
@@ -325,6 +544,7 @@ process_files() {
                 printf "  Found %d test results (%d failures)\n", file_tests, file_failures > "/dev/stderr"
             }
         }' "$file_path" >> "$temp_file" || true
+        fi
         
         # Cleanup diffs temp file
         rm -f "$diffs_temp_file"
