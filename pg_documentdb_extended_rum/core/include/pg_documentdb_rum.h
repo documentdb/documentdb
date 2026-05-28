@@ -51,7 +51,35 @@ typedef uint16 RumVacuumCycleId;
  * still OK, as long as RUM isn't using all of the high-order bits in its
  * flags word, because that way the flags word cannot match the page ID used
  * by SP-GiST.
+ *
+ * In RUM_BUILT_IN_RMGR_MODE, the page opaque data is compatible with GIN's format.
  */
+#ifdef RUM_BUILT_IN_RMGR_MODE
+typedef struct RumPageOpaqueData
+{
+	/* SECTION: GIN PageOpaqueData */
+	BlockNumber rightlink;      /* next page if any */
+
+	/* number of PostingItems on GIN_DATA & ~GIN_LEAF page.
+	 * On GIN_LIST page, number of heap tuples.
+	 */
+	union
+	{
+		OffsetNumber dataPageMaxoff;        /* number entries on RUM_DATA page: number of
+		                                     * heap ItemPointers on RUM_DATA|RUM_LEAF page
+		                                     * or number of PostingItems on RUM_DATA &
+		                                     * ~RUM_LEAF page. */
+
+		OffsetNumber entryPageUnused;
+	};
+	uint16 flags;               /* see bit definitions below */
+
+	/* Extra data for RUM */
+	BlockNumber leftlink;       /* prev page if any */
+	OffsetNumber dataPageFreespace;
+	RumVacuumCycleId cycleId; /* The vacuum cycleId */
+} RumPageOpaqueData;
+#else
 typedef struct RumPageOpaqueData
 {
 	BlockNumber leftlink;       /* prev page if any */
@@ -70,9 +98,11 @@ typedef struct RumPageOpaqueData
 	uint16 flags;               /* see bit definitions below */
 	RumVacuumCycleId cycleId; /* The vacuum cycleId */
 }   RumPageOpaqueData;
+#endif
 
 typedef RumPageOpaqueData *RumPageOpaque;
 
+/* Keep the flags for 0, 1, 2, 3 the same as GIN. */
 #define RUM_DATA (1 << 0)
 #define RUM_LEAF (1 << 1)
 #define RUM_DELETED (1 << 2)
@@ -82,9 +112,11 @@ typedef RumPageOpaqueData *RumPageOpaque;
  * of LP_DEAD for posting tree pages.
  */
 
+/* 4 is GIN_LIST - unused for RUM */
 /* DEPRECATED (REUSABLE): #define RUM_LIST (1 << 4) */
 #define RUM_PAGE_IS_DEAD_ROWS (1 << 4)
 
+/* GIN_LIST_FULLROW - unused for RUM */
 /* DEPRECATED (REUSABLE): #define RUM_LIST_FULLROW (1 << 5) */
 #define RUM_HALF_DEAD (1 << 6)
 #define RUM_INCOMPLETE_SPLIT (1 << 7)   /* page was split, but parent not updated */
@@ -142,7 +174,13 @@ typedef struct RumMetaPageData
 	int64 nEntries;
 }   RumMetaPageData;
 
+#ifdef RUM_BUILT_IN_RMGR_MODE
+
+/* In RUM_BUILT_IN_RMGR_MODE, bump the version number */
+#define RUM_CURRENT_VERSION (0xC0DE0003)
+#else
 #define RUM_CURRENT_VERSION (0xC0DE0002)
+#endif
 
 #define RumPageGetMeta(p) \
 	((RumMetaPageData *) PageGetContents(p))
@@ -603,7 +641,7 @@ typedef struct RumBtreeData
 	OffsetNumber (*findChildPtr)(RumBtree, Page, BlockNumber, OffsetNumber);
 	BlockNumber (*getLeftMostPage)(RumBtree, Page);
 	bool (*isEnoughSpace)(RumBtree, Buffer, OffsetNumber);
-	void (*placeToPage)(RumBtree, Page, OffsetNumber);
+	bool (*placeToPage)(RumBtree, Page, OffsetNumber, bool);
 	Page (*splitPage)(RumBtree, Buffer, Buffer, Page, Page, OffsetNumber);
 	void (*fillRoot)(RumBtree, Buffer, Buffer, Buffer, Page, Page, Page);
 	void (*fillBtreeForIncompleteSplit)(RumBtree, RumBtreeStack *, Buffer);
@@ -1039,6 +1077,12 @@ extern bool rumvalidate(Oid opclassoid);
 /* rumvacuum.c */
 extern void rumVacuumPruneEmptyEntries(Relation indexRel);
 
+/* rumxlogcompat.c */
+extern bool SupportsXLogInsertForEntry(Page page, Buffer childbuf);
+extern void WriteInsertWalRecord(Buffer buffer, Page page);
+extern void WriteInsertEntryWalRecord(bool isDelete, OffsetNumber off, IndexTuple entry);
+extern void DefineCustomRumRmgr(void);
+
 /* rumbulk.c */
 #if PG_VERSION_NUM <= 100006 || PG_VERSION_NUM == 110000
 typedef RBNode RBTNode;
@@ -1147,7 +1191,10 @@ extern PGDLLIMPORT bool RumSkipResetOnDeadEntryPage;
 extern PGDLLIMPORT bool RumEnableOrderedOperatorScans;
 extern PGDLLIMPORT int RumDefaultPageFillFactor;
 extern PGDLLIMPORT bool RumEnablePageFillFactor;
+extern PGDLLIMPORT bool RumAllowReplaceOnInsertTuple;
+extern PGDLLIMPORT bool RumEnableXlogInsertEntry;
 extern PGDLLIMPORT bool RumEnableBtreeLockOrder;
+extern PGDLLIMPORT bool EnableCustomXlogRmgr;
 
 /* Gucs used by tests */
 extern PGDLLIMPORT bool RumForceOrderedIndexScan;
