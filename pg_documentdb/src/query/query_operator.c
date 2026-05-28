@@ -4037,6 +4037,27 @@ ValidateAndGetObjectIdQual(List *opArgs, IdFilterWalkerContext *context,
 }
 
 
+static void
+ConvertQuerySpecToBsonQuery(Expr *querySpec)
+{
+	if (IsA(querySpec, Const))
+	{
+		Const *constExpr = (Const *) querySpec;
+		constExpr->consttype = BsonQueryTypeId();
+	}
+	else if (IsA(querySpec, Var))
+	{
+		Var *varExpr = (Var *) querySpec;
+		varExpr->vartype = BsonQueryTypeId();
+	}
+	else if (IsA(querySpec, Param))
+	{
+		Param *paramExpr = (Param *) querySpec;
+		paramExpr->paramtype = BsonQueryTypeId();
+	}
+}
+
+
 static bool
 TryConvertExistingExpression(FuncExpr *expr, IdFilterWalkerContext *context,
 							 const MongoIndexOperatorInfo *operator)
@@ -4063,8 +4084,11 @@ TryConvertExistingExpression(FuncExpr *expr, IdFilterWalkerContext *context,
 									   DOCUMENT_DATA_TABLE_OBJECT_ID_VAR_ATTR_NUMBER,
 									   BsonTypeId(), -1, InvalidOid, 0);
 			expr->funcid = BsonRegexObjectIdMatchFunctionId();
-			expr->args = list_make3(linitial(expr->args), objectIdVar, lsecond(
-										expr->args));
+
+			Expr *querySpec = lsecond(expr->args);
+			ConvertQuerySpecToBsonQuery(querySpec);
+			expr->args = list_make3(linitial(expr->args), objectIdVar, querySpec);
+
 			return true;
 		}
 
