@@ -40,20 +40,60 @@ PGDLLEXPORT void
 _PG_init(void)
 {
 	/* Assert things about the storage format */
+
+#ifdef RUM_BUILT_IN_RMGR_MODE
+
+	/* GIN has rightLink at offset 0*/
+	StaticAssertExpr(offsetof(RumPageOpaqueData, rightlink) == 0,
+					 "rightlink must be the 1st field with a specific offset");
+
+	/* Gin has maxoff at offset 4 */
+	StaticAssertExpr(offsetof(RumPageOpaqueData, dataPageMaxoff) == sizeof(uint32_t),
+					 "maxoff must be the 3rd field with a specific offset");
+	StaticAssertExpr(offsetof(RumPageOpaqueData, entryPageUnused) == sizeof(uint32_t),
+					 "entryPageCycleId must be the 3rd field with a specific offset");
+
+	/* GIN flags is at offset 6 */
+	StaticAssertExpr(offsetof(RumPageOpaqueData, flags) == sizeof(uint32_t) +
+					 sizeof(uint16_t),
+					 "flags must be the 3rd field with a specific offset");
+
+	/* Unique to RUM */
+	StaticAssertExpr(offsetof(RumPageOpaqueData, leftlink) == sizeof(uint32_t) +
+					 sizeof(uint32_t),
+					 "leftlink must be the 3rd field with a specific offset");
+
+	/* Unique to RUM */
+	StaticAssertExpr(offsetof(RumPageOpaqueData, dataPageFreespace) == sizeof(uint64_t) +
+					 sizeof(uint32_t),
+					 "freespace must be the 3rd field with a specific offset");
+
+	/* Unique to RUM */
+	StaticAssertExpr(offsetof(RumPageOpaqueData, cycleId) == sizeof(uint64_t) +
+					 sizeof(uint32_t) + sizeof(uint16_t),
+					 "cycleId must be the 4th field with a specific offset");
+#else
+	StaticAssertExpr(offsetof(RumPageOpaqueData, rightlink) == sizeof(uint32_t),
+					 "rightlink must be the 1st field with a specific offset");
 	StaticAssertExpr(offsetof(RumPageOpaqueData, dataPageMaxoff) == sizeof(uint64_t),
 					 "maxoff must be the 3rd field with a specific offset");
 	StaticAssertExpr(offsetof(RumPageOpaqueData, entryPageUnused) == sizeof(uint64_t),
 					 "entryPageCycleId must be the 3rd field with a specific offset");
-	StaticAssertExpr(offsetof(RumPageOpaqueData, dataPageFreespace) == sizeof(uint64_t) +
-					 sizeof(uint16_t),
-					 "freespace must be the 3rd field with a specific offset");
 	StaticAssertExpr(offsetof(RumPageOpaqueData, flags) == sizeof(uint64_t) +
 					 sizeof(uint32_t),
 					 "flags must be the 3rd field with a specific offset");
 
+	StaticAssertExpr(offsetof(RumPageOpaqueData, leftlink) == 0,
+					 "leftlink must be the 3rd field with a specific offset");
+	StaticAssertExpr(offsetof(RumPageOpaqueData, dataPageFreespace) == sizeof(uint64_t) +
+					 sizeof(uint16_t),
+					 "freespace must be the 3rd field with a specific offset");
+
 	StaticAssertExpr(offsetof(RumPageOpaqueData, cycleId) == sizeof(uint64_t) +
 					 sizeof(uint32_t) + sizeof(uint16_t),
 					 "cycleId must be the 4th field with a specific offset");
+#endif
+
 	StaticAssertExpr(sizeof(RumPageOpaqueData) == sizeof(uint64_t) + sizeof(uint64_t),
 					 "RumPageOpaqueData must be the 2 bigint fields worth");
 
@@ -83,6 +123,15 @@ DocumentDBRumInitCore(const char *rumGucPrefix,
 	InitializeRumVacuumState();
 
 	RegisterRoaringBitmapHooks();
+
+#if RUM_BUILT_IN_RMGR_MODE
+
+	/* We don't initialize a custom Rmgr in this path we should be using
+	 * the built-in Rmgrs for WAL logs.
+	 */
+#else
+	DefineCustomRumRmgr();
+#endif
 
 	/* Define custom GUC variables. (if any) */
 	if (DocumentDBRumLoadCommonGUCs)

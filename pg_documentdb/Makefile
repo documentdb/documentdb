@@ -76,6 +76,9 @@ check-documentdb-minimal: check-minimal
 check-extended-rum-minimal:
 	$(MAKE) -C src/test/extended_rum_tests check-minimal
 
+check-extended-rum-recovery:
+	$(MAKE) -C src/test/extended_rum_recovery_tests all
+
 check-isolation:
 	$(MAKE) -C src/test/regress check-isolation
 
