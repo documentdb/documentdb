@@ -150,7 +150,7 @@ test: commands_killop
 test: command_shard_commands
 
 # TODO join content with previous pfe tests
-test: bson_query_operator_pfe_index_pushdown
+test: bson_query_operator_pfe_index_pushdown bson_regex_object_id_pushdown_tests
 
 # Adhoc Query optimization tests
 test: bson_query_operator_in_opt
