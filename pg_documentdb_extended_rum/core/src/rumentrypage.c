@@ -564,17 +564,46 @@ entryIsEnoughSpace(RumBtree btree, Buffer buf, OffsetNumber off)
  * if child split occurred
  */
 static BlockNumber
-entryPreparePage(RumBtree btree, Page page, OffsetNumber off)
+entryPreparePage(RumBtree btree, Page page, OffsetNumber off, bool canReplace,
+				 bool *doReplace, bool *needsOverwrite)
 {
 	BlockNumber ret = InvalidBlockNumber;
 
 	Assert(btree->entry);
 	Assert(!RumPageIsData(page));
 
+	*doReplace = false;
 	if (btree->isDelete)
 	{
 		Assert(RumPageIsLeaf(page));
-		PageIndexTupleDelete(page, off);
+
+		if (RumAllowReplaceOnInsertTuple && canReplace)
+		{
+			ItemId currentItemId = PageGetItemId(page, off);
+			IndexTuple itup = (IndexTuple) PageGetItem(page, currentItemId);
+			if (!ItemIdIsNormal(currentItemId))
+			{
+				/* LP_DEAD entries - needs to replace and rewrite and revive */
+				btree->isDelete = true;
+				PageIndexTupleDelete(page, off);
+			}
+			else if (MAXALIGN(IndexTupleSize(itup)) >= MAXALIGN(IndexTupleSize(
+																	btree->entry)))
+			{
+				*doReplace = true;
+			}
+			else
+			{
+				/* Since we're just about to add PageAddItem - skip the compact on this delete */
+				btree->isDelete = true;
+				PageIndexTupleDeleteNoCompact(page, off);
+				*needsOverwrite = true;
+			}
+		}
+		else
+		{
+			PageIndexTupleDelete(page, off);
+		}
 	}
 
 	if (!RumPageIsLeaf(page) && btree->rightblkno != InvalidBlockNumber)
@@ -594,23 +623,48 @@ entryPreparePage(RumBtree btree, Page page, OffsetNumber off)
 /*
  * Place tuple on page and fills WAL record
  */
-static void
-entryPlaceToPage(RumBtree btree, Page page, OffsetNumber off)
+static bool
+entryPlaceToPage(RumBtree btree, Page page, OffsetNumber off, bool
+				 requireWalFromPlaceToPage)
 {
 	OffsetNumber placed;
 
-	entryPreparePage(btree, page, off);
+	bool canReplace = RumPageIsLeaf(page);
+	bool needsOverwrite = false;
+	bool doReplace = false;
+	entryPreparePage(btree, page, off, canReplace, &doReplace, &needsOverwrite);
 
-	placed = PageAddItem(page, (Item) btree->entry, IndexTupleSize(btree->entry), off,
-						 false, false);
-	if (placed != off)
+	if (doReplace)
 	{
-		elog(ERROR, "failed to add item to index page in \"%s\"",
-			 RelationGetRelationName(btree->index));
+		Assert(!needsOverwrite);
+		if (!PageIndexTupleOverwrite(page, off, (Item) btree->entry, IndexTupleSize(
+										 btree->entry)))
+		{
+			elog(ERROR, "failed to replace index tuple in tree in \"%s\" offset %d",
+				 RelationGetRelationName(btree->index), off);
+		}
+	}
+	else
+	{
+		placed = PageAddItem(page, (Item) btree->entry, IndexTupleSize(btree->entry), off,
+							 needsOverwrite, false);
+		if (placed != off)
+		{
+			elog(ERROR, "failed to add item to index page in \"%s\" offset %d",
+				 RelationGetRelationName(btree->index), off);
+		}
 	}
 
 	Assert(ItemIdIsNormal(PageGetItemId(page, off)));
+
+	if (requireWalFromPlaceToPage)
+	{
+		/* In the standby we need to redo for delete + add for both delete and replace */
+		WriteInsertEntryWalRecord(btree->isDelete, off, btree->entry);
+	}
+
 	btree->entry = NULL;
+	return requireWalFromPlaceToPage;
 }
 
 
@@ -644,8 +698,12 @@ entrySplitPage(RumBtree btree, Buffer lbuf, Buffer rbuf,
 	static char tupstoreStorage[2 * BLCKSZ + MAXIMUM_ALIGNOF];
 	char *tupstore = (char *) MAXALIGN(tupstoreStorage);
 
-	entryPreparePage(btree, newlPage, off);
+	bool canReplace = false;
+	bool needsOverwrite = false;
+	bool doReplace = false;
+	entryPreparePage(btree, newlPage, off, canReplace, &doReplace, &needsOverwrite);
 
+	Assert(!needsOverwrite && !doReplace);
 	maxoff = PageGetMaxOffsetNumber(newlPage);
 	ptr = tupstore;
 
