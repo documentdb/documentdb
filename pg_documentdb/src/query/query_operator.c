@@ -4045,7 +4045,7 @@ TryConvertExistingExpression(FuncExpr *expr, IdFilterWalkerContext *context,
 	{
 		case BSON_INDEX_STRATEGY_DOLLAR_REGEX:
 		{
-			if (!IsClusterVersionAtleast(DocDB_V0, 114, 0))
+			if (!IsClusterVersionAtleast(DocDB_V0, 112, 1))
 			{
 				return false;
 			}
