@@ -621,6 +621,163 @@ SELECT runtime.document, idx.document FROM documentdb_api.collection('compterm',
 ORDER BY runtime.document -> '_id';
 
 -- ========================================================================
+-- Section: Descending composite index bounds with comparable terms
+--
+-- Validates that when enableComparableTerms is ON and an index has a
+-- descending key, the bounds-checking logic in RunCompareOnBounds
+-- correctly compares index terms using natural ordering rather than
+-- sort ordering.
+-- ========================================================================
+
+-- Insert test data: equality on first key + range on descending second key
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_coll', '{"_id": 1,  "acctId": "A1", "ts": {"$date": {"$numberLong": "1700000000000"}}}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_coll', '{"_id": 2,  "acctId": "A1", "ts": {"$date": {"$numberLong": "1700100000000"}}}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_coll', '{"_id": 3,  "acctId": "A1", "ts": {"$date": {"$numberLong": "1700200000000"}}}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_coll', '{"_id": 4,  "acctId": "A1", "ts": {"$date": {"$numberLong": "1700300000000"}}}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_coll', '{"_id": 5,  "acctId": "A1", "ts": {"$date": {"$numberLong": "1700400000000"}}}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_coll', '{"_id": 6,  "acctId": "A1", "ts": {"$date": {"$numberLong": "1700500000000"}}}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_coll', '{"_id": 7,  "acctId": "A2", "ts": {"$date": {"$numberLong": "1700100000000"}}}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_coll', '{"_id": 8,  "acctId": "A2", "ts": {"$date": {"$numberLong": "1700200000000"}}}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_coll', '{"_id": 9,  "acctId": "A2", "ts": {"$date": {"$numberLong": "1700300000000"}}}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_coll', '{"_id": 10, "acctId": "A3", "ts": {"$date": {"$numberLong": "1700050000000"}}}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_coll', '{"_id": 11, "acctId": "A3", "ts": {"$date": {"$numberLong": "1700150000000"}}}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_coll', '{"_id": 12, "acctId": "A3", "ts": {"$date": {"$numberLong": "1700250000000"}}}');
+
+-- Compound index: ascending first key, descending second key
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_desc_db',
+  '{ "createIndexes": "comp_desc_coll", "indexes": [{ "key": { "acctId": 1, "ts": -1 }, "name": "acctId_1_ts_neg1" }] }', true);
+
+SELECT collection_id AS coll_col FROM documentdb_api_catalog.collections
+  WHERE database_name = 'comp_desc_db' AND collection_name = 'comp_desc_coll' \gset
+
+SELECT FORMAT('VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_%s', :coll_col) \gexec
+
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+
+-- Baseline with comparable terms OFF
+SET documentdb.enableComparableTerms TO off;
+
+SELECT document FROM bson_aggregation_find('comp_desc_db',
+  '{ "find": "comp_desc_coll", "filter": { "acctId": "A1", "ts": { "$gte": {"$date": {"$numberLong": "1700200000000"}} } }, "sort": { "acctId": 1, "ts": -1 } }');
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_coll", "pipeline": [{ "$match": { "acctId": "A1", "ts": { "$gte": {"$date": {"$numberLong": "1700200000000"}} } } }, { "$count": "n" }] }');
+
+SELECT document FROM bson_aggregation_find('comp_desc_db',
+  '{ "find": "comp_desc_coll", "filter": { "acctId": "A1", "ts": { "$lte": {"$date": {"$numberLong": "1700300000000"}} } }, "sort": { "acctId": 1, "ts": -1 } }');
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_coll", "pipeline": [{ "$match": { "acctId": "A1", "ts": { "$lte": {"$date": {"$numberLong": "1700300000000"}} } } }, { "$count": "n" }] }');
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_coll", "pipeline": [{ "$match": { "acctId": "A1", "ts": { "$gte": {"$date": {"$numberLong": "1700100000000"}}, "$lte": {"$date": {"$numberLong": "1700400000000"}} } } }, { "$count": "n" }] }');
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_coll", "pipeline": [{ "$match": { "acctId": "A1", "ts": { "$gt": {"$date": {"$numberLong": "1700200000000"}} } } }, { "$count": "n" }] }');
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_coll", "pipeline": [{ "$match": { "acctId": "A1", "ts": { "$lt": {"$date": {"$numberLong": "1700400000000"}} } } }, { "$count": "n" }] }');
+
+-- Same queries with comparable terms ON after REINDEX (must match above)
+SET documentdb.enableComparableTerms TO on;
+
+SELECT MAX(index_id) AS coll_idx FROM documentdb_api_catalog.collection_indexes
+  WHERE collection_id = :coll_col AND index_id != :coll_col \gset
+SELECT FORMAT('REINDEX INDEX documentdb_data.documents_rum_index_%s', :coll_idx) \gexec
+
+SELECT document FROM bson_aggregation_find('comp_desc_db',
+  '{ "find": "comp_desc_coll", "filter": { "acctId": "A1", "ts": { "$gte": {"$date": {"$numberLong": "1700200000000"}} } }, "sort": { "acctId": 1, "ts": -1 } }');
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_coll", "pipeline": [{ "$match": { "acctId": "A1", "ts": { "$gte": {"$date": {"$numberLong": "1700200000000"}} } } }, { "$count": "n" }] }');
+
+SELECT document FROM bson_aggregation_find('comp_desc_db',
+  '{ "find": "comp_desc_coll", "filter": { "acctId": "A1", "ts": { "$lte": {"$date": {"$numberLong": "1700300000000"}} } }, "sort": { "acctId": 1, "ts": -1 } }');
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_coll", "pipeline": [{ "$match": { "acctId": "A1", "ts": { "$lte": {"$date": {"$numberLong": "1700300000000"}} } } }, { "$count": "n" }] }');
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_coll", "pipeline": [{ "$match": { "acctId": "A1", "ts": { "$gte": {"$date": {"$numberLong": "1700100000000"}}, "$lte": {"$date": {"$numberLong": "1700400000000"}} } } }, { "$count": "n" }] }');
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_coll", "pipeline": [{ "$match": { "acctId": "A1", "ts": { "$gt": {"$date": {"$numberLong": "1700200000000"}} } } }, { "$count": "n" }] }');
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_coll", "pipeline": [{ "$match": { "acctId": "A1", "ts": { "$lt": {"$date": {"$numberLong": "1700400000000"}} } } }, { "$count": "n" }] }');
+
+-- Numeric descending key with comparable terms
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_num', '{"_id": 1, "cat": "X", "score": 10}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_num', '{"_id": 2, "cat": "X", "score": 20}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_num', '{"_id": 3, "cat": "X", "score": 30}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_num', '{"_id": 4, "cat": "X", "score": 40}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_num', '{"_id": 5, "cat": "X", "score": 50}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_num', '{"_id": 6, "cat": "Y", "score": 25}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_num', '{"_id": 7, "cat": "Y", "score": 35}');
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_desc_db',
+  '{ "createIndexes": "comp_desc_num", "indexes": [{ "key": { "cat": 1, "score": -1 }, "name": "cat_1_score_neg1" }] }', true);
+
+SELECT collection_id AS num_col FROM documentdb_api_catalog.collections
+  WHERE database_name = 'comp_desc_db' AND collection_name = 'comp_desc_num' \gset
+SELECT MAX(index_id) AS num_idx FROM documentdb_api_catalog.collection_indexes
+  WHERE collection_id = :num_col AND index_id != :num_col \gset
+
+SELECT FORMAT('REINDEX INDEX documentdb_data.documents_rum_index_%s', :num_idx) \gexec
+SELECT FORMAT('VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_%s', :num_col) \gexec
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_num", "pipeline": [{ "$match": { "cat": "X", "score": { "$gte": 30 } } }, { "$count": "n" }] }');
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_num", "pipeline": [{ "$match": { "cat": "X", "score": { "$lte": 30 } } }, { "$count": "n" }] }');
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_num", "pipeline": [{ "$match": { "cat": "X", "score": { "$gte": 20, "$lte": 40 } } }, { "$count": "n" }] }');
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_num", "pipeline": [{ "$match": { "cat": "X", "score": { "$gt": 20 } } }, { "$count": "n" }] }');
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_num", "pipeline": [{ "$match": { "cat": "X", "score": { "$lt": 40 } } }, { "$count": "n" }] }');
+
+-- Both keys descending with comparable terms
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_both', '{"_id": 1, "a": "P", "b": 100}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_both', '{"_id": 2, "a": "P", "b": 200}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_both', '{"_id": 3, "a": "P", "b": 300}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_both', '{"_id": 4, "a": "Q", "b": 150}');
+SELECT documentdb_api.insert_one('comp_desc_db', 'comp_desc_both', '{"_id": 5, "a": "Q", "b": 250}');
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_desc_db',
+  '{ "createIndexes": "comp_desc_both", "indexes": [{ "key": { "a": -1, "b": -1 }, "name": "a_neg1_b_neg1" }] }', true);
+
+SELECT collection_id AS both_col FROM documentdb_api_catalog.collections
+  WHERE database_name = 'comp_desc_db' AND collection_name = 'comp_desc_both' \gset
+SELECT MAX(index_id) AS both_idx FROM documentdb_api_catalog.collection_indexes
+  WHERE collection_id = :both_col AND index_id != :both_col \gset
+
+SELECT FORMAT('REINDEX INDEX documentdb_data.documents_rum_index_%s', :both_idx) \gexec
+SELECT FORMAT('VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_%s', :both_col) \gexec
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_both", "pipeline": [{ "$match": { "a": "P", "b": { "$gte": 200 } } }, { "$count": "n" }] }');
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_both", "pipeline": [{ "$match": { "a": "P", "b": { "$lte": 200 } } }, { "$count": "n" }] }');
+
+SELECT document FROM bson_aggregation_pipeline('comp_desc_db',
+  '{ "aggregate": "comp_desc_both", "pipeline": [{ "$match": { "a": "P", "b": { "$gte": 100, "$lte": 300 } } }, { "$count": "n" }] }');
+
+-- Cleanup descending bounds test collections
+SELECT documentdb_api.drop_collection('comp_desc_db', 'comp_desc_coll');
+SELECT documentdb_api.drop_collection('comp_desc_db', 'comp_desc_num');
+SELECT documentdb_api.drop_collection('comp_desc_db', 'comp_desc_both');
+
+SET enable_seqscan TO on;
+SET enable_bitmapscan TO on;
+
+-- ========================================================================
 -- Cleanup
 -- ========================================================================
 SET documentdb.enableComparableTerms TO off;
