@@ -359,6 +359,10 @@ bool EnableDuplicateFieldFix = DEFAULT_ENABLE_DUPLICATE_FIELD_FIX;
 #define DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVERSION true
 bool EnableObjectIdFuncExprConversion = DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVERSION;
 
+/* Added in v114, enabled in v114, remove after v117 */
+#define DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED true
+bool EnableSampleScanFixOnSharded = DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED;
+
 /*
  * SECTION: Let support feature flags
  */
@@ -1190,6 +1194,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL, &EnableObjectIdFuncExprConversion,
 		DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVERSION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableSampleScanFixOnSharded", newGucPrefix),
+		gettext_noop(
+			"Enables fix for $sample TABLESAMPLE on sharded collections."),
+		NULL,
+		&EnableSampleScanFixOnSharded,
+		DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableDeadIndexEntryMarkingByTTLTask", newGucPrefix),

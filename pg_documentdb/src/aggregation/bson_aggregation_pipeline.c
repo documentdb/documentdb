@@ -89,6 +89,7 @@ extern bool EnableOrderByIndexTerm;
 extern bool EnableGroupByCompoundIdIndexPushdown;
 extern bool EnableSortGroupStage;
 extern bool EnableSortPushToAccumulatorWithPrefix;
+extern bool EnableSampleScanFixOnSharded;
 
 /* GUC to config tdigest compression */
 extern int TdigestCompressionAccuracy;
@@ -8611,7 +8612,7 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 	RangeTblEntry *rte = linitial(query->rtable);
 
 	/* If there is a filter that's not the default filter then we can't push down sample */
-	/* TOOD: Pushdown sample to base RTE for $lookup. */
+	/* TODO: Pushdown sample to base RTE for $lookup. */
 	if (rte->rtekind == RTE_RELATION &&
 		IsDefaultJoinTree(query->jointree->quals))
 	{
@@ -8704,8 +8705,25 @@ CompareStageByStageName(const void *a, const void *b)
 
 
 /*
- * Whether or not the quals is the default
- * shard_key_value = 'int'
+ * Returns true if the node is a boolean TRUE constant.
+ */
+static inline bool
+IsBooleanTrueConst(Node *node)
+{
+	return IsA(node, Const) &&
+		   ((Const *) node)->consttype == BOOLOID &&
+		   !((Const *) node)->constisnull &&
+		   DatumGetBool(((Const *) node)->constvalue);
+}
+
+
+/*
+ * Checks whether the given node represents the default state
+ * (i.e. no user-specified filter). This is true when:
+ *  - node is NULL (no filter applied)
+ *  - node is BoolConst(TRUE) (empty match on sharded collections)
+ *  - node is a single OpExpr of shard_key_value = <bigint>
+ *    (the default shard key equality filter)
  */
 static bool
 IsDefaultJoinTree(Node *node)
@@ -8715,13 +8733,35 @@ IsDefaultJoinTree(Node *node)
 		return true;
 	}
 
+	/*
+	 * For sharded collections, query->jointree->quals starts as NULL
+	 * (no default shard key equality filter since each document has a
+	 * different hash-based shard key value). When HandleMatch({})
+	 * processes an empty match, it calls make_ands_explicit(NIL) which
+	 * returns a BoolConst(TRUE) node (the PG representation of an
+	 * always-true condition). Without this check, IsDefaultJoinTree
+	 * would not recognize BoolConst(TRUE) as equivalent to "no filter",
+	 * so HandleSample would conclude there was a user filter and skip
+	 * the TABLESAMPLE optimization.
+	 */
+	if (EnableSampleScanFixOnSharded && IsBooleanTrueConst(node))
+	{
+		return true;
+	}
+
 	if (!IsA(node, OpExpr))
 	{
 		return false;
 	}
 
+	/* Check that it's a bigint equality on the shard_key_value column
+	 * specifically, not just any bigint equality (e.g. collection_id). */
 	OpExpr *opExpr = (OpExpr *) node;
-	return opExpr->opno == BigintEqualOperatorId();
+	Expr *firstArg = linitial(opExpr->args);
+	return opExpr->opno == BigintEqualOperatorId() &&
+		   IsA(firstArg, Var) &&
+		   ((Var *) firstArg)->varattno ==
+		   DOCUMENT_DATA_TABLE_SHARD_KEY_VALUE_VAR_ATTR_NUMBER;
 }
 
 

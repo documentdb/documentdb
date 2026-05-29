@@ -2,6 +2,7 @@
 * Support non-blocking background unique index build for ordered indexes via `CREATE INDEX CONCURRENTLY` with post-processing to register exclusion constraints and validate existing rows. Guarded by `documentdb.enableNonBlockingUniqueIndexBuild` flag, enabled by default. *[Feature]*
 * Fix crash when `$natural` sort on non-base relations that are already sorted by pipeline. *[Bugfix]* (#532)
 * Fix schema validation propagation and ensure correct caching of the parsed validator across calls. *[Bugfix]*
+* Fix `$sample` TABLESAMPLE optimization not being applied on sharded collections when preceded by an empty filter. Guarded by `enableSampleScanFixOnSharded` feature flag *[Bugfix]*
 
 ### documentdb v0.113-0 (Unreleased) ###
 * Add `EnableSortPushToAccumulator` GUC to control pushing sort order into accumulator in `$sortGroup` stage *[Perf]*
