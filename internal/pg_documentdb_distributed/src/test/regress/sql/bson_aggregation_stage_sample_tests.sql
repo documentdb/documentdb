@@ -33,3 +33,22 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sampleTest
 SELECT documentdb_distributed_test_helpers.mask_plan_id_from_distributed_subplan($Q$
 EXPLAIN(costs off) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sampleTest", "pipeline": [ { "$sample": { "size": 3 } }, { "$project": { "_id": 0 } } ] }');
 $Q$);
+
+-- Empty $match + $sample on sharded collection (TABLESAMPLE expected with fix)
+SELECT documentdb_distributed_test_helpers.mask_plan_id_from_distributed_subplan($Q$
+EXPLAIN(costs off) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sampleTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 0 } } ] }');
+$Q$);
+
+-- Empty $match + $sample + $project + $sort on sharded collection (TABLESAMPLE expected)
+SELECT documentdb_distributed_test_helpers.mask_plan_id_from_distributed_subplan($Q$
+EXPLAIN(costs off) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sampleTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 0 } }, { "$sort": { "_id": 1 } } ] }');
+$Q$);
+
+-- Disable fix: empty $match + $sample on sharded collection (no TABLESAMPLE without fix)
+SET documentdb.enableSampleScanFixOnSharded TO off;
+
+SELECT documentdb_distributed_test_helpers.mask_plan_id_from_distributed_subplan($Q$
+EXPLAIN(costs off) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sampleTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 0 } } ] }');
+$Q$);
+
+RESET documentdb.enableSampleScanFixOnSharded;
