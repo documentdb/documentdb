@@ -98,3 +98,90 @@ $Q$);
          ->  Function Scan on read_intermediate_result intermediate_result
 (20 rows)
 
+-- Empty $match + $sample on sharded collection (TABLESAMPLE expected with fix)
+SELECT documentdb_distributed_test_helpers.mask_plan_id_from_distributed_subplan($Q$
+EXPLAIN(costs off) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sampleTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 0 } } ] }');
+$Q$);
+                             mask_plan_id_from_distributed_subplan                              
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   ->  Distributed Subplan X_X
+         ->  Limit
+               ->  Sort
+                     Sort Key: remote_scan."?sort?"
+                     ->  Custom Scan (Citus Adaptive)
+                           Task Count: 8
+                           Tasks Shown: One of 8
+                           ->  Task
+                                 Node: host=localhost port=58070 dbname=regression
+                                 ->  Limit
+                                       ->  Sort
+                                             Sort Key: (random())
+                                             ->  Sample Scan on documents_7000_70016 collection
+                                                   Sampling: system_rows ('3'::bigint)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on read_intermediate_result intermediate_result
+(20 rows)
+
+-- Empty $match + $sample + $project + $sort on sharded collection (TABLESAMPLE expected)
+SELECT documentdb_distributed_test_helpers.mask_plan_id_from_distributed_subplan($Q$
+EXPLAIN(costs off) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sampleTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 0 } }, { "$sort": { "_id": 1 } } ] }');
+$Q$);
+                                                                                                                                                                mask_plan_id_from_distributed_subplan                                                                                                                                                                
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   ->  Distributed Subplan X_X
+         ->  Limit
+               ->  Sort
+                     Sort Key: remote_scan."?sort?"
+                     ->  Custom Scan (Citus Adaptive)
+                           Task Count: 8
+                           Tasks Shown: One of 8
+                           ->  Task
+                                 Node: host=localhost port=58070 dbname=regression
+                                 ->  Limit
+                                       ->  Sort
+                                             Sort Key: (random())
+                                             ->  Sample Scan on documents_7000_70016 collection
+                                                   Sampling: system_rows ('3'::bigint)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Sort
+               Sort Key: (documentdb_api_catalog.bson_orderby(documentdb_api_internal.bson_dollar_project(intermediate_result.document, '{ "_id" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
+               ->  Function Scan on read_intermediate_result intermediate_result
+(22 rows)
+
+-- Disable fix: empty $match + $sample on sharded collection (no TABLESAMPLE without fix)
+SET documentdb.enableSampleScanFixOnSharded TO off;
+SELECT documentdb_distributed_test_helpers.mask_plan_id_from_distributed_subplan($Q$
+EXPLAIN(costs off) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sampleTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 0 } } ] }');
+$Q$);
+                            mask_plan_id_from_distributed_subplan                            
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   ->  Distributed Subplan X_X
+         ->  Limit
+               ->  Sort
+                     Sort Key: remote_scan."?sort?"
+                     ->  Custom Scan (Citus Adaptive)
+                           Task Count: 8
+                           Tasks Shown: One of 8
+                           ->  Task
+                                 Node: host=localhost port=58070 dbname=regression
+                                 ->  Limit
+                                       ->  Sort
+                                             Sort Key: (random())
+                                             ->  Seq Scan on documents_7000_70016 collection
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Function Scan on read_intermediate_result intermediate_result
+(19 rows)
+
+RESET documentdb.enableSampleScanFixOnSharded;
