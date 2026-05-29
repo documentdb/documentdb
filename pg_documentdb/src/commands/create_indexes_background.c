@@ -713,6 +713,8 @@ command_reindex_index_background(PG_FUNCTION_ARGS)
 
 	const char *databaseString = PG_ARGISNULL(0) ? "NULL" :
 								 quote_literal_cstr(text_to_cstring(PG_GETARG_TEXT_P(0)));
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(indexSpec);
 
 	StringInfo submitIndexBuildRequestQuery = makeStringInfo();
 	appendStringInfo(submitIndexBuildRequestQuery,
@@ -739,6 +741,8 @@ command_create_indexes_background(PG_FUNCTION_ARGS)
 	}
 
 	pgbson *indexSpec = PG_GETARG_PGBSON(1);
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(indexSpec);
 	const char *databaseString = PG_ARGISNULL(0) ? "NULL" :
 								 quote_literal_cstr(text_to_cstring(PG_GETARG_TEXT_P(0)));
 	StringInfo submitIndexBuildRequestQuery = makeStringInfo();

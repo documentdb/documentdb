@@ -28,6 +28,7 @@
 #include "metadata/metadata_cache.h"
 #include "planner/documentdb_planner.h"
 #include "utils/timeout.h"
+#include "utils/op_metadata.h"
 
 
 extern bool ThrowDeadlockOnCrud;
@@ -755,4 +756,17 @@ RewriteDocumentAddObjectIdCore(const bson_value_t *docValue,
 	}
 
 	return PgbsonWriterGetPgbson(&writer);
+}
+
+
+/*
+ * documentDbPreCommand
+ *
+ * Called at the beginning of command execution to register operation metadata
+ * for currentOp support. Thin wrapper around ExtractAndRegisterOpMetadataFromCommand.
+ */
+void
+documentDbPreCommand(pgbson *commandSpec)
+{
+	ExtractAndRegisterOpMetadataFromCommand(commandSpec);
 }

@@ -97,6 +97,7 @@
 #include "utils/index_utils.h"
 #include "utils/guc_utils.h"
 #include "schema_validation/schema_validation.h"
+#include "utils/op_metadata.h"
 
 #include "api_hooks.h"
 
@@ -439,6 +440,9 @@ command_update_bulk(PG_FUNCTION_ARGS)
 
 	ReportFeatureUsage(FEATURE_COMMAND_UPDATE_BULK);
 
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(updateSpec);
+
 	/* fetch TupleDesc for return value, not interested in resultTypeId */
 	Oid *resultTypeId = NULL;
 	TupleDesc resultTupDesc;
@@ -536,6 +540,9 @@ command_update(PG_FUNCTION_ARGS)
 	}
 
 	ReportFeatureUsage(FEATURE_COMMAND_UPDATE);
+
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(updateSpec);
 
 	/* fetch TupleDesc for return value, not interested in resultTypeId */
 	Oid *resultTypeId = NULL;

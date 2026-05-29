@@ -27,6 +27,7 @@
 #include <aggregation/bson_aggregation_pipeline.h>
 #include "aggregation/aggregation_commands.h"
 #include "infrastructure/cursor_store.h"
+#include "commands/commands_common.h"
 
 
 extern bool UseFileBasedPersistedCursors;
@@ -210,6 +211,9 @@ command_aggregate_cursor_first_page(PG_FUNCTION_ARGS)
 	pgbson *aggregationSpec = PG_GETARG_PGBSON(1);
 	int64_t cursorId = PG_ARGISNULL(2) ? 0 : PG_GETARG_INT64(2);
 
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(aggregationSpec);
+
 	Datum response = aggregate_cursor_first_page(database, aggregationSpec, cursorId);
 
 	PG_RETURN_DATUM(response);
@@ -244,6 +248,9 @@ command_find_cursor_first_page(PG_FUNCTION_ARGS)
 	text *database = PG_ARGISNULL(0) ? NULL : PG_GETARG_TEXT_P(0);
 	pgbson *findSpec = PG_GETARG_PGBSON(1);
 	int64_t cursorId = PG_ARGISNULL(2) ? 0 : PG_GETARG_INT64(2);
+
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(findSpec);
 
 	Datum response = find_cursor_first_page(database, findSpec, cursorId);
 	PG_RETURN_DATUM(response);
@@ -281,6 +288,9 @@ command_list_collections_cursor_first_page(PG_FUNCTION_ARGS)
 	text *database = PG_ARGISNULL(0) ? NULL : PG_GETARG_TEXT_P(0);
 	pgbson *listCollectionsSpec = PG_GETARG_PGBSON(1);
 
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(listCollectionsSpec);
+
 	Datum response = list_collections_first_page(database, listCollectionsSpec);
 	PG_RETURN_DATUM(response);
 }
@@ -317,6 +327,9 @@ command_list_indexes_cursor_first_page(PG_FUNCTION_ARGS)
 {
 	text *database = PG_ARGISNULL(0) ? NULL : PG_GETARG_TEXT_P(0);
 	pgbson *listIndexesSpec = PG_GETARG_PGBSON(1);
+
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(listIndexesSpec);
 
 	Datum response = list_indexes_first_page(database, listIndexesSpec);
 	PG_RETURN_DATUM(response);
@@ -356,6 +369,9 @@ command_cursor_get_more(PG_FUNCTION_ARGS)
 	text *database = PG_ARGISNULL(0) ? NULL : PG_GETARG_TEXT_P(0);
 	pgbson *getMoreSpec = PG_GETARG_PGBSON(1);
 	pgbson *cursorSpec = PG_GETARG_PGBSON(2);
+
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(getMoreSpec);
 
 	/* See sql/udfs/commands_crud/query_cursors_aggregate--latest.sql */
 	AttrNumber maxOutAttrNum = 2;
@@ -651,6 +667,9 @@ command_distinct_query(PG_FUNCTION_ARGS)
 	text *database = PG_ARGISNULL(0) ? NULL : PG_GETARG_TEXT_P(0);
 	pgbson *distinctSpec = PG_GETARG_PGBSON(1);
 
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(distinctSpec);
+
 	bool setStatementTimeout = true;
 	Query *query = GenerateDistinctQuery(database, distinctSpec, setStatementTimeout);
 
@@ -680,6 +699,9 @@ command_count_query(PG_FUNCTION_ARGS)
 
 	text *database = PG_ARGISNULL(0) ? NULL : PG_GETARG_TEXT_P(0);
 	pgbson *countSpec = PG_GETARG_PGBSON(1);
+
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(countSpec);
 
 	bool setStatementTimeout = true;
 	Query *query = GenerateCountQuery(database, countSpec, setStatementTimeout);

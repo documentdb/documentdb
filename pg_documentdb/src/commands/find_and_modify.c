@@ -28,6 +28,7 @@
 #include "utils/version_utils.h"
 #include "schema_validation/schema_validation.h"
 #include "operators/bson_expression.h"
+#include "utils/op_metadata.h"
 
 /* Represents bson message passed to a findAndModify command */
 typedef struct
@@ -149,6 +150,9 @@ command_find_and_modify(PG_FUNCTION_ARGS)
 	text *transactionId = !PG_ARGISNULL(2) ? PG_GETARG_TEXT_P(2) : NULL;
 
 	ReportFeatureUsage(FEATURE_COMMAND_FINDANDMODIFY);
+
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(message);
 
 	/* fetch TupleDesc for return value, not interested in resultTypeId */
 	Oid *resultTypeId = NULL;

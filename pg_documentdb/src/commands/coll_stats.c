@@ -27,6 +27,7 @@
 #include "commands/parse_error.h"
 #include "commands/commands_common.h"
 #include "commands/diagnostic_commands_common.h"
+#include "utils/op_metadata.h"
 #include "api_hooks.h"
 
 extern int CollStatsCountPolicyThreshold;
@@ -151,6 +152,9 @@ command_coll_stats_aggregation(PG_FUNCTION_ARGS)
 	Datum databaseName = PG_GETARG_DATUM(0);
 	Datum collectionName = PG_GETARG_DATUM(1);
 	pgbson *collStatsSpec = PG_GETARG_PGBSON(2);
+
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(collStatsSpec);
 
 	/* We either support count or storage stats currently */
 	bson_iter_t collStatsSpecIter;

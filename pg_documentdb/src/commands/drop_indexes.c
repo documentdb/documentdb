@@ -124,6 +124,8 @@ command_drop_indexes(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errmsg("dbName cannot be NULL")));
 	}
 	char *dbName = TextDatumGetCString(dbNameDatum);
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(arg);
 
 	bool dropIndexConcurrently = false;
 	DropIndexesResult dropIndexResult = ProcessDropIndexesRequest(dbName, dropIndexesArg,
@@ -376,6 +378,8 @@ command_drop_indexes_concurrently(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errmsg("Argument value must not be NULL")));
 	}
 	pgbson *spec = PG_GETARG_PGBSON(1);
+	/* Register operation metadata for currentOp */
+	documentDbPreCommand(spec);
 
 	Datum dbNameDatum = PG_ARGISNULL(0) ? (Datum) 0 : PG_GETARG_DATUM(0);
 
