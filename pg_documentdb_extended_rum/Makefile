@@ -10,6 +10,11 @@ RUM_CORE_LIB_NAME=pg_documentdb_extended_rum_core.so
 RUM_CORE_LIB_DIR=$(CURDIR)/core/
 RUM_CORE_LIB=$(RUM_CORE_LIB_DIR)/$(RUM_CORE_LIB_NAME)
 
+# TODO: Enable this once all the exports are fixed
+RUM_CORE_LIB_BUILTIN_RMGR_NAME=pg_documentdb_extended_rum_core_builtin_rmgr.so
+RUM_CORE_BUILTIN_RMGR_LIB_DIR=$(CURDIR)/core_builtin_rmgr
+RUM_CORE_BUILTIN_RMGR_LIB=$(RUM_CORE_BUILTIN_RMGR_LIB_DIR)/$(RUM_CORE_LIB_BUILTIN_RMGR_NAME)
+
 SOURCES = $(wildcard src/*.c)
 OBJS = $(patsubst %.c,%.o,$(SOURCES)) $(WIN32RES)
 
@@ -49,12 +54,18 @@ override CXXFLAGS += -fvisibility=hidden  -DHAVE_VISIBILITY_ATTRIBUTE=1
 $(RUM_CORE_LIB): $(RUM_CORE_SOURCES)
 	$(MAKE) -C $(RUM_CORE_LIB_DIR)
 
-$(MODULE_big)$(DLSUFFIX): $(RUM_CORE_LIB)
+$(RUM_CORE_BUILTIN_RMGR_LIB): $(RUM_CORE_SOURCES)
+	$(MAKE) -C $(RUM_CORE_BUILTIN_RMGR_LIB_DIR)
+
+$(MODULE_big)$(DLSUFFIX): $(RUM_CORE_LIB) # $(RUM_CORE_BUILTIN_RMGR_LIB)
 
 clean_core:
 	$(MAKE) -C $(RUM_CORE_LIB_DIR) clean
 
-clean: clean_core
+clean_core_rmgr:
+	$(MAKE) -C $(RUM_CORE_BUILTIN_RMGR_LIB_DIR) clean
+
+clean: clean_core clean_core_rmgr
 
 install_core:
 	$(MAKE) -C $(RUM_CORE_LIB_DIR) install
@@ -70,6 +81,11 @@ uninstall_core:
 uninstall: uninstall_core
 
 build-sql: $(generated_sql_files)
+
+# all: validate_exports
+
+validate_exports: $(RUM_CORE_LIB) $(RUM_CORE_BUILTIN_RMGR_LIB)
+	$(CURDIR)/validate_rum_core_exports.sh $(RUM_CORE_LIB) $(RUM_CORE_BUILTIN_RMGR_LIB)
 
 $(generated_sql_files): build/%: %
 	@mkdir -p $(SQL_DEPDIR) $(SQL_BUILDDIR)

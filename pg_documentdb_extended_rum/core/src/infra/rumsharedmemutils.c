@@ -24,7 +24,7 @@
 #include "utils/backend_progress.h"
 #include "storage/ipc.h"
 
-#include "pg_documentdb_rum.h"
+#include "pg_documentdb_rum_exports.h"
 
 typedef struct RumSingleVacInfo
 {
