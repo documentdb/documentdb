@@ -373,6 +373,7 @@ CreateCustomScanPathForStreaming(PlannerInfo *root, RelOptInfo *rel, Path *input
 	memcpy(inputContinuationCopy, inputContinuation,
 		   sizeof(DynamicCursorInputContinuation));
 	customPath->custom_private = list_make1(inputContinuationCopy);
+	customPath->path.pathkeys = root->sort_pathkeys;
 
 	return customPath;
 }
@@ -533,6 +534,11 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 		if (inputPath->pathtype == T_SeqScan)
 		{
 			/* See if we can convert to primary key scan */
+			if (root->sort_pathkeys != NIL)
+			{
+				continue;
+			}
+
 			IndexOptInfo *info = GetPrimaryKeyIndexOptCore(rel);
 			if (info != NULL)
 			{
@@ -565,6 +571,27 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 																  rinfo),
 															  rel->lateral_relids);
 				scanType = QueryScanType_TidRangeScan;
+			}
+		}
+
+		if (root->sort_pathkeys != NIL)
+		{
+			if (scanType != QueryScanType_SecondaryIndexScan &&
+				scanType != QueryScanType_SecondaryIndexOnlyScan)
+			{
+				/* For now, only allow order by optimization for secondary index scans since they are guaranteed to be ordered.
+				 * In the future we can consider adding explicit sort nodes for other scan types if necessary.
+				 */
+				continue;
+			}
+
+			IndexPath *ipath = (IndexPath *) inputPath;
+			if (list_length(ipath->indexorderbys) != list_length(root->sort_pathkeys))
+			{
+				/* The number of order by clauses in the index does not match the number of sort path keys.
+				 * This will need a runtime sort - fall back to regular scan.
+				 */
+				continue;
 			}
 		}
 
@@ -681,7 +708,7 @@ UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 	 *  If a continuation is provided, ensure that the plan paths are valid.
 	 */
 	if (root->hasJoinRTEs || root->hasRecursion || root->hasLateralRTEs ||
-		root->group_pathkeys != NIL || root->sort_pathkeys != NIL ||
+		root->group_pathkeys != NIL ||
 		root->agginfos != NIL || root->hasAlternativeSubPlans ||
 		root->window_pathkeys != NIL || root->parse->hasTargetSRFs)
 	{
