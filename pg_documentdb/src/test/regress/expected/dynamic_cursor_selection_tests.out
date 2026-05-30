@@ -149,8 +149,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
-         Filter: (collection.shard_key_value = '2601'::bigint)
-(7 rows)
+(6 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll" }');
@@ -227,8 +226,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dync
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
-         Filter: (collection.shard_key_value = '2601'::bigint)
-(7 rows)
+(6 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "projection": { "a": 1 } }');
@@ -654,8 +652,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
-         Filter: (collection.shard_key_value = '2601'::bigint)
-(7 rows)
+(6 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$addFields": { "c": 1 } }], "cursor": {} }');
@@ -680,8 +677,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
-         Filter: (collection.shard_key_value = '2601'::bigint)
-(7 rows)
+(6 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$project": { "a": 1 } }], "cursor": {} }');
@@ -706,8 +702,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
-         Filter: (collection.shard_key_value = '2601'::bigint)
-(7 rows)
+(6 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$set": { "d": "val" } }], "cursor": {} }');
@@ -732,8 +727,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
-         Filter: (collection.shard_key_value = '2601'::bigint)
-(7 rows)
+(6 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$unset": "b" }], "cursor": {} }');
@@ -758,8 +752,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
-         Filter: (collection.shard_key_value = '2601'::bigint)
-(7 rows)
+(6 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$replaceRoot": { "newRoot": { "val": "$a" } } }], "cursor": {} }');
@@ -784,8 +777,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
-         Filter: (collection.shard_key_value = '2601'::bigint)
-(7 rows)
+(6 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$replaceWith": { "val": "$a" } }], "cursor": {} }');
@@ -815,8 +807,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          indexName: _id_
          ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
                Output: shard_key_value, object_id, document
-               Filter: (collection.shard_key_value = '2601'::bigint)
-(9 rows)
+(8 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$limit": 1 }], "cursor": {} }');
@@ -862,8 +853,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
-         Filter: (collection.shard_key_value = '2601'::bigint)
-(7 rows)
+(6 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$skip": 0 }], "cursor": {} }');
@@ -1154,8 +1144,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
-         Filter: (collection.shard_key_value = '2601'::bigint)
-(7 rows)
+(6 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$redact": "$$KEEP" }], "cursor": {} }');
@@ -1554,8 +1543,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
          Output: shard_key_value, object_id, document
-         Filter: (collection.shard_key_value = '2601'::bigint)
-(7 rows)
+(6 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$project": { "a": 1, "b": 1 } }, { "$unset": "b" }], "cursor": {} }');
