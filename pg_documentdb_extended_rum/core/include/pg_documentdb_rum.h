@@ -22,24 +22,14 @@
 #include "utils/datum.h"
 #include "utils/memutils.h"
 
-#include "rumsort.h"
+#include "pg_documentdb_rum_exports.h"
 
-/* PG16 defined visibility for PGDLLEXPORT properly, for PG15, we need to set it */
-#if PG_VERSION_NUM < 160000
-#undef PGDLLEXPORT
-#ifdef HAVE_VISIBILITY_ATTRIBUTE
-#define PGDLLEXPORT __attribute__((visibility("default")))
-#else
-#define PGDLLEXPORT
-#endif
-#endif
+#include "rumsort.h"
 
 /* RUM distance strategies */
 #define RUM_DISTANCE 20
 #define RUM_LEFT_DISTANCE 21
 #define RUM_RIGHT_DISTANCE 22
-
-typedef uint16 RumVacuumCycleId;
 
 /*
  * Page opaque data in a inverted index page.
@@ -343,16 +333,6 @@ typedef signed char RumNullCategory;
 #define RUM_CAT_EMPTY_QUERY (-1)        /* placeholder for full-scan query */
 
 /*
- * searchMode settings for extractQueryFn.
- */
-#define GIN_SEARCH_MODE_DEFAULT 0
-#define GIN_SEARCH_MODE_INCLUDE_EMPTY 1
-#define GIN_SEARCH_MODE_ALL 2
-#define GIN_SEARCH_MODE_EVERYTHING 3        /* for internal use only */
-#define RUM_SEARCH_MODE_ORDERED 4
-#define RUM_SEARCH_MODE_ORDERED_REVERSE 5
-
-/*
  * Access macros for null category byte in entry tuples
  */
 #define RumCategoryOffset(itup, rumstate) \
@@ -481,21 +461,6 @@ typedef struct RumOptions
 #define RUM_SHARE BUFFER_LOCK_SHARE
 #define RUM_EXCLUSIVE BUFFER_LOCK_EXCLUSIVE
 
-#define MAX_STRATEGIES (8)
-typedef struct RumConfig
-{
-	Oid addInfoTypeOid;
-
-	struct
-	{
-		StrategyNumber strategy;
-		ScanDirection direction;
-	}       strategyInfo[MAX_STRATEGIES];
-
-	bool skipGenerateEmptyEntries;
-	bool compareFunctionHasRecheck;
-}   RumConfig;
-
 /*
  * RumState: working data structure describing the index being worked on
  */
@@ -564,7 +529,7 @@ typedef struct RumState
 #endif
 
 /* rumutil.c */
-extern PGDLLIMPORT bytea * documentdb_rumoptions(Datum reloptions, bool validate);
+extern bytea * documentdb_rumoptions(Datum reloptions, bool validate);
 extern bool rumproperty(Oid index_oid, int attno,
 						IndexAMProperty prop, const char *propname,
 						bool *res, bool *isnull);
@@ -1064,13 +1029,6 @@ extern IndexBulkDeleteResult * rumvacuumcleanup(IndexVacuumInfo *info,
 												IndexBulkDeleteResult *stats);
 
 
-/* rumvacuumutil.c */
-extern void InitializeRumVacuumState(void);
-extern RumVacuumCycleId rum_start_vacuum_cycle_id(Relation rel);
-extern void rum_end_vacuum_cycle_id(Relation rel);
-extern RumVacuumCycleId rum_vacuum_get_cycleId(Relation rel);
-
-
 /* rumvalidate.c */
 extern bool rumvalidate(Oid opclassoid);
 
@@ -1083,20 +1041,22 @@ extern void WriteInsertWalRecord(Buffer buffer, Page page);
 extern void WriteInsertEntryWalRecord(bool isDelete, OffsetNumber off, IndexTuple entry);
 extern void DefineCustomRumRmgr(void);
 
+/* rumutil.c */
+extern void initialize_rumoptions(void);
+
 /* rumbulk.c */
 #if PG_VERSION_NUM <= 100006 || PG_VERSION_NUM == 110000
 typedef RBNode RBTNode;
 #endif
 
 /* rumselfuncs.c */
-extern PGDLLIMPORT void documentdb_rum_costestimate(struct PlannerInfo *root, struct
-													IndexPath *path, double
-													loop_count,
-													Cost *indexStartupCost,
-													Cost *indexTotalCost,
-													Selectivity *indexSelectivity,
-													double *indexCorrelation,
-													double *indexPages);
+extern void documentdb_rum_costestimate(struct PlannerInfo *root, struct
+										IndexPath *path, double loop_count,
+										Cost *indexStartupCost,
+										Cost *indexTotalCost,
+										Selectivity *indexSelectivity,
+										double *indexCorrelation,
+										double *indexPages);
 
 extern PGDLLIMPORT void DocumentDBRumOrderedCostEstimate(struct PlannerInfo *root, struct
 														 IndexPath *path, double
@@ -1718,20 +1678,5 @@ extern Datum FunctionCall10Coll(FmgrInfo *flinfo, Oid collation,
 #define PROGRESS_RUM_PHASE_WRITE_WAL 7
 #define PROGRESS_RUM_PHASE_POST_WRITE_WAL 8
 
-
-#define UNREDACTED_RUM_LOG_CODE MAKE_SQLSTATE('R', 'Z', 'Z', 'Z', 'Z')
-typedef int (*rum_format_log_hook)(const char *fmt, ...) pg_attribute_printf (1, 2);
-extern PGDLLIMPORT rum_format_log_hook rum_unredacted_log_emit_hook;
-
-#define errmsg_unredacted(...) \
-	(rum_unredacted_log_emit_hook ? \
-	 (*rum_unredacted_log_emit_hook)(__VA_ARGS__) : \
-	 errmsg_internal(__VA_ARGS__))
-
-
-#define elog_rum_unredacted(...) \
-	ereport(LOG, (errcode(UNREDACTED_RUM_LOG_CODE), errhidecontext(true), \
-				  errhidestmt(true), errmsg_unredacted( \
-					  __VA_ARGS__)))
 
 #endif   /* __RUM_H__ */
