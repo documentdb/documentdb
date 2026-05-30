@@ -26,7 +26,7 @@
 #endif
 #include "utils/typcache.h"
 
-#include "pg_documentdb_rum.h"
+#include "pg_documentdb_rum_exports.h"
 
 #include <math.h>
 
