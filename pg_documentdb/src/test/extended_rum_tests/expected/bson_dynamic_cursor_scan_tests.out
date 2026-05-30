@@ -641,7 +641,7 @@ $cmd$);
    indexBounds: ["y": [0, 0]]
    ->  Bitmap Heap Scan on documentdb_data.documents_9202 collection
          Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "$or" : [ { "x" : { "$numberInt" : "0" } }, { "y" : { "$numberInt" : "0" } } ] }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         Recheck Cond: ((collection.document #= '{ "x" : { "$numberInt" : "0" } }'::bsonquery) OR (collection.document #= '{ "y" : { "$numberInt" : "0" } }'::bsonquery))
+         Recheck Cond: ((collection.document @= '{ "x" : { "$numberInt" : "0" } }'::bson) OR (collection.document @= '{ "y" : { "$numberInt" : "0" } }'::bson))
          ->  BitmapOr
                ->  Bitmap Index Scan on x_1
                      Index Cond: (collection.document @= '{ "x" : { "$numberInt" : "0" } }'::bson)
