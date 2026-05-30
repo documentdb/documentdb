@@ -173,6 +173,7 @@ extern bool EnableIndexOnlyScanForRangeMatch;
 extern bool EnableIndexOnlyScanForFindProject;
 extern bool EnableObjectIdFuncExprConversion;
 extern bool EnableExtendedIndexes;
+extern bool EnableDynamicCursors;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -4569,8 +4570,10 @@ ReplaceFunctionOperatorsInPlanPath(PlannerInfo *root, RelOptInfo *rel, Path *pat
 																  PARENTTYPE_BITMAPHEAP,
 																  context);
 	}
-	else if (IsA(path, CustomPath) && EnablePrimaryKeyCursorScan &&
-			 EnableCursorPlanBeforeRestrictionPathUpdate)
+	else if (IsA(path, CustomPath) &&
+			 ((EnablePrimaryKeyCursorScan &&
+			   EnableCursorPlanBeforeRestrictionPathUpdate) ||
+			  EnableDynamicCursors))
 	{
 		CustomPath *customPath = (CustomPath *) path;
 		ReplaceExtensionFunctionOperatorsInPaths(root, rel,
