@@ -14,10 +14,8 @@
 #include "postgres.h"
 #include "utils/guc.h"
 #include "access/reloptions.h"
-#include "pg_documentdb_rum.h"
 
-/* Kind of relation optioms for rum index */
-static relopt_kind rum_relopt_kind;
+#include "pg_documentdb_rum_exports.h"
 
 PGDLLEXPORT void InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 												char *documentDBRumGucPrefix);
@@ -63,7 +61,6 @@ PGDLLEXPORT bool RumInjectSplitEntryInternalOnly =
 
 /* rumentrypage.c */
 /* SystemConfig */
-#define RUM_DEFAULT_FILL_FACTOR 50
 PGDLLEXPORT int RumDefaultPageFillFactor = RUM_DEFAULT_FILL_FACTOR;
 
 /* rumdatapage.c */
@@ -444,49 +441,4 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		RUM_DEFAULT_FILL_FACTOR, 10, 100,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
-
-	rum_relopt_kind = add_reloption_kind();
-
-	add_string_reloption(rum_relopt_kind, "attach",
-						 "Column name to attach as additional info",
-						 NULL, NULL, AccessExclusiveLock);
-	add_string_reloption(rum_relopt_kind, "to",
-						 "Column name to add a order by column",
-						 NULL, NULL, AccessExclusiveLock);
-	add_bool_reloption(rum_relopt_kind, "order_by_attach",
-					   "Use (addinfo, itempointer) order instead of just itempointer",
-					   false, AccessExclusiveLock);
-	add_int_reloption(rum_relopt_kind, "fill_factor",
-					  "Page fill factor for RUM index",
-					  RUM_DEFAULT_FILL_FACTOR, 10, 100,
-					  AccessExclusiveLock);
-}
-
-
-PGDLLEXPORT bytea *
-documentdb_rumoptions(Datum reloptions, bool validate)
-{
-#if PG_VERSION_NUM >= 180000
-	static const int offsetIfDefault = -1;
-	static const relopt_parse_elt tab[] = {
-		{ "attach", RELOPT_TYPE_STRING, offsetof(RumOptions, attachColumn),
-		  offsetIfDefault },
-		{ "to", RELOPT_TYPE_STRING, offsetof(RumOptions, addToColumn), offsetIfDefault },
-		{ "order_by_attach", RELOPT_TYPE_BOOL, offsetof(RumOptions, useAlternativeOrder),
-		  offsetIfDefault },
-		{ "fill_factor", RELOPT_TYPE_INT, offsetof(RumOptions, fillFactor),
-		  offsetIfDefault }
-	};
-#else
-	static const relopt_parse_elt tab[] = {
-		{ "attach", RELOPT_TYPE_STRING, offsetof(RumOptions, attachColumn) },
-		{ "to", RELOPT_TYPE_STRING, offsetof(RumOptions, addToColumn) },
-		{ "order_by_attach", RELOPT_TYPE_BOOL, offsetof(RumOptions,
-														useAlternativeOrder) },
-		{ "fill_factor", RELOPT_TYPE_INT, offsetof(RumOptions, fillFactor) }
-	};
-#endif
-
-	return (bytea *) build_reloptions(reloptions, validate, rum_relopt_kind,
-									  sizeof(RumOptions), tab, lengthof(tab));
 }

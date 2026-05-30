@@ -46,8 +46,8 @@
 
 extern int RumParallelIndexWorkersOverride;
 
-extern PGDLLEXPORT void documentdb_rum_parallel_build_main(dsm_segment *seg,
-														   shm_toc *toc);
+extern RMGR_FUNC_EXPORT(void, documentdb_rum_parallel_build_main, dsm_segment * seg,
+						shm_toc * toc);
 
 /* Magic numbers for parallel state sharing */
 #define PARALLEL_KEY_RUM_SHARED UINT64CONST(0xB000000000000001)
@@ -1195,8 +1195,8 @@ _rum_begin_parallel(RumBuildState *buildstate, Relation heap, Relation index,
 	 */
 	EnterParallelMode();
 	Assert(request > 0);
-	pcxt = CreateParallelContext("pg_documentdb_extended_rum_core",
-								 "documentdb_rum_parallel_build_main",
+	pcxt = CreateParallelContext("pg_documentdb_extended_rum_core" RMGR_SUFFIX_STR,
+								 RMGR_PREFIX_STR "documentdb_rum_parallel_build_main",
 								 request);
 
 	scantuplesortstates = leaderparticipates ? request + 1 : request;
@@ -2441,8 +2441,8 @@ _rum_parallel_scan_and_build(RumBuildState *state,
 /*
  * Perform work within a launched parallel process.
  */
-PGDLLEXPORT void
-documentdb_rum_parallel_build_main(dsm_segment *seg, shm_toc *toc)
+RMGR_FUNC_EXPORT(void, documentdb_rum_parallel_build_main, dsm_segment * seg, shm_toc *
+				 toc)
 {
 	char *sharedquery;
 	RumBuildShared *rumshared;

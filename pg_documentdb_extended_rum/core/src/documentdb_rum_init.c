@@ -138,6 +138,7 @@ DocumentDBRumInitCore(const char *rumGucPrefix,
 	{
 		DocumentDBRumLoadCommonGUCs = false;
 		InitializeCommonDocumentDBGUCs(rumGucPrefix, documentDBRumGucPrefix);
+		initialize_rumoptions();
 	}
 }
 
