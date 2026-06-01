@@ -1682,6 +1682,7 @@ ProcessUpdate(MongoCollection *collection, UpdateSpec *updateSpec,
 								"multi=true and replace-style updates cannot be used together.")));
 		}
 
+		ReportFeatureUsage(FEATURE_UPDATE_MANY);
 
 		/*
 		 * Update as many document as match the query. This is not a retryable
