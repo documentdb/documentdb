@@ -756,12 +756,17 @@ DropPostgresIndex(uint64 collectionId, int indexId, bool unique, bool concurrent
 
 	char *cmd = CreateDropIndexCommand(collectionId, indexId, isConstraint,
 									   concurrently, missingOk);
-	ExecuteDropIndexCommand(cmd, isConstraint, concurrently, forceReadWrite);
 
-	if (concurrently)
-	{
-		DropIndexStatisticsForPlannerStatistics(collectionId, list_make1_int(indexId));
-	}
+	/*
+	 * Drop statistics before the index so that the stats object still exists on
+	 * the coordinator when the DROP STATISTICS command runs. This lets Citus
+	 * propagate the drop to shard tables. If we dropped after the index,
+	 * DEPENDENCY_AUTO would silently remove the coordinator stats first, making
+	 * the explicit DROP STATISTICS a no-op that Citus cannot map to shards.
+	 */
+	DropIndexStatisticsForPlannerStatistics(collectionId, list_make1_int(indexId));
+
+	ExecuteDropIndexCommand(cmd, isConstraint, concurrently, forceReadWrite);
 }
 
 
@@ -979,13 +984,17 @@ HandleDropIndexConcurrently(uint64 collectionId, int indexId, bool unique, bool
 	{
 		char *cmd = CreateDropIndexCommand(collectionId, indexId, unique, concurrently,
 										   missingOk);
+
+		/*
+		 * Drop statistics before the index so that the stats object still
+		 * exists on the coordinator when the DROP STATISTICS command runs.
+		 * This lets Citus propagate the drop to shard tables.
+		 */
+		DropIndexStatisticsForPlannerStatistics(collectionId, list_make1_int(
+													indexId));
+
 		bool forceReadWrite = false;
 		ExecuteDropIndexCommand(cmd, unique, concurrently, forceReadWrite);
-		if (concurrently)
-		{
-			DropIndexStatisticsForPlannerStatistics(collectionId, list_make1_int(
-														indexId));
-		}
 
 		indexDropped = true;
 	}

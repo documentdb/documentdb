@@ -2,6 +2,7 @@ SET search_path TO documentdb_api_catalog, documentdb_api, documentdb_core, docu
 SET citus.next_shard_id TO 740000;
 SET documentdb.next_collection_id TO 7400;
 SET documentdb.next_collection_index_id TO 7400;
+set citus.show_shards_for_app_name_prefixes to '*';
 -- create a collection
 SELECT documentdb_api.create_collection('stats_db', 'planner_stats');
 NOTICE:  creating collection
@@ -73,6 +74,22 @@ Statistics objects:
 
 -- it's also on the shard table
 \d documentdb_data.documents_7401_740002
+       Table "documentdb_data.documents_7401_740002"
+     Column      |  Type  | Collation | Nullable | Default 
+---------------------------------------------------------------------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_7401_740002" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_7402_740002" documentdb_rum (document bson_rum_single_path_ops (path=b, tl='2691'), document bson_rum_single_path_ops (path=c, tl='2691'))
+    "documents_rum_index_7403_740002" documentdb_rum (document bson_rum_single_path_ops (path=a, tl='2699'))
+Check constraints:
+    "shard_key_value_check_740002" CHECK (shard_key_value = '7401'::bigint)
+Statistics objects:
+    "documentdb_data.documents_rum_index_7402_stats_740002" ON bson_stats_project(document, 'b'::text), bson_stats_project(document, 'c'::text) FROM documentdb_data.documents_7401_740002
+    "documentdb_data.documents_rum_index_7403_stats_740002" ON bson_stats_project(document, 'a'::text) FROM documentdb_data.documents_7401_740002
+
 -- dropping the index should remove the stats.
 CALL documentdb_api.drop_indexes('stats_db', '{ "dropIndexes": "planner_stats", "index": "a_1" }');
                           retval                          
@@ -97,6 +114,20 @@ Statistics objects:
 
 -- it's also removed on the shard table
 \d documentdb_data.documents_7401_740002
+       Table "documentdb_data.documents_7401_740002"
+     Column      |  Type  | Collation | Nullable | Default 
+---------------------------------------------------------------------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_7401_740002" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_7402_740002" documentdb_rum (document bson_rum_single_path_ops (path=b, tl='2691'), document bson_rum_single_path_ops (path=c, tl='2691'))
+Check constraints:
+    "shard_key_value_check_740002" CHECK (shard_key_value = '7401'::bigint)
+Statistics objects:
+    "documentdb_data.documents_rum_index_7402_stats_740002" ON bson_stats_project(document, 'b'::text), bson_stats_project(document, 'c'::text) FROM documentdb_data.documents_7401_740002
+
 -- now test the stats usage.
 SELECT COUNT(documentdb_api.insert_one('stats_db', 'planner_stats', bson_build_document('_id', i, 'b', 1, 'c', i, 'padding', repeat('x', 1010)))) FROM generate_series(1, 1000) i;
  count 
@@ -140,7 +171,6 @@ NOTICE:  statistics object "documentdb_data.documents_rum_index_7401_stats" does
  
 (1 row)
 
-set citus.show_shards_for_app_name_prefixes to '*';
 \d documentdb_data.documents_7401
           Table "documentdb_data.documents_7401"
      Column      |  Type  | Collation | Nullable | Default 
