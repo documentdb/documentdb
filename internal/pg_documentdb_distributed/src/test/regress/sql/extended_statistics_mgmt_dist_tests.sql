@@ -2,6 +2,7 @@ SET search_path TO documentdb_api_catalog, documentdb_api, documentdb_core, docu
 SET citus.next_shard_id TO 740000;
 SET documentdb.next_collection_id TO 7400;
 SET documentdb.next_collection_index_id TO 7400;
+set citus.show_shards_for_app_name_prefixes to '*';
 
 -- create a collection
 SELECT documentdb_api.create_collection('stats_db', 'planner_stats');
@@ -52,7 +53,6 @@ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation
 -- now shard the collection.
 SELECT documentdb_api.shard_collection('{ "shardCollection": "stats_db.planner_stats", "key": { "_id": "hashed" } }');
 
-set citus.show_shards_for_app_name_prefixes to '*';
 \d documentdb_data.documents_7401
 \d documentdb_data.documents_7401_740004
 
