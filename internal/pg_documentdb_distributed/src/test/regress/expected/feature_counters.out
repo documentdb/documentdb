@@ -742,7 +742,7 @@ SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
                                                                                                           get_feature_counter_pretty                                                                                                          
 ---------------------------------------------------------------------
- {"Feature_usage":[{"command_insert" : 2}, {"command_insert_100" : 1}, {"command_insert_one" : 1}, {"command_update" : 3}, {"command_update_100" : 1}, {"command_update_one" : 2}, {"update_operator_inc" : 1}, {"update_operator_set" : 3}]}
+ {"Feature_usage":[{"command_insert" : 2}, {"command_insert_100" : 1}, {"command_insert_one" : 1}, {"command_update" : 3}, {"command_update_100" : 1}, {"command_update_one" : 2}, {"update_many" : 3}, {"update_operator_inc" : 1}, {"update_operator_set" : 3}]}
 (1 row)
 
 SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$min":{"year": 3000 }},"multi":false}]}');
