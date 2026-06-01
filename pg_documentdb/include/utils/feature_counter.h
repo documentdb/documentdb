@@ -19,7 +19,7 @@
 #include <port/atomics.h>
 
 #define MAX_FEATURE_NAME_LENGTH 255
-#define MAX_FEATURE_COUNT 439
+#define MAX_FEATURE_COUNT 440
 
 /* Internal features that are not exposed */
 #define INTERNAL_FEATURE_TYPE MAX_FEATURE_COUNT
@@ -486,7 +486,9 @@ typedef enum
 	FEATURE_STAGE_VECTOR_SEARCH_KNN,
 	FEATURE_STAGE_VECTOR_SEARCH_NATIVE,
 
-	/* Feature counter region - Update operators */
+
+	/* Feature counter region - Update operators/Options */
+	FEATURE_UPDATE_MANY,
 	FEATURE_UPDATE_OPERATOR_ADDTOSET,
 	FEATURE_UPDATE_OPERATOR_BIT,
 	FEATURE_UPDATE_OPERATOR_CURRENTDATE,

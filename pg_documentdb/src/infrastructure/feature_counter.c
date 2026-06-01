@@ -502,7 +502,8 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_STAGE_VECTOR_SEARCH_KNN] = "vector_search_knn",
 	[FEATURE_STAGE_VECTOR_SEARCH_NATIVE] = "vector_search_native",
 
-	/* Feature Mapping region - Update operators */
+	/* Feature Mapping region - Update operators / options */
+	[FEATURE_UPDATE_MANY] = "update_many",
 	[FEATURE_UPDATE_OPERATOR_ADDTOSET] = "update_operator_addtoset",
 	[FEATURE_UPDATE_OPERATOR_BIT] = "update_operator_bit",
 	[FEATURE_UPDATE_OPERATOR_CURRENTDATE] = "update_operator_currentdate",
