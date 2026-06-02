@@ -985,6 +985,7 @@ fn get_stage_from_plan(
                         }
                     }
                     "DocumentDBApiExplainQueryScan" => ("ExplainWrapper".to_owned(), None),
+                    "DocumentDBApiDistinctQueryScan" => ("DISTINCT_SCAN".to_owned(), None),
                     scan_type if query_catalog.scan_types().contains(&scan_type.to_owned()) => {
                         ("FETCH".to_owned(), None)
                     }

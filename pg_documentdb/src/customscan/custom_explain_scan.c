@@ -172,6 +172,96 @@ AddExplainCustomScanWrapper(PlannerInfo *root, RelOptInfo *rel,
 /* --------------------------------------------------------- */
 
 
+static bool
+IsValidPath(Path *inputPath)
+{
+	CHECK_FOR_INTERRUPTS();
+	check_stack_depth();
+	if (inputPath->param_info != NULL)
+	{
+		return false;
+	}
+
+	if (inputPath->pathtype == T_IndexScan ||
+		inputPath->pathtype == T_IndexOnlyScan)
+	{
+		IndexPath *indexPath = (IndexPath *) inputPath;
+		return IsBsonRegularIndexAm(indexPath->indexinfo->relam);
+	}
+	else if (inputPath->pathtype == T_BitmapHeapScan)
+	{
+		BitmapHeapPath *bitmapHeapPath = (BitmapHeapPath *) inputPath;
+		if (bitmapHeapPath->bitmapqual->pathtype == T_IndexScan ||
+			bitmapHeapPath->bitmapqual->pathtype == T_IndexOnlyScan)
+		{
+			IndexPath *indexPath = (IndexPath *) bitmapHeapPath->bitmapqual;
+			return IsBsonRegularIndexAm(indexPath->indexinfo->relam);
+		}
+		else if (bitmapHeapPath->bitmapqual->pathtype == T_BitmapAnd)
+		{
+			/* BitmapAnd is valid if all its children are valid */
+			BitmapAndPath *bitmapAndPath =
+				(BitmapAndPath *) bitmapHeapPath->bitmapqual;
+			ListCell *bitmapCell;
+			bool isValidPath = true;
+			foreach(bitmapCell, bitmapAndPath->bitmapquals)
+			{
+				Path *childPath = (Path *) lfirst(bitmapCell);
+				if ((childPath->pathtype != T_IndexScan &&
+					 childPath->pathtype != T_IndexOnlyScan) ||
+					!IsBsonRegularIndexAm(
+						((IndexPath *) childPath)->indexinfo->relam))
+				{
+					isValidPath = false;
+					break;
+				}
+			}
+
+			return isValidPath;
+		}
+		else if (bitmapHeapPath->bitmapqual->pathtype == T_BitmapOr)
+		{
+			/* BitmapOr is valid if all its children are valid */
+			BitmapOrPath *bitmapOrPath = (BitmapOrPath *) bitmapHeapPath->bitmapqual;
+			ListCell *bitmapCell;
+			bool isValidPath = true;
+			foreach(bitmapCell, bitmapOrPath->bitmapquals)
+			{
+				Path *childPath = (Path *) lfirst(bitmapCell);
+				if ((childPath->pathtype != T_IndexScan &&
+					 childPath->pathtype != T_IndexOnlyScan) ||
+					!IsBsonRegularIndexAm(
+						((IndexPath *) childPath)->indexinfo->relam))
+				{
+					isValidPath = false;
+					break;
+				}
+			}
+
+			return isValidPath;
+		}
+	}
+	else if (inputPath->pathtype == T_CustomScan)
+	{
+		CustomPath *customPath = (CustomPath *) inputPath;
+		ListCell *cell;
+		foreach(cell, customPath->custom_paths)
+		{
+			Path *childPath = (Path *) lfirst(cell);
+			if (!IsValidPath(childPath))
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/* we only wrap IndexScan and BitmapHeapScan */
+	return false;
+}
+
+
 /*
  * Helper method that walks all paths in the rel's pathlist
  * and adds a custom path wrapper that contains the queryState.
@@ -184,76 +274,8 @@ AddExplainCustomPathCore(List *pathList, Oid relOid, uint64 collectionId)
 
 	foreach(cell, pathList)
 	{
-		bool isValidPath = false;
 		Path *inputPath = lfirst(cell);
-
-		if (inputPath->pathtype == T_IndexScan ||
-			inputPath->pathtype == T_IndexOnlyScan)
-		{
-			IndexPath *indexPath = (IndexPath *) inputPath;
-			isValidPath = IsBsonRegularIndexAm(indexPath->indexinfo->relam);
-		}
-		else if (inputPath->pathtype == T_BitmapHeapScan)
-		{
-			BitmapHeapPath *bitmapHeapPath = (BitmapHeapPath *) inputPath;
-			if (bitmapHeapPath->bitmapqual->pathtype == T_IndexScan ||
-				bitmapHeapPath->bitmapqual->pathtype == T_IndexOnlyScan)
-			{
-				IndexPath *indexPath = (IndexPath *) bitmapHeapPath->bitmapqual;
-				isValidPath = IsBsonRegularIndexAm(indexPath->indexinfo->relam);
-			}
-			else if (bitmapHeapPath->bitmapqual->pathtype == T_BitmapAnd)
-			{
-				/* BitmapAnd is valid if all its children are valid */
-				BitmapAndPath *bitmapAndPath =
-					(BitmapAndPath *) bitmapHeapPath->bitmapqual;
-				ListCell *bitmapCell;
-				isValidPath = true;
-				foreach(bitmapCell, bitmapAndPath->bitmapquals)
-				{
-					Path *childPath = (Path *) lfirst(bitmapCell);
-					if ((childPath->pathtype != T_IndexScan &&
-						 childPath->pathtype != T_IndexOnlyScan) ||
-						!IsBsonRegularIndexAm(
-							((IndexPath *) childPath)->indexinfo->relam))
-					{
-						isValidPath = false;
-						break;
-					}
-				}
-			}
-			else if (bitmapHeapPath->bitmapqual->pathtype == T_BitmapOr)
-			{
-				/* BitmapOr is valid if all its children are valid */
-				BitmapOrPath *bitmapOrPath = (BitmapOrPath *) bitmapHeapPath->bitmapqual;
-				ListCell *bitmapCell;
-				isValidPath = true;
-				foreach(bitmapCell, bitmapOrPath->bitmapquals)
-				{
-					Path *childPath = (Path *) lfirst(bitmapCell);
-					if ((childPath->pathtype != T_IndexScan &&
-						 childPath->pathtype != T_IndexOnlyScan) ||
-						!IsBsonRegularIndexAm(
-							((IndexPath *) childPath)->indexinfo->relam))
-					{
-						isValidPath = false;
-						break;
-					}
-				}
-			}
-		}
-		else
-		{
-			/* we only wrap IndexScan and BitmapHeapScan */
-			isValidPath = false;
-		}
-
-		if (inputPath->param_info != NULL)
-		{
-			isValidPath = false;
-		}
-
-		if (!isValidPath)
+		if (!IsValidPath(inputPath))
 		{
 			customPlanPaths = lappend(customPlanPaths, inputPath);
 			continue;
@@ -566,6 +588,16 @@ WalkAndExplainScanState(PlanState *scanState, ExplainState *es)
 		for (int i = 0; i < bitmapOrState->nplans; i++)
 		{
 			WalkAndExplainScanState(bitmapOrState->bitmapplans[i], es);
+		}
+	}
+	else if (IsA(scanState, CustomScanState))
+	{
+		CustomScanState *customScanState = (CustomScanState *) scanState;
+		ListCell *cell;
+		foreach(cell, customScanState->custom_ps)
+		{
+			PlanState *child = (PlanState *) lfirst(cell);
+			WalkAndExplainScanState(child, es);
 		}
 	}
 

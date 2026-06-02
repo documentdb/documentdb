@@ -4940,6 +4940,13 @@ documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan, BlockNumber block)
 		return;
 	}
 
+	if (block == InvalidBlockNumber)
+	{
+		/* We wanna just skip the rest of the rows for this entry */
+		entry->isFinished = true;
+		return;
+	}
+
 	RumItem targetItem = { 0 };
 	BlockIdSet(&targetItem.iptr.ip_blkid, block);
 	targetItem.iptr.ip_posid = 0;
@@ -4959,10 +4966,15 @@ documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan, BlockNumber block)
 							scan->xs_snapshot, &targetItem, so);
 	}
 
+	if (entry->isFinished)
+	{
+		/* We finished the entry - we're done */
+		return;
+	}
+
 	/* If we got here, we reached the target block (or could have exceeded it by 1 entry)
 	 * To handle the corner case where the current item is exactly where we need to be,
 	 * we rev offset back by one entry.
 	 */
 	entry->offset -= entry->scanDirection;
-	entry->isFinished = false;
 }
