@@ -106,6 +106,10 @@ typedef struct TailableCursorContinuationEntry
 
 	/* contiunation token for the tailable cursor. */
 	const char *continuationToken;
+
+	/* Opaque per-cursor context carried through the cursor doc.
+	 * Pipeline stages may store arbitrary contextual data here. */
+	pgbson *cursorContext;
 } TailableCursorContinuationEntry;
 
 
@@ -328,6 +332,7 @@ const char NodeId[] = "nodeId";
 uint32_t NodeIdLength = 7;
 const char ContinuationToken[] = "continuationToken";
 uint32_t ContiunationTokenLength = 16;
+const char CursorContextKey[] = "cursorContext";
 
 #define PATH_AND_PATH_LEN(path) path, sizeof(path) - 1
 
@@ -2135,6 +2140,7 @@ UpdateTailableCursorInContinuationMapCore(bson_iter_t *singleContinuationDoc,
 {
 	uint32 nodeId = 0;
 	const char *continuationToken = NULL;
+	pgbson *cursorContext = NULL;
 
 	while (bson_iter_next(singleContinuationDoc))
 	{
@@ -2159,6 +2165,17 @@ UpdateTailableCursorInContinuationMapCore(bson_iter_t *singleContinuationDoc,
 			continuationToken = pstrdup(bson_iter_utf8(singleContinuationDoc,
 													   &resumeLSNLength));
 		}
+		else if (strcmp(key, CursorContextKey) == 0)
+		{
+			if (!BSON_ITER_HOLDS_DOCUMENT(singleContinuationDoc))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR), errmsg(
+									"Expecting document value for %s",
+									CursorContextKey)));
+			}
+			const bson_value_t *val = bson_iter_value(singleContinuationDoc);
+			cursorContext = PgbsonInitFromDocumentBsonValue(val);
+		}
 	}
 	bool found = false;
 	TailableCursorContinuationEntry *hashEntry =
@@ -2168,6 +2185,7 @@ UpdateTailableCursorInContinuationMapCore(bson_iter_t *singleContinuationDoc,
 		hashEntry->nodeId = nodeId;
 	}
 	hashEntry->continuationToken = continuationToken;
+	hashEntry->cursorContext = cursorContext;
 }
 
 
@@ -2381,6 +2399,14 @@ SerializeTailableContinuationsToWriter(pgbson_writer *writer, HTAB *cursorMap)
 		PgbsonWriterAppendUtf8(&entryWriter,
 							   PATH_AND_PATH_LEN(ContinuationToken),
 							   entry->continuationToken);
+
+		if (entry->cursorContext != NULL)
+		{
+			PgbsonWriterAppendDocument(&entryWriter,
+									   PATH_AND_PATH_LEN(CursorContextKey),
+									   entry->cursorContext);
+		}
+
 		PgbsonArrayWriterEndDocument(&childWriter, &entryWriter);
 	}
 	PgbsonWriterEndArray(writer, &childWriter);
