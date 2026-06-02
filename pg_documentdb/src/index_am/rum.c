@@ -214,7 +214,7 @@ static const char *RumFunctionArray[RumFunction_Max] =
 	[RumFunction_SetUnredactedLogHook] = "SetRumUnredactedLogEmitHook",
 	[RumFunction_RumOrderedCostEstimate] = "RumOrderedCostEstimate",
 	[RumFunction_GetCurrentIndexKey] = "documentdb_rum_get_current_index_key",
-	[RumFunction_SkipTidsForCurrentEntry] = "documentdb_rum_skip_tids_for_current_entry",
+	[RumFunction_SkipTidsForCurrentEntry] = "documentdb_rum_skip_tids_on_current_entry",
 };
 
 
@@ -235,7 +235,7 @@ static const char *DocumentDBRumFunctionArray[RumFunction_Max] =
 	[RumFunction_SetUnredactedLogHook] = "DocumentDBSetRumUnredactedLogEmitHook",
 	[RumFunction_RumOrderedCostEstimate] = "DocumentDBRumOrderedCostEstimate",
 	[RumFunction_GetCurrentIndexKey] = "documentdb_rum_get_current_index_key",
-	[RumFunction_SkipTidsForCurrentEntry] = "documentdb_rum_skip_tids_for_current_entry",
+	[RumFunction_SkipTidsForCurrentEntry] = "documentdb_rum_skip_tids_on_current_entry",
 };
 
 

@@ -708,7 +708,7 @@ UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 	 *  If a continuation is provided, ensure that the plan paths are valid.
 	 */
 	if (root->hasJoinRTEs || root->hasRecursion || root->hasLateralRTEs ||
-		root->group_pathkeys != NIL ||
+		root->group_pathkeys != NIL || root->distinct_pathkeys != NIL ||
 		root->agginfos != NIL || root->hasAlternativeSubPlans ||
 		root->window_pathkeys != NIL || root->parse->hasTargetSRFs)
 	{

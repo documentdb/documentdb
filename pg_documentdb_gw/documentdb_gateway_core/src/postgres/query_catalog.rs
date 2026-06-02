@@ -653,6 +653,7 @@ pub fn create_query_catalog() -> QueryCatalog {
             scan_types: vec![
                 "DocumentDBApiScan".to_owned(),
                 "DocumentDBApiQueryScan".to_owned(),
+                "DocumentDBApiCursorScan".to_owned(),
             ],
 
             ..Default::default()
