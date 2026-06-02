@@ -231,6 +231,10 @@ bool EnableSkipDottedFieldIndexTerms = DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TE
 #define DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS true
 bool EnableDottedValueTextIndexTerms = DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS;
 
+/* Added in v114, enabled in v114, remove after v118 */
+#define DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN true
+bool EnableDistinctIndexPushdown = DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN;
+
 /*
  * SECTION: Planner feature flags
  */
@@ -260,6 +264,10 @@ bool EnableDynamicCursors = DEFAULT_ENABLE_DYNAMIC_CURSORS;
 /* Added in v114, enabled in v114, remove after v120 */
 #define DEFAULT_ENABLE_INDEX_PATH_KEY_SUMMARIZATION true
 bool EnableIndexPathKeySummarization = DEFAULT_ENABLE_INDEX_PATH_KEY_SUMMARIZATION;
+
+/* Added in v114, pending stabilization, enable in v116 */
+#define DEFAULT_ENABLE_DISTINCT_CUSTOM_SCAN false
+bool EnableDistinctCustomScan = DEFAULT_ENABLE_DISTINCT_CUSTOM_SCAN;
 
 /*
  * SECTION: Aggregation & Query feature flags
@@ -636,6 +644,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
+		psprintf("%s.enableDistinctCustomScan", newGucPrefix),
+		gettext_noop(
+			"Whether or not to enable distinct custom scan."),
+		NULL, &EnableDistinctCustomScan,
+		DEFAULT_ENABLE_DISTINCT_CUSTOM_SCAN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
 		psprintf("%s.enableUsernamePasswordConstraints", newGucPrefix),
 		gettext_noop(
 			"Determines whether username and password constraints are enabled."),
@@ -750,6 +766,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable generating index terms for dotted values (e.g. \"foo.bar\")."),
 		NULL, &EnableDottedValueTextIndexTerms,
 		DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableDistinctIndexPushdown", newGucPrefix),
+		gettext_noop(
+			"Whether to enable pushing down distinct operations to the index."),
+		NULL, &EnableDistinctIndexPushdown,
+		DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

@@ -1777,7 +1777,7 @@ SELECT document FROM documentdb_api.count_query('db', '{ "count": "get_aggregati
 SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_test", "key": "_id" }');
                                                                                    document                                                                                    
 ---------------------------------------------------------------------
- { "values" : [ { "$numberInt" : "5" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "1" } ], "ok" : { "$numberDouble" : "1.0" } }
+ { "values" : [ { "$numberInt" : "3" }, { "$numberInt" : "2" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "1" } ], "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 -- Count/Distinct on a nonexistent collection (exercises error/default handling)

@@ -81,12 +81,12 @@ SELECT documentdb_api_internal.bson_get_rewritten_sql('db',
 -- Test distinct
 SELECT documentdb_api_internal.bson_get_rewritten_sql('db',
   '{ "distinct": "rewrite_sql_test", "key": "country" }'::documentdb_core.bson);
-                                      bson_get_rewritten_sql                                      
---------------------------------------------------------------------------------------------------
-  SELECT bson_distinct_agg(document) AS document                                                 +
-    FROM ( SELECT DISTINCT bson_distinct_unwind(collection.document, 'country'::text) AS document+
-            FROM documentdb_data.documents_1984000 collection                                    +
-           WHERE (collection.shard_key_value = '1984000'::bigint)) agg_stage_0
+                                                                            bson_get_rewritten_sql                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  SELECT bson_distinct_agg(document) AS document                                                                                                                              +
+    FROM ( SELECT DISTINCT bson_distinct_unwind(collection.document, 'country'::text) AS document                                                                             +
+            FROM documentdb_data.documents_1984000 collection                                                                                                                 +
+           WHERE ((collection.shard_key_value = '1984000'::bigint) AND bson_dollar_fullscan(collection.document, '{ "country" : { "$numberInt" : "1" } }'::bson))) agg_stage_0
 (1 row)
 
 -- Test error on unsupported command type
