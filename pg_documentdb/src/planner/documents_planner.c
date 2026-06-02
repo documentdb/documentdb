@@ -138,6 +138,7 @@ extern bool ForceParallelScanIfAvailable;
 extern bool EnableCursorPlanBeforeRestrictionPathUpdate;
 extern bool EnableExtendedIndexes;
 extern bool EnableDynamicCursors;
+extern bool EnableDistinctCustomScan;
 
 planner_hook_type ExtensionPreviousPlannerHook = NULL;
 set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook = NULL;
@@ -533,6 +534,12 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 			 */
 			UpdatePathsToForceRumIndexScanToBitmapHeapScan(root, rel);
 		}
+	}
+
+	if (EnableDistinctCustomScan &&
+		list_length(root->distinct_pathkeys) > 0)
+	{
+		AddDistinctCustomScanWrapper(root, rel, rte);
 	}
 
 	/* For vector, text search inject custom scan path to track lifetime of

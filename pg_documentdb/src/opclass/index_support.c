@@ -52,6 +52,7 @@
 #include "utils/version_utils.h"
 #include "query/bson_compare.h"
 #include "index_am/index_am_utils.h"
+#include "utils/docdb_make_funcs.h"
 #include "query/bson_dollar_selectivity.h"
 #include "planner/documentdb_planner.h"
 #include "aggregation/bson_query_common.h"
@@ -174,6 +175,7 @@ extern bool EnableIndexOnlyScanForFindProject;
 extern bool EnableObjectIdFuncExprConversion;
 extern bool EnableExtendedIndexes;
 extern bool EnableDynamicCursors;
+extern bool EnableDistinctIndexPushdown;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -208,7 +210,7 @@ static Expr * CreateKnownFullScanExpr(Datum queryValue, Expr *documentExpr, int
 static OpExpr * CreateExistsTrueOpExpr(Expr *documentExpr, const char *sourcePath,
 									   uint32_t sourcePathLength);
 static List * GetSortDetails(PlannerInfo *root, Index rti,
-							 bool *hasOrderBy, bool *hasGroupby, bool *isOrderById);
+							 bool *hasGroupby, bool *isOrderById);
 static bool IsValidIndexPathForIdOrderBy(IndexPath *indexPath, List *sortDetails);
 
 static Expr * HandleSupportRequestForBtreeObjectIdCondition(
@@ -2414,6 +2416,20 @@ CheckFieldCoverage(Node *node, void *context)
 					state->hasUncoveredField = !isProjectionCoveredByIndex;
 					return state->hasUncoveredField;
 				}
+				else if (EnableDistinctIndexPushdown &&
+						 funcExpr->funcid == BsonDistinctUnwindFunctionOid() &&
+						 IsA(secondArg, Const))
+				{
+					Const *constArg = (Const *) secondArg;
+					if (constArg->constisnull)
+					{
+						/* If the constant is null, we can't do index-only scan. */
+						state->hasUncoveredField = true;
+						return true;
+					}
+
+					fieldPath = TextDatumGetCString(constArg->constvalue);
+				}
 				else
 				{
 					/* To be safe, err on the side of not using index-only scan when the function is not recognized. */
@@ -2740,11 +2756,10 @@ GetPrimaryKeyIndexOptInfo(RelOptInfo *rel)
 static void
 ConsiderBtreeOrderByPushdown(PlannerInfo *root, IndexPath *indexPath)
 {
-	bool hasOrderBy = false;
-	bool hasGroupby = false;
 	bool isOrderById = false;
-	List *sortDetails = GetSortDetails(root, indexPath->path.parent->relid, &hasOrderBy,
-									   &hasGroupby, &isOrderById);
+	bool hasGroupby = false;
+	List *sortDetails = GetSortDetails(root, indexPath->path.parent->relid, &hasGroupby,
+									   &isOrderById);
 
 	if (sortDetails == NIL || !isOrderById)
 	{
@@ -2856,11 +2871,12 @@ BuildPointReadIndexClause(RestrictInfo *restrictInfo, int indexCol)
 
 
 static List *
-GetSortDetails(PlannerInfo *root, Index rti,
-			   bool *hasOrderBy, bool *hasGroupby, bool *isOrderById)
+GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby, bool *isOrderById)
 {
 	List *sortDetails = NIL;
 	ListCell *sortCell;
+	bool hasOrderBy = false;
+	bool hasDistinct = false;
 	foreach(sortCell, root->query_pathkeys)
 	{
 		PathKey *pathkey = (PathKey *) lfirst(sortCell);
@@ -2881,21 +2897,31 @@ GetSortDetails(PlannerInfo *root, Index rti,
 		bool isGroupByEntry = false;
 		if (func->funcid == BsonOrderByFunctionOid())
 		{
-			*hasOrderBy = true;
+			if (hasDistinct)
+			{
+				return NIL;
+			}
+
+			hasOrderBy = true;
 		}
 		else if (EnableOrderByIndexTerm &&
 				 (func->funcid == BsonOrderByIndexFunctionOid() ||
 				  func->funcid == BsonOrderByIndexReverseFunctionOid()))
 		{
 			/* TODO: Collation index pushdown support. */
-			*hasOrderBy = true;
+			if (hasDistinct)
+			{
+				return NIL;
+			}
+
+			hasOrderBy = true;
 		}
 		else if (func->funcid == BsonExpressionGetFunctionOid() ||
 				 func->funcid == BsonExpressionGetWithLetFunctionOid())
 		{
 			/* Reject GROUP BY pathkey appearing after ORDER BY pathkeys;
 			 * GROUP BY entries must form a leading prefix of the pathkey list. */
-			if (*hasOrderBy)
+			if (hasOrderBy)
 			{
 				return NIL;
 			}
@@ -2928,13 +2954,25 @@ GetSortDetails(PlannerInfo *root, Index rti,
 			 * Reject GROUP BY pathkey appearing after ORDER BY pathkeys;
 			 * GROUP BY entries must form a leading prefix of the pathkey list.
 			 */
-			if (*hasOrderBy)
+			if (hasOrderBy)
 			{
 				return NIL;
 			}
 
 			*hasGroupby = true;
 			isGroupByEntry = true;
+		}
+		else if (func->funcid == BsonDistinctUnwindFunctionOid() &&
+				 EnableDistinctIndexPushdown)
+		{
+			/* Similar to $group case, reject if ORDER BY has already been seen */
+			if (hasOrderBy)
+			{
+				return NIL;
+			}
+
+			hasDistinct = true;
+			*hasGroupby = true;
 		}
 		else
 		{
@@ -2966,17 +3004,39 @@ GetSortDetails(PlannerInfo *root, Index rti,
 		if (firstVar->varno != (int) rti ||
 			firstVar->varattno != DOCUMENT_DATA_TABLE_DOCUMENT_VAR_ATTR_NUMBER ||
 			(firstVar->vartype != BsonTypeId() && firstVar->vartype !=
-			 DocumentDBCoreBsonTypeId()) ||
-			(secondConst->consttype != BsonTypeId() && secondConst->consttype !=
-			 DocumentDBCoreBsonTypeId()) ||
-			secondConst->constisnull)
+			 DocumentDBCoreBsonTypeId()))
 		{
 			return NIL;
 		}
 
 		pgbsonelement sortElement;
-		PgbsonToSinglePgbsonElement(
-			DatumGetPgBson(secondConst->constvalue), &sortElement);
+
+		if (EnableDistinctIndexPushdown && hasDistinct)
+		{
+			if (secondConst->consttype != TEXTOID || secondConst->constisnull)
+			{
+				return NIL;
+			}
+
+			sortElement.path = TextDatumGetCString(secondConst->constvalue);
+			sortElement.pathLength = strlen(sortElement.path);
+			sortElement.bsonValue.value_type = BSON_TYPE_INT32;
+			sortElement.bsonValue.value.v_int32 = 1;
+
+			secondConst = MakeBsonConst(PgbsonElementToPgbson(&sortElement));
+		}
+		else if ((secondConst->consttype != BsonTypeId() && secondConst->consttype !=
+				  DocumentDBCoreBsonTypeId()) ||
+				 secondConst->constisnull)
+		{
+			return NIL;
+		}
+		else
+		{
+			PgbsonToSinglePgbsonElement(
+				DatumGetPgBson(secondConst->constvalue), &sortElement);
+		}
+
 		if (isGroupByEntry)
 		{
 			/* In the case of group by the expression would be { "": expr }
@@ -3112,10 +3172,9 @@ ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel, RangeTblEn
 		return;
 	}
 
-	bool hasOrderBy = false;
-	bool hasGroupby = false;
 	bool isOrderById = false;
-	List *sortDetails = GetSortDetails(root, rti, &hasOrderBy, &hasGroupby, &isOrderById);
+	bool hasGroupby = false;
+	List *sortDetails = GetSortDetails(root, rti, &hasGroupby, &isOrderById);
 
 	if (sortDetails == NIL || !isOrderById)
 	{
@@ -3221,11 +3280,10 @@ ProcessOrderByStatements(PlannerInfo *root,
 {
 	int i = 0, sortDetailsIndex = 0;
 
-	bool hasOrderBy = false;
-	bool hasGroupby = false;
 	bool isOrderById = false;
-	List *sortDetails = GetSortDetails(root, path->path.parent->relid, &hasOrderBy,
-									   &hasGroupby, &isOrderById);
+	bool hasGroupby = false;
+	List *sortDetails = GetSortDetails(root, path->path.parent->relid, &hasGroupby,
+									   &isOrderById);
 
 	if (list_length(sortDetails) == 0)
 	{

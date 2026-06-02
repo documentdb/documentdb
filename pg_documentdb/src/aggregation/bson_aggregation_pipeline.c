@@ -90,6 +90,7 @@ extern bool EnableGroupByCompoundIdIndexPushdown;
 extern bool EnableSortGroupStage;
 extern bool EnableSortPushToAccumulatorWithPrefix;
 extern bool EnableSampleScanFixOnSharded;
+extern bool EnableDistinctIndexPushdown;
 
 /* GUC to config tdigest compression */
 extern int TdigestCompressionAccuracy;
@@ -304,6 +305,8 @@ static void SetAccumulatorSortOrder(TargetEntry *accumulatorTle, Expr *documentE
 static bool TryBuildSuffixSortSpec(const bson_value_t *groupValue,
 								   const bson_value_t *sortValue,
 								   bson_value_t *suffixSortSpec);
+static bool CanPushSortFilterToIndex(Query *query,
+									 AggregationPipelineBuildContext *context);
 
 #define COMPATIBLE_CHANGE_STREAM_STAGES_COUNT 8
 const char *CompatibleChangeStreamPipelineStages[COMPATIBLE_CHANGE_STREAM_STAGES_COUNT] =
@@ -2512,6 +2515,7 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 							"A distinct key value cannot contain any embedded null characters")));
 	}
 
+	context.allowShardBaseTable = true;
 	Query *query = GenerateBaseTableQuery(databaseDatum, &collectionName, collectionUuid,
 										  &indexHint, &context);
 
@@ -4682,6 +4686,28 @@ HandleDistinct(const StringView *distinctKey, Query *query,
 	ParseState *parseState = make_parsestate(NULL);
 	parseState->p_expr_kind = EXPR_KIND_SELECT_TARGET;
 	parseState->p_next_resno = firstEntry->resno + 1;
+
+	/* Add the full scan expr to be able to push the sort to an index */
+	if (CanPushSortFilterToIndex(query, context) && EnableDistinctIndexPushdown)
+	{
+		pgbsonelement sortSpecElement = { 0 };
+		sortSpecElement.path = distinctKey->string;
+		sortSpecElement.pathLength = distinctKey->length;
+		sortSpecElement.bsonValue.value_type = BSON_TYPE_INT32;
+		sortSpecElement.bsonValue.value.v_int32 = 1;
+
+		pgbson *sortBson = PgbsonElementToPgbson(&sortSpecElement);
+		Const *sortConst = MakeBsonConst(sortBson);
+		List *rangeArgs = list_make2(currentProjection, sortConst);
+		Expr *fullScanExpr = (Expr *) makeFuncExpr(
+			BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
+			InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+		List *currentQuals = make_ands_implicit(
+			(Expr *) query->jointree->quals);
+		currentQuals = lappend(currentQuals, fullScanExpr);
+		query->jointree->quals = (Node *) make_ands_explicit(
+			currentQuals);
+	}
 
 	query = MigrateQueryToSubQuery(query, context);
 	firstEntry = linitial(query->targetList);
