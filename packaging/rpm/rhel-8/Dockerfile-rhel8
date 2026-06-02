@@ -37,6 +37,7 @@ RUN dnf -y swap curl-minimal curl && \
         libicu-devel \
         krb5-devel \
         python3 \
+        perl-IPC-Run \
         tar && \
     dnf clean all
 
