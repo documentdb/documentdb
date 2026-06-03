@@ -1,5 +1,6 @@
 ### documentdb v0.114-0 (Unreleased) ###
 * Support non-blocking background unique index build for ordered indexes via `CREATE INDEX CONCURRENTLY` with post-processing to register exclusion constraints and validate existing rows. Guarded by `documentdb.enableNonBlockingUniqueIndexBuild` flag, enabled by default. *[Feature]*
+* Add feature-flagged targeted RUM posting-tree pruning to shorten root cleanup-lock hold time during vacuum. Guarded by `enable_targeted_posting_tree_pruning`, disabled by default while pending stabilization. *[Perf]*
 * Fix crash when `$natural` sort on non-base relations that are already sorted by pipeline. *[Bugfix]* (#532)
 * Fix schema validation propagation and ensure correct caching of the parsed validator across calls. *[Bugfix]*
 * Fix `$sample` TABLESAMPLE optimization not being applied on sharded collections when preceded by an empty filter. Guarded by `enableSampleScanFixOnSharded` feature flag *[Bugfix]*
