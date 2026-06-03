@@ -270,54 +270,103 @@ $$ LANGUAGE plpgsql;
 -- progress. We use pg_snapshot_xmax() as the target (an upper bound on every
 -- already-committed xid) so we never have to allocate a new xid ourselves.
 CREATE OR REPLACE PROCEDURE documentdb_test_helpers.wait_for_vacuum_horizon(p_timeout_ms int default 30000)
-LANGUAGE plpgsql
+  LANGUAGE plpgsql
 AS $$
 DECLARE
   v_target xid8;
   v_deadline timestamptz := clock_timestamp() + (p_timeout_ms || ' ms')::interval;
   v_holders text;
+  v_prepared_holders text;
   v_slot_holders text;
   v_horizon_ok boolean;
 BEGIN
   v_target := pg_snapshot_xmax(pg_current_snapshot());
   COMMIT;
   LOOP
-    -- Check both running backends AND replication slots.
-    -- VACUUM uses GetOldestNonRemovableTransactionId() which considers
-    -- replication slot xmin in addition to running backend snapshots.
-    -- pg_snapshot_xmin() only reflects running backends, so we must
-    -- separately verify no replication slot holds back the horizon.
-    SELECT pg_snapshot_xmin(pg_current_snapshot()) >= v_target
+    -- VACUUM uses GetOldestNonRemovableTransactionId(), which (via
+    -- ComputeXidHorizons) walks the ProcArray for both proc->xid AND
+    -- proc->xmin, plus replication slot xmins, plus prepared xacts.
+    --
+    -- A read-only backend with proc->xid = InvalidTransactionId but
+    -- proc->xmin set (e.g., a long-running SELECT in a background worker)
+    -- pins VACUUM's horizon but is *invisible* to pg_snapshot_xmin(),
+    -- which GetSnapshotData computes from proc->xid only. That asymmetry
+    -- is the historical flake source -- the helper would return ✓ while
+    -- VACUUM still saw an older OldestXmin and silently skipped
+    -- ambulkdelete. Use pg_stat_activity.backend_xmin (which exposes
+    -- proc->xmin) so we wait on the same holders VACUUM does. Also check
+    -- backend_xid to defend against the narrow race PG itself defends
+    -- against in ComputeXidHorizons (xmin = TransactionIdOlder(xmin, xid)):
+    -- a writer whose proc->xmin is momentarily cleared between snapshots
+    -- but whose proc->xid still pins the horizon.
+    --
+    -- We use age() for the xid comparisons (rather than ::text::bigint)
+    -- to be wraparound-safe: backend_xmin / backend_xid / pg_prepared_xacts
+    -- / pg_replication_slots all expose 32-bit xid which wraps every ~4B
+    -- transactions. age() computes next_xid - xid in modulo arithmetic,
+    -- so "older than v_target" is exactly age(x) > age(v_target::xid),
+    -- which behaves correctly across wraparound boundaries.
+    --
+    -- ComputeXidHorizons's *data* horizon counts:
+    --   * backends in the current database (proc->databaseId == MyDatabaseId)
+    --   * backends with PROC_AFFECTS_ALL_HORIZONS set (physical walsenders
+    --     doing hot-standby-feedback), which are not tied to any specific
+    --     database and appear in pg_stat_activity with datname IS NULL
+    -- so we scope the backend check to (current_database() OR NULL).
+    SELECT NOT EXISTS (
+             SELECT 1 FROM pg_stat_activity
+              WHERE pid <> pg_backend_pid()
+                AND (datname = current_database() OR datname IS NULL)
+                AND (
+                  (backend_xmin IS NOT NULL
+                   AND age(backend_xmin) > age(v_target::text::xid))
+                  OR
+                  (backend_xid IS NOT NULL
+                   AND age(backend_xid) > age(v_target::text::xid))
+                )
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_prepared_xacts
+              WHERE age(transaction) > age(v_target::text::xid)
+                AND database = current_database()
+           )
            AND NOT EXISTS (
              SELECT 1 FROM pg_replication_slots
               WHERE xmin IS NOT NULL
-                AND xmin::text::bigint < v_target::text::bigint
+                AND age(xmin) > age(v_target::text::xid)
            )
       INTO v_horizon_ok;
 
     EXIT WHEN v_horizon_ok;
 
     IF clock_timestamp() > v_deadline THEN
-      SELECT string_agg(format('pid=%s xmin=%s state=%s backend_type=%s',
-                               pid, backend_xmin, state, backend_type), '; ')
+      SELECT string_agg(format('pid=%s xid=%s xmin=%s state=%s backend_type=%s db=%s',
+                               pid, backend_xid, backend_xmin, state, backend_type, datname), '; ')
         INTO v_holders
         FROM pg_stat_activity
-       WHERE backend_xmin IS NOT NULL
-         AND pid <> pg_backend_pid();
+       WHERE pid <> pg_backend_pid()
+         AND (datname = current_database() OR datname IS NULL)
+         AND (backend_xmin IS NOT NULL OR backend_xid IS NOT NULL);
+      SELECT string_agg(format('gid=%s xid=%s db=%s',
+                               gid, transaction, database), '; ')
+        INTO v_prepared_holders
+        FROM pg_prepared_xacts
+       WHERE database = current_database();
       SELECT string_agg(format('slot=%s xmin=%s active=%s',
                                slot_name, xmin, active), '; ')
         INTO v_slot_holders
         FROM pg_replication_slots
        WHERE xmin IS NOT NULL;
-      RAISE EXCEPTION 'wait_for_vacuum_horizon: xmin horizon did not advance to % within %ms (backends: %; slots: %)',
+      RAISE EXCEPTION 'wait_for_vacuum_horizon: xmin horizon did not advance to % within %ms (backends: %; prepared: %; slots: %)',
         v_target, p_timeout_ms,
         COALESCE(v_holders, '<none>'),
+        COALESCE(v_prepared_holders, '<none>'),
         COALESCE(v_slot_holders, '<none>');
     END IF;
     PERFORM pg_sleep(0.05);
     COMMIT;
   END LOOP;
-END
+END;
 $$;
 CREATE OR REPLACE FUNCTION documentdb_test_helpers.change_index_jobs_status(active_status boolean)
 RETURNS void
