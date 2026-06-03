@@ -79,8 +79,9 @@ IndexOptInfo * GetPrimaryKeyIndexOptCore(RelOptInfo *rel);
 
 
 IndexPath * GetPrimaryKeyContinuationIndexPath(PlannerInfo *root, RelOptInfo *rel,
-											   Datum *primaryKeyDatums, bool
-											   rowCompareIsInclusive);
+											   Datum *primaryKeyDatums,
+											   ScanDirection scandir,
+											   bool rowCompareIsInclusive);
 IndexPath * AddRowCompareToExistingPrimaryKeyPath(PlannerInfo *root,
 												  RelOptInfo *rel,
 												  IndexPath *existingPath,

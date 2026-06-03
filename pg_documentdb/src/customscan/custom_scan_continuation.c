@@ -207,6 +207,7 @@ static RestrictInfo * BuildPrimaryKeyRestrictInfo(PlannerInfo *root, RelOptInfo 
 												  IndexOptInfo *indexInfo,
 												  Datum *primaryKeyDatums, bool
 												  rowCompareIsInclusive,
+												  ScanDirection scandir,
 												  bool *isObjectIdContinuation);
 static void ParseContinuationState(ExtensionScanState *scanState,
 								   InputContinuation *continuation);
@@ -555,7 +556,9 @@ CreateCustomScanPathForContinuation(PlannerInfo *root, RelOptInfo *rel, Path *in
 
 IndexPath *
 GetPrimaryKeyContinuationIndexPath(PlannerInfo *root, RelOptInfo *rel,
-								   Datum *primaryKeyDatums, bool rowCompareIsInclusive)
+								   Datum *primaryKeyDatums,
+								   ScanDirection scandir,
+								   bool rowCompareIsInclusive)
 {
 	IndexOptInfo *info = GetPrimaryKeyIndexOpt(rel);
 	if (info == NULL)
@@ -569,6 +572,7 @@ GetPrimaryKeyContinuationIndexPath(PlannerInfo *root, RelOptInfo *rel,
 		root, rel, info,
 		primaryKeyDatums,
 		rowCompareIsInclusive,
+		scandir,
 		&isIdContinuation);
 
 	List *oldIndexList = rel->indexlist;
@@ -696,7 +700,9 @@ AddRowCompareToExistingPrimaryKeyPath(PlannerInfo *root, RelOptInfo *rel,
 	RestrictInfo *rowCompareRestrictInfo =
 		BuildPrimaryKeyRestrictInfo(root, rel, existingPath->indexinfo,
 									primaryKeyDatums,
-									rowCompareIsInclusive, &isObjectIdContinuation);
+									rowCompareIsInclusive,
+									existingPath->indexscandir,
+									&isObjectIdContinuation);
 
 	/* Copy the IndexPath and its IndexOptInfo so we don't modify the original */
 	IndexPath *pathCopy = palloc(sizeof(IndexPath));
@@ -1039,8 +1045,10 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 
 		if (inputPath == NULL)
 		{
+			ScanDirection scandir = ForwardScanDirection;
 			inputPath = GetPrimaryKeyContinuationIndexPath(root, rel,
 														   scanState.primaryKeyDatums,
+														   scandir,
 														   rowCompareInclusive);
 		}
 
@@ -2418,6 +2426,7 @@ static RestrictInfo *
 BuildPrimaryKeyRestrictInfo(PlannerInfo *root, RelOptInfo *rel,
 							IndexOptInfo *indexInfo,
 							Datum *primaryKeyDatums, bool rowCompareIsInclusive,
+							ScanDirection scandir,
 							bool *isObjectIdContinuation)
 {
 	ListCell *cell;
@@ -2440,12 +2449,44 @@ BuildPrimaryKeyRestrictInfo(PlannerInfo *root, RelOptInfo *rel,
 									 primaryKeyDatums[1], false, false);
 	Expr *skipExpr;
 	*isObjectIdContinuation = false;
+
+	Oid bsonCompareOp;
+	Oid shardKeyCompareOp;
+#if PG_VERSION_NUM >= 180000
+	CompareType cmptype;
+#else
+	RowCompareType rcType;
+#endif
+
+	if (ScanDirectionIsBackward(scandir))
+	{
+		bsonCompareOp = rowCompareIsInclusive ? BsonLessThanEqualOperatorId() :
+						BsonLessThanOperatorId();
+		shardKeyCompareOp = rowCompareIsInclusive ? BigIntLessEqualOperatorId() :
+							BigIntLessOperatorId();
+#if PG_VERSION_NUM >= 180000
+		cmptype = rowCompareIsInclusive ? COMPARE_LE : COMPARE_LT;
+#else
+		rcType = rowCompareIsInclusive ? ROWCOMPARE_LE : ROWCOMPARE_LT;
+#endif
+	}
+	else
+	{
+		bsonCompareOp = rowCompareIsInclusive ? BsonGreaterThanEqualOperatorId() :
+						BsonGreaterThanOperatorId();
+		shardKeyCompareOp = rowCompareIsInclusive ? BigIntGreaterEqualOperatorId() :
+							BigIntGreaterOperatorId();
+#if PG_VERSION_NUM >= 180000
+		cmptype = rowCompareIsInclusive ? COMPARE_GE : COMPARE_GT;
+#else
+		rcType = rowCompareIsInclusive ? ROWCOMPARE_GE : ROWCOMPARE_GT;
+#endif
+	}
+
 	if (hasShardKeyEquality)
 	{
 		/* Construct object_id > in this path */
-		Oid opOid = rowCompareIsInclusive ? BsonGreaterThanEqualOperatorId() :
-					BsonGreaterThanOperatorId();
-		skipExpr = make_opclause(opOid, BOOLOID, false, (Expr *) objectIdVar,
+		skipExpr = make_opclause(bsonCompareOp, BOOLOID, false, (Expr *) objectIdVar,
 								 (Expr *) objectIdConst, InvalidOid, InvalidOid);
 		*isObjectIdContinuation = true;
 	}
@@ -2459,23 +2500,14 @@ BuildPrimaryKeyRestrictInfo(PlannerInfo *root, RelOptInfo *rel,
 		Const *shardKeyConst = makeConst(INT8OID, -1, InvalidOid, sizeof(int64),
 										 primaryKeyDatums[0], false, true);
 		RowCompareExpr *rcexpr = makeNode(RowCompareExpr);
-	#if PG_VERSION_NUM >= 180000
-		rcexpr->cmptype = rowCompareIsInclusive ? COMPARE_GE : COMPARE_GT;
-	#else
-		rcexpr->rctype = rowCompareIsInclusive ? ROWCOMPARE_GE : ROWCOMPARE_GT;
-	#endif
+#if PG_VERSION_NUM >= 180000
+		rcexpr->cmptype = cmptype;
+#else
+		rcexpr->rctype = rcType;
+#endif
 
-		if (rowCompareIsInclusive)
-		{
-			rcexpr->opnos = list_make2_oid(BigIntGreaterEqualOperatorId(),
-										   BsonGreaterThanEqualOperatorId());
-		}
-		else
-		{
-			rcexpr->opnos = list_make2_oid(BigIntGreaterOperatorId(),
-										   BsonGreaterThanOperatorId());
-		}
 
+		rcexpr->opnos = list_make2_oid(shardKeyCompareOp, bsonCompareOp);
 		rcexpr->opfamilies = list_make2_oid(IntegerOpsOpFamilyOid(),
 											BsonBtreeOpFamilyOid());
 		rcexpr->inputcollids = list_make2_oid(InvalidOid, InvalidOid);

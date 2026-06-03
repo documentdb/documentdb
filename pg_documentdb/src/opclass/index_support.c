@@ -2753,7 +2753,7 @@ GetPrimaryKeyIndexOptInfo(RelOptInfo *rel)
 }
 
 
-static void
+void
 ConsiderBtreeOrderByPushdown(PlannerInfo *root, IndexPath *indexPath)
 {
 	bool isOrderById = false;
@@ -3197,6 +3197,15 @@ ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel, RangeTblEn
 			{
 				path = (Path *) bitmapPath->bitmapqual;
 			}
+		}
+
+		if (IsA(path, CustomPath) &&
+			context->hasDynamicStreamingContinuationScan)
+		{
+			/* In case of a custom path with streaming continuation,
+			 * don't try to overwrite with order by paths.
+			 */
+			return;
 		}
 
 		if (!IsA(path, IndexPath))
