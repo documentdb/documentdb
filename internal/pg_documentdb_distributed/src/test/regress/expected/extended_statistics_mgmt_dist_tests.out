@@ -40,11 +40,17 @@ SELECT documentdb_api.coll_mod('stats_db', 'planner_stats', '{ "collMod": "plann
  { "ok" : { "$numberInt" : "1" } }
 (1 row)
 
--- print list_indexes to see that the option is set
+-- verify statsEnabled is in collections.options
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'stats_db' AND collection_name = 'planner_stats';
+          options          
+---------------------------------------------------------------------
+ { "statsEnabled" : true }
+(1 row)
+
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "planner_stats" }') ORDER BY 1;
                                                                                                                         bson_dollar_unwind                                                                                                                         
 ---------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.planner_stats", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_", "statsEnabled" : true } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.planner_stats", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.planner_stats", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }, "name" : "b_c_1" } }, "ok" : { "$numberDouble" : "1.0" } }
 (2 rows)
 
@@ -165,7 +171,6 @@ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation
 
 -- now shard the collection.
 SELECT documentdb_api.shard_collection('{ "shardCollection": "stats_db.planner_stats", "key": { "_id": "hashed" } }');
-NOTICE:  statistics object "documentdb_data.documents_rum_index_7401_stats" does not exist, skipping
  shard_collection 
 ---------------------------------------------------------------------
  
@@ -206,7 +211,7 @@ Statistics objects:
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "planner_stats" }') ORDER BY 1;
                                                                                                                         bson_dollar_unwind                                                                                                                         
 ---------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.planner_stats", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_", "statsEnabled" : true } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.planner_stats", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.planner_stats", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }, "name" : "b_c_1" } }, "ok" : { "$numberDouble" : "1.0" } }
 (2 rows)
 
@@ -226,11 +231,17 @@ NOTICE:  creating collection
 (1 row)
 
 SELECT collection_id AS auto_dist_id FROM documentdb_api_catalog.collections WHERE database_name = 'stats_db' AND collection_name = 'auto_dist' \gset
--- listIndexes shows statsEnabled=true on the _id_ index.
-SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "auto_dist" }') ORDER BY 1;
-                                                                                                                   bson_dollar_unwind                                                                                                                    
+-- collections.options shows statsEnabled=true (stored at creation time).
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_name = 'auto_dist';
+          options          
 ---------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.auto_dist", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_", "statsEnabled" : true } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "statsEnabled" : true }
+(1 row)
+
+SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "auto_dist" }') ORDER BY 1;
+                                                                                                        bson_dollar_unwind                                                                                                        
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.auto_dist", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 -- Add a compound index so a stats object is materialized before sharding.
@@ -259,7 +270,6 @@ Statistics objects:
 -- on the parent table and the new shard tables (the OR with the per-collection
 -- GUC in ShardCollectionCore lets the new GUC keep stats across sharding).
 SELECT documentdb_api.shard_collection('{ "shardCollection": "stats_db.auto_dist", "key": { "_id": "hashed" } }');
-NOTICE:  statistics object "documentdb_data.documents_rum_index_7406_stats" does not exist, skipping
  shard_collection 
 ---------------------------------------------------------------------
  
@@ -281,11 +291,17 @@ Check constraints:
 Statistics objects:
     "documentdb_data.documents_rum_index_7409_stats" ON bson_stats_project(document, 'p'::text), bson_stats_project(document, 'q'::text) FROM documentdb_data.documents_7402
 
--- listIndexes still reports statsEnabled=true after sharding.
+-- collections.options still shows statsEnabled=true after sharding.
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_name = 'auto_dist';
+          options          
+---------------------------------------------------------------------
+ { "statsEnabled" : true }
+(1 row)
+
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "auto_dist" }') ORDER BY 1;
                                                                                                                       bson_dollar_unwind                                                                                                                       
 ---------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.auto_dist", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_", "statsEnabled" : true } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.auto_dist", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.auto_dist", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "1" } }, "name" : "p_q_1" } }, "ok" : { "$numberDouble" : "1.0" } }
 (2 rows)
 
