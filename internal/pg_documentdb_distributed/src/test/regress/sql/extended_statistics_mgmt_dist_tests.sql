@@ -18,7 +18,8 @@ SELECT documentdb_api.coll_mod('stats_db', 'planner_stats', '{ "collMod": "plann
 set documentdb.enablePerCollectionPlannerStatistics to on;
 SELECT documentdb_api.coll_mod('stats_db', 'planner_stats', '{ "collMod": "planner_stats", "enableStats": true }');
 
--- print list_indexes to see that the option is set
+-- verify statsEnabled is in collections.options
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'stats_db' AND collection_name = 'planner_stats';
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "planner_stats" }') ORDER BY 1;
 
 -- now create an index on the collection and verify that the planner statistics are updated for the index
@@ -70,7 +71,8 @@ set documentdb.enablePlannerStatisticsNewCollections to on;
 SELECT documentdb_api.create_collection('stats_db', 'auto_dist');
 SELECT collection_id AS auto_dist_id FROM documentdb_api_catalog.collections WHERE database_name = 'stats_db' AND collection_name = 'auto_dist' \gset
 
--- listIndexes shows statsEnabled=true on the _id_ index.
+-- collections.options shows statsEnabled=true (stored at creation time).
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_name = 'auto_dist';
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "auto_dist" }') ORDER BY 1;
 
 -- Add a compound index so a stats object is materialized before sharding.
@@ -83,7 +85,8 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('stats_db', '{ "c
 SELECT documentdb_api.shard_collection('{ "shardCollection": "stats_db.auto_dist", "key": { "_id": "hashed" } }');
 \d documentdb_data.documents_:auto_dist_id
 
--- listIndexes still reports statsEnabled=true after sharding.
+-- collections.options still shows statsEnabled=true after sharding.
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_name = 'auto_dist';
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "auto_dist" }') ORDER BY 1;
 
 -- Turning the new GUC off and sharding a *different* collection that was

@@ -980,18 +980,58 @@ HandleDropIndexConcurrently(uint64 collectionId, int indexId, bool unique, bool
 
 	/* declared volatile because of the longjmp in PG_CATCH */
 	volatile bool indexDropped = false;
+
+	/*
+	 * Drop statistics before the index so that the stats object still
+	 * exists on the coordinator when the DROP STATISTICS command runs.
+	 * This lets Citus propagate the drop to shard tables.
+	 *
+	 * We must commit after dropping stats so that the locks acquired by
+	 * the DROP STATISTICS (and its Citus propagation to shards) are
+	 * released before the DROP INDEX CONCURRENTLY runs via a separate
+	 * libpq connection. Otherwise the libpq connection blocks waiting
+	 * for the locks held by this transaction, causing a hang.
+	 *
+	 * If the stats drop fails we must NOT proceed with the index drop,
+	 * otherwise the index would be removed while its statistics remain,
+	 * leaving stale stats behind.
+	 */
+	volatile bool statsDropped = false;
+	PG_TRY();
+	{
+		DropIndexStatisticsForPlannerStatistics(collectionId, list_make1_int(indexId));
+		PopAllActiveSnapshots();
+		CommitTransactionCommand();
+		StartTransactionCommand();
+		statsDropped = true;
+	}
+	PG_CATCH();
+	{
+		MemoryContextSwitchTo(oldMemContext);
+		ErrorData *edata = CopyErrorDataAndFlush();
+		result->errcode = edata->sqlerrcode;
+		result->errmsg = edata->message;
+		result->ok = false;
+
+		ereport(DEBUG1, (errmsg(
+							 "Failed to drop statistics for index %d on collection "
+							 UINT64_FORMAT, indexId, collectionId)));
+
+		PopAllActiveSnapshots();
+		AbortCurrentTransaction();
+		StartTransactionCommand();
+	}
+	PG_END_TRY();
+
+	if (!statsDropped)
+	{
+		return;
+	}
+
 	PG_TRY();
 	{
 		char *cmd = CreateDropIndexCommand(collectionId, indexId, unique, concurrently,
 										   missingOk);
-
-		/*
-		 * Drop statistics before the index so that the stats object still
-		 * exists on the coordinator when the DROP STATISTICS command runs.
-		 * This lets Citus propagate the drop to shard tables.
-		 */
-		DropIndexStatisticsForPlannerStatistics(collectionId, list_make1_int(
-													indexId));
 
 		bool forceReadWrite = false;
 		ExecuteDropIndexCommand(cmd, unique, concurrently, forceReadWrite);

@@ -2323,6 +2323,40 @@ UpdateEnableUpdateDescription(MongoCollection *collection, bool enabled)
 }
 
 
+/*
+ * UpdateCollectionStatsEnabledOption stores or removes the statsEnabled
+ * option in the collection's options column. This is used to track whether
+ * planner statistics are enabled for the collection without requiring a
+ * FOR UPDATE lock on collection_indexes.
+ */
+void
+UpdateCollectionStatsEnabledOption(uint64 collectionId, bool enabled)
+{
+	MongoCollection *collection = GetMongoCollectionByColId(collectionId, NoLock);
+	if (collection == NULL)
+	{
+		return;
+	}
+
+	pgbson_writer optionWriter;
+	PgbsonWriterInit(&optionWriter);
+
+	if (enabled)
+	{
+		PgbsonWriterAppendBool(&optionWriter, "statsEnabled",
+							   strlen("statsEnabled"), true);
+		pgbson *updateSpec = PgbsonWriterGetPgbson(&optionWriter);
+		UpdateCollectionOptions(collection, updateSpec);
+	}
+	else
+	{
+		PgbsonWriterAppendUtf8(&optionWriter, "", 0, "statsEnabled");
+		pgbson *removeSpec = PgbsonWriterGetPgbson(&optionWriter);
+		RemoveCollectionOptions(collection, removeSpec);
+	}
+}
+
+
 static void
 UpdateCollectionOptions(MongoCollection *collection, const pgbson *updateSpec)
 {
@@ -2452,6 +2486,11 @@ CopyCollectionOptions(const pgbson *options, MongoCollection *collection)
 			 * for this collection.
 			 */
 			collection->options.updateDescriptionEnabled =
+				BsonValueAsBool(bson_iter_value(&optionsIter));
+		}
+		else if (strcmp(key, "statsEnabled") == 0)
+		{
+			collection->options.statsEnabled =
 				BsonValueAsBool(bson_iter_value(&optionsIter));
 		}
 	}

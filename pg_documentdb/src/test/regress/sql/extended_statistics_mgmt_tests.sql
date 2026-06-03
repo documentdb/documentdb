@@ -16,7 +16,8 @@ SELECT documentdb_api.coll_mod('stats_db', 'planner_stats', '{ "collMod": "plann
 set documentdb.enablePerCollectionPlannerStatistics to on;
 SELECT documentdb_api.coll_mod('stats_db', 'planner_stats', '{ "collMod": "planner_stats", "enableStats": true }');
 
--- print list_indexes to see that the option is set
+-- verify statsEnabled is now in the collections.options column (not on the _id_ index)
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_id = 6401;
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "planner_stats" }') ORDER BY 1;
 
 -- now create an index on the collection and verify that the planner statistics are updated for the index
@@ -87,8 +88,8 @@ SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch
 -- With enablePlannerStatisticsNewCollections=on, a new collection auto-enables stats.
 set documentdb.enablePlannerStatisticsNewCollections to on;
 SELECT documentdb_api.create_collection('stats_db', 'auto_on');
--- listIndexes shows statsEnabled=true on the _id_ index, even though no stats
--- objects exist yet (no non-_id indexes have been created).
+-- collections.options shows statsEnabled=true (stored at creation time via INSERT).
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_id = 6403;
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "auto_on" }') ORDER BY 1;
 \d documentdb_data.documents_6403
 
@@ -104,6 +105,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('stats_db', '{ "c
 
 -- Toggling the new GUC off after creation does NOT remove stats. The flag persists.
 set documentdb.enablePlannerStatisticsNewCollections to off;
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_id = 6403;
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "auto_on" }') ORDER BY 1;
 \d documentdb_data.documents_6403
 
