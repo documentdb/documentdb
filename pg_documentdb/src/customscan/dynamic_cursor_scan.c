@@ -1152,7 +1152,7 @@ ExtensionCursorScanNextWithIndexContinuation(CustomScanState *node)
 
 	TupleTableSlot *slot = NULL;
 	IndexScanDesc scanDesc = NULL;
-	SkipTidsOnCurrentEntryFunc skipTidsFunc = NULL;
+	PGFunction skipTidsFunc = NULL;
 	bool pathKeySummarizationForced = false;
 	double numSkipped = 0;
 

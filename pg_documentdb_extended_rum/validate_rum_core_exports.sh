@@ -6,8 +6,12 @@ rightLib=$2
 echo "Validating exports in $leftLib and $rightLib"
 
 # These symbols must be exported by leftLib (the core lib)
+
+expectedPublicExports=(
+    DocumentDBRumInitPublic
+)
+
 expectedExports=(
-    DocumentDBRumInitCore
     DocumentDBRumOrderedCostEstimate
     documentdb_rum_get_current_index_key
     documentdb_rum_get_multi_key_status
@@ -38,6 +42,13 @@ failed=0
 
 # Assert all expected symbols are exported by leftLib
 for sym in "${expectedExports[@]}"; do
+    if ! echo "$leftExports" | grep -qxF "$sym"; then
+        echo "ERROR: expected symbol '$sym' not found in $leftLib"
+        failed=1
+    fi
+done
+
+for sym in "${expectedPublicExports[@]}"; do
     if ! echo "$leftExports" | grep -qxF "$sym"; then
         echo "ERROR: expected symbol '$sym' not found in $leftLib"
         failed=1

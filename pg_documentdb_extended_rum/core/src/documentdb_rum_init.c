@@ -23,10 +23,14 @@ PG_MODULE_MAGIC;
 
 void _PG_init(void);
 
-extern PGDLLEXPORT bool documentdb_rum_get_multi_key_status(Relation indexRelation);
-extern PGDLLEXPORT void documentdb_rum_update_multi_key_status(Relation indexRelation);
-extern PGDLLEXPORT void DocumentDBRumInitCore(const char *rumGucPrefix, const
-											  char *documentDBRumGucPrefix);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_get_multi_key_status);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_update_multi_key_status);
+
+#ifndef RUM_BUILD_ONLY_CORE_RMGR
+extern void DocumentDBRumInitPublic(const char *rumGucPrefix,
+									const char *documentDBRumGucPrefix);
+#endif
+static void DocumentDBRumInitLib(void);
 
 extern PGDLLIMPORT void InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 													   char *documentDBRumGucPrefix);
@@ -110,41 +114,57 @@ _PG_init(void)
 							"variable in postgresql.conf. ")));
 	}
 
-	/* Do not add any initialization logic here. Do it in DocumentDBRumInitCore */
-	DocumentDBRumInitCore("documentdb_rum", "documentdb_rum");
+	/* Do not add any initialization logic here. Do it in DocumentDBRumInitPublic
+	 * or DocumentDBRumInitLib instead.
+	 */
+#ifndef RUM_BUILD_ONLY_CORE_RMGR
+	DocumentDBRumInitPublic("documentdb_rum", "documentdb_rum");
 	MarkGUCPrefixReserved("documentdb_rum");
+#else
+	DocumentDBRumInitLib();
+#endif
 }
 
 
-PGDLLEXPORT void
-DocumentDBRumInitCore(const char *rumGucPrefix,
-					  const char *documentDBRumGucPrefix)
+static void
+DocumentDBRumInitLib(void)
 {
-	InitializeRumVacuumState();
-
 	RegisterRoaringBitmapHooks();
-
-#if RUM_BUILT_IN_RMGR_MODE
 
 	/* We don't initialize a custom Rmgr in this path we should be using
 	 * the built-in Rmgrs for WAL logs.
 	 */
-#else
+#ifndef RUM_BUILT_IN_RMGR_MODE
 	DefineCustomRumRmgr();
 #endif
+
+	initialize_rumoptions();
+}
+
+
+#ifndef RUM_BUILD_ONLY_CORE_RMGR
+PGDLLEXPORT void
+DocumentDBRumInitPublic(const char *rumGucPrefix,
+						const char *documentDBRumGucPrefix)
+{
+	InitializeRumVacuumState();
 
 	/* Define custom GUC variables. (if any) */
 	if (DocumentDBRumLoadCommonGUCs)
 	{
 		DocumentDBRumLoadCommonGUCs = false;
 		InitializeCommonDocumentDBGUCs(rumGucPrefix, documentDBRumGucPrefix);
-		initialize_rumoptions();
 	}
+
+	DocumentDBRumInitLib();
 }
 
 
-PGDLLEXPORT bool
-documentdb_rum_get_multi_key_status(Relation indexRelation)
+#endif
+
+
+static bool
+documentdb_rum_get_multi_key_status_core(Relation indexRelation)
 {
 	Buffer metabuffer;
 	Page metapage;
@@ -157,19 +177,27 @@ documentdb_rum_get_multi_key_status(Relation indexRelation)
 	metadata = RumPageGetMeta(metapage);
 	hasMultiKeyPaths = metadata->nPendingHeapTuples > 0;
 	UnlockReleaseBuffer(metabuffer);
-
 	return hasMultiKeyPaths;
 }
 
 
-PGDLLEXPORT void
-documentdb_rum_update_multi_key_status(Relation index)
+RMGR_PG_FUNCTION_DEF(documentdb_rum_get_multi_key_status)
 {
+	Relation indexRelation = (Relation) PG_GETARG_POINTER(0);
+	bool hasMultiKeyPaths = documentdb_rum_get_multi_key_status_core(indexRelation);
+	PG_RETURN_BOOL(hasMultiKeyPaths);
+}
+
+
+RMGR_PG_FUNCTION_DEF(documentdb_rum_update_multi_key_status)
+{
+	Relation index = (Relation) PG_GETARG_POINTER(0);
+
 	/* First do a get to see if we even need to update */
-	bool isMultiKey = documentdb_rum_get_multi_key_status(index);
+	bool isMultiKey = documentdb_rum_get_multi_key_status_core(index);
 	if (isMultiKey)
 	{
-		return;
+		PG_RETURN_VOID();
 	}
 
 	Buffer metaBuffer;
@@ -189,4 +217,5 @@ documentdb_rum_update_multi_key_status(Relation index)
 
 	GenericXLogFinish(state);
 	UnlockReleaseBuffer(metaBuffer);
+	PG_RETURN_VOID();
 }

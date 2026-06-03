@@ -103,7 +103,7 @@ ExprCanBePushedToIndex(SupportRequestIndexCondition *supportRequest)
 	}
 
 	/* A $expr can be pushed to the index iff the index is non-multikey */
-	GetMultikeyStatusFunc getMultiKeyStatusFunc = GetMultiKeyStatusByRelAm(
+	PGFunction getMultiKeyStatusFunc = GetMultiKeyStatusByRelAm(
 		supportRequest->index->relam);
 	if (getMultiKeyStatusFunc == NULL)
 	{
@@ -119,7 +119,8 @@ ExprCanBePushedToIndex(SupportRequestIndexCondition *supportRequest)
 
 	bool isMultiKeyIndex = false;
 	Relation indexRel = index_open(supportRequest->index->indexoid, NoLock);
-	isMultiKeyIndex = getMultiKeyStatusFunc(indexRel);
+	isMultiKeyIndex = DatumGetBool(DirectFunctionCall1(getMultiKeyStatusFunc,
+													   PointerGetDatum(indexRel)));
 	index_close(indexRel, NoLock);
 
 	return !isMultiKeyIndex;

@@ -59,25 +59,24 @@ bool IsHashedPathOpFamilyOid(Oid relam, Oid opFamilyOid);
 
 bool IsOrderBySupportedOnOpClass(Oid indexAm, Oid IndexPathOpFamilyAm);
 
-GetMultikeyStatusFunc GetMultiKeyStatusByRelAm(Oid relam);
+PGFunction GetMultiKeyStatusByRelAm(Oid relam);
 bool GetIndexSupportsBackwardsScan(Oid relam, bool *indexCanOrder);
 
 bool GetIndexAmSupportsIndexOnlyScan(Oid indexAm, Oid opFamilyOid,
-									 GetMultikeyStatusFunc *getMultiKeyStatus,
+									 PGFunction *getMultiKeyStatus,
 									 GetTruncationStatusFunc *getTruncationStatus);
 
 void TryExplainByIndexAm(struct IndexScanDescData *scan, ExplainWriterFuncs *writeFuncs,
 						 void *writerState);
 
-GetCurrentIndexKeyFunc GetIndexKeyCurrentKeyFunc(Oid relam, Oid opFamily,
-												 bool *pathKeySummarizationForced);
-
-SkipTidsOnCurrentEntryFunc GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily,
-														 bool *pathKeySummarizationForced);
+PGFunction GetIndexKeyCurrentKeyFunc(Oid relam, Oid opFamily,
+									 bool *pathKeySummarizationForced);
+PGFunction GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily,
+										 bool *pathKeySummarizationForced);
 
 
 bool GetCompositeOpClassWithProps(Relation indexRelation,
 								  bool *supportsOrderedOperatorScans,
-								  GetMultikeyStatusFunc *multiKeyStatusFunc);
+								  PGFunction *multiKeyStatusFunc);
 
 #endif
