@@ -28,9 +28,18 @@
 extern bool EnablePerCollectionPlannerStatistics;
 extern bool EnableCompositeIndexPlanner;
 
+/* PG selectivity functions */
+extern Datum eqsel(PG_FUNCTION_ARGS);
+extern Datum scalargtsel(PG_FUNCTION_ARGS);
+extern Datum scalargesel(PG_FUNCTION_ARGS);
+extern Datum scalarltsel(PG_FUNCTION_ARGS);
+extern Datum scalarlesel(PG_FUNCTION_ARGS);
+extern Datum neqsel(PG_FUNCTION_ARGS);
+
 static double GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double
 									   defaultExprSelectivity,
-									   pgbsonelement *outputDollarElement);
+									   pgbsonelement *outputDollarElement,
+									   BsonIndexStrategy *outputIndexStrategy);
 
 static double GetDisableStatisticSelectivity(List *args, double
 											 defaultDisabledSelectivity);
@@ -135,6 +144,172 @@ EnablePlannerCostSelectivity(PlannerInfo *planner, List *args)
 }
 
 
+/*
+ * Calculate the selectivity for $exists queries.
+ * Which is essentially $exists: false -> $eq: null
+ * For $exists: true is the inverse, so we can just do 1.0 - $eq: null selectivity.
+ */
+static double
+GetDollarExistsSelectivity(PlannerInfo *planner, Oid selectivityOpExpr, Node *leftOperand,
+						   bson_value_t *rightValue, int varRelId, bool isExistsTrue)
+{
+	rightValue->value_type = BSON_TYPE_NULL;
+	List *args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
+														   rightValue)));
+	double selectivity = DirectFunctionCall4(eqsel, PointerGetDatum(planner),
+											 ObjectIdGetDatum(selectivityOpExpr),
+											 PointerGetDatum(args), Int32GetDatum(
+												 varRelId));
+
+	if (isExistsTrue)
+	{
+		selectivity = 1.0 - selectivity;
+	}
+
+	list_free(args);
+	return selectivity;
+}
+
+
+static double
+GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy
+							   indexStrategy, Oid selectivityOpExpr,
+							   Node *leftOperand, bson_value_t *rightValue,
+							   int varRelId, Oid collation,
+							   double defaultInputSelectivity)
+{
+	/*
+	 * TODO Selectivity:
+	 * REGEX: for regex with anchored prefix, we should use range selectivity. Calculate the gte and lte boundaries selectivity.
+	 * $IN/$NIN: for $in and $nin with small set of elements (i.e <= 20) we should consider using scalararray selectivity functions
+	 * (scalararraysel/scalararraynesel), or exploring what btree does for SAOP to have the best selectivity estimate.
+	 */
+
+	List *args = NIL;
+	double selectivity = defaultInputSelectivity;
+
+	/* Generic default selectivity clamps at 0.0001, so for large tables, the selectivity would be very high, i.e for a 2B row table, that would be 200,000 rows
+	 * which gives false positive results when doing the plan, making postgres it is better to do index bitmap intersections rather than pushing filters to the runtime
+	 * etc. For well known strategies, we can use the more accurate selectivity functions which has no clamping and just trusts the mvc data. */
+	switch (indexStrategy)
+	{
+		case BSON_INDEX_STRATEGY_DOLLAR_EQUAL:
+		{
+			args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
+															 rightValue)));
+			selectivity = DatumGetFloat8(DirectFunctionCall4(eqsel, PointerGetDatum(
+																 planner),
+															 ObjectIdGetDatum(
+																 selectivityOpExpr),
+															 PointerGetDatum(args),
+															 Int32GetDatum(varRelId)));
+			break;
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
+		{
+			args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
+															 rightValue)));
+			selectivity = DatumGetFloat8(DirectFunctionCall4(scalargtsel, PointerGetDatum(
+																 planner),
+															 ObjectIdGetDatum(
+																 selectivityOpExpr),
+															 PointerGetDatum(args),
+															 Int32GetDatum(varRelId)));
+			break;
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
+		{
+			/* We transform $exists: true as $gte: MinKey for PFE support. */
+			if (rightValue->value_type == BSON_TYPE_MINKEY)
+			{
+				bool isExistsTrue = true;
+				return GetDollarExistsSelectivity(planner, selectivityOpExpr, leftOperand,
+												  rightValue, varRelId, isExistsTrue);
+			}
+
+			args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
+															 rightValue)));
+			selectivity = DatumGetFloat8(DirectFunctionCall4(scalargesel, PointerGetDatum(
+																 planner),
+															 ObjectIdGetDatum(
+																 selectivityOpExpr),
+															 PointerGetDatum(args),
+															 Int32GetDatum(varRelId)));
+			break;
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_EXISTS:
+		{
+			bool isExistsTrue = BsonValueAsBool(rightValue);
+			return GetDollarExistsSelectivity(planner, selectivityOpExpr, leftOperand,
+											  rightValue, varRelId, isExistsTrue);
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_LESS:
+		{
+			args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
+															 rightValue)));
+			selectivity = DatumGetFloat8(DirectFunctionCall4(scalarltsel, PointerGetDatum(
+																 planner),
+															 ObjectIdGetDatum(
+																 selectivityOpExpr),
+															 PointerGetDatum(args),
+															 Int32GetDatum(varRelId)));
+
+			break;
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
+		{
+			args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
+															 rightValue)));
+			selectivity = DatumGetFloat8(DirectFunctionCall4(scalarlesel, PointerGetDatum(
+																 planner),
+															 ObjectIdGetDatum(
+																 selectivityOpExpr),
+															 PointerGetDatum(args),
+															 Int32GetDatum(varRelId)));
+			break;
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_EQUAL:
+		{
+			args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
+															 rightValue)));
+			selectivity = DatumGetFloat8(DirectFunctionCall4(neqsel, PointerGetDatum(
+																 planner),
+															 ObjectIdGetDatum(
+																 selectivityOpExpr),
+															 PointerGetDatum(args),
+															 Int32GetDatum(varRelId)));
+			break;
+		}
+
+		/* For all other cases use the default generic selectivity which clamps at 0.0001 selectivity. */
+		default:
+		{
+			args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
+															 rightValue)));
+			selectivity = DatumGetFloat8(DirectFunctionCall4(neqsel, PointerGetDatum(
+																 planner),
+															 ObjectIdGetDatum(
+																 selectivityOpExpr),
+															 PointerGetDatum(args),
+															 Int32GetDatum(varRelId)));
+			break;
+		}
+	}
+
+	list_free(args);
+
+	/* Clamp the selectivity to a valid range [0.0, 1.0] */
+	CLAMP_PROBABILITY(selectivity);
+	return selectivity;
+}
+
+
 double
 GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 							 List *args, Oid collation, int varRelId,
@@ -157,8 +332,10 @@ GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 			 * TODO: Once elemMatch runtime selectivity is enabled - remove this logic.
 			 */
 			pgbsonelement elemMatchElement;
+			BsonIndexStrategy indexStrategyIgnore = BSON_INDEX_STRATEGY_INVALID;
 			return GetStatisticsNoStatsData(args, selectivityOpExpr,
-											defaultExprSelectivity, &elemMatchElement);
+											defaultExprSelectivity, &elemMatchElement,
+											&indexStrategyIgnore);
 		}
 	}
 
@@ -170,9 +347,11 @@ GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 	}
 
 	pgbsonelement dollarElement;
+	BsonIndexStrategy indexStrategy = BSON_INDEX_STRATEGY_INVALID;
 	double defaultInputSelectivity = GetStatisticsNoStatsData(args, selectivityOpExpr,
 															  defaultExprSelectivity,
-															  &dollarElement);
+															  &dollarElement,
+															  &indexStrategy);
 
 	/*
 	 * This is Postgres's default selectivity implementation that looks at statistics
@@ -186,19 +365,20 @@ GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 		/* update the args to contain the right value for the LHS to pick up the selectivity */
 		Const *pathValue = MakeTextConst(dollarElement.path,
 										 dollarElement.pathLength);
-		Const *bsonConst = MakeBsonConst(BsonValueToDocumentPgbson(
-											 &dollarElement.bsonValue));
 		List *pathArgs = list_make2(linitial(args), pathValue);
 		Node *updatedExpr = (Node *) makeFuncExpr(BsonStatsProjectFuncOid(),
 												  BsonTypeId(), pathArgs,
 												  InvalidOid,
 												  DEFAULT_COLLATION_OID,
 												  COERCE_EXPLICIT_CALL);
-		List *newArgs = list_make2(updatedExpr, bsonConst);
-		selectivity = generic_restriction_selectivity(
-			planner, selectivityOpExpr, collation, newArgs, varRelId,
-			defaultInputSelectivity);
-		list_free_deep(newArgs);
+
+		selectivity = GetCustomStatisticsSelectivity(planner, indexStrategy,
+													 selectivityOpExpr,
+													 updatedExpr,
+													 &dollarElement.bsonValue,
+													 varRelId, collation,
+													 defaultInputSelectivity);
+
 		list_free(pathArgs);
 		pfree(pathValue);
 	}
@@ -219,9 +399,12 @@ GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
  */
 static double
 GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double defaultExprSelectivity,
-						 pgbsonelement *outputDollarElement)
+						 pgbsonelement *outputDollarElement,
+						 BsonIndexStrategy *outputIndexStrategy)
 {
 	outputDollarElement->bsonValue.value_type = BSON_TYPE_EOD;
+	*outputIndexStrategy = BSON_INDEX_STRATEGY_INVALID;
+
 	if (list_length(args) != 2)
 	{
 		/* this is not one of the default operators - return Postgres's default values */
@@ -270,6 +453,8 @@ GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double defaultExprSe
 			return defaultExprSelectivity;
 		}
 	}
+
+	*outputIndexStrategy = indexStrategy;
 
 	pgbsonelement dollarElement;
 	PgbsonToSinglePgbsonElement(
