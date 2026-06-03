@@ -21,6 +21,7 @@
 #include "metadata/metadata_cache.h"
 #include "utils/error_utils.h"
 #include "utils/query_utils.h"
+#include "utils/type_cache.h"
 #include "utils/version_utils.h"
 #include "api_hooks.h"
 #include "commands/retryable_writes.h"
@@ -34,7 +35,8 @@ static bool CanColocateAtDatabaseLevel(text *databaseDatum);
 static const char * CreatePostgresDataTable(uint64_t collectionId,
 											const char *colocateWith,
 											const char *shardingColumn);
-static uint64_t InsertIntoCollectionTable(text *databaseDatum, text *collectionDatum);
+static uint64_t InsertIntoCollectionTable(text *databaseDatum, text *collectionDatum,
+										  pgbson *initialOptions);
 
 static uint64_t InsertMetadataIntoCollections(text *databaseDatum, text *collectionDatum,
 											  bool *collectionExists);
@@ -108,13 +110,6 @@ command_create_collection_core(PG_FUNCTION_ARGS)
 	ereport(NOTICE, (errmsg("creating collection")));
 	CreatePostgresDataTable(collectionId, colocateWith, shardingColumn);
 
-	if (EnablePlannerStatisticsNewCollections &&
-		IsClusterVersionAtleast(DocDB_V0, 111, 0))
-	{
-		bool enableStats = true;
-		UpdateCollectionPlannerStatistics(collectionId, enableStats);
-	}
-
 	PG_RETURN_BOOL(true);
 }
 
@@ -151,6 +146,21 @@ static uint64_t
 InsertMetadataIntoCollections(text *databaseDatum, text *collectionDatum,
 							  bool *collectionExists)
 {
+	/* Build initial options with statsEnabled if the GUC is on.
+	 * This is set in the INSERT to avoid a separate UPDATE which would
+	 * take an ExclusiveLock on the Citus reference table shard.
+	 */
+	pgbson *volatile initialOptions = NULL;
+	if (EnablePlannerStatisticsNewCollections &&
+		IsClusterVersionAtleast(DocDB_V0, 111, 0))
+	{
+		pgbson_writer optionWriter;
+		PgbsonWriterInit(&optionWriter);
+		PgbsonWriterAppendBool(&optionWriter, "statsEnabled",
+							   strlen("statsEnabled"), true);
+		initialOptions = PgbsonWriterGetPgbson(&optionWriter);
+	}
+
 	/* Insert row into the collections table */
 	MemoryContext savedMemoryContext = CurrentMemoryContext;
 	ResourceOwner oldOwner = CurrentResourceOwner;
@@ -160,7 +170,8 @@ InsertMetadataIntoCollections(text *databaseDatum, text *collectionDatum,
 	*collectionExists = false;
 	PG_TRY();
 	{
-		collectionId = InsertIntoCollectionTable(databaseDatum, collectionDatum);
+		collectionId = InsertIntoCollectionTable(databaseDatum, collectionDatum,
+												 (pgbson *) initialOptions);
 		ReleaseCurrentSubTransaction();
 		MemoryContextSwitchTo(savedMemoryContext);
 		CurrentResourceOwner = oldOwner;
@@ -381,19 +392,48 @@ CreateRetryTable(char *retryTableName, char *colocateWith, const
  * a unique identifier which is then used to create the underlying postgres table.
  */
 static uint64_t
-InsertIntoCollectionTable(text *databaseDatum, text *collectionDatum)
+InsertIntoCollectionTable(text *databaseDatum, text *collectionDatum,
+						  pgbson *initialOptions)
 {
-	const char *query = FormatSqlQuery("INSERT INTO %s.collections ("
-									   " database_name, collection_name, collection_uuid )"
-									   " VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id",
-									   ApiCatalogSchemaName);
+	const char *query;
+	int nargs;
+	Oid argTypes[3];
+	Datum argValues[3];
+	char argNulls[3];
 
-	int nargs = 2;
-	Oid argTypes[2] = { TEXTOID, TEXTOID };
-	Datum argValues[2] = {
-		PointerGetDatum(databaseDatum), PointerGetDatum(collectionDatum)
-	};
-	char argNulls[2] = { ' ', ' ' };
+	if (initialOptions != NULL)
+	{
+		query = FormatSqlQuery("INSERT INTO %s.collections ("
+							   " database_name, collection_name, collection_uuid, options)"
+							   " VALUES ($1, $2, gen_random_uuid(), $3::%s.bson)"
+							   " RETURNING collection_id",
+							   ApiCatalogSchemaName, CoreSchemaName);
+		nargs = 3;
+		argTypes[0] = TEXTOID;
+		argTypes[1] = TEXTOID;
+		argTypes[2] = BsonTypeId();
+		argValues[0] = PointerGetDatum(databaseDatum);
+		argValues[1] = PointerGetDatum(collectionDatum);
+		argValues[2] = PointerGetDatum(initialOptions);
+		argNulls[0] = ' ';
+		argNulls[1] = ' ';
+		argNulls[2] = ' ';
+	}
+	else
+	{
+		query = FormatSqlQuery("INSERT INTO %s.collections ("
+							   " database_name, collection_name, collection_uuid )"
+							   " VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id",
+							   ApiCatalogSchemaName);
+		nargs = 2;
+		argTypes[0] = TEXTOID;
+		argTypes[1] = TEXTOID;
+		argValues[0] = PointerGetDatum(databaseDatum);
+		argValues[1] = PointerGetDatum(collectionDatum);
+		argNulls[0] = ' ';
+		argNulls[1] = ' ';
+	}
+
 	bool readOnly = false;
 	bool isNull = false;
 	Datum resultDatum = ExtensionExecuteQueryWithArgsViaSPI(

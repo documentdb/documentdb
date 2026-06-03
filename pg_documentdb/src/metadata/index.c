@@ -10,6 +10,8 @@
 #include <postgres.h>
 
 #include <catalog/namespace.h>
+#include <access/table.h>
+#include <miscadmin.h>
 #include <commands/sequence.h>
 #include <executor/spi.h>
 #include <utils/array.h>
@@ -44,6 +46,7 @@
 #include "infrastructure/job_management.h"
 #include "utils/error_utils.h"
 #include "index_am/index_am_extend_create.h"
+#include "metadata/collection.h"
 
 extern int MaxNumActiveUsersIndexBuilds;
 extern int IndexBuildScheduleInSec;
@@ -692,7 +695,8 @@ CollectionIdGetIndexNames(uint64 collectionId, bool excludeIdIndex, bool inProgr
 
 static List *
 CollectionIdGetIndexesCore(uint64 collectionId, bool excludeIdIndex,
-						   bool enableNestedDistribution, bool includeIndexBuilds)
+						   bool enableNestedDistribution, bool includeIndexBuilds,
+						   bool includeCurrentTransaction)
 {
 	StringInfo cmdStr = makeStringInfo();
 	appendStringInfo(cmdStr,
@@ -735,7 +739,8 @@ CollectionIdGetIndexesCore(uint64 collectionId, bool excludeIdIndex,
 	/* Closed the inner query */
 	appendStringInfo(cmdStr, " ORDER BY index_id) a");
 
-	bool readOnly = true;
+	/* readonly gives only durable commits. */
+	bool readOnly = !includeCurrentTransaction;
 	int numValues = 4;
 	bool isNull[4];
 	Datum results[4];
@@ -821,8 +826,10 @@ CollectionIdGetIndexes(uint64 collectionId, bool excludeIdIndex,
 					   bool enableNestedDistribution)
 {
 	bool includeIndexBuilds = true;
+	bool includeCurrentTransaction = false;
 	return CollectionIdGetIndexesCore(collectionId, excludeIdIndex,
-									  enableNestedDistribution, includeIndexBuilds);
+									  enableNestedDistribution, includeIndexBuilds,
+									  includeCurrentTransaction);
 }
 
 
@@ -834,8 +841,10 @@ CollectionIdGetValidIndexes(uint64 collectionId, bool excludeIdIndex,
 							bool enableNestedDistribution)
 {
 	bool includeIndexBuilds = false;
+	bool includeCurrentTransaction = false;
 	return CollectionIdGetIndexesCore(collectionId, excludeIdIndex,
-									  enableNestedDistribution, includeIndexBuilds);
+									  enableNestedDistribution, includeIndexBuilds,
+									  includeCurrentTransaction);
 }
 
 
@@ -3084,7 +3093,23 @@ GetOptionsEquivalencyFromIndexOptions(HTAB *bsonElementHash,
 bool
 CollectionHasStatisticsEnabled(uint64 collectionId)
 {
-	/* Find the _id index (the primary key index for the collection) */
+	/* Check the cached collection options (new path) */
+	MongoCollection *collection = GetMongoCollectionByColId(collectionId, NoLock);
+
+	/* Return false if the collection is not found, let the caller handle non existent collections. */
+	if (collection == NULL)
+	{
+		return false;
+	}
+
+	if (collection->options.statsEnabled)
+	{
+		return true;
+	}
+
+	/* Fall back to _id_ index options for backward compatibility with
+	 * collections that were stats-enabled before the options column was used.
+	 */
 	IndexDetails *details = IndexNameGetIndexDetails(collectionId, "_id_");
 	if (details == NULL)
 	{
@@ -3113,6 +3138,43 @@ UpdateIndexStatisticsForPlannerStatisticsCore(uint64 collectionId, List *indexId
 {
 	StringInfoData indexExprStringInfo;
 	initStringInfo(&indexExprStringInfo);
+
+	Oid ownerOid = InvalidOid;
+	appendStringInfo(&indexExprStringInfo,
+					 DOCUMENT_DATA_TABLE_NAME_FORMAT, collectionId);
+
+	char *ownerName = NULL;
+
+	/* Get table owner once to use as the owner for the statistics. */
+	if (list_length(indexIdList) > 0)
+	{
+		Oid tableOid = get_relname_relid(indexExprStringInfo.data, ApiDataNamespaceOid());
+		if (!OidIsValid(tableOid))
+		{
+			ereport(ERROR, (errmsg(
+								"Could not find table oid for collection while adding custom stats. This is unexpected.")));
+		}
+
+		HeapTuple classTuple = SearchSysCache1(RELOID, ObjectIdGetDatum(tableOid));
+		if (!HeapTupleIsValid(classTuple))
+		{
+			ereport(ERROR, (errmsg(
+								"Could not find table from syscachefor collection while adding custom stats. This is unexpected")));
+		}
+
+		Form_pg_class classForm = (Form_pg_class) GETSTRUCT(classTuple);
+		ownerOid = classForm->relowner;
+		ReleaseSysCache(classTuple);
+		ownerName = GetUserNameFromId(ownerOid, false);
+
+		if (!ownerName)
+		{
+			ereport(ERROR, (errmsg(
+								"Could not find owner name for collection while adding custom stats. This is unexpected.")));
+		}
+	}
+
+
 	ListCell *cell;
 	foreach(cell, indexIdList)
 	{
@@ -3239,6 +3301,18 @@ UpdateIndexStatisticsForPlannerStatisticsCore(uint64 collectionId, List *indexId
 		ObjectAddressSet(statsAddr, StatisticExtRelationId, statOid);
 		ObjectAddressSet(indexAddr, RelationRelationId, indexOid);
 		recordDependencyOn(&statsAddr, &indexAddr, DEPENDENCY_AUTO);
+
+		resetStringInfo(&indexExprStringInfo);
+		appendStringInfo(&indexExprStringInfo,
+						 "ALTER STATISTICS %s." DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT
+						 "_stats OWNER TO %s;",
+						 ApiDataSchemaName,
+						 details->indexId,
+						 quote_identifier(ownerName));
+
+		isNull = false;
+		ExtensionExecuteQueryViaSPI(indexExprStringInfo.data, readOnly, SPI_OK_UTILITY,
+									&isNull);
 	}
 }
 
@@ -3295,99 +3369,6 @@ DropIndexStatisticsForPlannerStatistics(uint64 collectionId, List *indexIdList)
 }
 
 
-static void
-UpdateIdIndexToSetStatsState(uint64 collectionId, bool enableStats)
-{
-	StringInfoData queryStringInfo;
-	initStringInfo(&queryStringInfo);
-
-	appendStringInfo(&queryStringInfo,
-					 "SELECT index_id, index_spec FROM %s.collection_indexes"
-					 " WHERE collection_id = %lu AND (index_spec).index_name = '_id_' LIMIT 1 FOR UPDATE",
-					 ApiCatalogSchemaName, collectionId);
-
-	/* all args are non-null */
-	bool readOnly = false;
-	int numValues = 2;
-	bool isNull[2];
-	Datum results[2];
-	ExtensionExecuteMultiValueQueryViaSPI(queryStringInfo.data, readOnly,
-										  SPI_OK_SELECT, results, isNull,
-										  numValues);
-
-	if (isNull[0] || isNull[1])
-	{
-		ereport(ERROR, (errmsg(
-							"Could not find primary key index for collection. This is unexpected")));
-	}
-
-	IndexDetails indexDetails = { 0 };
-	indexDetails.indexId = DatumGetInt32(results[0]);
-	indexDetails.indexSpec = *DatumGetIndexSpec(results[1]);
-	indexDetails.collectionId = collectionId;
-
-	pgbson *indexOptions = indexDetails.indexSpec.indexOptions;
-	if (indexOptions == NULL)
-	{
-		indexOptions = PgbsonInitEmpty();
-	}
-
-	bson_iter_t iter;
-	pgbson_writer optionsWriter;
-	PgbsonWriterInit(&optionsWriter);
-	PgbsonInitIterator(indexOptions, &iter);
-	bool foundStatsEnabled = false;
-	while (bson_iter_next(&iter))
-	{
-		const char *key = bson_iter_key(&iter);
-		const bson_value_t *value = bson_iter_value(&iter);
-		if (strcmp(key, "statsEnabled") == 0)
-		{
-			foundStatsEnabled = true;
-
-			/* Skip writing the field if it's false (disabled) */
-			if (enableStats)
-			{
-				PgbsonWriterAppendBool(&optionsWriter, key, -1, true);
-			}
-		}
-		else
-		{
-			PgbsonWriterAppendValue(&optionsWriter, key, -1, value);
-		}
-	}
-
-	if (!foundStatsEnabled && enableStats)
-	{
-		PgbsonWriterAppendBool(&optionsWriter, "statsEnabled", -1, true);
-	}
-
-	if (IsPgbsonWriterEmptyDocument(&optionsWriter))
-	{
-		/* Handle empty document case */
-		indexDetails.indexSpec.indexOptions = NULL;
-	}
-	else
-	{
-		indexDetails.indexSpec.indexOptions = PgbsonWriterGetPgbson(&optionsWriter);
-	}
-
-	Datum indexSpecDatum = IndexSpecGetDatum(&indexDetails.indexSpec);
-	resetStringInfo(&queryStringInfo);
-	appendStringInfo(&queryStringInfo,
-					 "UPDATE %s.collection_indexes SET index_spec = $1"
-					 " WHERE index_id = %d",
-					 ApiCatalogSchemaName, indexDetails.indexId);
-
-	Oid argTypes[1] = { IndexSpecTypeId() };
-	Datum argValues[1] = { indexSpecDatum };
-	char argNulls[1] = { ' ' };
-	ExtensionExecuteQueryWithArgsViaSPI(queryStringInfo.data, 1, argTypes, argValues,
-										argNulls,
-										readOnly, SPI_OK_UPDATE, &isNull[0]);
-}
-
-
 void
 UpdateIndexStatisticsForPlannerStatistics(uint64 collectionId, List *indexIdList)
 {
@@ -3408,18 +3389,20 @@ UpdateIndexStatisticsForPlannerStatistics(uint64 collectionId, List *indexIdList
 static void
 EnableCollectionPlannerStatistics(uint64 collectionId)
 {
-	/* First set the collection as being stats enabled. This involves setting
-	 * a flag in the index options of the _id index for the collection. We use the
-	 * presence of this flag to determine whether to update stats for this collection or not.
-	 */
+	/* Set the collection as being stats enabled via the collections.options column. */
 	bool enabled = true;
-	UpdateIdIndexToSetStatsState(collectionId, enabled);
+	UpdateCollectionStatsEnabledOption(collectionId, enabled);
 
 	/* Next add stats for all indexes added to the collection */
-	bool includeIdIndex = false;
+	bool excludeIdIndex = true;
 	bool enableNestedDistribution = false;
-	List *indexIdList = CollectionIdGetIndexes(collectionId, includeIdIndex,
-											   enableNestedDistribution);
+	bool includeIndexBuilds = true;
+	bool includeCurrentTransaction = true;
+	List *indexIdList = CollectionIdGetIndexesCore(collectionId, excludeIdIndex,
+												   enableNestedDistribution,
+												   includeIndexBuilds,
+												   includeCurrentTransaction);
+
 	bool isIndexIdList = false;
 	UpdateIndexStatisticsForPlannerStatisticsCore(collectionId, indexIdList,
 												  isIndexIdList);
@@ -3430,18 +3413,19 @@ EnableCollectionPlannerStatistics(uint64 collectionId)
 static void
 DisableCollectionPlannerStatistics(uint64 collectionId)
 {
-	/* First set the collection as being stats disabled. This involves setting
-	 * a flag in the index options of the _id index for the collection. We use the
-	 * presence of this flag to determine whether to update stats for this collection or not.
-	 */
+	/* Set the collection as being stats disabled via the collections.options column. */
 	bool enabled = false;
-	UpdateIdIndexToSetStatsState(collectionId, enabled);
+	UpdateCollectionStatsEnabledOption(collectionId, enabled);
 
-	/* Next add stats for all indexes added to the collection */
-	bool includeIdIndex = false;
+	/* Next drop stats for all indexes added to the collection */
+	bool excludeIdIndex = true;
 	bool enableNestedDistribution = false;
-	List *indexDetailsList = CollectionIdGetIndexes(collectionId, includeIdIndex,
-													enableNestedDistribution);
+	bool includeIndexBuilds = true;
+	bool includeCurrentTransaction = true;
+	List *indexDetailsList = CollectionIdGetIndexesCore(collectionId, excludeIdIndex,
+														enableNestedDistribution,
+														includeIndexBuilds,
+														includeCurrentTransaction);
 	DropIndexStatisticsForPlannerStatisticsWithIndexDetails(collectionId,
 															indexDetailsList);
 	list_free_deep(indexDetailsList);
