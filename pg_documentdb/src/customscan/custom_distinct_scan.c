@@ -67,7 +67,7 @@ typedef struct DistinctQueryScanState
 	Plan *innerPlan;
 
 	/* Function to skip TIDs for the current entry */
-	SkipTidsOnCurrentEntryFunc skipTidsFunc;
+	PGFunction skipTidsFunc;
 
 	/* Whether path summarization is forced */
 	bool isPathSummarizationForced;
@@ -206,7 +206,7 @@ AddDistinctCustomPathCore(PlannerInfo *root, List *pathList)
 		}
 
 		bool isPathSummarizationForced = false;
-		SkipTidsOnCurrentEntryFunc skipTidsFunc = GetSkipTidsOnCurrentEntryFunc(
+		PGFunction skipTidsFunc = GetSkipTidsOnCurrentEntryFunc(
 			indexPath->indexinfo->relam, indexPath->indexinfo->opfamily[0],
 			&isPathSummarizationForced);
 

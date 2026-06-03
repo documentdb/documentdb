@@ -3740,7 +3740,7 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	bool firstFilterColumnFound = false;
 	bool indexCanOrder = false;
 	bool isMultiKeyIndex = false;
-	GetMultikeyStatusFunc getMultiKeyStatusFunc = GetMultiKeyStatusByRelAm(
+	PGFunction getMultiKeyStatusFunc = GetMultiKeyStatusByRelAm(
 		indexPath->indexinfo->relam);
 
 	if (getMultiKeyStatusFunc != NULL &&
@@ -3748,7 +3748,8 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 		list_length(root->query_pathkeys) > 0)
 	{
 		Relation indexRel = index_open(indexPath->indexinfo->indexoid, NoLock);
-		isMultiKeyIndex = getMultiKeyStatusFunc(indexRel);
+		isMultiKeyIndex = DatumGetBool(DirectFunctionCall1(getMultiKeyStatusFunc,
+														   PointerGetDatum(indexRel)));
 		index_close(indexRel, NoLock);
 	}
 

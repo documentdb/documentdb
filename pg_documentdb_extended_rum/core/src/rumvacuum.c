@@ -1695,6 +1695,7 @@ rumbulkdelete(IndexVacuumInfo *info,
 			  IndexBulkDeleteResult *stats, IndexBulkDeleteCallback callback,
 			  void *callback_state)
 {
+	rumValidateIndexVersion(info->index);
 	if (RumEnableNewBulkDelete)
 	{
 		return rumBulkDeleteDiskOrdered(info, stats, callback, callback_state);

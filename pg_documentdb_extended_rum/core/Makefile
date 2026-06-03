@@ -38,8 +38,8 @@ ifeq ($(RUM_BUILT_IN_RMGR_MODE), yes)
 endif
 
 ifeq ($(RUM_BUILD_ONLY_CORE_RMGR), yes)
-    PG_CPPFLAGS += -DRUM_USE_RMGR_EXPORT_PREFIX
-    PG_CFLAGS += -DRUM_USE_RMGR_EXPORT_PREFIX
+    PG_CPPFLAGS += -DRUM_BUILD_ONLY_CORE_RMGR
+    PG_CFLAGS += -DRUM_BUILD_ONLY_CORE_RMGR
 endif
 
 # Update to notify roaring to use the C atomics implementation (as opposed to c++): See roaring.h CROARING_ATOMIC_IMPL_C
