@@ -41,7 +41,7 @@ use crate::{
         },
         QueryCatalog,
     },
-    time,
+    time::{self, EpochClock},
 };
 
 fn pg_configuration(
@@ -222,6 +222,8 @@ impl ConnectionPool {
         Ok(Self {
             pool,
             timeout_pool,
+            // Use the exact `Instant::now()` at pool creation time to avoid reporting
+            // an earlier cached timestamp for a freshly constructed pool.
             last_used_nanos: AtomicU64::new(time::instant_to_u64(Instant::now())),
             metrics,
             identifier: pool_identifier,
@@ -241,7 +243,7 @@ impl ConnectionPool {
         &self,
     ) -> std::result::Result<PoolConnection, deadpool_postgres::PoolError> {
         self.last_used_nanos
-            .store(time::instant_to_u64(Instant::now()), Ordering::Relaxed);
+            .store(EpochClock::almost_now_timestamp(), Ordering::Relaxed);
 
         self.pool.get().await.inspect_err(|error| {
             self.metrics.record_timeout_if_pool_timeout(error);
@@ -264,7 +266,7 @@ impl ConnectionPool {
         &self,
     ) -> std::result::Result<PoolConnection, deadpool_postgres::PoolError> {
         self.last_used_nanos
-            .store(time::instant_to_u64(Instant::now()), Ordering::Relaxed);
+            .store(EpochClock::almost_now_timestamp(), Ordering::Relaxed);
 
         self.timeout_pool.get().await.inspect_err(|error| {
             self.metrics.record_timeout_if_pool_timeout(error);
