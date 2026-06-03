@@ -9,9 +9,6 @@ SET documentdb.next_collection_index_id TO 1900;
 
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal,public;
 
--- Note: documentdb.enableSchemaValidation and documentdb.enableBypassDocumentValidation
--- are set in regression_opts.conf to ensure GUC values propagate to worker nodes
-
 ---------------------------------------------
 -- Test 1: Sharded collection - multi update with schema validation
 -- (Sharded collections enforce validation via CHECK constraint)

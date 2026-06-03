@@ -597,7 +597,6 @@ SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "q
 (1 row)
 
 -- schema validation
-set documentdb.enableSchemaValidation = on;
 SELECT documentdb_api_catalog.bson_dollar_project(document,'{"_id":0,"a":1,"b":1}') FROM documentdb_api.collection('fam', 'collection') ORDER BY document;
                       bson_dollar_project                       
 ----------------------------------------------------------------
@@ -688,7 +687,6 @@ select  documentdb_api.coll_mod('fam', 'collection', '{"collMod": "collection", 
 
 select documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "query": {"_id": 3}, "update": {"$set": {"a": "zero"}}, "new": true, "upsert": true, "fields": {"foo": {"$pow": [1, 2]}}}');
 ERROR:  Document failed validation
-set documentdb.enableBypassDocumentValidation = on;
 select documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "query": {"_id": 3}, "update": {"$set": {"a": "zero"}}, "new": true, "upsert": true, "bypassDocumentValidation": true, "fields": {"foo": {"$pow": [1, 2]}}}');
                                                                                                              find_and_modify                                                                                                              
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -706,5 +704,3 @@ SELECT documentdb_api_catalog.bson_dollar_project(document,'{"_id":0,"a":1,"b":1
  { "a" : { "$numberInt" : "5" }, "b" : { "$numberInt" : "6" } }
 (6 rows)
 
-set documentdb.enableSchemaValidation = off;
-set documentdb.enableBypassDocumentValidation = off;

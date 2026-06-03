@@ -209,7 +209,6 @@ SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "q
 SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "query": {"_id": 1}, "update": {"$inc": {"b": 1}}, "new": true, "upsert": true, "fields": {"foo": {"$pow": [1, 2]}}}');
 
 -- schema validation
-set documentdb.enableSchemaValidation = on;
 SELECT documentdb_api_catalog.bson_dollar_project(document,'{"_id":0,"a":1,"b":1}') FROM documentdb_api.collection('fam', 'collection') ORDER BY document;
 SELECT documentdb_api.coll_mod('fam', 'collection', '{"collMod": "collection", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"a": {"bsonType": "int"}}}}}');
 -- expect to fail since "a" is not an int
@@ -231,8 +230,5 @@ SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "q
 -- expect to fail
 select  documentdb_api.coll_mod('fam', 'collection', '{"collMod": "collection", "validationLevel": "strict"}');
 select documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "query": {"_id": 3}, "update": {"$set": {"a": "zero"}}, "new": true, "upsert": true, "fields": {"foo": {"$pow": [1, 2]}}}');
-set documentdb.enableBypassDocumentValidation = on;
 select documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "query": {"_id": 3}, "update": {"$set": {"a": "zero"}}, "new": true, "upsert": true, "bypassDocumentValidation": true, "fields": {"foo": {"$pow": [1, 2]}}}');
 SELECT documentdb_api_catalog.bson_dollar_project(document,'{"_id":0,"a":1,"b":1}') FROM documentdb_api.collection('fam', 'collection') ORDER BY document;
-set documentdb.enableSchemaValidation = off;
-set documentdb.enableBypassDocumentValidation = off;
