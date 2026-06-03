@@ -90,6 +90,9 @@ typedef struct MongoCollectionOptions
 
 	/* Whether updateDescription is enabled for this collection */
 	bool updateDescriptionEnabled;
+
+	/* Whether planner statistics are enabled for this collection */
+	bool statsEnabled;
 } MongoCollectionOptions;
 
 
@@ -274,4 +277,5 @@ bool ParseChangeStreamPreAndPostImageOption(const bson_value_t *optionValue,
 											const char *commandPrefix);
 void UpdateChangeStreamPreAndPostImages(MongoCollection *collection, bool enabled);
 void UpdateEnableUpdateDescription(MongoCollection *collection, bool enabled);
+void UpdateCollectionStatsEnabledOption(uint64 collectionId, bool enabled);
 #endif
