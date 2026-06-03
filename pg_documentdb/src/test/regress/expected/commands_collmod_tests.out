@@ -163,3 +163,166 @@ SELECT document FROM bson_aggregation_find('collmod', '{ "find": "coll_mod_test_
  { "_id" : "101", "a" : { "$numberInt" : "101" } }
 (1 row)
 
+-- ============================================================================
+-- Tests for multiple collection options interaction
+--
+-- Verify that enabling/disabling different options (statsEnabled,
+-- changeStreamPreAndPostImages, enableUpdateDescription) works correctly
+-- with the append/remove semantics and that enabling one does not overwrite
+-- the other.
+-- ============================================================================
+SET documentdb.enablePerCollectionPlannerStatistics to on;
+SET documentdb.enablePreImages to on;
+SELECT documentdb_api.create_collection('collmod', 'multi_opts');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+-- Enable statsEnabled first.
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts', '{ "collMod": "multi_opts", "enableStats": true }');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts';
+          options          
+---------------------------
+ { "statsEnabled" : true }
+(1 row)
+
+-- Enable changeStreamPreAndPostImages — both options should coexist.
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts', '{ "collMod": "multi_opts", "changeStreamPreAndPostImages": { "enabled": true } }');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts';
+                                     options                                      
+----------------------------------------------------------------------------------
+ { "statsEnabled" : true, "changeStreamPreAndPostImages" : { "enabled" : true } }
+(1 row)
+
+-- Enable enableUpdateDescription — three options should coexist.
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts', '{ "collMod": "multi_opts", "enableUpdateDescription": true }');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts';
+                                                      options                                                       
+--------------------------------------------------------------------------------------------------------------------
+ { "statsEnabled" : true, "changeStreamPreAndPostImages" : { "enabled" : true }, "enableUpdateDescription" : true }
+(1 row)
+
+-- Disable stats — changeStreamPreAndPostImages and enableUpdateDescription remain.
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts', '{ "collMod": "multi_opts", "enableStats": false }');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts';
+                                           options                                           
+---------------------------------------------------------------------------------------------
+ { "changeStreamPreAndPostImages" : { "enabled" : true }, "enableUpdateDescription" : true }
+(1 row)
+
+-- Re-enable stats — all three present again.
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts', '{ "collMod": "multi_opts", "enableStats": true }');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts';
+                                                      options                                                       
+--------------------------------------------------------------------------------------------------------------------
+ { "changeStreamPreAndPostImages" : { "enabled" : true }, "enableUpdateDescription" : true, "statsEnabled" : true }
+(1 row)
+
+-- Disable changeStreamPreAndPostImages — statsEnabled and enableUpdateDescription remain.
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts', '{ "collMod": "multi_opts", "changeStreamPreAndPostImages": { "enabled": false } }');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts';
+                           options                           
+-------------------------------------------------------------
+ { "enableUpdateDescription" : true, "statsEnabled" : true }
+(1 row)
+
+-- Disable enableUpdateDescription — only stats should remain.
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts', '{ "collMod": "multi_opts", "enableUpdateDescription": false }');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts';
+          options          
+---------------------------
+ { "statsEnabled" : true }
+(1 row)
+
+-- Disable stats — options should be NULL (empty).
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts', '{ "collMod": "multi_opts", "enableStats": false }');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts';
+ options 
+---------
+ 
+(1 row)
+
+-- Test creation with enablePlannerStatisticsNewCollections + then add other options
+SET documentdb.enablePlannerStatisticsNewCollections to on;
+SELECT documentdb_api.create_collection('collmod', 'multi_opts2');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts2';
+          options          
+---------------------------
+ { "statsEnabled" : true }
+(1 row)
+
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts2', '{ "collMod": "multi_opts2", "changeStreamPreAndPostImages": { "enabled": true } }');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts2';
+                                     options                                      
+----------------------------------------------------------------------------------
+ { "statsEnabled" : true, "changeStreamPreAndPostImages" : { "enabled" : true } }
+(1 row)
+
+SELECT documentdb_api.coll_mod('collmod', 'multi_opts2', '{ "collMod": "multi_opts2", "enableUpdateDescription": true }');
+             coll_mod              
+-----------------------------------
+ { "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'collmod' AND collection_name = 'multi_opts2';
+                                                      options                                                       
+--------------------------------------------------------------------------------------------------------------------
+ { "statsEnabled" : true, "changeStreamPreAndPostImages" : { "enabled" : true }, "enableUpdateDescription" : true }
+(1 row)
+
+RESET documentdb.enablePerCollectionPlannerStatistics;
+RESET documentdb.enablePlannerStatisticsNewCollections;
+RESET documentdb.enablePreImages;
