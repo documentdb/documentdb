@@ -144,6 +144,29 @@ RunQueryWithCommutativeWritesCore(const char *query, int nargs, Oid *argTypes,
 }
 
 
+static void
+RunMultiValueQueryWithCommutativeWritesCore(const char *query, SPIPlanPtr plan,
+											int nargs, Oid *argTypes,
+											Datum *argValues, char *argNulls,
+											bool readOnly, long maxTupleCount)
+{
+	int savedGUCLevel = NewGUCNestLevel();
+	SetGUCLocally("citus.all_modifications_commutative", "true");
+
+	if (plan != NULL)
+	{
+		SPI_execute_plan(plan, argValues, argNulls, readOnly, maxTupleCount);
+	}
+	else
+	{
+		SPI_execute_with_args(query, nargs, argTypes, argValues, argNulls,
+							  readOnly, maxTupleCount);
+	}
+
+	RollbackGUCChange(savedGUCLevel);
+}
+
+
 static Datum
 RunQueryWithSequentialModificationCore(const char *query, int expectedSPIOK, bool *isNull)
 {
@@ -752,6 +775,8 @@ InitializeDocumentDBDistributedHooks(void)
 	is_metadata_coordinator_hook = IsMetadataCoordinatorCore;
 	run_command_on_metadata_coordinator_hook = RunCommandOnMetadataCoordinatorCore;
 	run_query_with_commutative_writes_hook = RunQueryWithCommutativeWritesCore;
+	run_multi_value_query_with_commutative_writes_hook =
+		RunMultiValueQueryWithCommutativeWritesCore;
 	run_query_with_sequential_modification_mode_hook =
 		RunQueryWithSequentialModificationCore;
 	distribute_postgres_table_hook = DistributePostgresTableCore;
