@@ -2,7 +2,6 @@ SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documen
 SET citus.next_shard_id TO 17771000;
 SET documentdb.next_collection_id TO 177710;
 SET documentdb.next_collection_index_id TO 177710;
-set documentdb.enableSchemaValidation = true;
 --------------------------------------Need $jsonSchema--------------------------------------
 SELECT documentdb_api.create_collection_view('schema_validation_insertion', '{ "create": "col", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"a": {"bsonType": "int"}}}}, "validationLevel": "strict", "validationAction": "error"}');
 NOTICE:  creating collection
@@ -120,7 +119,14 @@ SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col2", "
  ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""525074461"" }, ""errmsg"" : ""Document failed validation"" } ] }",f)
 (1 row)
 
-set documentdb.enableBypassDocumentValidation = true;
+set documentdb.enableBypassDocumentValidation to off;
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col2", "documents":[{"_id":"2", "a":1}], "bypassDocumentValidation": true}');
+                                                                                                                        insert                                                                                                                        
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""525074461"" }, ""errmsg"" : ""Document failed validation"" } ] }",f)
+(1 row)
+
+set documentdb.enableBypassDocumentValidation to on;
 SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col2", "documents":[{"_id":"2", "a":1}], "bypassDocumentValidation": true}');
                                          insert                                         
 ---------------------------------------------------------------------
@@ -833,5 +839,3 @@ SELECT shard_key_value, object_id, document from documentdb_api.collection('sche
           177720 | { "" : "2" } | { "_id" : "2", "a" : { "$numberInt" : "2" } }
 (1 row)
 
-set documentdb.enableBypassDocumentValidation = false;
-set documentdb.enableSchemaValidation = false;
