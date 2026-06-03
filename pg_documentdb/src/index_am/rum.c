@@ -61,8 +61,8 @@ static bool loaded_rum_routine = false;
 static bool loaded_documentdb_rum_routine = false;
 static IndexAmRoutine rum_index_routine = { 0 };
 
-static GetMultikeyStatusFunc rum_index_multi_key_get_func = NULL;
-static UpdateMultikeyStatusFunc rum_index_multi_key_update_func = NULL;
+static PGFunction rum_index_multi_key_get_func = NULL;
+static PGFunction rum_index_multi_key_update_func = NULL;
 
 typedef enum IndexMultiKeyStatus
 {
@@ -149,7 +149,7 @@ static void extension_rumcostestimate(PlannerInfo *root, IndexPath *path,
 									  double *indexPages);
 static IndexAmRoutine * GetRumIndexHandler(PG_FUNCTION_ARGS);
 
-static bool RumGetMultiKeyStatusSlow(Relation relation);
+static Datum RumGetMultiKeyStatusSlow(PG_FUNCTION_ARGS);
 
 static Datum (*rum_extract_tsquery_func)(PG_FUNCTION_ARGS) = NULL;
 static Datum (*rum_tsquery_consistent_func)(PG_FUNCTION_ARGS) = NULL;
@@ -257,7 +257,7 @@ extern void SetDocumentDBFunctionNames(const char *explainRumIndexFunc,
 									   const char *updateMultiKeyStatus,
 									   const char *orderedCostEstimateFunc);
 
-static OrderedCostEstimateCoreFunc RumOrderedCostEstimate = NULL;
+static PGFunction RumOrderedCostEstimate = NULL;
 
 
 /*
@@ -542,7 +542,7 @@ LoadRumRoutine(void)
 
 	/* Load optional explain function */
 	missingOk = true;
-	TryExplainIndexFunc explain_index_func =
+	PGFunction explain_index_func =
 		load_external_function(rumLibPath,
 							   functionCatalog[RumFunction_TryExplainRumIndex],
 							   !missingOk,
@@ -553,7 +553,7 @@ LoadRumRoutine(void)
 		RumIndexAmEntry.add_explain_output = explain_index_func;
 	}
 
-	OrderedCostEstimateCoreFunc costEstimateFunc =
+	PGFunction costEstimateFunc =
 		load_external_function(rumLibPath,
 							   functionCatalog[RumFunction_RumOrderedCostEstimate],
 							   !missingOk,
@@ -598,7 +598,7 @@ LoadRumRoutine(void)
 							   !missingOk,
 							   ignoreLibFileHandle);
 
-	GetCurrentIndexKeyFunc getCurrentIndexKeyFunc =
+	PGFunction getCurrentIndexKeyFunc =
 		load_external_function(rumLibPath,
 							   functionCatalog[RumFunction_GetCurrentIndexKey],
 							   !missingOk,
@@ -608,7 +608,7 @@ LoadRumRoutine(void)
 		RumIndexAmEntry.get_current_index_key = getCurrentIndexKeyFunc;
 	}
 
-	SkipTidsOnCurrentEntryFunc skipTidsFunc =
+	PGFunction skipTidsFunc =
 		load_external_function(rumLibPath,
 							   functionCatalog[RumFunction_SkipTidsForCurrentEntry],
 							   !missingOk,
@@ -668,7 +668,7 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 							   double *indexPages, IndexAmRoutine *coreRoutine,
 							   bool forceIndexPushdownCostToZero, bool
 							   enableCompositePlannerCosts,
-							   OrderedCostEstimateCoreFunc orderedCostEstimateCoreFunc)
+							   PGFunction orderedCostEstimateCoreFunc)
 {
 	if (!IsIndexIsValidForQuery(path))
 	{
@@ -737,13 +737,24 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 	if (enableCompositePlannerCosts &&
 		orderedCostEstimateCoreFunc != NULL && isCompositeOpFamily)
 	{
-		orderedCostEstimateCoreFunc(root, path, loop_count, indexStartupCost,
-									indexTotalCost, indexSelectivity,
-									indexCorrelation,
-									indexPages, &totalNumTuples,
-									&boundarySelectivity, &numBoundaryQuals,
-									&dataPagesProportionFetched,
-									ExtractBoundaryQualsForOrderedIndexPath);
+		LOCAL_FCINFO(fcinfo, 13);
+		memset(fcinfo->args, 0, sizeof(NullableDatum) * 13);
+		fcinfo->args[0].value = PointerGetDatum(root);
+		fcinfo->args[1].value = PointerGetDatum(path);
+		fcinfo->args[2].value = Float8GetDatum(loop_count);
+		fcinfo->args[3].value = PointerGetDatum(indexStartupCost);
+		fcinfo->args[4].value = PointerGetDatum(indexTotalCost);
+		fcinfo->args[5].value = PointerGetDatum(indexSelectivity);
+		fcinfo->args[6].value = PointerGetDatum(indexCorrelation);
+		fcinfo->args[7].value = PointerGetDatum(indexPages);
+		fcinfo->args[8].value = PointerGetDatum(&totalNumTuples);
+		fcinfo->args[9].value = PointerGetDatum(&boundarySelectivity);
+		fcinfo->args[10].value = PointerGetDatum(&numBoundaryQuals);
+		fcinfo->args[11].value = PointerGetDatum(&dataPagesProportionFetched);
+		fcinfo->args[12].value = PointerGetDatum(ExtractBoundaryQualsForOrderedIndexPath);
+
+		InitFunctionCallInfoData(*fcinfo, NULL, 13, InvalidOid, NULL, NULL);
+		orderedCostEstimateCoreFunc(fcinfo);
 	}
 	else
 	{
@@ -798,7 +809,7 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 bool
 CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath)
 {
-	GetMultikeyStatusFunc getMultiKeyStatusFunc = NULL;
+	PGFunction getMultiKeyStatusFunc = NULL;
 	GetTruncationStatusFunc getTruncationStatusFunc = NULL;
 
 	bool supports = GetIndexAmSupportsIndexOnlyScan(indexPath->indexinfo->relam,
@@ -839,7 +850,9 @@ CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath)
 	}
 
 	Relation indexRelation = index_open(indexPath->indexinfo->indexoid, NoLock);
-	bool multiKeyStatus = getMultiKeyStatusFunc(indexRelation);
+	bool multiKeyStatus = DatumGetBool(DirectFunctionCall1(getMultiKeyStatusFunc,
+														   PointerGetDatum(
+															   indexRelation)));
 	bool hasTruncatedTerms = getTruncationStatusFunc(indexRelation);
 	index_close(indexRelation, NoLock);
 
@@ -1157,7 +1170,7 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 						 IndexAmRoutine *coreRoutine)
 {
 	bool supportsOrderedOperatorScans = false;
-	GetMultikeyStatusFunc multiKeyStatusFunc = NULL;
+	PGFunction multiKeyStatusFunc = NULL;
 	if (GetCompositeOpClassWithProps(scan->indexRelation,
 									 &supportsOrderedOperatorScans, &multiKeyStatusFunc))
 	{
@@ -1183,7 +1196,13 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 		{
 			if (multiKeyStatusFunc != NULL)
 			{
-				outerScanState->multiKeyStatus = multiKeyStatusFunc(scan->indexRelation);
+				bool indexHasArrays =
+					DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
+													 PointerGetDatum(
+														 scan->indexRelation)));
+				outerScanState->multiKeyStatus = indexHasArrays ?
+												 IndexMultiKeyStatus_HasArrays :
+												 IndexMultiKeyStatus_HasNoArrays;
 			}
 			else
 			{
@@ -1291,7 +1310,7 @@ extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nsc
 									IndexAmRoutine *coreRoutine)
 {
 	bool supportsOrderedOperatorScans = false;
-	GetMultikeyStatusFunc multiKeyStatusFunc = NULL;
+	PGFunction multiKeyStatusFunc = NULL;
 	if (IsCompositeScanEligible(scankey, nscankeys) &&
 		GetCompositeOpClassWithProps(scan->indexRelation,
 									 &supportsOrderedOperatorScans, &multiKeyStatusFunc))
@@ -1302,7 +1321,9 @@ extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nsc
 		bool hasCorrelatedReducedTerms = false;
 		if (multiKeyStatusFunc != NULL)
 		{
-			indexHasArrays = multiKeyStatusFunc(scan->indexRelation);
+			indexHasArrays = DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
+															  PointerGetDatum(
+																  scan->indexRelation)));
 		}
 		else
 		{
@@ -1450,19 +1471,16 @@ extension_rumbuild(Relation heapRelation,
 {
 	EnsureRumLibLoaded();
 
-	bool amCanBuildParallel = true;
 	return extension_rumbuild_core(heapRelation, indexRelation,
 								   indexInfo, &rum_index_routine,
-								   rum_index_multi_key_update_func,
-								   amCanBuildParallel);
+								   rum_index_multi_key_update_func);
 }
 
 
 IndexBuildResult *
 extension_rumbuild_core(Relation heapRelation, Relation indexRelation,
 						struct IndexInfo *indexInfo, IndexAmRoutine *coreRoutine,
-						UpdateMultikeyStatusFunc updateMultikeyStatus,
-						bool amCanBuildParallel)
+						PGFunction updateMultikeyStatus)
 {
 	RumHasMultiKeyPaths = false;
 	IndexBuildResult *result = coreRoutine->ambuild(heapRelation, indexRelation,
@@ -1472,17 +1490,17 @@ extension_rumbuild_core(Relation heapRelation, Relation indexRelation,
 	 * Note: We don't use HasMultiKeyPaths here as we want to handle the parallel build
 	 * scenario where we may have multiple workers building the index.
 	 */
-	if (amCanBuildParallel && IsCompositeOpClass(indexRelation))
+	if (IsCompositeOpClass(indexRelation))
 	{
 		IndexMultiKeyStatus status = CheckIndexHasArrays(indexRelation, coreRoutine);
 		if (status == IndexMultiKeyStatus_HasArrays && updateMultikeyStatus != NULL)
 		{
-			updateMultikeyStatus(indexRelation);
+			DirectFunctionCall1(updateMultikeyStatus, PointerGetDatum(indexRelation));
 		}
 	}
 	else if (RumHasMultiKeyPaths && updateMultikeyStatus != NULL)
 	{
-		updateMultikeyStatus(indexRelation);
+		DirectFunctionCall1(updateMultikeyStatus, PointerGetDatum(indexRelation));
 	}
 
 	return result;
@@ -1518,7 +1536,7 @@ extension_ruminsert_core(Relation indexRelation,
 						 bool indexUnchanged,
 						 struct IndexInfo *indexInfo,
 						 IndexAmRoutine *coreRoutine,
-						 UpdateMultikeyStatusFunc updateMultikeyStatus)
+						 PGFunction updateMultikeyStatus)
 {
 	RumHasMultiKeyPaths = false;
 	bool result = coreRoutine->aminsert(indexRelation, values, isnull,
@@ -1527,20 +1545,21 @@ extension_ruminsert_core(Relation indexRelation,
 
 	if (RumHasMultiKeyPaths && updateMultikeyStatus != NULL)
 	{
-		updateMultikeyStatus(indexRelation);
+		DirectFunctionCall1(updateMultikeyStatus, PointerGetDatum(indexRelation));
 	}
 
 	return result;
 }
 
 
-static bool
-RumGetMultiKeyStatusSlow(Relation indexRelation)
+static Datum
+RumGetMultiKeyStatusSlow(PG_FUNCTION_ARGS)
 {
+	Relation indexRelation = (Relation) PG_GETARG_POINTER(0);
 	EnsureRumLibLoaded();
 	IndexMultiKeyStatus multiKeyStatus = CheckIndexHasArrays(indexRelation,
 															 &rum_index_routine);
-	return multiKeyStatus == IndexMultiKeyStatus_HasArrays;
+	PG_RETURN_BOOL(multiKeyStatus == IndexMultiKeyStatus_HasArrays);
 }
 
 
@@ -1668,7 +1687,7 @@ GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum,
 
 
 static void
-ExplainCompositeProperties(void *state, GetMultikeyStatusFunc multiKeyStatusFunc,
+ExplainCompositeProperties(void *state, PGFunction multiKeyStatusFunc,
 						   Relation index_rel, bool enableCompositeReducedCorrelatedTerms,
 						   List *indexQuals, List *indexOrderBy, bool
 						   supportsOrderedOperatorScans,
@@ -1676,8 +1695,13 @@ ExplainCompositeProperties(void *state, GetMultikeyStatusFunc multiKeyStatusFunc
 						   void (*writeStringListFunc)(const char *, List *, void *),
 						   void (*writeStringFunc)(const char *, const char *, void *))
 {
-	bool isMultiKey = multiKeyStatusFunc ? multiKeyStatusFunc(index_rel) :
-					  RumGetMultiKeyStatusSlow(index_rel);
+	if (!multiKeyStatusFunc)
+	{
+		multiKeyStatusFunc = RumGetMultiKeyStatusSlow;
+	}
+
+	bool isMultiKey = DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
+													   PointerGetDatum(index_rel)));
 	writeBoolFunc("isMultiKey", isMultiKey, state);
 
 	bool hasCorrelatedTerms = false;
@@ -1824,7 +1848,7 @@ ExplainRawCompositeScanToWriter(Relation index_rel, List *indexQuals, List *inde
 								ScanDirection indexScanDir, pgbson_writer *writer)
 {
 	bool supportsOrderedOperatorScans = false;
-	GetMultikeyStatusFunc multiKeyStatusFunc = NULL;
+	PGFunction multiKeyStatusFunc = NULL;
 	if (!GetCompositeOpClassWithProps(index_rel, &supportsOrderedOperatorScans,
 									  &multiKeyStatusFunc))
 	{
@@ -1860,7 +1884,7 @@ ExplainRawCompositeScan(Relation index_rel, List *indexQuals, List *indexOrderBy
 						ScanDirection indexScanDir, struct ExplainState *es)
 {
 	bool supportsOrderedOperatorScans = false;
-	GetMultikeyStatusFunc multiKeyStatusFunc = NULL;
+	PGFunction multiKeyStatusFunc = NULL;
 	if (!GetCompositeOpClassWithProps(index_rel, &supportsOrderedOperatorScans,
 									  &multiKeyStatusFunc))
 	{
@@ -1892,7 +1916,9 @@ static void
 ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 						 ExplainWriterFuncs *writerFuncs)
 {
-	bool hasMultiKey = RumGetMultiKeyStatusSlow(scan->indexRelation);
+	bool hasMultiKey = DatumGetBool(DirectFunctionCall1(RumGetMultiKeyStatusSlow,
+														PointerGetDatum(
+															scan->indexRelation)));
 
 	writerFuncs->writeBool("isMultiKey", hasMultiKey, state);
 
@@ -2243,7 +2269,7 @@ DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan)
 	}
 
 	bool pathKeySummarizationForced = false;
-	GetCurrentIndexKeyFunc getCurrentIndexKey =
+	PGFunction getCurrentIndexKey =
 		GetIndexKeyCurrentKeyFunc(scan->indexRelation->rd_rel->relam,
 								  scan->indexRelation->rd_opfamily[0],
 								  &pathKeySummarizationForced);
@@ -2257,18 +2283,18 @@ DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan)
 		scan->indexRelation->rd_indam->ambeginscan == extension_documentdb_rumbeginscan;
 	if (isPathSummarizationScan || pathKeySummarizationForced)
 	{
-		return getCurrentIndexKey(scan);
+		return DirectFunctionCall1(getCurrentIndexKey, PointerGetDatum(scan));
 	}
 	else
 	{
 		DocumentDBRumIndexState *state = scan->opaque;
-		return getCurrentIndexKey(state->innerScan);
+		return DirectFunctionCall1(getCurrentIndexKey, PointerGetDatum(state->innerScan));
 	}
 }
 
 
 void
-DocumentDBRumSkipTidsForCurrentEntry(IndexScanDesc scan, SkipTidsOnCurrentEntryFunc
+DocumentDBRumSkipTidsForCurrentEntry(IndexScanDesc scan, PGFunction
 									 skipTidsFunc, bool pathKeySummarizationForced,
 									 ItemPointer userContinuationState)
 {
@@ -2287,13 +2313,16 @@ DocumentDBRumSkipTidsForCurrentEntry(IndexScanDesc scan, SkipTidsOnCurrentEntryF
 		scan->indexRelation->rd_indam->ambeginscan == extension_documentdb_rumbeginscan;
 	if (isPathSummarizationScan || pathKeySummarizationForced)
 	{
-		skipTidsFunc(scan, BlockIdGetBlockNumber(
-						 &userContinuationState->ip_blkid));
+		DirectFunctionCall2(skipTidsFunc, PointerGetDatum(scan), UInt32GetDatum(
+								BlockIdGetBlockNumber(
+									&
+									userContinuationState->ip_blkid)));
 	}
 	else
 	{
 		DocumentDBRumIndexState *state = scan->opaque;
-		skipTidsFunc(state->innerScan, BlockIdGetBlockNumber(
-						 &userContinuationState->ip_blkid));
+		DirectFunctionCall2(skipTidsFunc, PointerGetDatum(state->innerScan),
+							UInt32GetDatum(BlockIdGetBlockNumber(
+											   &userContinuationState->ip_blkid)));
 	}
 }

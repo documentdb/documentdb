@@ -57,7 +57,7 @@ $(RUM_CORE_LIB): $(RUM_CORE_SOURCES)
 $(RUM_CORE_BUILTIN_RMGR_LIB): $(RUM_CORE_SOURCES)
 	$(MAKE) -C $(RUM_CORE_BUILTIN_RMGR_LIB_DIR)
 
-$(MODULE_big)$(DLSUFFIX): $(RUM_CORE_LIB) # $(RUM_CORE_BUILTIN_RMGR_LIB)
+$(MODULE_big)$(DLSUFFIX): $(RUM_CORE_LIB) $(RUM_CORE_BUILTIN_RMGR_LIB)
 
 clean_core:
 	$(MAKE) -C $(RUM_CORE_LIB_DIR) clean
@@ -82,7 +82,7 @@ uninstall: uninstall_core
 
 build-sql: $(generated_sql_files)
 
-# all: validate_exports
+all: validate_exports
 
 validate_exports: $(RUM_CORE_LIB) $(RUM_CORE_BUILTIN_RMGR_LIB)
 	$(CURDIR)/validate_rum_core_exports.sh $(RUM_CORE_LIB) $(RUM_CORE_BUILTIN_RMGR_LIB)
