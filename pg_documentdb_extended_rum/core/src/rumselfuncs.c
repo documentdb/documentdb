@@ -37,6 +37,8 @@ typedef struct
 	double arrayScans;
 } GinQualCounts;
 
+RMGR_PG_FUNCTION_INFO_V1(DocumentDBRumOrderedCostEstimate);
+
 static bool gincost_opexpr(PlannerInfo *root,
 						   IndexOptInfo *index,
 						   int indexcol,
@@ -60,15 +62,23 @@ typedef List *(*BoundaryQualsSelectorFunc)(IndexPath *indexPath, int32_t *num_sa
  * Variant of cost estimate that specializes in ordered btree style index scans.
  * This is used for costing index scans that can support order by pushdown.
  */
-PGDLLEXPORT void
-DocumentDBRumOrderedCostEstimate(PlannerInfo *root, IndexPath *path, double loop_count,
-								 Cost *indexStartupCost, Cost *indexTotalCost,
-								 Selectivity *indexSelectivity, double *indexCorrelation,
-								 double *indexPages, double *totalNumTuples,
-								 Selectivity *boundarySelectivity, int *numBoundaryQuals,
-								 double *dataPagesProportionFetched,
-								 BoundaryQualsSelectorFunc boundaryQualsSelector)
+RMGR_PG_FUNCTION_DEF(DocumentDBRumOrderedCostEstimate)
 {
+	PlannerInfo *root = (PlannerInfo *) PG_GETARG_POINTER(0);
+	IndexPath *path = (IndexPath *) PG_GETARG_POINTER(1);
+	double loop_count = PG_GETARG_FLOAT8(2);
+	Cost *indexStartupCost = (Cost *) PG_GETARG_POINTER(3);
+	Cost *indexTotalCost = (Cost *) PG_GETARG_POINTER(4);
+	Selectivity *indexSelectivity = (Selectivity *) PG_GETARG_POINTER(5);
+	double *indexCorrelation = (double *) PG_GETARG_POINTER(6);
+	double *indexPages = (double *) PG_GETARG_POINTER(7);
+	double *totalNumTuples = (double *) PG_GETARG_POINTER(8);
+	Selectivity *boundarySelectivity = (Selectivity *) PG_GETARG_POINTER(9);
+	int *numBoundaryQuals = (int *) PG_GETARG_POINTER(10);
+	double *dataPagesProportionFetched = (double *) PG_GETARG_POINTER(11);
+	BoundaryQualsSelectorFunc boundaryQualsSelector =
+		(BoundaryQualsSelectorFunc) PG_GETARG_POINTER(12);
+
 	IndexOptInfo *index = path->indexinfo;
 	RumStatsData ginStats;
 	double numPages, numTuples;
@@ -140,6 +150,7 @@ DocumentDBRumOrderedCostEstimate(PlannerInfo *root, IndexPath *path, double loop
 	*dataPagesProportionFetched = numDataPages == 0 ? 0 : (dataPagesFetched /
 														   numDataPages);
 	*numBoundaryQuals = boundaryQualsCount;
+	PG_RETURN_VOID();
 }
 
 
