@@ -19,13 +19,13 @@
  * SECTION: Schema validation flags
  */
 
-/* Added in v108, Pending stabilization */
-#define DEFAULT_ENABLE_SCHEMA_VALIDATION false
+/* Added in v108, enabled in v114, remove after v116 */
+#define DEFAULT_ENABLE_SCHEMA_VALIDATION true
 bool EnableSchemaValidation =
 	DEFAULT_ENABLE_SCHEMA_VALIDATION;
 
-/* Added in v108, Pending stabilization */
-#define DEFAULT_ENABLE_BYPASSDOCUMENTVALIDATION false
+/* Added in v108, enabled in v114, remove after v116 */
+#define DEFAULT_ENABLE_BYPASSDOCUMENTVALIDATION true
 bool EnableBypassDocumentValidation =
 	DEFAULT_ENABLE_BYPASSDOCUMENTVALIDATION;
 
