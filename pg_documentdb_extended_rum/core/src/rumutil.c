@@ -1066,6 +1066,28 @@ rumGetStats(Relation index, RumStatsData *stats)
 }
 
 
+void
+rumValidateIndexVersion(Relation index)
+{
+	Buffer metabuffer;
+	Page metapage;
+	RumMetaPageData *metadata;
+	uint32_t rumVersion;
+
+	metabuffer = ReadBuffer(index, RUM_METAPAGE_BLKNO);
+	LockBuffer(metabuffer, RUM_SHARE);
+	metapage = BufferGetPage(metabuffer);
+	metadata = RumPageGetMeta(metapage);
+	rumVersion = metadata->rumVersion;
+	UnlockReleaseBuffer(metabuffer);
+
+	if (rumVersion != RUM_CURRENT_VERSION)
+	{
+		elog(ERROR, "unexpected RUM index version. Reindex");
+	}
+}
+
+
 /*
  * Write the given statistics to the index's metapage
  *

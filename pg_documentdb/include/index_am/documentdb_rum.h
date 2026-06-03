@@ -16,8 +16,6 @@
 #include <nodes/pathnodes.h>
 #include "index_am/index_am_exports.h"
 
-typedef void (*UpdateMultikeyStatusFunc)(Relation index);
-
 
 /* How to load the RUM library into the process */
 typedef enum RumLibraryLoadOptions
@@ -55,18 +53,6 @@ bool extension_rumgettuple_core(IndexScanDesc scan, ScanDirection direction,
 
 typedef List *(*BoundaryQualsSelectorFunc)(IndexPath *indexPath, int32_t *num_sa_scans);
 
-typedef void (*OrderedCostEstimateCoreFunc)(PlannerInfo *root, IndexPath *path, double
-											loop_count,
-											Cost *indexStartupCost, Cost *indexTotalCost,
-											Selectivity *indexSelectivity,
-											double *indexCorrelation,
-											double *indexPages,
-											double *totalNumTuples,
-											Selectivity *boundarySelectivity,
-											int *numBoundaryQuals,
-											double *dataPagesProportionFetched,
-											BoundaryQualsSelectorFunc
-											boundaryQualsSelector);
 void extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double
 									loop_count,
 									Cost *indexStartupCost, Cost *indexTotalCost,
@@ -75,14 +61,12 @@ void extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double
 									double *indexPages, IndexAmRoutine *coreRoutine,
 									bool forceIndexPushdownCostToZero,
 									bool enableCompositePlannerCosts,
-									OrderedCostEstimateCoreFunc
-									orderedCostEstimateCoreFunc);
+									PGFunction orderedCostEstimateCoreFunc);
 
 IndexBuildResult * extension_rumbuild_core(Relation heapRelation, Relation indexRelation,
 										   struct IndexInfo *indexInfo,
 										   IndexAmRoutine *coreRoutine,
-										   UpdateMultikeyStatusFunc updateMultikeyStatus,
-										   bool amCanBuildParallel);
+										   PGFunction updateMultikeyStatus);
 
 bool extension_ruminsert_core(Relation indexRelation,
 							  Datum *values,
@@ -93,7 +77,7 @@ bool extension_ruminsert_core(Relation indexRelation,
 							  bool indexUnchanged,
 							  struct IndexInfo *indexInfo,
 							  IndexAmRoutine *coreRoutine,
-							  UpdateMultikeyStatusFunc updateMultikeyStatus);
+							  PGFunction updateMultikeyStatus);
 
 bool RumGetTruncationStatus(Relation indexRelation);
 
@@ -121,7 +105,7 @@ void RecordCostEstimateForIndex(Oid indexOid, Oid relOid, Cost indexStartupCost,
 								dataPagesProportionFetched);
 
 Datum DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan);
-void DocumentDBRumSkipTidsForCurrentEntry(IndexScanDesc scan, SkipTidsOnCurrentEntryFunc
+void DocumentDBRumSkipTidsForCurrentEntry(IndexScanDesc scan, PGFunction
 										  skipTidsFunc, bool pathKeySummarizationForced,
 										  ItemPointer userContinuationState);
 #endif

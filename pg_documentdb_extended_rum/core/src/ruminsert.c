@@ -1120,6 +1120,8 @@ ruminsert(Relation index, Datum *values, bool *isnull,
 	/* Initialize RumState cache if first call in this statement */
 	if (rumstate == NULL)
 	{
+		/* Validate index state the first time */
+		rumValidateIndexVersion(index);
 		oldCtx = MemoryContextSwitchTo(indexInfo->ii_Context);
 		rumstate = palloc_object(RumState);
 		initRumState(rumstate, index);

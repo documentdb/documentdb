@@ -55,10 +55,8 @@ static void entryGetItemOrdered(RumState *rumstate, RumScanEntry entry,
 static void entryFindItem(RumState *rumstate, RumScanEntry entry, RumItem *item, Snapshot
 						  snapshot);
 
-extern PGDLLEXPORT Datum documentdb_rum_get_current_index_key(struct
-															  IndexScanDescData *scan);
-extern PGDLLEXPORT void documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan,
-																  BlockNumber block);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_get_current_index_key);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_skip_tids_on_current_entry);
 
 /*
  * Extract key value for ordering.
@@ -4891,9 +4889,9 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 }
 
 
-PGDLLEXPORT Datum
-documentdb_rum_get_current_index_key(IndexScanDesc scan)
+RMGR_PG_FUNCTION_DEF(documentdb_rum_get_current_index_key)
 {
+	IndexScanDesc scan = (IndexScanDesc) PG_GETARG_POINTER(0);
 	RumScanOpaque so = (RumScanOpaque) scan->opaque;
 	if (so->scanType != RumOrderedScan)
 	{
@@ -4910,7 +4908,7 @@ documentdb_rum_get_current_index_key(IndexScanDesc scan)
 
 	if (off < FirstOffsetNumber || off > PageGetMaxOffsetNumber(page))
 	{
-		return (Datum) 0;
+		PG_RETURN_DATUM((Datum) 0);
 	}
 
 	ItemId itemId = PageGetItemId(page, off);
@@ -4919,13 +4917,15 @@ documentdb_rum_get_current_index_key(IndexScanDesc scan)
 	RumNullCategory icategory;
 	Datum idatum = rumtuple_get_key(&so->rumstate, itup, &icategory);
 
-	return idatum;
+	PG_RETURN_DATUM(idatum);
 }
 
 
-PGDLLEXPORT void
-documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan, BlockNumber block)
+RMGR_PG_FUNCTION_DEF(documentdb_rum_skip_tids_on_current_entry)
 {
+	IndexScanDesc scan = (IndexScanDesc) PG_GETARG_POINTER(0);
+	BlockNumber block = PG_GETARG_UINT32(1);
+
 	RumScanOpaque so = (RumScanOpaque) scan->opaque;
 	if (so->scanType != RumOrderedScan)
 	{
@@ -4937,14 +4937,14 @@ documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan, BlockNumber block)
 	if (entry->isFinished)
 	{
 		/* Current entry is finished - no need to move forward */
-		return;
+		PG_RETURN_VOID();
 	}
 
 	if (block == InvalidBlockNumber)
 	{
 		/* We wanna just skip the rest of the rows for this entry */
 		entry->isFinished = true;
-		return;
+		PG_RETURN_VOID();
 	}
 
 	RumItem targetItem = { 0 };
@@ -4955,7 +4955,7 @@ documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan, BlockNumber block)
 	if (rumCompareItemPointers(&entry->curItem.iptr, &targetItem.iptr) >= 0)
 	{
 		/* Current item is after the target block - no need to move forward */
-		return;
+		PG_RETURN_VOID();
 	}
 
 	while (!entry->isFinished &&
@@ -4969,7 +4969,7 @@ documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan, BlockNumber block)
 	if (entry->isFinished)
 	{
 		/* We finished the entry - we're done */
-		return;
+		PG_RETURN_VOID();
 	}
 
 	/* If we got here, we reached the target block (or could have exceeded it by 1 entry)
@@ -4977,4 +4977,5 @@ documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan, BlockNumber block)
 	 * we rev offset back by one entry.
 	 */
 	entry->offset -= entry->scanDirection;
+	PG_RETURN_VOID();
 }

@@ -556,6 +556,7 @@ extern Datum rumtuple_get_key(RumState *rumstate, IndexTuple tuple,
 							  RumNullCategory *category);
 
 extern void rumGetStats(Relation index, RumStatsData *stats);
+extern void rumValidateIndexVersion(Relation index);
 extern void rumUpdateStats(Relation index, const RumStatsData *stats,
 						   bool isBuild);
 
@@ -1057,24 +1058,6 @@ extern void documentdb_rum_costestimate(struct PlannerInfo *root, struct
 										Selectivity *indexSelectivity,
 										double *indexCorrelation,
 										double *indexPages);
-
-extern PGDLLIMPORT void DocumentDBRumOrderedCostEstimate(struct PlannerInfo *root, struct
-														 IndexPath *path, double
-														 loop_count,
-														 Cost *indexStartupCost,
-														 Cost *indexTotalCost,
-														 Selectivity *indexSelectivity,
-														 double *indexCorrelation,
-														 double *indexPages,
-														 double *totalNumTuples,
-														 Selectivity *boundarySelectivity,
-														 int *numBoundaryQuals,
-														 double *
-														 dataPagesProportionFetched,
-														 List *(*
-																boundaryIndexQualsSelector)(
-															 struct IndexPath *indexPath,
-															 int32_t *num_sa_scans));
 
 typedef struct RumEntryAccumulator
 {

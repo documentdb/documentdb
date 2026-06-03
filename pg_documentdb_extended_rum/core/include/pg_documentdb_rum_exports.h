@@ -79,7 +79,7 @@ extern PGDLLIMPORT rum_format_log_hook rum_unredacted_log_emit_hook;
 					  __VA_ARGS__)))
 
 
-#ifdef RUM_USE_RMGR_EXPORT_PREFIX
+#ifdef RUM_BUILD_ONLY_CORE_RMGR
 #define RMGR_PG_FUNCTION_INFO_V1(funcname) PG_FUNCTION_INFO_V1(builtin_rmgr_ ## funcname)
 #define RMGR_PG_FUNCTION_DEF(funcname) \
 	PGDLLEXPORT Datum builtin_rmgr_ ## funcname(PG_FUNCTION_ARGS)

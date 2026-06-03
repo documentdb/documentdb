@@ -67,9 +67,7 @@ typedef struct ExplainWriterFuncs
 						 void *writer);
 } ExplainWriterFuncs;
 
-extern PGDLLEXPORT void try_explain_documentdb_rum_index(IndexScanDesc scan,
-														 void *state,
-														 ExplainWriterFuncs *funcs);
+RMGR_PG_FUNCTION_INFO_V1(try_explain_documentdb_rum_index);
 
 IndexScanDesc
 rumbeginscan(Relation rel, int nkeys, int norderbys)
@@ -79,6 +77,9 @@ rumbeginscan(Relation rel, int nkeys, int norderbys)
 	MemoryContext prev = CurrentMemoryContext;
 
 	scan = RelationGetIndexScan(rel, nkeys, norderbys);
+
+	/* Validate the index version for sanity */
+	rumValidateIndexVersion(scan->indexRelation);
 
 	/* allocate private workspace */
 	so = (RumScanOpaque) palloc(sizeof(RumScanOpaqueData));
@@ -1525,10 +1526,12 @@ rumrestrpos(PG_FUNCTION_ARGS)
 }
 
 
-extern PGDLLEXPORT void
-try_explain_documentdb_rum_index(IndexScanDesc scan,
-								 void *state, ExplainWriterFuncs *funcs)
+RMGR_PG_FUNCTION_DEF(try_explain_documentdb_rum_index)
 {
+	IndexScanDesc scan = (IndexScanDesc) PG_GETARG_POINTER(0);
+	void *state = (void *) PG_GETARG_POINTER(1);
+	ExplainWriterFuncs *funcs = (ExplainWriterFuncs *) PG_GETARG_POINTER(2);
+
 	/* This function is called from explain.c */
 	int i, j;
 	List *entryList = NIL;
@@ -1624,4 +1627,5 @@ try_explain_documentdb_rum_index(IndexScanDesc scan,
 	}
 
 	funcs->writeStringList("scanKeyDetails", entryList, state);
+	PG_RETURN_VOID();
 }

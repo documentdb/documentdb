@@ -9,6 +9,8 @@
  *-------------------------------------------------------------------------
  */
 
+#include <postgres.h>
+#include <fmgr.h>
 #include "index_am/index_am_utils.h"
 #include "utils/feature_counter.h"
 #include "access/relscan.h"
@@ -135,7 +137,7 @@ GetBsonIndexAmEntryByIndexOid(Oid indexAm)
 
 bool
 GetIndexAmSupportsIndexOnlyScan(Oid indexAm, Oid opFamilyOid,
-								GetMultikeyStatusFunc *getMultiKeyStatus,
+								PGFunction *getMultiKeyStatus,
 								GetTruncationStatusFunc *getTruncationStatus)
 {
 	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(indexAm);
@@ -352,7 +354,8 @@ TryExplainByIndexAm(struct IndexScanDescData *scan, ExplainWriterFuncs *writeFun
 		return;
 	}
 
-	amEntry->add_explain_output(scan, writerState, writeFuncs);
+	DirectFunctionCall3(amEntry->add_explain_output, PointerGetDatum(scan),
+						PointerGetDatum(writerState), PointerGetDatum(writeFuncs));
 }
 
 
@@ -502,7 +505,7 @@ IsOrderBySupportedOnOpClass(Oid indexAm, Oid columnOpFamilyAm)
 }
 
 
-GetMultikeyStatusFunc
+PGFunction
 GetMultiKeyStatusByRelAm(Oid relam)
 {
 	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relam);
@@ -530,7 +533,7 @@ GetIndexSupportsBackwardsScan(Oid relam, bool *indexCanOrder)
 }
 
 
-GetCurrentIndexKeyFunc
+PGFunction
 GetIndexKeyCurrentKeyFunc(Oid relam, Oid opFamily, bool *pathKeySummarizationForced)
 {
 	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relam);
@@ -551,7 +554,7 @@ GetIndexKeyCurrentKeyFunc(Oid relam, Oid opFamily, bool *pathKeySummarizationFor
 }
 
 
-SkipTidsOnCurrentEntryFunc
+PGFunction
 GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily, bool *pathKeySummarizationForced)
 {
 	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relam);
@@ -575,7 +578,7 @@ GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily, bool *pathKeySummarizatio
 bool
 GetCompositeOpClassWithProps(Relation indexRelation,
 							 bool *supportsOrderedOperatorScans,
-							 GetMultikeyStatusFunc *multiKeyStatusFunc)
+							 PGFunction *multiKeyStatusFunc)
 {
 	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(
 		indexRelation->rd_rel->relam);
