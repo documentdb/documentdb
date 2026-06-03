@@ -142,6 +142,11 @@ PGDLLEXPORT bool RumSkipGlobalVisibilityCheckOnPrune =
 PGDLLEXPORT bool RumEnableOverwriteEntryTupleOnVacuum =
 	RUM_DEFAULT_ENABLE_OVERWRITE_ENTRY_TUPLE_ON_VACUUM;
 
+/* FeatureFlag: Added in v114, Pending stabilization, enable on v117 */
+#define RUM_DEFAULT_ENABLE_TARGETED_POSTING_TREE_PRUNING false
+PGDLLEXPORT bool RumEnableTargetedPostingTreePruning =
+	RUM_DEFAULT_ENABLE_TARGETED_POSTING_TREE_PRUNING;
+
 /* rumget.c */
 /* FeatureFlag: Added in v109, Pending stabilization, enable on v116 */
 #define RUM_DEFAULT_ENABLE_SUPPORT_DEAD_INDEX_ITEMS false
@@ -364,6 +369,16 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		RUM_DEFAULT_ENABLE_OVERWRITE_ENTRY_TUPLE_ON_VACUUM,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_targeted_posting_tree_pruning", documentDBRumGucPrefix),
+		"Enables targeted pruning of empty posting tree pages during vacuum",
+		NULL,
+		&RumEnableTargetedPostingTreePruning,
+		RUM_DEFAULT_ENABLE_TARGETED_POSTING_TREE_PRUNING,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
 	DefineCustomBoolVariable(
 		psprintf("%s.track_incomplete_split", documentDBRumGucPrefix),
 		"Sets whether or not to track incomplete splits",

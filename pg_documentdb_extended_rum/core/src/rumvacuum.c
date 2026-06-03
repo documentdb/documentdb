@@ -41,6 +41,7 @@ extern bool RumVacuumSkipPrunePostingTreePages;
 extern bool RumTraversePageOnlyOnBackTrack;
 extern bool RumSkipGlobalVisibilityCheckOnPrune;
 extern bool RumEnableOverwriteEntryTupleOnVacuum;
+extern bool RumEnableTargetedPostingTreePruning;
 
 typedef struct
 {
@@ -89,6 +90,10 @@ static void LogFinalVacuumState(Relation index, RumVacuumStatistics *stats,
 static void TraverseAndPrunePostingTrees(RumVacuumState *gvs, Page page, Buffer buffer,
 										 BlockNumber currentBlockNo,
 										 RumVacuumStatistics *vacStats);
+
+static uint32_t rumPostingTreePruneEmptyPagesTargeted(RumVacuumState *gvs,
+													  OffsetNumber attnum,
+													  BlockNumber rootBlkno);
 
 inline static bool
 IsCurrentVacuumCycleId(RumVacuumState *gvs, Page page)
@@ -747,54 +752,60 @@ rumVacuumPostingTree(RumVacuumState *gvs,
 					 uint32_t *postingTreeEmptyPages)
 {
 	int numDeletedPages = 0;
-	int nonVoidPageCount = 0;
-	int numVoidPages = rumCleanPostingTreeLeavesTidsByRightlink(gvs, attnum,
-																rootBlkno,
-																&nonVoidPageCount);
-	if (!RumVacuumSkipPrunePostingTreePages && numVoidPages > 0)
+	int numNonEmptyLeafPages = 0;
+	int numEmptyLeafPages = rumCleanPostingTreeLeavesTidsByRightlink(gvs, attnum,
+																	 rootBlkno,
+																	 &numNonEmptyLeafPages);
+	if (!RumVacuumSkipPrunePostingTreePages && numEmptyLeafPages > 0)
 	{
-		/*
-		 * There is at least one empty page.  So we have to rescan the tree
-		 * deleting empty pages.
-		 */
-		Buffer buffer;
-		DataPageDeleteStack root,
-							*ptr,
-							*tmp;
-
-		buffer = ReadBufferExtended(gvs->index, MAIN_FORKNUM, rootBlkno,
-									RBM_NORMAL, gvs->strategy);
-
-		/*
-		 * Lock posting tree root for cleanup to ensure there are no
-		 * concurrent inserts.
-		 */
-		LockBufferForCleanup(buffer);
-		memset(&root, 0, sizeof(DataPageDeleteStack));
-		root.isRoot = true;
-
-		rumPostingTreePruneEmptyPagesUnderRootLock(gvs, rootBlkno, true, &root,
-												   InvalidOffsetNumber,
-												   &numDeletedPages);
-
-		ptr = root.child;
-
-		while (ptr)
+		if (RumEnableTargetedPostingTreePruning)
 		{
-			tmp = ptr->child;
-			pfree(ptr);
-			ptr = tmp;
+			/* Perform targeted pruning of the posting tree */
+			numDeletedPages = rumPostingTreePruneEmptyPagesTargeted(gvs, attnum,
+																	rootBlkno);
 		}
+		else
+		{
+			/* Perform full tree traversal under a root lock to prune empty pages */
+			Buffer buffer;
+			DataPageDeleteStack root,
+								*ptr,
+								*tmp;
 
-		UnlockReleaseBuffer(buffer);
+			buffer = ReadBufferExtended(gvs->index, MAIN_FORKNUM, rootBlkno,
+										RBM_NORMAL, gvs->strategy);
+
+			/*
+			 * Lock posting tree root for cleanup to ensure there are no
+			 * concurrent inserts.
+			 */
+			LockBufferForCleanup(buffer);
+			memset(&root, 0, sizeof(DataPageDeleteStack));
+			root.isRoot = true;
+
+			rumPostingTreePruneEmptyPagesUnderRootLock(gvs, rootBlkno, true, &root,
+													   InvalidOffsetNumber,
+													   &numDeletedPages);
+
+			ptr = root.child;
+
+			while (ptr)
+			{
+				tmp = ptr->child;
+				pfree(ptr);
+				ptr = tmp;
+			}
+
+			UnlockReleaseBuffer(buffer);
+		}
 	}
 
-	*blocks_done += numVoidPages + nonVoidPageCount;
+	*blocks_done += numEmptyLeafPages + numNonEmptyLeafPages;
 	*postingTreePagesDeleted += numDeletedPages;
-	*postingTreeEmptyPages += numVoidPages;
+	*postingTreeEmptyPages += numEmptyLeafPages;
 	ereport(DEBUG1, (errmsg("[RUM] Vacuum posting tree void pages %d, deleted pages %d",
-							numVoidPages, numDeletedPages)));
-	return nonVoidPageCount == 0;
+							numEmptyLeafPages, numDeletedPages)));
+	return numNonEmptyLeafPages == 0;
 }
 
 
@@ -2511,6 +2522,101 @@ TryDeletePostingLeafFromTree(RumVacuumState *gvs, BlockNumber rootBlkno,
 	}
 
 	UnlockReleaseBuffer(buffer);
+}
+
+
+/*
+ * Prune empty pages from the posting tree.
+ * Returns the number of posting tree pages deleted.
+ *
+ * Walks leaves without holding the root cleanup lock. For each empty leaf, takes
+ * the root cleanup lock only for a targeted descent to that leaf. Also prunes
+ * empty ancestors on the stack unwind.
+ *
+ * This intentionally mirrors RumVacuumPrunePostingTree, but keeps an ambulkdelete-facing
+ * contract: rumVacuumPostingTree already computed leaf emptiness during TID cleanup and
+ * only needs deleted-page accounting.
+ *
+ * Also uses BufferGetBlockNumber(buffer) for the leaf being inspected instead of the
+ * traversal cursor, since FindLeftMostLeafDataPage may move buffer from the root
+ * to the leftmost leaf before the scan starts. This is a change we want to evaluate in production
+ * before making it the default behavior.
+ *
+ * TODO: armaans Extract the common rightlink scan and targeted empty-leaf deletion into
+ * a shared helper after this ambulkdelete path has been evaluated.
+ */
+static uint32_t
+rumPostingTreePruneEmptyPagesTargeted(RumVacuumState *gvs,
+									  OffsetNumber attnum,
+									  BlockNumber rootBlkno)
+{
+	Buffer buffer;
+	Page page;
+	BlockNumber nextBlockNumber;
+	bool isPageRoot = true;
+	bool exclusive = false;
+
+	/*
+	 * TryDeletePostingLeafFromTree reports page deletions through
+	 * RumVacuumStatistics because its existing caller is rumvacuumcleanup.
+	 * Use local stats here for now and translate back to numDeletedPages.
+	 */
+	RumVacuumStatistics localStats = { 0 };
+
+	/* Find leftmost leaf page of posting tree and lock it in non-exclusive mode */
+	buffer = FindLeftMostLeafDataPage(gvs, rootBlkno, &isPageRoot, exclusive);
+	page = BufferGetPage(buffer);
+	if (isPageRoot)
+	{
+		/* We don't ever prune the root posting tree */
+		UnlockReleaseBuffer(buffer);
+
+		return 0;
+	}
+
+	/*
+	 * Iterate posting tree leaves using rightlinks. For each empty leaf, use a
+	 * targeted descent from the root to attempt to delete the leaf and prune empty ancestors.
+	 */
+	while (true)
+	{
+		BlockNumber currentBlockNo = BufferGetBlockNumber(buffer);
+		nextBlockNumber = RumPageGetOpaque(page)->rightlink;
+		if (RumDataPageMaxOff(page) < FirstOffsetNumber)
+		{
+			/* We're trying to delete this page - send the right bound entry of the current page
+			 * So that's the one being searched for in the parents.
+			 */
+			RumItem *maxEntry = RumDataPageGetRightBound(page);
+			RumPostingTreeDeleteEntry deleteEntry = { 0 };
+			deleteEntry.deleteBlock = currentBlockNo;
+			deleteEntry.pageMaxItem = *maxEntry;
+			deleteEntry.entryDeleted = false;
+			UnlockReleaseBuffer(buffer);
+			TryDeletePostingLeafFromTree(gvs, rootBlkno, attnum, &deleteEntry,
+										 &localStats);
+		}
+		else
+		{
+			UnlockReleaseBuffer(buffer);
+		}
+
+		if (nextBlockNumber == InvalidBlockNumber)
+		{
+			break;
+		}
+
+		/* Delay here and check for interrupts when not holding locks */
+		RumVacuumDelayPointCompat();
+		CHECK_FOR_INTERRUPTS();
+
+		buffer = ReadBufferExtended(gvs->index, MAIN_FORKNUM, nextBlockNumber,
+									RBM_NORMAL, gvs->strategy);
+		LockBuffer(buffer, RUM_SHARE);
+		page = BufferGetPage(buffer);
+	}
+
+	return localStats.numPostingTreePagesDeleted;
 }
 
 
