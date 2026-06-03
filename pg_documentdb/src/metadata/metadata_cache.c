@@ -15,6 +15,7 @@
 #include <catalog/pg_extension.h>
 #include <catalog/pg_proc.h>
 #include <catalog/pg_type.h>
+#include <catalog/pg_operator.h>
 #include <utils/fmgroids.h>
 
 #include "commands/extension.h"
@@ -173,6 +174,9 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OID of the <bigint> >= <bigint> operator */
 	Oid BigIntGreaterEqualOperatorId;
+
+	/* OID of the <bigint> <= <bigint> operator */
+	Oid BigIntLessEqualOperatorId;
 
 	/* OID of the <text> OPERATOR(pg_catalog.=) <text> operator */
 	Oid TextEqualOperatorId;
@@ -1571,6 +1575,31 @@ BigIntGreaterEqualOperatorId(void)
 	}
 
 	return Cache.BigIntGreaterEqualOperatorId;
+}
+
+
+Oid
+BigIntLessEqualOperatorId(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (Cache.BigIntLessEqualOperatorId == InvalidOid)
+	{
+		List *operatorNameList = list_make2(makeString("pg_catalog"),
+											makeString("<="));
+
+		Cache.BigIntLessEqualOperatorId =
+			OpernameGetOprid(operatorNameList, INT8OID, INT8OID);
+	}
+
+	return Cache.BigIntLessEqualOperatorId;
+}
+
+
+Oid
+BigIntLessOperatorId(void)
+{
+	return Int8LessOperator;
 }
 
 
