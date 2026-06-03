@@ -45,7 +45,8 @@ ANALYZE;
 CREATE OR REPLACE FUNCTION sp_drain_and_report(
     p_find_spec text,
     p_getmore_spec text,
-    p_batch_size int
+    p_batch_size int,
+    p_expected_cursor_type int DEFAULT 3
 ) RETURNS TABLE(page_num int, batch_count bigint, cursor_type int, persist_conn bool) AS $$
 DECLARE
     v_cursor_page documentdb_core.bson;
@@ -71,6 +72,16 @@ BEGIN
     IF v_continuation IS NOT NULL THEN
         SELECT (bson_dollar_project(v_continuation, '{ "dc.type": 1 }') ->> 'dc.type')::int
             INTO v_cursor_type;
+
+        -- For streaming cursors, validate dc.type is set and matches expected
+        IF NOT v_persist THEN
+            IF v_cursor_type IS NULL THEN
+                RAISE EXCEPTION 'Page 1: streaming cursor but dc.type is NULL';
+            END IF;
+            IF v_cursor_type != p_expected_cursor_type THEN
+                RAISE EXCEPTION 'Page 1: expected dc.type=%, got dc.type=%', p_expected_cursor_type, v_cursor_type;
+            END IF;
+        END IF;
     ELSE
         v_cursor_type := -1;
     END IF;
@@ -97,6 +108,16 @@ BEGIN
         IF v_continuation IS NOT NULL THEN
             SELECT (bson_dollar_project(v_continuation, '{ "dc.type": 1 }') ->> 'dc.type')::int
                 INTO v_cursor_type;
+
+            -- For streaming cursors, validate dc.type is set and matches expected
+            IF NOT v_persist THEN
+                IF v_cursor_type IS NULL THEN
+                    RAISE EXCEPTION 'Page %: streaming cursor but dc.type is NULL', v_page;
+                END IF;
+                IF v_cursor_type != p_expected_cursor_type THEN
+                    RAISE EXCEPTION 'Page %: expected dc.type=%, got dc.type=%', v_page, p_expected_cursor_type, v_cursor_type;
+                END IF;
+            END IF;
         ELSE
             v_cursor_type := -1;
         END IF;
@@ -859,6 +880,524 @@ SELECT COUNT(*) AS total_pages FROM sp_drain_ordered(
     '{ "getMore": { "$numberLong": "538" }, "collection": "sp_order_coll", "batchSize": 2 }',
     2);
 
+-- ---------------------------------------------------------------------------
+-- Test G12: Backward scan correctness — reversed mixed-direction index
+-- sort: { a: -1, b: 1 }, hint: idx_order_a_asc_b_desc (index is {a:1,b:-1})
+-- Full reverse of all index directions → backward scan → streaming
+-- Expected: (a=3,b=2,id=1), (a=3,b=3,id=8), (a=3,b=4,id=5),
+--           (a=2,b=1,id=3), (a=2,b=2,id=6), (a=2,b=5,id=9),
+--           (a=1,b=1,id=7), (a=1,b=3,id=4), (a=1,b=4,id=10), (a=1,b=5,id=2)
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_ordered(
+    '{ "find": "sp_order_coll", "sort": { "a": -1, "b": 1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "batchSize": 3, "hint": "idx_order_a_asc_b_desc" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_order_coll", "batchSize": 3 }',
+    3);
+
+-- ---------------------------------------------------------------------------
+-- Test G13: Backward scan correctness — ascending sort on descending index
+-- sort: { a: 1 }, hint: idx_order_a_desc (index is {a:-1})
+-- Ascending sort on descending index → backward scan → streaming
+-- Expected: a=1 (ids 2,4,7,10), a=2 (ids 3,6,9), a=3 (ids 1,5,8)
+-- Same order as G1 (ascending sort on ascending index)
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_ordered(
+    '{ "find": "sp_order_coll", "sort": { "a": 1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "batchSize": 3, "hint": "idx_order_a_desc" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_order_coll", "batchSize": 3 }',
+    3);
+
+-- ---------------------------------------------------------------------------
+-- Test G14: Backward scan correctness — compound ASC index with filter
+-- filter: { a: { $lte: 2 } }, sort: { a: -1, b: -1 }, hint: idx_order_ab_asc
+-- Full reverse of {a:1,b:1} with range filter → backward scan → streaming
+-- Expected: (a=2,b=5,id=9), (a=2,b=2,id=6), (a=2,b=1,id=3),
+--           (a=1,b=5,id=2), (a=1,b=4,id=10), (a=1,b=3,id=4), (a=1,b=1,id=7)
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_ordered(
+    '{ "find": "sp_order_coll", "filter": { "a": { "$lte": 2 } }, "sort": { "a": -1, "b": -1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "batchSize": 3, "hint": "idx_order_ab_asc" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_order_coll", "batchSize": 3 }',
+    3);
+
+-- ---------------------------------------------------------------------------
+-- Test G15: Backward scan correctness — equality filter + reversed next-key
+-- filter: { a: 2 }, sort: { b: -1 }, hint: idx_order_ab_asc
+-- Equality on prefix + descending sort on next key (reverse of {b:1})
+-- → backward scan within equality range → streaming
+-- Expected: (a=2,b=5,id=9), (a=2,b=2,id=6), (a=2,b=1,id=3)
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_ordered(
+    '{ "find": "sp_order_coll", "filter": { "a": 2 }, "sort": { "b": -1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "batchSize": 2, "hint": "idx_order_ab_asc" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_order_coll", "batchSize": 2 }',
+    2);
+
+-- ---------------------------------------------------------------------------
+-- Test G16: Backward scan correctness — equality filter + reversed next-key
+--           on mixed-direction index
+-- filter: { a: 1 }, sort: { b: 1 }, hint: idx_order_a_asc_b_desc (idx {a:1,b:-1})
+-- Equality on prefix + ascending sort on b (reverse of {b:-1})
+-- → backward scan within equality range → streaming
+-- Expected: (a=1,b=1,id=7), (a=1,b=3,id=4), (a=1,b=4,id=10), (a=1,b=5,id=2)
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_ordered(
+    '{ "find": "sp_order_coll", "filter": { "a": 1 }, "sort": { "b": 1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "batchSize": 2, "hint": "idx_order_a_asc_b_desc" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_order_coll", "batchSize": 2 }',
+    2);
+
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
+
+-- ===========================================================================
+-- SECTION H: Primary key dynamic cursors with sort
+-- Tests verify dynamic cursor behavior when using primary key scans with sort.
+-- Primary key scans use the built-in _id index. With sort on _id, the scan
+-- should be streamable (cursor_type=2, PrimaryKeyScan). Currently primary key
+-- scans with sort produce persistent cursors — these are marked as UNEXPECTED.
+-- Also includes backward scan tests for secondary index scans.
+--
+-- cursor_type values: 2 = PrimaryKeyScan, 3 = SecondaryIndexScan,
+--                     7 = SecondaryIndexOnlyScan, NULL = persistent
+-- ===========================================================================
+
+-- Create a collection with sequential _id values for primary key scan tests
+SELECT documentdb_api.drop_collection('dyncur_sp_db', 'sp_pk_coll');
+SELECT COUNT(documentdb_api.insert_one('dyncur_sp_db', 'sp_pk_coll',
+    FORMAT('{ "_id": %s, "val": %s }', i, i * 10)::documentdb_core.bson))
+FROM generate_series(1, 20) AS i;
+
+ANALYZE;
+
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+
+-- ---------------------------------------------------------------------------
+-- Test H1: Primary key scan with ascending _id sort (no filter)
+-- sort: { _id: 1 }, no hint (uses built-in _id index)
+-- EXPECTED: streaming (cursor_type=2, persist_conn=f) — OK
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_and_report(
+    '{ "find": "sp_pk_coll", "sort": { "_id": 1 }, "projection": { "_id": 1, "val": 1 }, "batchSize": 5 }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_pk_coll", "batchSize": 5 }',
+    5, 2);
+
+-- ---------------------------------------------------------------------------
+-- Test H2: Primary key scan with descending _id sort (backward scan)
+-- sort: { _id: -1 }, no hint
+-- EXPECTED: streaming (cursor_type=2, persist_conn=f) — OK
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_and_report(
+    '{ "find": "sp_pk_coll", "sort": { "_id": -1 }, "projection": { "_id": 1, "val": 1 }, "batchSize": 5 }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_pk_coll", "batchSize": 5 }',
+    5, 2);
+
+-- ---------------------------------------------------------------------------
+-- Test H3: Primary key scan with filter + ascending _id sort
+-- filter: { _id: { $gte: 5 } }, sort: { _id: 1 }
+-- EXPECTED: streaming (cursor_type=2, persist_conn=f) — OK
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_and_report(
+    '{ "find": "sp_pk_coll", "filter": { "_id": { "$gte": 5 } }, "sort": { "_id": 1 }, "projection": { "_id": 1, "val": 1 }, "batchSize": 5 }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_pk_coll", "batchSize": 5 }',
+    5, 2);
+
+-- ---------------------------------------------------------------------------
+-- Test H4: Primary key scan with filter + descending _id sort (backward)
+-- filter: { _id: { $lte: 15 } }, sort: { _id: -1 }
+-- EXPECTED: streaming (cursor_type=2, persist_conn=f) — OK
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_and_report(
+    '{ "find": "sp_pk_coll", "filter": { "_id": { "$lte": 15 } }, "sort": { "_id": -1 }, "projection": { "_id": 1, "val": 1 }, "batchSize": 5 }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_pk_coll", "batchSize": 5 }',
+    5, 2);
+
+-- ---------------------------------------------------------------------------
+-- Test H5: Primary key scan, filter only (no sort) — baseline streaming
+-- filter: { _id: { $gte: 10, $lte: 18 } }
+-- EXPECTED: streaming (cursor_type=2, persist_conn=f)
+-- This should already work since filter-only primary key scans are streamable.
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_and_report(
+    '{ "find": "sp_pk_coll", "filter": { "_id": { "$gte": 10, "$lte": 18 } }, "projection": { "_id": 1, "val": 1 }, "batchSize": 3 }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_pk_coll", "batchSize": 3 }',
+    3, 2);
+
+-- ---------------------------------------------------------------------------
+-- Test H6: Primary key scan with skip + ascending sort → persistent
+-- sort: { _id: 1 }, skip: 5
+-- Skip always forces persistent regardless of scan type.
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_and_report(
+    '{ "find": "sp_pk_coll", "sort": { "_id": 1 }, "projection": { "_id": 1, "val": 1 }, "skip": 5, "batchSize": 5 }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_pk_coll", "batchSize": 5 }',
+    5, 2);
+
+-- ---------------------------------------------------------------------------
+-- Test H7: Primary key scan with limit + ascending sort → persistent
+-- sort: { _id: 1 }, limit: 10
+-- Limit always forces persistent regardless of scan type.
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_and_report(
+    '{ "find": "sp_pk_coll", "sort": { "_id": 1 }, "projection": { "_id": 1, "val": 1 }, "limit": 10, "batchSize": 5 }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_pk_coll", "batchSize": 5 }',
+    5, 2);
+
+-- ---------------------------------------------------------------------------
+-- SECTION H EXPLAIN: Plan shapes for primary key scans with sort
+-- ---------------------------------------------------------------------------
+
+-- Test H1 EXPLAIN: ascending _id sort
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncur_sp_db',
+    '{ "find": "sp_pk_coll", "sort": { "_id": 1 }, "projection": { "_id": 1, "val": 1 }, "batchSize": 5 }');
+$cmd$);
+
+-- Test H2 EXPLAIN: descending _id sort (backward scan)
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncur_sp_db',
+    '{ "find": "sp_pk_coll", "sort": { "_id": -1 }, "projection": { "_id": 1, "val": 1 }, "batchSize": 5 }');
+$cmd$);
+
+-- ===========================================================================
+-- SECTION H2: Backward scan tests for secondary index scans
+-- Validates that backward scans on secondary indexes (reversed sort direction
+-- on all index keys) produce streaming cursors.
+-- ===========================================================================
+
+-- ---------------------------------------------------------------------------
+-- Test H8: Backward scan on compound ASC index with full reverse sort
+-- sort: { a: -1, b: -1 }, hint: idx_order_ab_asc (from Section G)
+-- Full reverse of {a:1, b:1} → streaming backward index scan
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_and_report(
+    '{ "find": "sp_order_coll", "sort": { "a": -1, "b": -1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "batchSize": 3, "hint": "idx_order_ab_asc" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_order_coll", "batchSize": 3 }',
+    3);
+
+-- ---------------------------------------------------------------------------
+-- Test H9: Backward scan on mixed direction index with full reverse sort
+-- sort: { a: -1, b: 1 }, hint: idx_order_a_asc_b_desc (from Section G)
+-- Full reverse of {a:1, b:-1} → streaming backward index scan
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_and_report(
+    '{ "find": "sp_order_coll", "sort": { "a": -1, "b": 1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "batchSize": 3, "hint": "idx_order_a_asc_b_desc" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_order_coll", "batchSize": 3 }',
+    3);
+
+-- ---------------------------------------------------------------------------
+-- Test H10: Backward scan on DESC index with ascending sort
+-- sort: { a: 1 }, hint: idx_order_a_desc (from Section G)
+-- Ascending sort on descending index → backward scan → streaming
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_and_report(
+    '{ "find": "sp_order_coll", "sort": { "a": 1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "batchSize": 3, "hint": "idx_order_a_desc" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_order_coll", "batchSize": 3 }',
+    3);
+
+-- ---------------------------------------------------------------------------
+-- Test H11: Backward scan with filter on compound ASC index
+-- filter: { a: { $lte: 2 } }, sort: { a: -1, b: -1 }, hint: idx_order_ab_asc
+-- Full reverse of {a:1, b:1} with filter → streaming backward scan
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_and_report(
+    '{ "find": "sp_order_coll", "filter": { "a": { "$lte": 2 } }, "sort": { "a": -1, "b": -1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "batchSize": 3, "hint": "idx_order_ab_asc" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_order_coll", "batchSize": 3 }',
+    3);
+
+-- ---------------------------------------------------------------------------
+-- Test H12: Backward scan with equality filter + reversed next-key sort
+-- filter: { a: 2 }, sort: { b: -1 }, hint: idx_order_ab_asc
+-- Equality on prefix + descending sort on next key (reverse of {b:1})
+-- → should be streaming (backward scan within equality range)
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_and_report(
+    '{ "find": "sp_order_coll", "filter": { "a": 2 }, "sort": { "b": -1 }, "projection": { "_id": 1, "a": 1, "b": 1 }, "batchSize": 2, "hint": "idx_order_ab_asc" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_order_coll", "batchSize": 2 }',
+    2);
+
+-- ---------------------------------------------------------------------------
+-- SECTION H RESULTS SUMMARY
+-- ===========================================================================
+-- | Test | Sort          | Filter       | Index/Scan   | Expected    | Status    |
+-- |------|---------------|--------------|--------------|-------------|-----------|
+-- | H1   | {_id:1}       | -            | primary key  | streaming   | OK        |
+-- | H2   | {_id:-1}      | -            | primary key  | streaming   | OK        |
+-- | H3   | {_id:1}       | _id >= 5     | primary key  | streaming   | OK        |
+-- | H4   | {_id:-1}      | _id <= 15    | primary key  | streaming   | OK        |
+-- | H5   | -             | _id range    | primary key  | streaming   | OK        |
+-- | H6   | {_id:1}       | - (skip:5)   | primary key  | persistent  | OK        |
+-- | H7   | {_id:1}       | - (limit:10) | primary key  | persistent  | OK        |
+-- | H8   | {a:-1,b:-1}   | -            | idx_ab_asc   | streaming   | OK        |
+-- | H9   | {a:-1,b:1}    | -            | idx_a1_b-1   | streaming   | OK        |
+-- | H10  | {a:1}         | -            | idx_a_desc   | streaming   | OK        |
+-- | H11  | {a:-1,b:-1}   | a <= 2       | idx_ab_asc   | streaming   | OK        |
+-- | H12  | {b:-1}        | a = 2        | idx_ab_asc   | streaming   | OK        |
+-- ===========================================================================
+
+-- ===========================================================================
+-- SECTION H3: Primary key scan ordering correctness
+-- Validates that documents are returned in the correct order when sorting
+-- by _id (forward and backward). Uses a simple drain helper without streaming
+-- assertions to focus on document ordering.
+-- ===========================================================================
+
+-- Helper: drain cursor and return docs from all pages (asserts streaming PK scan)
+CREATE OR REPLACE FUNCTION sp_drain_docs(
+    p_find text, p_getmore text, p_batch_size int
+) RETURNS TABLE(page_num int, docs documentdb_core.bson) AS $$
+DECLARE
+    v_page documentdb_core.bson;
+    v_cont documentdb_core.bson;
+    v_persist bool;
+    v_cid bigint;
+    v_cursor_type int;
+    v_page_num int := 0;
+BEGIN
+    SELECT fp.cursorPage, fp.continuation, fp.persistconnection, fp.cursorid
+    INTO v_page, v_cont, v_persist, v_cid
+    FROM find_cursor_first_page(database => 'dyncur_sp_db',
+        commandSpec => p_find::documentdb_core.bson, cursorId => 538) fp;
+
+    -- Assert streaming PK scan on first page
+    IF v_persist THEN
+        RAISE EXCEPTION 'sp_drain_docs page 1: expected streaming, got persistent';
+    END IF;
+    IF v_cont IS NOT NULL THEN
+        SELECT (bson_dollar_project(v_cont, '{ "dc.type": 1 }') ->> 'dc.type')::int INTO v_cursor_type;
+        IF v_cursor_type IS DISTINCT FROM 2 THEN
+            RAISE EXCEPTION 'sp_drain_docs page 1: expected dc.type=2 (PrimaryKeyScan), got %', v_cursor_type;
+        END IF;
+    END IF;
+
+    v_page_num := 1;
+    page_num := v_page_num;
+    docs := bson_dollar_project(v_page, '{ "cursor.firstBatch._id": 1, "cursor.firstBatch.val": 1 }');
+    RETURN NEXT;
+
+    WHILE v_cont IS NOT NULL LOOP
+        SELECT gm.cursorPage, gm.continuation
+        INTO v_page, v_cont
+        FROM cursor_get_more(database => 'dyncur_sp_db',
+            getMoreSpec => p_getmore::documentdb_core.bson,
+            continuationSpec => v_cont) gm;
+
+        v_page_num := v_page_num + 1;
+
+        -- Assert PK scan on subsequent pages
+        IF v_cont IS NOT NULL THEN
+            SELECT (bson_dollar_project(v_cont, '{ "dc.type": 1 }') ->> 'dc.type')::int INTO v_cursor_type;
+            IF v_cursor_type IS DISTINCT FROM 2 THEN
+                RAISE EXCEPTION 'sp_drain_docs page %: expected dc.type=2 (PrimaryKeyScan), got %', v_page_num, v_cursor_type;
+            END IF;
+        END IF;
+
+        page_num := v_page_num;
+        docs := bson_dollar_project(v_page, '{ "cursor.nextBatch._id": 1, "cursor.nextBatch.val": 1 }');
+        RETURN NEXT;
+
+        IF v_cont IS NULL THEN
+            EXIT;
+        END IF;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+
+-- ---------------------------------------------------------------------------
+-- Test H13: PK forward scan correctness — ascending _id sort (no filter)
+-- sort: { _id: 1 }, batchSize: 5, 20 docs (_id=1..20, val=_id*10)
+-- Expected: _id 1,2,3,4,5 | 6,7,8,9,10 | 11,12,13,14,15 | 16,17,18,19,20
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_docs(
+    '{ "find": "sp_pk_coll", "sort": { "_id": 1 }, "projection": { "_id": 1, "val": 1 }, "batchSize": 5 }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_pk_coll", "batchSize": 5 }',
+    5);
+
+-- ---------------------------------------------------------------------------
+-- Test H14: PK backward scan correctness — descending _id sort (no filter)
+-- sort: { _id: -1 }, batchSize: 5, 20 docs
+-- Expected: _id 20,19,18,17,16 | 15,14,13,12,11 | 10,9,8,7,6 | 5,4,3,2,1
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_docs(
+    '{ "find": "sp_pk_coll", "sort": { "_id": -1 }, "projection": { "_id": 1, "val": 1 }, "batchSize": 5 }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_pk_coll", "batchSize": 5 }',
+    5);
+
+-- ---------------------------------------------------------------------------
+-- Test H15: PK forward scan with filter — ascending _id sort
+-- filter: { _id: { $gte: 5, $lte: 14 } }, sort: { _id: 1 }, batchSize: 3
+-- Expected: _id 5,6,7 | 8,9,10 | 11,12,13 | 14
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_docs(
+    '{ "find": "sp_pk_coll", "filter": { "_id": { "$gte": 5, "$lte": 14 } }, "sort": { "_id": 1 }, "projection": { "_id": 1, "val": 1 }, "batchSize": 3 }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_pk_coll", "batchSize": 3 }',
+    3);
+
+-- ---------------------------------------------------------------------------
+-- Test H16: PK backward scan with filter — descending _id sort
+-- filter: { _id: { $gte: 5, $lte: 14 } }, sort: { _id: -1 }, batchSize: 3
+-- Expected: _id 14,13,12 | 11,10,9 | 8,7,6 | 5
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_docs(
+    '{ "find": "sp_pk_coll", "filter": { "_id": { "$gte": 5, "$lte": 14 } }, "sort": { "_id": -1 }, "projection": { "_id": 1, "val": 1 }, "batchSize": 3 }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_pk_coll", "batchSize": 3 }',
+    3);
+
+-- ---------------------------------------------------------------------------
+-- Test H17: PK forward scan — no sort, filter only (baseline streaming)
+-- filter: { _id: { $gte: 8, $lte: 12 } }, batchSize: 2
+-- Expected: _id 8,9 | 10,11 | 12 (natural _id order from index scan)
+-- ---------------------------------------------------------------------------
+SELECT * FROM sp_drain_docs(
+    '{ "find": "sp_pk_coll", "filter": { "_id": { "$gte": 8, "$lte": 12 } }, "projection": { "_id": 1, "val": 1 }, "batchSize": 2 }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_pk_coll", "batchSize": 2 }',
+    2);
+
+-- ---------------------------------------------------------------------------
+-- Test H18: PK forward scan — total doc count check
+-- sort: { _id: 1 }, batchSize: 7, 20 docs → 3 pages (7+7+6)
+-- ---------------------------------------------------------------------------
+SELECT COUNT(*) AS total_pages FROM sp_drain_docs(
+    '{ "find": "sp_pk_coll", "sort": { "_id": 1 }, "projection": { "_id": 1 }, "batchSize": 7 }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_pk_coll", "batchSize": 7 }',
+    7);
+
+-- ---------------------------------------------------------------------------
+-- Test H19: PK backward scan — total doc count check with filter
+-- filter: { _id: { $lte: 15 } }, sort: { _id: -1 }, batchSize: 4
+-- 15 docs → 4 pages (4+4+4+3)
+-- ---------------------------------------------------------------------------
+SELECT COUNT(*) AS total_pages FROM sp_drain_docs(
+    '{ "find": "sp_pk_coll", "filter": { "_id": { "$lte": 15 } }, "sort": { "_id": -1 }, "projection": { "_id": 1 }, "batchSize": 4 }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "sp_pk_coll", "batchSize": 4 }',
+    4);
+
+-- ===========================================================================
+-- SECTION H4: Primary key scan persistence across getMore with index_scan disabled
+-- Validates that once a streaming PK scan is established on the first page,
+-- disabling enable_indexscan does not change the scan type on subsequent
+-- getMore calls — the continuation should preserve cursor_type=2.
+-- ===========================================================================
+
+-- ---------------------------------------------------------------------------
+-- Test H20: PK forward sort, disable enable_indexscan after first page
+-- First page: sort {_id: 1}, batchSize 5 → streaming cursor_type=2
+-- Then SET enable_indexscan = off and do getMore — should still be PK scan
+-- ---------------------------------------------------------------------------
+DO $$
+DECLARE
+    v_page documentdb_core.bson;
+    v_cont documentdb_core.bson;
+    v_persist bool;
+    v_cursor_type int;
+    v_batch_count bigint;
+BEGIN
+    -- Get first page (with index scans enabled — should pick PK scan)
+    SELECT fp.cursorPage, fp.continuation, fp.persistconnection
+    INTO v_page, v_cont, v_persist
+    FROM find_cursor_first_page(
+        database => 'dyncur_sp_db',
+        commandSpec => '{ "find": "sp_pk_coll", "sort": { "_id": 1 }, "projection": { "_id": 1, "val": 1 }, "batchSize": 5 }'::documentdb_core.bson,
+        cursorId => 538
+    ) fp;
+
+    -- Assert first page is streaming with PK scan
+    IF v_persist THEN
+        RAISE EXCEPTION 'H20: first page should be streaming, got persistent';
+    END IF;
+
+    SELECT (bson_dollar_project(v_cont, '{ "dc.type": 1 }') ->> 'dc.type')::int INTO v_cursor_type;
+    IF v_cursor_type IS DISTINCT FROM 2 THEN
+        RAISE EXCEPTION 'H20: first page expected dc.type=2 (PrimaryKeyScan), got %', v_cursor_type;
+    END IF;
+
+    RAISE NOTICE 'H20 first page: streaming=true, cursor_type=%, batch=5', v_cursor_type;
+
+    -- Disable index scans, ensure seq scan is available
+    SET LOCAL enable_indexscan = off;
+    SET LOCAL enable_seqscan = on;
+
+    -- getMore — the continuation should force PK scan regardless
+    SELECT gm.cursorPage, gm.continuation
+    INTO v_page, v_cont
+    FROM cursor_get_more(
+        database => 'dyncur_sp_db',
+        getMoreSpec => '{ "getMore": { "$numberLong": "538" }, "collection": "sp_pk_coll", "batchSize": 5 }'::documentdb_core.bson,
+        continuationSpec => v_cont
+    ) gm;
+
+    -- Assert getMore still has PK scan
+    SELECT (bson_dollar_project(v_cont, '{ "dc.type": 1 }') ->> 'dc.type')::int INTO v_cursor_type;
+    IF v_cursor_type IS DISTINCT FROM 2 THEN
+        RAISE EXCEPTION 'H20: getMore expected dc.type=2 (PrimaryKeyScan) with index_scan off, got %', v_cursor_type;
+    END IF;
+
+    SELECT (bson_dollar_project(v_page,
+        '{ "c": { "$size": { "$ifNull": ["$cursor.nextBatch", []] } } }')
+        ->> 'c')::bigint INTO v_batch_count;
+
+    RAISE NOTICE 'H20 getMore (index_scan=off): cursor_type=%, batch=%', v_cursor_type, v_batch_count;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Test H21: PK backward sort, disable enable_indexscan after first page
+-- sort: { _id: -1 }, batchSize 5
+-- First page: streaming cursor_type=2, then disable index scans
+-- getMore should still preserve cursor_type=2 (PrimaryKeyScan)
+-- ---------------------------------------------------------------------------
+DO $$
+DECLARE
+    v_page documentdb_core.bson;
+    v_cont documentdb_core.bson;
+    v_persist bool;
+    v_cursor_type int;
+    v_batch_count bigint;
+BEGIN
+    -- Get first page with backward PK sort
+    SELECT fp.cursorPage, fp.continuation, fp.persistconnection
+    INTO v_page, v_cont, v_persist
+    FROM find_cursor_first_page(
+        database => 'dyncur_sp_db',
+        commandSpec => '{ "find": "sp_pk_coll", "sort": { "_id": -1 }, "projection": { "_id": 1, "val": 1 }, "batchSize": 5 }'::documentdb_core.bson,
+        cursorId => 538
+    ) fp;
+
+    -- Assert first page is streaming with PK scan
+    IF v_persist THEN
+        RAISE EXCEPTION 'H21: first page should be streaming, got persistent';
+    END IF;
+
+    SELECT (bson_dollar_project(v_cont, '{ "dc.type": 1 }') ->> 'dc.type')::int INTO v_cursor_type;
+    IF v_cursor_type IS DISTINCT FROM 2 THEN
+        RAISE EXCEPTION 'H21: first page expected dc.type=2 (PrimaryKeyScan), got %', v_cursor_type;
+    END IF;
+
+    RAISE NOTICE 'H21 first page: streaming=true, cursor_type=%', v_cursor_type;
+
+    -- Disable index scans, ensure seq scan is available
+    SET LOCAL enable_indexscan = off;
+    SET LOCAL enable_seqscan = on;
+
+    -- getMore — continuation should preserve PK scan regardless
+    SELECT gm.cursorPage, gm.continuation
+    INTO v_page, v_cont
+    FROM cursor_get_more(
+        database => 'dyncur_sp_db',
+        getMoreSpec => '{ "getMore": { "$numberLong": "538" }, "collection": "sp_pk_coll", "batchSize": 5 }'::documentdb_core.bson,
+        continuationSpec => v_cont
+    ) gm;
+
+    -- Assert getMore still has PK scan
+    SELECT (bson_dollar_project(v_cont, '{ "dc.type": 1 }') ->> 'dc.type')::int INTO v_cursor_type;
+    IF v_cursor_type IS DISTINCT FROM 2 THEN
+        RAISE EXCEPTION 'H21: getMore expected dc.type=2 (PrimaryKeyScan) with index_scan off, got %', v_cursor_type;
+    END IF;
+
+    SELECT (bson_dollar_project(v_page,
+        '{ "c": { "$size": { "$ifNull": ["$cursor.nextBatch", []] } } }')
+        ->> 'c')::bigint INTO v_batch_count;
+
+    RAISE NOTICE 'H21 getMore (index_scan=off): cursor_type=%, batch=%', v_cursor_type, v_batch_count;
+END;
+$$;
+
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
 
 -- ===========================================================================
@@ -866,3 +1405,4 @@ SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
 -- ===========================================================================
 DROP FUNCTION IF EXISTS sp_drain_and_report;
 DROP FUNCTION IF EXISTS sp_drain_ordered;
+DROP FUNCTION IF EXISTS sp_drain_docs;

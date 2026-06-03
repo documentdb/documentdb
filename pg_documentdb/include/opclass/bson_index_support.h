@@ -126,6 +126,7 @@ OpExpr * GetOpExprClauseFromIndexOperator(const
 										  Expr *firstArg, Expr *secondArg,
 										  bytea *indexOptions);
 
+void ConsiderBtreeOrderByPushdown(PlannerInfo *root, IndexPath *indexPath);
 void documentdb_btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 							   Cost *indexStartupCost, Cost *indexTotalCost,
 							   Selectivity *indexSelectivity, double *indexCorrelation,
