@@ -12,6 +12,7 @@
 #define EXTENSION_API_HOOKS_H
 
 #include <access/amapi.h>
+#include <executor/spi.h>
 #include <utils/memutils.h>
 #include <nodes/execnodes.h>
 
@@ -46,6 +47,20 @@ DistributedRunCommandResult RunCommandOnMetadataCoordinator(const char *query);
 Datum RunQueryWithCommutativeWrites(const char *query, int nargs, Oid *argTypes,
 									Datum *argValues, char *argNulls,
 									int expectedSPIOK, bool *isNull);
+
+/*
+ * Runs a multi-value query via SPI with commutative writes enabled for
+ * distributed scenarios. The GUC is scoped to just this query execution
+ * and rolled back afterwards. Supports both prepared plans and ad-hoc queries.
+ * Pass plan as NULL to use SPI_execute_with_args with the query text.
+ *
+ * Precondition: Caller must have an active SPI connection (via SPI_connect).
+ * Results are available in SPI_processed/SPI_tuptable after this call returns.
+ */
+void RunMultiValueQueryWithCommutativeWrites(const char *query, SPIPlanPtr plan,
+											 int nargs, Oid *argTypes,
+											 Datum *argValues, char *argNulls,
+											 bool readOnly, long maxTupleCount);
 
 
 /*
