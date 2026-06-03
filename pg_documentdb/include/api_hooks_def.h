@@ -15,6 +15,7 @@
 
 #include "api_hooks_common.h"
 #include <access/amapi.h>
+#include <executor/spi.h>
 #include <nodes/execnodes.h>
 #include <nodes/parsenodes.h>
 #include <nodes/pathnodes.h>
@@ -61,6 +62,22 @@ typedef Datum (*RunQueryWithCommutativeWrites_HookType)(const char *query, int n
 														Datum *argValues, char *argNulls,
 														int expectedSPIOK, bool *isNull);
 extern RunQueryWithCommutativeWrites_HookType run_query_with_commutative_writes_hook;
+
+
+/*
+ * Runs a multi-value query with commutative writes enabled.
+ * The GUC is scoped to just this query execution and rolled back afterwards.
+ */
+typedef void (*RunMultiValueQueryWithCommutativeWrites_HookType)(const char *query,
+																 SPIPlanPtr plan,
+																 int nargs,
+																 Oid *argTypes,
+																 Datum *argValues,
+																 char *argNulls,
+																 bool readOnly,
+																 long maxTupleCount);
+extern RunMultiValueQueryWithCommutativeWrites_HookType
+	run_multi_value_query_with_commutative_writes_hook;
 
 
 /*

@@ -454,6 +454,13 @@ bool EnableOnlyCollectionCacheInvalidateOnCollectionChanges =
 bool EnableNewNamespaceValidation =
 	DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION;
 
+/* Improves updateMany performance but can lead to deadlocks when concurrent writes update the same document */
+/* To enable this default we need to handle deadlock scenarios gracefully */
+/* Added in v114, Pending stabilization, enable in v120 */
+#define DEFAULT_ENABLE_COMMUTATIVE_UPDATE_MANY false
+bool EnableCommutativeUpdateMany =
+	DEFAULT_ENABLE_COMMUTATIVE_UPDATE_MANY;
+
 /*
  * SECTION: Changestream feature flags
  */
@@ -1259,6 +1266,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableCompactVacuumFull,
 		DEFAULT_ENABLE_COMPACT_VACUUM_FULL,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCommutativeUpdateMany", newGucPrefix),
+		gettext_noop(
+			"Whether to enable commutative writes for updateMany to improve performance. Can lead to deadlocks when concurrent writes update the same document."),
+		NULL,
+		&EnableCommutativeUpdateMany,
+		DEFAULT_ENABLE_COMMUTATIVE_UPDATE_MANY,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
