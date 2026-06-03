@@ -152,6 +152,8 @@ Oid BsonIndexBoundsEqualOperatorFuncId(void);
 Oid BigintEqualOperatorId(void);
 Oid BigIntGreaterOperatorId(void);
 Oid BigIntGreaterEqualOperatorId(void);
+Oid BigIntLessOperatorId(void);
+Oid BigIntLessEqualOperatorId(void);
 Oid TextEqualOperatorId(void);
 Oid TextNotEqualOperatorId(void);
 Oid TextLessOperatorId(void);
