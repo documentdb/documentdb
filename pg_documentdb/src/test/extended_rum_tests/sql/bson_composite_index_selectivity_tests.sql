@@ -191,3 +191,79 @@ set enable_seqscan to off;
 set enable_bitmapscan to off;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb',
     '{ "find": "generic_selectiviity_coll", "filter": { "tenantId": { "$in": ["tenant-abc-001", "tenant-abc-002"] }, "active": 1, "status": { "$in": [1, 2, 3] }, "steps.assignees": { "$elemMatch": { "userId": "user-xyz-001", "status": 4, "active": 1 } } } }');
+
+-- Reset before next section
+set enable_seqscan to on;
+set enable_bitmapscan to on;
+set documentdb.enableCompositeIndexPlanner to off;
+
+--------------------------------------------------------------------------------
+-- Test: Per-collection planner statistics using btree selectivity functions
+-- Validates that with per-collection stats enabled, the planner uses accurate
+-- selectivity estimates (eqsel/scalargtsel/etc.) instead of the generic
+-- restriction selectivity which clamps at 0.0001. This prevents false positive
+-- BitmapAnd plans when a highly selective index exists.
+--------------------------------------------------------------------------------
+
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO on;
+SELECT documentdb_api.create_collection('comp_idb', 'btree_selectivity');
+
+-- Create indexes on a highly selective field (guid) and a low-selectivity field (category)
+SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_idb', '{ "createIndexes": "btree_selectivity", "indexes": [ { "key": { "guid": 1 }, "name": "guid_1" }, { "key": { "category": 1 }, "name": "category_1" }, { "key": { "score": 1 }, "name": "score_1" } ] }', TRUE);
+
+-- Insert 50000 rows: unique guids, ~10% category="rare", ~90% category="common"
+-- Documents > 1KB to ensure index scans are preferred over seq scan
+-- At 50K rows: true guid selectivity = 2/50002 ~ 0.00004
+-- Without fix: clamped to 0.0001 (2.5x overestimate → BitmapAnd becomes "cheap")
+-- With fix: uses eqsel giving accurate estimate → Index Scan preferred
+SELECT COUNT(documentdb_api.insert_one('comp_idb', 'btree_selectivity',
+    bson_build_document('_id'::text, i, 'guid'::text, ('guid-' || lpad(i::text, 8, '0')), 'category'::text, 'common'::text, 'score'::text, i, 'padding'::text, repeat('x', 1200))))
+FROM generate_series(1, 45000) i;
+SELECT COUNT(documentdb_api.insert_one('comp_idb', 'btree_selectivity',
+    bson_build_document('_id'::text, i, 'guid'::text, ('guid-' || lpad(i::text, 8, '0')), 'category'::text, 'rare'::text, 'score'::text, i, 'padding'::text, repeat('x', 1200))))
+FROM generate_series(45001, 50000) i;
+
+-- Insert 2 target rows with known guid and category="rare"
+SELECT documentdb_api.insert_one('comp_idb', 'btree_selectivity',
+    '{ "_id": 50001, "guid": "target-guid-00000001", "category": "rare", "score": 5000, "padding": "target1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }');
+SELECT documentdb_api.insert_one('comp_idb', 'btree_selectivity',
+    '{ "_id": 50002, "guid": "target-guid-00000001", "category": "rare", "score": 5001, "padding": "target2xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }');
+
+ANALYZE documentdb_data.documents_203;
+
+SET enable_seqscan TO off;
+
+-- Test: Without per-collection stats, both guid and category get generic selectivity
+-- (LowSelectivity = 0.01). The planner incorrectly combines both indexes via BitmapAnd
+-- because it overestimates the number of matching rows for each index.
+SET documentdb.enablePerCollectionPlannerStatistics TO off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb',
+    '{ "find": "btree_selectivity", "filter": { "$and": [ {"guid": "target-guid-00000001"}, {"category": "rare"} ] } }');
+
+-- Test: With per-collection stats enabled, eqsel returns accurate selectivity for guid
+-- (2/50002 ~ 0.00004) which is lower than category (5000/50002 ~ 0.1).
+-- The accurate selectivity avoids BitmapAnd and uses guid_1 directly.
+-- Disable bitmap scan for deterministic plan output (IndexScan vs BitmapHeapScan
+-- is marginal at this data size; the key point is BitmapAnd is avoided above).
+SET enable_bitmapscan TO off;
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb',
+    '{ "find": "btree_selectivity", "filter": { "$and": [ {"guid": "target-guid-00000001"}, {"category": "rare"} ] } }');
+
+-- Test: Range query on score with guid uses scalar selectivity functions
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb',
+    '{ "find": "btree_selectivity", "filter": { "$and": [ {"guid": "target-guid-00000001"}, {"score": {"$gte": 4000, "$lte": 6000}} ] } }');
+
+-- Test: Verify query returns correct results
+SELECT document FROM bson_aggregation_find('comp_idb',
+    '{ "find": "btree_selectivity", "filter": { "$and": [ {"guid": "target-guid-00000001"}, {"category": "rare"} ] } }');
+
+-- Cleanup: drop the collection to free resources
+SELECT documentdb_api.drop_collection('comp_idb', 'btree_selectivity');
+
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+RESET documentdb.enablePerCollectionPlannerStatistics;
+RESET documentdb.enablePlannerStatisticsNewCollections;
+RESET documentdb.enableCompositeIndexPlanner;

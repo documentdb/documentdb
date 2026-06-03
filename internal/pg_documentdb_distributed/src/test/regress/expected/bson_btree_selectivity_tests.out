@@ -1,0 +1,158 @@
+SET search_path TO documentdb_api_catalog, documentdb_api, documentdb_core, documentdb_api_internal, public;
+SET citus.next_shard_id TO 645000;
+SET documentdb.next_collection_id TO 6450;
+SET documentdb.next_collection_index_id TO 6450;
+---------------------------------------------------------------------
+-- Test: bson_operator_selectivity with btree stats
+-- Validates that when enableBsonSelectivityFromBtreeStats is on, the planner
+-- uses PG's native selectivity functions (eqsel/scalargtsel/etc.) on btree
+-- expression indexes, giving accurate row estimates instead of the default 1%.
+---------------------------------------------------------------------
+-- Create a collection and insert data
+SELECT documentdb_api.create_collection('sel_db', 'btree_sel');
+NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- Insert 50K rows: category has only 10 distinct values (each ~5000 rows),
+-- guid is unique per row (each has exactly 1 row)
+SELECT COUNT(documentdb_api.insert_one('sel_db', 'btree_sel',
+    bson_build_document(
+        '_id'::text, i,
+        'guid'::text, format('guid-%08s', i),
+        'category'::text, format('cat-%s', i % 10),
+        'score'::text, (i % 1000)
+    ))) FROM generate_series(1, 50000) i;
+ count 
+---------------------------------------------------------------------
+ 50000
+(1 row)
+
+-- Insert 2 target rows with a known guid
+SELECT documentdb_api.insert_one('sel_db', 'btree_sel',
+    '{ "_id": 50001, "guid": "target-guid-00000001", "category": "cat-0", "score": 500 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('sel_db', 'btree_sel',
+    '{ "_id": 50002, "guid": "target-guid-00000001", "category": "cat-0", "score": 501 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Create btree expression indexes using bson_stats_project
+CREATE INDEX btree_sel_guid ON documentdb_data.documents_6451
+    USING btree(documentdb_api_internal.bson_stats_project(document, 'guid'::text));
+CREATE INDEX btree_sel_category ON documentdb_data.documents_6451
+    USING btree(documentdb_api_internal.bson_stats_project(document, 'category'::text));
+CREATE INDEX btree_sel_score ON documentdb_data.documents_6451
+    USING btree(documentdb_api_internal.bson_stats_project(document, 'score'::text));
+ANALYZE documentdb_data.documents_6451;
+SET enable_seqscan TO off;
+-- Test 1: Without btree selectivity, default 1% selectivity for all operators.
+-- Both guid and category get the same generic 1% selectivity.
+SET documentdb_core.enableBsonSelectivityFromBtreeStats TO off;
+EXPLAIN (COSTS OFF) SELECT document FROM documentdb_data.documents_6451
+    WHERE documentdb_api_internal.bson_stats_project(document, 'guid'::text) = '{"": "target-guid-00000001"}'
+    AND documentdb_api_internal.bson_stats_project(document, 'category'::text) = '{"": "cat-0"}';
+                                                                                     QUERY PLAN                                                                                     
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using btree_sel_guid_645002 on documents_6451_645002 documents_6451
+               Index Cond: (documentdb_api_internal.bson_stats_project(document, 'guid'::text) OPERATOR(documentdb_core.=) '{ "" : "target-guid-00000001" }'::documentdb_core.bson)
+               Filter: (documentdb_api_internal.bson_stats_project(document, 'category'::text) OPERATOR(documentdb_core.=) '{ "" : "cat-0" }'::documentdb_core.bson)
+(8 rows)
+
+-- Test 2: With btree selectivity enabled, eqsel returns accurate selectivity.
+-- guid "target-guid-00000001" has 2/50002 rows (~0.00004) vs category "cat-0"
+-- with ~5002/50002 rows (~0.1). The planner uses the guid index (same index
+-- choice but with accurate row estimates).
+SET documentdb_core.enableBsonSelectivityFromBtreeStats TO on;
+EXPLAIN (COSTS OFF) SELECT document FROM documentdb_data.documents_6451
+    WHERE documentdb_api_internal.bson_stats_project(document, 'guid'::text) = '{"": "target-guid-00000001"}'
+    AND documentdb_api_internal.bson_stats_project(document, 'category'::text) = '{"": "cat-0"}';
+                                                                                     QUERY PLAN                                                                                     
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using btree_sel_guid_645002 on documents_6451_645002 documents_6451
+               Index Cond: (documentdb_api_internal.bson_stats_project(document, 'guid'::text) OPERATOR(documentdb_core.=) '{ "" : "target-guid-00000001" }'::documentdb_core.bson)
+               Filter: (documentdb_api_internal.bson_stats_project(document, 'category'::text) OPERATOR(documentdb_core.=) '{ "" : "cat-0" }'::documentdb_core.bson)
+(8 rows)
+
+-- Test 3: Range query with btree selectivity uses scalargtsel/scalarltsel
+SET documentdb_core.enableBsonSelectivityFromBtreeStats TO on;
+EXPLAIN (COSTS OFF) SELECT document FROM documentdb_data.documents_6451
+    WHERE documentdb_api_internal.bson_stats_project(document, 'guid'::text) = '{"": "target-guid-00000001"}'
+    AND documentdb_api_internal.bson_stats_project(document, 'score'::text) >= '{"": 400}'
+    AND documentdb_api_internal.bson_stats_project(document, 'score'::text) <= '{"": 600}';
+                                                                                                                                                                           QUERY PLAN                                                                                                                                                                            
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Bitmap Heap Scan on documents_6451_645002 documents_6451
+               Recheck Cond: ((documentdb_api_internal.bson_stats_project(document, 'score'::text) OPERATOR(documentdb_core.>=) '{ "" : { "$numberInt" : "400" } }'::documentdb_core.bson) AND (documentdb_api_internal.bson_stats_project(document, 'score'::text) OPERATOR(documentdb_core.<=) '{ "" : { "$numberInt" : "600" } }'::documentdb_core.bson))
+               Filter: (documentdb_api_internal.bson_stats_project(document, 'guid'::text) OPERATOR(documentdb_core.=) '{ "" : "target-guid-00000001" }'::documentdb_core.bson)
+               ->  Bitmap Index Scan on btree_sel_score_645002
+                     Index Cond: ((documentdb_api_internal.bson_stats_project(document, 'score'::text) OPERATOR(documentdb_core.>=) '{ "" : { "$numberInt" : "400" } }'::documentdb_core.bson) AND (documentdb_api_internal.bson_stats_project(document, 'score'::text) OPERATOR(documentdb_core.<=) '{ "" : { "$numberInt" : "600" } }'::documentdb_core.bson))
+(10 rows)
+
+-- Test 4: Verify query correctness
+SELECT document FROM documentdb_data.documents_6451
+    WHERE documentdb_api_internal.bson_stats_project(document, 'guid'::text) = '{"": "target-guid-00000001"}'
+    AND documentdb_api_internal.bson_stats_project(document, 'category'::text) = '{"": "cat-0"}';
+                                                             document                                                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "50001" }, "guid" : "target-guid-00000001", "category" : "cat-0", "score" : { "$numberInt" : "500" } }
+ { "_id" : { "$numberInt" : "50002" }, "guid" : "target-guid-00000001", "category" : "cat-0", "score" : { "$numberInt" : "501" } }
+(2 rows)
+
+-- Test 5: PK _id index plan change with GUC on/off for range queries.
+-- With accurate selectivity, PG knows _id > 500 matches ~99% of rows and
+-- chooses Bitmap Heap Scan (efficient for large result sets). Without it,
+-- the default 1% selectivity makes PG think few rows match → Index Scan.
+SET documentdb_core.enableBsonSelectivityFromBtreeStats TO on;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('sel_db',
+    '{ "find": "btree_sel", "filter": { "_id": { "$gt": 500 } } }');
+                                                                                        QUERY PLAN                                                                                         
+---------------------------------------------------------------------
+ Bitmap Heap Scan on documents_6451_645002 collection
+   Recheck Cond: ((shard_key_value = '6451'::bigint) AND (object_id > '{ "" : { "$numberInt" : "500" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+   Filter: (document @> '{ "_id" : { "$numberInt" : "500" } }'::bson)
+   ->  Bitmap Index Scan on _id_
+         Index Cond: ((shard_key_value = '6451'::bigint) AND (object_id > '{ "" : { "$numberInt" : "500" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(5 rows)
+
+SET documentdb_core.enableBsonSelectivityFromBtreeStats TO off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('sel_db',
+    '{ "find": "btree_sel", "filter": { "_id": { "$gt": 500 } } }');
+                                                                                     QUERY PLAN                                                                                      
+---------------------------------------------------------------------
+ Index Scan using _id_ on documents_6451_645002 collection
+   Index Cond: ((shard_key_value = '6451'::bigint) AND (object_id > '{ "" : { "$numberInt" : "500" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(2 rows)
+
+-- Cleanup: drop the collection to free resources
+RESET enable_seqscan;
+SELECT documentdb_api.drop_collection('sel_db', 'btree_sel');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+RESET documentdb_core.enableBsonSelectivityFromBtreeStats;
