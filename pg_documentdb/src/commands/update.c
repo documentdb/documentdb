@@ -113,6 +113,7 @@ extern int BatchUpdateLockTimeoutMs;
 /* This guc is temporary and is used to handle whether the parameter “bypassDocumentValidation” could be set in the request command.*/
 extern bool EnableBypassDocumentValidation;
 extern bool EnableSchemaValidation;
+extern bool EnableCommutativeUpdateMany;
 
 /*
  * UpdateSpec describes a single update operation.
@@ -2185,7 +2186,23 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 														argCount)
 						  : GetSPIQueryPlan(collection->collectionId, preparedQueryKey,
 											updateQuery.data, argTypes, argCount);
-		SPI_execute_plan(plan, argValues, argNulls, readOnly, maxTupleCount);
+
+		if (collection->shardKey != NULL && EnableCommutativeUpdateMany)
+		{
+			/*
+			 * In distributed scenarios, enable commutative writes to improve
+			 * updateMany performance. The GUC is scoped to just this query
+			 * execution to avoid leaking into subsequent operations (e.g., deletes)
+			 * in the same transaction.
+			 */
+			RunMultiValueQueryWithCommutativeWrites(updateQuery.data, plan, argCount,
+													argTypes, argValues, argNulls,
+													readOnly, maxTupleCount);
+		}
+		else
+		{
+			SPI_execute_plan(plan, argValues, argNulls, readOnly, maxTupleCount);
+		}
 	}
 	else
 	{
