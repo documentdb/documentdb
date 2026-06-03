@@ -3,6 +3,7 @@
 * Fix crash when `$natural` sort on non-base relations that are already sorted by pipeline. *[Bugfix]* (#532)
 * Fix schema validation propagation and ensure correct caching of the parsed validator across calls. *[Bugfix]*
 * Fix `$sample` TABLESAMPLE optimization not being applied on sharded collections when preceded by an empty filter. Guarded by `enableSampleScanFixOnSharded` feature flag *[Bugfix]*
+* Schema Validation: enabled by default.
 
 ### documentdb v0.113-0 (Unreleased) ###
 * Add `EnableSortPushToAccumulator` GUC to control pushing sort order into accumulator in `$sortGroup` stage *[Perf]*
@@ -48,7 +49,6 @@
 * Support collation with non-unique ordered indexes with $eq, $gt, $gte. Requires `EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
 * Enable collated index pushdown for collation-insensitive operators; avoid pushdown for unsupported operator strategies. *[Feature]*
 
-
 ### documentdb v0.110-0 (April 22, 2026) ###
 * Add support for keyword `description` in `$jsonSchema` *[Feature]*
 * Integrate cargo tools to identify dependencies for pg_documentdb_gw *[Feature]* (#263)
@@ -83,7 +83,7 @@
 * Support `rolesInfo` command *[Feature]*
 * Fix concurrent upsert behavior, update the documents in case of conflicts during insert *[Bugfix]* (#295).
 * Support collation with `$sortArray` aggregation operator *[Feature]*
-* Add support for keyword `required` in `$jsonSchema`
+* Add support for keyword `required` in `$jsonSchema` *[Feature]*
 * Fix a segmentation fault when using ordered aggregate such as `$last` with `$setWindowFields` aggregation stage. *[Bugfix]*
 * Fix crash when building lookup pipeline queries from nested pipelines and $group aggregates *[Bugfix]*
 * Add basic support for compiling with pg18 *[Feature]*
