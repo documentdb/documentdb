@@ -222,8 +222,6 @@ begin;
 select documentdb_api.delete('db', '{"delete":"removeme", "deletes": [{"q":{"a":{"$eq":5}},"limit":1}] }', '{ "":[{"q":{"a":{"$eq":5}},"limit":1}] }');
 rollback;
 
-select documentdb_api.drop_collection('db','removeme');
-
 SELECT 1 FROM documentdb_api.insert_one('delete', 'test_sort_returning', '{"_id": 1,"a":3,"b":7}');
 SELECT 1 FROM documentdb_api.insert_one('delete', 'test_sort_returning', '{"_id": 2,"a":2,"b":5}');
 SELECT 1 FROM documentdb_api.insert_one('delete', 'test_sort_returning', '{"_id": 3,"a":1,"b":6}');
@@ -351,3 +349,97 @@ EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_2505 WHER
 EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_2505 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte" : 10}}', NULL, NULL::text);
 EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_2505 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte" : 10}}', NULL, NULL::text);
 COMMIT;
+
+-- Test for deleteOne plan caching by enabling and disabling the config
+-- validate _id-only delete_one correctness, should still delete only one document
+begin;
+set local documentdb.enableDeleteOnePlanCacheOptimization to true;
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6},"limit":1}]}');
+select count(*) from documentdb_api.collection('db', 'removeme') where document @@ '{"_id":6}';
+
+set local documentdb.enableDeleteOnePlanCacheOptimization to false;
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":7},"limit":1}]}');
+select count(*) from documentdb_api.collection('db', 'removeme') where document @@ '{"_id":7}';
+
+select count(*) from documentdb_api.collection('db', 'removeme');
+rollback;
+
+-- _id with other filters: should use full query matching
+begin;
+set local documentdb.enableDeleteOnePlanCacheOptimization to true;
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6, "a":6},"limit":1}]}');
+select count(*) from documentdb_api.collection('db', 'removeme') where document @@ '{"_id":6}';
+
+set local documentdb.enableDeleteOnePlanCacheOptimization to false;
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":7, "a":7},"limit":1}]}');
+select count(*) from documentdb_api.collection('db', 'removeme') where document @@ '{"_id":7}';
+select count(*) from documentdb_api.collection('db', 'removeme');
+rollback;
+
+begin;
+set local documentdb.enableDeleteOnePlanCacheOptimization to true;
+-- delete_one empty query
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{},"limit":1}]}');
+select count(*) from documentdb_api.collection('db', 'removeme');
+rollback;
+
+begin;
+set local documentdb.enableDeleteOnePlanCacheOptimization to false;
+-- delete_one empty query
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{},"limit":1}]}');
+select count(*) from documentdb_api.collection('db', 'removeme');
+rollback;
+
+begin;
+select count(*) from documentdb_api.collection('db', 'removeme');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":1},"limit":1}]}');
+
+-- force the cached plan to be used for next deletes and verify that delete happens correctly with the generic plan
+set local plan_cache_mode to 'force_generic_plan';
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":2},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":3},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":4},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":5},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6},"limit":1}]}');
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":7},"limit":1}]}');
+
+select count(*) from documentdb_api.collection('db', 'removeme') where document @@ '{"_id": { "$in" : [1, 2, 3, 4, 5, 6, 7]}}';
+select count(*) from documentdb_api.collection('db', 'removeme');
+rollback;
+
+-- Test: planId collision when findAndModify (deleteOne with returnDeletedDocument)
+-- uses _id filter (planId QUERY_DELETE_ONE_ID → remapped to QUERY_DELETE_ONE_ID_RETURN_DOCUMENT)
+-- and then without _id filter (planId QUERY_DELETE_ONE → also remapped to the same
+-- QUERY_DELETE_ONE_ID_RETURN_DOCUMENT). Different SQL/argCount sharing the same planId
+-- causes a plan cache collision.
+SELECT 1 FROM documentdb_api.insert_one('db', 'plan_collision_test', '{"_id": 1, "a": 1}');
+SELECT 1 FROM documentdb_api.insert_one('db', 'plan_collision_test', '{"_id": 2, "a": 2}');
+SELECT 1 FROM documentdb_api.insert_one('db', 'plan_collision_test', '{"_id": 3, "a": 3}');
+SELECT 1 FROM documentdb_api.insert_one('db', 'plan_collision_test', '{"_id": 4, "a": 4}');
+SELECT 1 FROM documentdb_api.insert_one('db', 'plan_collision_test', '{"_id": 5, "a": 5}');
+SELECT 1 FROM documentdb_api.insert_one('db', 'plan_collision_test', '{"_id": 6, "a": 6}');
+SELECT 1 FROM documentdb_api.insert_one('db', 'plan_collision_test', '{"_id": 7, "a": 7}');
+SELECT 1 FROM documentdb_api.insert_one('db', 'plan_collision_test', '{"_id": 8, "a": 8}');
+
+begin;
+set local plan_cache_mode to 'force_generic_plan';
+
+-- Cache the plan: findAndModify with _id filter + remove (returnDeletedDocument=true)
+-- This caches plan with 3 args (shard_key, query, objectId) under planId 11
+select documentdb_api.find_and_modify('db', '{"findAndModify":"plan_collision_test", "query":{"_id":1}, "remove":true}');
+select documentdb_api.find_and_modify('db', '{"findAndModify":"plan_collision_test", "query":{"_id":2}, "remove":true}');
+select documentdb_api.find_and_modify('db', '{"findAndModify":"plan_collision_test", "query":{"_id":3}, "remove":true}');
+select documentdb_api.find_and_modify('db', '{"findAndModify":"plan_collision_test", "query":{"_id":4}, "remove":true}');
+select documentdb_api.find_and_modify('db', '{"findAndModify":"plan_collision_test", "query":{"_id":5}, "remove":true}');
+
+-- Now run findAndModify WITHOUT _id filter. Before the fix, this would reuse the cached
+-- plan (planId 11) which expects 3 args but receives 2, causing a crash.
+select documentdb_api.find_and_modify('db', '{"findAndModify":"plan_collision_test", "query":{"a":6}, "remove":true}');
+
+select count(*) from documentdb_api.collection('db', 'plan_collision_test');
+rollback;
+
+select documentdb_api.drop_collection('db', 'plan_collision_test');
+
+select documentdb_api.drop_collection('db','removeme');
