@@ -1816,10 +1816,11 @@ psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:610: ERROR:  collation
 SET documentdb.enableNewWithExprAccumulators TO on;
 SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 -- =============================================================================
--- Test 27: enableCollation off → collation ignored, binary comparison applies
+-- Test 27: enableCollation off + skipFailOnCollation on → collation ignored, binary comparison applies
 -- =============================================================================
+-- With enableCollation off and skipFailOnCollation on, collation is ignored and binary comparison applies.
 SET documentdb_core.enableCollation TO off;
--- With enableCollation off, collation is simply ignored and binary comparison applies.
+SET documentdb.skipFailOnCollation TO on;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
                         document                        
@@ -1837,6 +1838,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 (2 rows)
 
 -- Cleanup GUC settings
+RESET documentdb.skipFailOnCollation;
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb_core.enableCollation TO off;
 RESET documentdb.enableNewWithExprAccumulators;
@@ -1845,7 +1847,7 @@ RESET documentdb.enableNewWithExprAccumulators;
 --          $group accumulators while preserving results
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sortgroup_safe_test','{ "_id": 1, "g": "A", "seq": 30, "v": 10, "bonus": 2 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:635: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:636: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1939,11 +1941,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Even when the sort could be dropped, an invalid sort spec should still error.
 SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "myFoobar": "InvalidDirection" } }, { "$group": { "_id": null, "c": { "$max": "$v" } } } ] }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:654: ERROR:  Sort direction value "InvalidDirection" is not valid
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:655: ERROR:  Sort direction value "InvalidDirection" is not valid
 -- Test 30: Non-$ prefixed path in accumulator should fail in group validation
 SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": null, "c": { "notAnOperator": "$v" } } } ] }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:658: ERROR:  Unrecognized group operator notAnOperator
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:659: ERROR:  Unrecognized group operator notAnOperator
 -- Test 31: $push is order-sensitive — sort must be preserved
 SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "vals": { "$push": "$v" } } }, { "$sort": { "_id": 1 } } ] }');
@@ -2026,7 +2028,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_
 (2 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "firstVal": { "$first": "$v" } } }, { "$sort": { "_id": 1 } } ] }');
-                                                                                                                                                                                                                                                                                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+                                                                                                                                                                                                                                                                                                                                                                                                                              QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                               
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
@@ -2041,14 +2043,14 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                      Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
                      ->  Subquery Scan on agg_stage_0
                            Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
+                           ->  Sort
                                  Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
                                  Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on documentdb_data.documents_25702018 collection
+                                 ->  Bitmap Heap Scan on documentdb_data.documents_25702018 collection
                                        Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25702018'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25702018'::bigint)
+                                       Recheck Cond: (collection.shard_key_value = '25702018'::bigint)
+                                       ->  Bitmap Index Scan on _id_
+                                             Index Cond: (collection.shard_key_value = '25702018'::bigint)
 (21 rows)
 
 RESET documentdb.enableSortGroupStage;

@@ -266,6 +266,7 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 
 	/* Find/Aggregate using collation */
 	[FEATURE_COLLATION] = "collation",
+	[FEATURE_COLLATION_CREATE_COLLECTION] = "collation_with_collection",
 	[FEATURE_COLLATION_CREATE_INDEX] = "collation_with_indexes",
 
 	/* Feature Mapping region - Commands */

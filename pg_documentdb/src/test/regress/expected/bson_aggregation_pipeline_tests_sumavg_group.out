@@ -1811,10 +1811,11 @@ ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 -- =============================================================================
--- Test 27: enableCollation off → collation ignored, binary comparison applies
+-- Test 27: enableCollation off + skipFailOnCollation on → collation ignored, binary comparison applies
 -- =============================================================================
+-- With enableCollation off and skipFailOnCollation on, collation is ignored and binary comparison applies.
 SET documentdb_core.enableCollation TO off;
--- With enableCollation off, collation is simply ignored and binary comparison applies.
+SET documentdb.skipFailOnCollation TO on;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
                         document                        
@@ -1832,6 +1833,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 (2 rows)
 
 -- Cleanup GUC settings
+RESET documentdb.skipFailOnCollation;
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb_core.enableCollation TO off;
 RESET documentdb.enableNewWithExprAccumulators;
@@ -2021,7 +2023,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_
 (2 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "firstVal": { "$first": "$v" } } }, { "$sort": { "_id": 1 } } ] }');
-                                                                                                                                                                                                                                                                                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+                                                                                                                                                                                                                                                                                                                                                                                                                              QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                               
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
@@ -2039,11 +2041,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                            ->  Sort
                                  Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
                                  Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on documentdb_data.documents_25702018 collection
+                                 ->  Bitmap Heap Scan on documentdb_data.documents_25702018 collection
                                        Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25702018'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25702018'::bigint)
+                                       Recheck Cond: (collection.shard_key_value = '25702018'::bigint)
+                                       ->  Bitmap Index Scan on _id_
+                                             Index Cond: (collection.shard_key_value = '25702018'::bigint)
 (21 rows)
 
 RESET documentdb.enableSortGroupStage;

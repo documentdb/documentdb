@@ -76,6 +76,7 @@
 
 extern bool EnableCursorsOnAggregationQueryRewrite;
 extern bool EnableCollation;
+extern bool SkipFailOnCollation;
 extern bool DefaultInlineWriteOperations;
 extern int MaxAggregationStagesAllowed;
 
@@ -1456,10 +1457,15 @@ GenerateAggregationQuery(text *database, pgbson *aggregationSpec, QueryData *que
 			ReportFeatureUsage(FEATURE_COLLATION);
 			if (EnableCollation)
 			{
-				/* Ignore collation until enabled for aggregate */
 				EnsureTopLevelFieldType("collation", &aggregationIterator,
 										BSON_TYPE_DOCUMENT);
 				ParseAndGetCollationString(value, context.collationString);
+			}
+			else if (!SkipFailOnCollation)
+			{
+				ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+								errmsg(
+									"collation is not supported in the aggregate command yet.")));
 			}
 		}
 		else if (setStatementTimeout &&
@@ -1721,10 +1727,15 @@ GenerateFindQuery(text *databaseDatum, pgbson *findSpec, QueryData *queryData,
 					ReportFeatureUsage(FEATURE_COLLATION);
 					if (EnableCollation)
 					{
-						/* Ignore collation until enabled for find */
 						EnsureTopLevelFieldType("collation", &findIterator,
 												BSON_TYPE_DOCUMENT);
 						ParseAndGetCollationString(value, context.collationString);
+					}
+					else if (!SkipFailOnCollation)
+					{
+						ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+										errmsg(
+											"collation is not supported in the find command yet.")));
 					}
 					continue;
 				}
@@ -2263,6 +2274,16 @@ GenerateCountQuery(text *databaseDatum, pgbson *countSpec, bool setStatementTime
 			EnsureTopLevelFieldIsNumberLike("distinct.maxTimeMS", value);
 			SetExplicitStatementTimeout(BsonValueAsInt32(value));
 		}
+		else if (StringViewEqualsCString(&keyView, "collation"))
+		{
+			ReportFeatureUsage(FEATURE_COLLATION);
+			if (!SkipFailOnCollation)
+			{
+				ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+								errmsg(
+									"collation is not supported in the count command yet.")));
+			}
+		}
 		else if (StringViewEqualsCString(&keyView, "$db"))
 		{
 			text *prevDb = context.databaseNameDatum;
@@ -2466,6 +2487,16 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 		{
 			EnsureTopLevelFieldIsNumberLike("distinct.maxTimeMS", value);
 			SetExplicitStatementTimeout(BsonValueAsInt32(value));
+		}
+		else if (StringViewEqualsCString(&keyView, "collation"))
+		{
+			ReportFeatureUsage(FEATURE_COLLATION);
+			if (!SkipFailOnCollation)
+			{
+				ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+								errmsg(
+									"collation is not supported in the distinct command yet.")));
+			}
 		}
 		else if (StringViewEqualsCString(&keyView, "$db"))
 		{
