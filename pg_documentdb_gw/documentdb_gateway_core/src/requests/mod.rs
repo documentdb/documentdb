@@ -331,6 +331,7 @@ impl<'a> Request<'a> {
             RequestType::DropIndexes => &["dropIndexes"],
             RequestType::Find => &["find"],
             RequestType::FindAndModify => &["findAndModify"],
+            RequestType::GetMore => &["collection"],
             RequestType::Insert => &["insert"],
             RequestType::ListIndexes => &["listIndexes"],
             RequestType::ReIndex => &["reIndex", "reindex"],
@@ -341,5 +342,76 @@ impl<'a> Request<'a> {
             RequestType::Update => &["update"],
             _ => &[],
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bson::doc;
+
+    fn build_raw(doc: &bson::Document) -> RawDocumentBuf {
+        RawDocumentBuf::from_document(doc)
+            .expect("test document should serialize to RawDocumentBuf")
+    }
+
+    #[test]
+    fn get_more_extracts_collection_name() {
+        let doc = doc! {
+            "getMore": 12345_i64,
+            "collection": "myCollection",
+            "$db": "testdb"
+        };
+        let request = Request::RawBuf(RequestType::GetMore, build_raw(&doc));
+        let info = request
+            .extract_common()
+            .expect("extract_common should succeed");
+
+        assert_eq!(
+            info.collection().expect("collection should be present"),
+            "myCollection"
+        );
+        assert_eq!(info.db().expect("db should be present"), "testdb");
+    }
+
+    #[test]
+    fn get_more_without_collection_field_returns_error() {
+        let doc = doc! {
+            "getMore": 12345_i64,
+            "$db": "testdb"
+        };
+        let request = Request::RawBuf(RequestType::GetMore, build_raw(&doc));
+        let info = request
+            .extract_common()
+            .expect("extract_common should succeed");
+
+        assert!(
+            info.collection().is_err(),
+            "collection should not be present when 'collection' field is missing"
+        );
+    }
+
+    #[test]
+    fn find_extracts_collection_from_command_key() {
+        let doc = doc! {
+            "find": "orders",
+            "filter": {},
+            "$db": "testdb"
+        };
+        let request = Request::RawBuf(RequestType::Find, build_raw(&doc));
+        let info = request
+            .extract_common()
+            .expect("extract_common should succeed");
+
+        assert_eq!(
+            info.collection().expect("collection should be present"),
+            "orders"
+        );
+    }
+
+    #[test]
+    fn get_more_collection_field_is_mapped() {
+        let request = Request::RawBuf(RequestType::GetMore, build_raw(&doc! {}));
+        assert_eq!(request.collection_field(), &["collection"]);
     }
 }
