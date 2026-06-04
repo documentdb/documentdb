@@ -260,24 +260,28 @@ EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregati
 ERROR:  index specified by index hint is not found: hint provided does not correspond to an existing index
 -- natural hint picks _id index.
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": { "$natural": 1 } }');
-                            QUERY PLAN                            
+                               QUERY PLAN                               
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_69501_695002 collection
-   Recheck Cond: (shard_key_value = '69501'::bigint)
-   Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '69501'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_69501_695002 collection
+         Recheck Cond: (shard_key_value = '69501'::bigint)
+         Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '69501'::bigint)
+(7 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": { "$natural": -1 } }');
-                            QUERY PLAN                            
+                               QUERY PLAN                               
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_69501_695002 collection
-   Recheck Cond: (shard_key_value = '69501'::bigint)
-   Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '69501'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_69501_695002 collection
+         Recheck Cond: (shard_key_value = '69501'::bigint)
+         Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '69501'::bigint)
+(7 rows)
 
 -- more error cases
 SELECT documentdb_api_internal.create_indexes_non_concurrently('hint_db', '{ "createIndexes": "query_index_hints", "indexes": [ { "key": { "a": 1 }, "sparse": true, "name": "a_2" }] }', true);
