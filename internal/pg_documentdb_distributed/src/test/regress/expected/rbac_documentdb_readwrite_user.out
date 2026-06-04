@@ -309,7 +309,7 @@ SELECT documentdb_api_v2.insert_one('db', 'coll_agg_proj', '{ "_id": "bat", "a":
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
-SELECT document FROM bson_aggregation_find('db', '{ "find": "coll_agg_proj", "filter": { "$expr": {"$ne": ["$a", "CAT"]} }, "sort": { "_id": 1 }, "skip": 0, "collation": { "locale": "fi", "strength" : 1 } }');
+SELECT document FROM bson_aggregation_find('db', '{ "find": "coll_agg_proj", "filter": { "$expr": {"$ne": ["$a", "CAT"]} }, "sort": { "_id": 1 }, "skip": 0 }');
                     document                     
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "a" : "cat" }

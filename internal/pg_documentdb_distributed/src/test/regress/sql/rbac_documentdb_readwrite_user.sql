@@ -116,7 +116,7 @@ SELECT documentdb_api_v2.insert_one('db', 'coll_agg_proj', '{ "_id": 4, "a": "dO
 SELECT documentdb_api_v2.insert_one('db', 'coll_agg_proj', '{ "_id": "hen", "a": "hen" }');
 SELECT documentdb_api_v2.insert_one('db', 'coll_agg_proj', '{ "_id": "bat", "a": "bat" }');
 
-SELECT document FROM bson_aggregation_find('db', '{ "find": "coll_agg_proj", "filter": { "$expr": {"$ne": ["$a", "CAT"]} }, "sort": { "_id": 1 }, "skip": 0, "collation": { "locale": "fi", "strength" : 1 } }');
+SELECT document FROM bson_aggregation_find('db', '{ "find": "coll_agg_proj", "filter": { "$expr": {"$ne": ["$a", "CAT"]} }, "sort": { "_id": 1 }, "skip": 0 }');
 
 SELECT documentdb_api_v2.insert_one('db','agg_facet_group','{ "_id": 1, "a": { "b": 1, "c": 1} }', NULL);
 SELECT documentdb_api_v2.insert_one('db','agg_facet_group','{ "_id": 2, "a": { "b": 1, "c": 2} }', NULL);

@@ -35,9 +35,15 @@ SELECT documentdb_api.insert_one('coll_q_db', 'coll_strings', '{ "_id": 26, "a":
 
 SET documentdb_core.enableCollation TO off;
 
--- enableCollation = off: collation in the command should be silently accepted (no error).
+-- enableCollation = off, skipFailOnCollation = off (default): collation is rejected.
 SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_strings", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$eq": "cat" } } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }');
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "b": { "$eq": "cat" } }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }');
+
+-- enableCollation = off, skipFailOnCollation = on: collation is accepted but ignored (binary match).
+SET documentdb.skipFailOnCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_strings", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$eq": "cat" } } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }');
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "b": { "$eq": "cat" } }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }');
+RESET documentdb.skipFailOnCollation;
 
 SET documentdb_core.enableCollation TO on;
 
@@ -990,11 +996,26 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
 -- $merge: collation propagation through writes is not supported.
 SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_lookup_src", "pipeline": [{"$merge" : { "into": "coll_merge_target", "whenMatched" : "replace" }} ], "collation": { "locale": "en", "strength" : 1} }');
 
+-- $bucketAuto
+SELECT document FROM bson_aggregation_pipeline('coll_q_db',
+'{ "aggregate": "coll_strings",
+   "pipeline": [
+     { "$bucketAuto": { "groupBy": "$a", "buckets": 2 } }
+   ],
+   "collation": { "locale": "en", "strength": 1 }
+}');
+
 -- findAndModify with collation.
 SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "coll_multi_collation", "query": {"a": 1}, "update": {"_id": 1, "b": 1}, "collation" : {"locale" : "en", "strength": 1} }');
 
 -- update with collation + arrayFilters.
 SELECT documentdb_api.update('update', '{"update":"coll_multi_collation", "updates":[{"q":{"_id": 134111, "b": [ 5, 2, 4 ] },"u":{"$set" : {"b.$[a]":3} },"upsert":true, "collation" : {"locale" : "en", "strength": 1}, "arrayFilters": [ { "a": 2 } ]}]}');
+
+-- count with collation: unsupported
+SELECT documentdb_api.count_query('coll_q_db', '{"count":"coll_strings", "query":{"a":"cat"}, "collation":{"locale":"en","strength":1}}');
+
+-- distinct with collation: unsupported
+SELECT documentdb_api.distinct_query('coll_q_db', '{"distinct":"coll_strings", "key":"a", "query":{}, "collation":{"locale":"en","strength":1}}');
 
 -- ======================================================================
 -- CLEANUP
