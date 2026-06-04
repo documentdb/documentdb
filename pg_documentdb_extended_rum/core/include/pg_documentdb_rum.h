@@ -1138,6 +1138,7 @@ extern PGDLLIMPORT bool RumAllowReplaceOnInsertTuple;
 extern PGDLLIMPORT bool RumEnableXlogInsertEntry;
 extern PGDLLIMPORT bool RumEnableBtreeLockOrder;
 extern PGDLLIMPORT bool EnableCustomXlogRmgr;
+extern PGDLLIMPORT bool EnableRumCompareFunctionFmgr;
 
 /* Gucs used by tests */
 extern PGDLLIMPORT bool RumForceOrderedIndexScan;

@@ -18,6 +18,7 @@
 #include "rumbuild_tuplesort.h"
 #include "storage/itemptr.h"
 #include "utils/typcache.h"
+#include "utils/sortsupport.h"
 #include "catalog/pg_collation.h"
 #include "utils/builtins.h"
 
@@ -333,6 +334,17 @@ rumMergeItemPointers(RumItem *a, uint32 na,
 }
 
 
+int
+rum_indexbuild_comparator_shim(Datum x, Datum y, SortSupport ssup)
+{
+	FmgrInfo *rstate = (FmgrInfo *) ssup->ssup_extra;
+	return DatumGetInt32(FunctionCall2Coll(rstate,
+										   ssup->ssup_collation,
+										   x,
+										   y));
+}
+
+
 #if PG_VERSION_NUM >= 160000
 static void
 removeabbrev_index_rum(Tuplesortstate *state, SortTuple *stups, int count)
@@ -405,7 +417,7 @@ Tuplesortstate *
 tuplesort_begin_indexbuild_rum(Relation heapRel,
 							   Relation indexRel,
 							   int workMem, SortCoordinate coordinate,
-							   int sortopt)
+							   int sortopt, FmgrInfo *compareFn)
 {
 	Tuplesortstate *state = tuplesort_begin_common(workMem, coordinate,
 												   sortopt);
@@ -466,9 +478,17 @@ tuplesort_begin_indexbuild_rum(Relation heapRel,
 			}
 
 			cmpFunc = typentry->cmp_proc_finfo.fn_oid;
+			PrepareSortSupportComparisonShim(cmpFunc, sortKey);
 		}
-
-		PrepareSortSupportComparisonShim(cmpFunc, sortKey);
+		else if (compareFn[i].fn_oid == cmpFunc && EnableRumCompareFunctionFmgr)
+		{
+			sortKey->comparator = rum_indexbuild_comparator_shim;
+			sortKey->ssup_extra = (void *) &compareFn[i];
+		}
+		else
+		{
+			PrepareSortSupportComparisonShim(cmpFunc, sortKey);
+		}
 	}
 
 	base->removeabbrev = removeabbrev_index_rum;
@@ -564,7 +584,7 @@ Tuplesortstate *
 tuplesort_begin_indexbuild_rum(Relation heapRel,
 							   Relation indexRel,
 							   int workMem, SortCoordinate coordinate,
-							   int sortopt)
+							   int sortopt, FmgrInfo *compareFn)
 {
 	ereport(ERROR, errmsg("RUM parallel index build requires PostgreSQL 16 or later"));
 }
