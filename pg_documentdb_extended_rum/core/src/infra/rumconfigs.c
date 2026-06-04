@@ -45,6 +45,10 @@ PGDLLEXPORT bool RumEnableXlogInsertEntry = RUM_DEFAULT_ENABLE_XLOG_INSERT_ENTRY
 #define RUM_DEFAULT_ENABLE_CUSTOM_XLOG_RMRG false
 PGDLLEXPORT bool EnableCustomXlogRmgr = RUM_DEFAULT_ENABLE_CUSTOM_XLOG_RMRG;
 
+/* FeatureFlag: Added in v114, enabled in v114, remove after v118 */
+#define RUM_DEFAULT_ENABLE_COMPARE_FUNCTION_FMGR true
+PGDLLEXPORT bool EnableRumCompareFunctionFmgr = RUM_DEFAULT_ENABLE_COMPARE_FUNCTION_FMGR;
+
 /* FeatureFlag: Added in v108, enabled in v108, remove after v121 */
 #define RUM_DEFAULT_FIX_INCOMPLETE_SPLIT true
 PGDLLEXPORT bool RumFixIncompleteSplit = RUM_DEFAULT_FIX_INCOMPLETE_SPLIT;
@@ -409,6 +413,15 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&EnableCustomXlogRmgr,
 		RUM_DEFAULT_ENABLE_CUSTOM_XLOG_RMRG,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_compare_function_fmgr", documentDBRumGucPrefix),
+		"Sets whether or not to enable the use of the compare function in the fmgr",
+		NULL,
+		&EnableRumCompareFunctionFmgr,
+		RUM_DEFAULT_ENABLE_COMPARE_FUNCTION_FMGR,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 

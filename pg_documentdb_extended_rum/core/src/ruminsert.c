@@ -928,7 +928,7 @@ rumbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 		state->bs_sortstate =
 			tuplesort_begin_indexbuild_rum(heap, index,
 										   maintenance_work_mem, coordinate,
-										   TUPLESORT_NONE);
+										   TUPLESORT_NONE, state->rumstate.compareFn);
 
 		/* scan the relation in parallel and merge per-worker results */
 		reltuples = _rum_parallel_merge(state);
@@ -1598,9 +1598,17 @@ RumBufferInit(RumState *state)
 			}
 
 			cmpFunc = typentry->cmp_proc_finfo.fn_oid;
+			PrepareSortSupportComparisonShim(cmpFunc, sortKey);
 		}
-
-		PrepareSortSupportComparisonShim(cmpFunc, sortKey);
+		else if (EnableRumCompareFunctionFmgr)
+		{
+			sortKey->ssup_extra = &state->compareFn[i];
+			sortKey->comparator = rum_indexbuild_comparator_shim;
+		}
+		else
+		{
+			PrepareSortSupportComparisonShim(cmpFunc, sortKey);
+		}
 	}
 
 	return buffer;
@@ -2391,13 +2399,15 @@ _rum_parallel_scan_and_build(RumBuildState *state,
 	state->bs_sortstate = tuplesort_begin_indexbuild_rum(heap, index,
 														 state->work_mem,
 														 coordinate,
-														 TUPLESORT_NONE);
+														 TUPLESORT_NONE,
+														 state->rumstate.compareFn);
 
 	/* Local per-worker sort of raw-data */
 	state->bs_worker_sort = tuplesort_begin_indexbuild_rum(heap, index,
 														   state->work_mem,
 														   NULL,
-														   TUPLESORT_NONE);
+														   TUPLESORT_NONE,
+														   state->rumstate.compareFn);
 
 	/* Join parallel scan */
 	indexInfo = BuildIndexInfo(index);
@@ -2859,7 +2869,8 @@ _rum_serial_scan_and_build(RumBuildState *state,
 	state->bs_worker_sort = tuplesort_begin_indexbuild_rum(heap, index,
 														   state->work_mem,
 														   NULL,
-														   TUPLESORT_NONE);
+														   TUPLESORT_NONE,
+														   state->rumstate.compareFn);
 
 	/* start table scan */
 	indexInfo = BuildIndexInfo(index);
