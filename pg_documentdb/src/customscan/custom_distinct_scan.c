@@ -18,6 +18,7 @@
 #include <optimizer/pathnode.h>
 #include <optimizer/optimizer.h>
 #include <parser/parse_relation.h>
+#include <rewrite/rewriteManip.h>
 #include <utils/rel.h>
 #include <miscadmin.h>
 #include <optimizer/paths.h>
@@ -161,14 +162,27 @@ RegisterDistinctScanNodes(void)
 void
 AddDistinctCustomScanWrapper(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 {
-	/* Currently we only support scenarios where it's all DISTINCT */
-	if (root->distinct_pathkeys == NIL ||
-		list_length(root->distinct_pathkeys) != list_length(root->query_pathkeys))
-	{
-		return;
-	}
+	/*
+	 * Currently we only support scenarios where it's all DISTINCT or GROUP BY
+	 * with no actual aggregate accumulators in the target list.
+	 *
+	 * Note: we cannot rely on root->parse->hasAggs here because the aggregation
+	 * pipeline rewrite for $group sets hasAggs = true even when only an _id
+	 * grouping expression is present (no accumulators). We instead walk the
+	 * top-level target list for Aggref nodes.
+	 */
+	bool distinctScenario = root->distinct_pathkeys != NIL &&
+							list_length(root->distinct_pathkeys) == list_length(
+		root->query_pathkeys);
+	bool groupScenario = root->group_pathkeys != NIL && root->query_pathkeys != NIL &&
+						 list_length(root->group_pathkeys) == list_length(
+		root->query_pathkeys) &&
+						 !contain_aggs_of_level((Node *) root->parse->targetList, 0);
 
-	rel->pathlist = AddDistinctCustomPathCore(root, rel->pathlist);
+	if (distinctScenario || groupScenario)
+	{
+		rel->pathlist = AddDistinctCustomPathCore(root, rel->pathlist);
+	}
 }
 
 
@@ -199,7 +213,16 @@ AddDistinctCustomPathCore(PlannerInfo *root, List *pathList)
 
 		IndexPath *indexPath = (IndexPath *) inputPath;
 
-		if (list_length(indexPath->indexorderbys) != list_length(root->distinct_pathkeys))
+		/*
+		 * The number of index ORDER BYs must match the number of pathkeys we
+		 * intend to deduplicate on. For DISTINCT that's distinct_pathkeys; for
+		 * GROUP BY (with no aggregates) that's group_pathkeys.
+		 */
+		int targetPathKeyLength = root->distinct_pathkeys != NIL ?
+								  list_length(root->distinct_pathkeys) :
+								  list_length(root->group_pathkeys);
+
+		if (list_length(indexPath->indexorderbys) != targetPathKeyLength)
 		{
 			customPlanPaths = lappend(customPlanPaths, inputPath);
 			continue;
