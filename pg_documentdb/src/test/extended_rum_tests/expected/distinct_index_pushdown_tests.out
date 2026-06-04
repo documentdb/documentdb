@@ -1374,17 +1374,20 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a" }')
 $cmd$, p_ignore_heap_fetches => true);
-                                         run_explain_and_trim                                          
--------------------------------------------------------------------------------------------------------
+                                            run_explain_and_trim                                             
+-------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Unique (actual rows=10 loops=1)
          ->  Sort (actual rows=200 loops=1)
                Sort Key: (bson_distinct_unwind(collection.document, 'a'::text))
                Sort Method: quicksort  Memory: xxxkB
                ->  ProjectSet (actual rows=200 loops=1)
-                     ->  Index Scan using _id_ on documents_19900 collection (actual rows=200 loops=1)
-                           Index Cond: (shard_key_value = '19900'::bigint)
-(8 rows)
+                     ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=200 loops=1)
+                           namespaceName: db.dist_push
+                           indexName: _id_
+                           ->  Index Scan using _id_ on documents_19900 collection (actual rows=200 loops=1)
+                                 Index Cond: (shard_key_value = '19900'::bigint)
+(11 rows)
 
 ROLLBACK;
 -- ============================================================
@@ -1508,17 +1511,20 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a" }')
 $cmd$, p_ignore_heap_fetches => true);
-                                         run_explain_and_trim                                          
--------------------------------------------------------------------------------------------------------
+                                            run_explain_and_trim                                             
+-------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Unique (actual rows=10 loops=1)
          ->  Sort (actual rows=200 loops=1)
                Sort Key: (bson_distinct_unwind(collection.document, 'a'::text))
                Sort Method: quicksort  Memory: xxxkB
                ->  ProjectSet (actual rows=200 loops=1)
-                     ->  Index Scan using _id_ on documents_19900 collection (actual rows=200 loops=1)
-                           Index Cond: (shard_key_value = '19900'::bigint)
-(8 rows)
+                     ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=200 loops=1)
+                           namespaceName: db.dist_push
+                           indexName: _id_
+                           ->  Index Scan using _id_ on documents_19900 collection (actual rows=200 loops=1)
+                                 Index Cond: (shard_key_value = '19900'::bigint)
+(11 rows)
 
 ROLLBACK;
 -- ============================================================

@@ -64,14 +64,14 @@ $cmd$);
                                                                                   run_explain_and_trim                                                                                  
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 29_1
+   ->  Distributed Subplan 31_1
          ->  Custom Scan (Citus Adaptive)
                Task Count: 8
                Tasks Shown: One of 8
                ->  Task
                      Node: host=localhost port=58070 dbname=regression
                      ->  Seq Scan on documents_95650_95650002 collection
-   ->  Distributed Subplan 29_2
+   ->  Distributed Subplan 31_2
          ->  Custom Scan (Citus Adaptive)
                Task Count: 8
                Tasks Shown: One of 8
@@ -113,14 +113,14 @@ $cmd$);
                                                                                   run_explain_and_trim                                                                                  
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 33_1
+   ->  Distributed Subplan 35_1
          ->  Custom Scan (Citus Adaptive)
                Task Count: 8
                Tasks Shown: One of 8
                ->  Task
                      Node: host=localhost port=58070 dbname=regression
                      ->  Seq Scan on documents_95650_95650002 collection
-   ->  Distributed Subplan 33_2
+   ->  Distributed Subplan 35_2
          ->  Custom Scan (Citus Adaptive)
                Task Count: 8
                Tasks Shown: One of 8
@@ -216,7 +216,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_q_dist_db', '{ "find": "coll_agg_d", "filter": { "_id": { "$eq": 2 } }, "sort": { "_id": 1 }, "limit": 5, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-                                                                                      run_explain_and_trim                                                                                      
+                                                                                         run_explain_and_trim                                                                                         
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -226,10 +226,12 @@ $cmd$);
          ->  Limit
                ->  Sort
                      Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-                     ->  Index Scan using _id_ on documents_95651_95650013 collection
-                           Index Cond: ((shard_key_value = '-1389566185330078543'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
-                           Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "2" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(11 rows)
+                     ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                           indexName: _id_
+                           ->  Index Scan using _id_ on documents_95651_95650013 collection
+                                 Index Cond: ((shard_key_value = '-1389566185330078543'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
+                                 Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "2" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(13 rows)
 
 END;
 -- ======================================================================
@@ -610,17 +612,19 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": 3 }', '{}', 'en-u-ks-level1')
 $cmd$);
-                                                                                run_explain_and_trim                                                                                
+                                                                                   run_explain_and_trim                                                                                   
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
    Tasks Shown: All
    ->  Task
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using _id_ on documents_95654_95650043 collection
-               Index Cond: ((shard_key_value = '-4918719581749358852'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "3" } }'::documentdb_core.bson))
-               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "3" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(8 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan)
+               indexName: _id_
+               ->  Index Scan using _id_ on documents_95654_95650043 collection
+                     Index Cond: ((shard_key_value = '-4918719581749358852'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "3" } }'::documentdb_core.bson))
+                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "3" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(10 rows)
 
 END;
 -- ======================================================================

@@ -67,84 +67,100 @@ ANALYZE documentdb_data.documents_68701;
 set enable_seqscan to off;
 -- cannot push down
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "b": 1 } }');
-                            QUERY PLAN                            
+                               QUERY PLAN                               
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_68701_687002 collection
-   Recheck Cond: (shard_key_value = '68701'::bigint)
-   Filter: (document @= '{ "b" : { "$numberInt" : "1" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '68701'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_68701_687002 collection
+         Recheck Cond: (shard_key_value = '68701'::bigint)
+         Filter: (document @= '{ "b" : { "$numberInt" : "1" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '68701'::bigint)
+(7 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "b": 1, "pfe_a": 5 } }');
-                                                            QUERY PLAN                                                             
+                                                               QUERY PLAN                                                                
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_68701_687002 collection
-   Recheck Cond: (shard_key_value = '68701'::bigint)
-   Filter: ((document @= '{ "b" : { "$numberInt" : "1" } }'::bson) AND (document @= '{ "pfe_a" : { "$numberInt" : "5" } }'::bson))
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '68701'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_68701_687002 collection
+         Recheck Cond: (shard_key_value = '68701'::bigint)
+         Filter: ((document @= '{ "b" : { "$numberInt" : "1" } }'::bson) AND (document @= '{ "pfe_a" : { "$numberInt" : "5" } }'::bson))
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '68701'::bigint)
+(7 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "d": 1, "pfe_a": 15 } }');
-                                                             QUERY PLAN                                                             
+                                                                QUERY PLAN                                                                
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_68701_687002 collection
-   Recheck Cond: (shard_key_value = '68701'::bigint)
-   Filter: ((document @= '{ "d" : { "$numberInt" : "1" } }'::bson) AND (document @= '{ "pfe_a" : { "$numberInt" : "15" } }'::bson))
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '68701'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_68701_687002 collection
+         Recheck Cond: (shard_key_value = '68701'::bigint)
+         Filter: ((document @= '{ "d" : { "$numberInt" : "1" } }'::bson) AND (document @= '{ "pfe_a" : { "$numberInt" : "15" } }'::bson))
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '68701'::bigint)
+(7 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "e": 15 } }');
-                            QUERY PLAN                             
+                               QUERY PLAN                                
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_68701_687002 collection
-   Recheck Cond: (shard_key_value = '68701'::bigint)
-   Filter: (document @= '{ "e" : { "$numberInt" : "15" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '68701'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_68701_687002 collection
+         Recheck Cond: (shard_key_value = '68701'::bigint)
+         Filter: (document @= '{ "e" : { "$numberInt" : "15" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '68701'::bigint)
+(7 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "f": 10 } }');
-                            QUERY PLAN                             
+                               QUERY PLAN                                
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_68701_687002 collection
-   Recheck Cond: (shard_key_value = '68701'::bigint)
-   Filter: (document @= '{ "f" : { "$numberInt" : "10" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '68701'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_68701_687002 collection
+         Recheck Cond: (shard_key_value = '68701'::bigint)
+         Filter: (document @= '{ "f" : { "$numberInt" : "10" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '68701'::bigint)
+(7 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 } } }');
-                            QUERY PLAN                             
+                               QUERY PLAN                                
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_68701_687002 collection
-   Recheck Cond: (shard_key_value = '68701'::bigint)
-   Filter: (document @> '{ "g" : { "$numberInt" : "10" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '68701'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_68701_687002 collection
+         Recheck Cond: (shard_key_value = '68701'::bigint)
+         Filter: (document @> '{ "g" : { "$numberInt" : "10" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '68701'::bigint)
+(7 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 }, "h": 11 } }');
-                                                           QUERY PLAN                                                            
+                                                              QUERY PLAN                                                               
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_68701_687002 collection
-   Recheck Cond: (shard_key_value = '68701'::bigint)
-   Filter: ((document @> '{ "g" : { "$numberInt" : "10" } }'::bson) AND (document @= '{ "h" : { "$numberInt" : "11" } }'::bson))
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '68701'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_68701_687002 collection
+         Recheck Cond: (shard_key_value = '68701'::bigint)
+         Filter: ((document @> '{ "g" : { "$numberInt" : "10" } }'::bson) AND (document @= '{ "h" : { "$numberInt" : "11" } }'::bson))
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '68701'::bigint)
+(7 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "g": { "$gt": 10 }, "h": 11, "i": { "$gt": 15 } } }');
-                                                                                         QUERY PLAN                                                                                          
+                                                                                            QUERY PLAN                                                                                             
 ---------------------------------------------------------------------
- Bitmap Heap Scan on documents_68701_687002 collection
-   Recheck Cond: (shard_key_value = '68701'::bigint)
-   Filter: ((document @> '{ "g" : { "$numberInt" : "10" } }'::bson) AND (document @= '{ "h" : { "$numberInt" : "11" } }'::bson) AND (document @> '{ "i" : { "$numberInt" : "15" } }'::bson))
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '68701'::bigint)
-(5 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_68701_687002 collection
+         Recheck Cond: (shard_key_value = '68701'::bigint)
+         Filter: ((document @> '{ "g" : { "$numberInt" : "10" } }'::bson) AND (document @= '{ "h" : { "$numberInt" : "11" } }'::bson) AND (document @> '{ "i" : { "$numberInt" : "15" } }'::bson))
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '68701'::bigint)
+(7 rows)
 
 -- can push
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_pfe', '{ "find": "query_orderby_pfe", "filter": { "b": 1, "pfe_a": 15 } }');
@@ -289,7 +305,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
 ---------------------------------------------------------------------
  Sort (actual rows=90 loops=1)
    Sort Key: (bson_orderby(document, '{ "f" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: 38kB
+   Sort Method: quicksort  Memory: 39kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=90 loops=1)
          indexName: f_1
          indexKey: {"f": 1}

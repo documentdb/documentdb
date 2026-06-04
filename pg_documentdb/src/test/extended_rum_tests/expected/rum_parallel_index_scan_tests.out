@@ -45,13 +45,16 @@ set enable_bitmapscan to off;
 SELECT documentdb_test_helpers.run_explain_and_trim(
     $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
         '{ "find": "parallel_scan", "filter": { "a": { "$gt": 10 } } }') $cmd$);
-                            run_explain_and_trim                             
------------------------------------------------------------------------------
- Index Scan using _id_ on documents_901 collection (actual rows=990 loops=1)
-   Index Cond: (shard_key_value = '901'::bigint)
-   Filter: (document @> '{ "a" : { "$numberInt" : "10" } }'::bson)
-   Rows Removed by Filter: 10
-(4 rows)
+                               run_explain_and_trim                                
+-----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=990 loops=1)
+   namespaceName: p_ixscan.parallel_scan
+   indexName: _id_
+   ->  Index Scan using _id_ on documents_901 collection (actual rows=990 loops=1)
+         Index Cond: (shard_key_value = '901'::bigint)
+         Filter: (document @> '{ "a" : { "$numberInt" : "10" } }'::bson)
+         Rows Removed by Filter: 10
+(7 rows)
 
 set parallel_tuple_cost to 0;
 set parallel_setup_cost to 0;
