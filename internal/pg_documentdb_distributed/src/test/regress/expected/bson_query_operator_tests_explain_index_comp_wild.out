@@ -612,7 +612,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
 (20 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$ne" : 1 }}'$cmd$ );
-                                                       run_explain_and_trim                                                       
+                                                          run_explain_and_trim                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=23 loops=1)
    Task Count: 1
@@ -621,14 +621,16 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 1526 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=23 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@!=) '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-               Rows Removed by Filter: 4
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=23 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=23 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@!=) '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                     Rows Removed by Filter: 4
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$gt" : 1 }}'$cmd$ );
                                                               run_explain_and_trim                                                               
@@ -808,7 +810,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
 
 /* validate explain for the individual items as well */
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gt" : { "b": 1 } }}'$cmd$ );
-                                                          run_explain_and_trim                                                           
+                                                             run_explain_and_trim                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=15 loops=1)
    Task Count: 1
@@ -817,17 +819,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 1349 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=15 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@>) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
-               Rows Removed by Filter: 12
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=15 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=15 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@>) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
+                     Rows Removed by Filter: 12
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gt" : { "b": [ true, false ] } }}'$cmd$ );
-                                                       run_explain_and_trim                                                       
+                                                          run_explain_and_trim                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -836,17 +840,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 37 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=1 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@>) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
-               Rows Removed by Filter: 26
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=1 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@>) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
+                     Rows Removed by Filter: 26
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gt" : [ { "b": [ 2, 3, 4 ] } ] }}'$cmd$ );
-                                                                                      run_explain_and_trim                                                                                       
+                                                                                         run_explain_and_trim                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Task Count: 1
@@ -855,17 +861,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 417 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=3 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@>) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
-               Rows Removed by Filter: 24
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=3 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@>) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
+                     Rows Removed by Filter: 24
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gte" : { "b": 1 } }}'$cmd$ );
-                                                           run_explain_and_trim                                                           
+                                                              run_explain_and_trim                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=16 loops=1)
    Task Count: 1
@@ -874,17 +882,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 1389 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=16 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
-               Rows Removed by Filter: 11
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=16 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=16 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
+                     Rows Removed by Filter: 11
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gte" : { "b": [ true, false ] } }}'$cmd$ );
-                                                       run_explain_and_trim                                                        
+                                                          run_explain_and_trim                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -893,17 +903,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 37 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=1 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
-               Rows Removed by Filter: 26
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=1 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
+                     Rows Removed by Filter: 26
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$gte" : [ { "b": [ 2, 3, 4 ] } ] }}'$cmd$ );
-                                                                                       run_explain_and_trim                                                                                       
+                                                                                          run_explain_and_trim                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Task Count: 1
@@ -912,17 +924,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 417 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=3 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
-               Rows Removed by Filter: 24
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=3 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
+                     Rows Removed by Filter: 24
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lt" : { "b": 1 } }}'$cmd$ );
-                                                          run_explain_and_trim                                                           
+                                                             run_explain_and_trim                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=5 loops=1)
    Task Count: 1
@@ -931,17 +945,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 300 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=5 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@<) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
-               Rows Removed by Filter: 22
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=5 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@<) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
+                     Rows Removed by Filter: 22
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lt" : { "b": [ true, false ] } }}'$cmd$ );
-                                                       run_explain_and_trim                                                       
+                                                          run_explain_and_trim                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=18 loops=1)
    Task Count: 1
@@ -950,17 +966,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 1506 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=18 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@<) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
-               Rows Removed by Filter: 9
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=18 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=18 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@<) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
+                     Rows Removed by Filter: 9
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lt" : [ { "b": [ 2, 3, 4 ] } ] }}'$cmd$ );
-                                                                                      run_explain_and_trim                                                                                       
+                                                                                         run_explain_and_trim                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=9 loops=1)
    Task Count: 1
@@ -969,17 +987,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 762 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=9 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@<) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
-               Rows Removed by Filter: 18
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=9 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=9 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@<) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
+                     Rows Removed by Filter: 18
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lte" : { "b": 1 } }}'$cmd$ );
-                                                           run_explain_and_trim                                                           
+                                                              run_explain_and_trim                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=6 loops=1)
    Task Count: 1
@@ -988,17 +1008,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 340 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=6 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@<=) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
-               Rows Removed by Filter: 21
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=6 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@<=) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
+                     Rows Removed by Filter: 21
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lte" : { "b": [ true, false ] } }}'$cmd$ );
-                                                       run_explain_and_trim                                                        
+                                                          run_explain_and_trim                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=18 loops=1)
    Task Count: 1
@@ -1007,17 +1029,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 1506 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=18 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@<=) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
-               Rows Removed by Filter: 9
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=18 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=18 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@<=) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
+                     Rows Removed by Filter: 9
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$lte" : [ { "b": [ 2, 3, 4 ] } ] }}'$cmd$ );
-                                                                                       run_explain_and_trim                                                                                       
+                                                                                          run_explain_and_trim                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=9 loops=1)
    Task Count: 1
@@ -1026,17 +1050,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 762 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=9 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@<=) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
-               Rows Removed by Filter: 18
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=9 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=9 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@<=) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
+                     Rows Removed by Filter: 18
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$eq" : { "b": 1 } }}'$cmd$ );
-                                                          run_explain_and_trim                                                           
+                                                             run_explain_and_trim                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Task Count: 1
@@ -1045,17 +1071,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 122 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=2 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
-               Rows Removed by Filter: 25
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=2 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
+                     Rows Removed by Filter: 25
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$eq" : { "b": [ true, false ] } }}'$cmd$ );
-                                                       run_explain_and_trim                                                       
+                                                          run_explain_and_trim                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Task Count: 1
@@ -1064,17 +1092,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 0 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=0 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
-               Rows Removed by Filter: 27
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=0 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
+                     Rows Removed by Filter: 27
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$eq" : [ { "b": [ 2, 3, 4 ] } ] }}'$cmd$ );
-                                                                                      run_explain_and_trim                                                                                       
+                                                                                         run_explain_and_trim                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Task Count: 1
@@ -1083,17 +1113,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 0 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=0 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
-               Rows Removed by Filter: 27
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=0 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
+                     Rows Removed by Filter: 27
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$ne" : { "b": 1 } }}'$cmd$ );
-                                                           run_explain_and_trim                                                           
+                                                              run_explain_and_trim                                                              
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=25 loops=1)
    Task Count: 1
@@ -1102,17 +1134,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 1732 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=25 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@!=) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
-               Rows Removed by Filter: 2
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(14 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=25 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=25 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@!=) '{ "a" : { "b" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
+                     Rows Removed by Filter: 2
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(16 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$ne" : { "b": [ true, false ] } }}'$cmd$ );
-                                                       run_explain_and_trim                                                        
+                                                          run_explain_and_trim                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=27 loops=1)
    Task Count: 1
@@ -1121,16 +1155,18 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 1854 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=27 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@!=) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(13 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=27 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=27 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@!=) '{ "a" : { "b" : [ true, false ] } }'::documentdb_core.bson)
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(15 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a": { "$ne" : [ { "b": [ 2, 3, 4 ] } ] }}'$cmd$ );
-                                                                                       run_explain_and_trim                                                                                       
+                                                                                          run_explain_and_trim                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=27 loops=1)
    Task Count: 1
@@ -1139,16 +1175,18 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 1854 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=27 loops=1)
-               Recheck Cond: (shard_key_value = '1100'::bigint)
-               Filter: (document OPERATOR(documentdb_api_catalog.@!=) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
-               Heap Blocks: exact=1
-               ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                     Index Cond: (shard_key_value = '1100'::bigint)
-(13 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=27 loops=1)
+               indexName: _id_
+               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=27 loops=1)
+                     Recheck Cond: (shard_key_value = '1100'::bigint)
+                     Filter: (document OPERATOR(documentdb_api_catalog.@!=) '{ "a" : [ { "b" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } ] }'::documentdb_core.bson)
+                     Heap Blocks: exact=1
+                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                           Index Cond: (shard_key_value = '1100'::bigint)
+(15 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2 }}' ORDER BY object_id$cmd$ );
-                                                                        run_explain_and_trim                                                                        
+                                                                           run_explain_and_trim                                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -1157,12 +1195,14 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 40 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=1 loops=1)
-               Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
-(9 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+               indexName: _id_
+               ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=1 loops=1)
+                     Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
+(11 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2, "$ne" : null }}' ORDER BY object_id$cmd$ );
-                                                                        run_explain_and_trim                                                                        
+                                                                           run_explain_and_trim                                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -1171,13 +1211,15 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 40 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=1 loops=1)
-               Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
-               Filter: (document OPERATOR(documentdb_api_catalog.@!=) '{ "_id" : null }'::documentdb_core.bson)
-(10 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+               indexName: _id_
+               ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=1 loops=1)
+                     Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
+                     Filter: (document OPERATOR(documentdb_api_catalog.@!=) '{ "_id" : null }'::documentdb_core.bson)
+(12 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2, "$in": [ 1, 2 ] }}' ORDER BY object_id$cmd$ );
-                                                                        run_explain_and_trim                                                                        
+                                                                           run_explain_and_trim                                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -1186,13 +1228,15 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 40 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=1 loops=1)
-               Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
-               Filter: (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::documentdb_core.bson)
-(10 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+               indexName: _id_
+               ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=1 loops=1)
+                     Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
+                     Filter: (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::documentdb_core.bson)
+(12 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2, "$gt": 20, "$lt": 40 }}' ORDER BY object_id$cmd$ );
-                                                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                                                             
+                                                                                                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                                                                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Task Count: 1
@@ -1201,12 +1245,14 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 0 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=0 loops=1)
-               Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>) '{ "" : { "$numberInt" : "20" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : { "$numberInt" : "40" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberDouble" : "-Infinity" } }'::documentdb_core.bson))
-(9 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+               indexName: _id_
+               ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=0 loops=1)
+                     Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>) '{ "" : { "$numberInt" : "20" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : { "$numberInt" : "40" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberDouble" : "-Infinity" } }'::documentdb_core.bson))
+(11 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$all": [ 2 ], "$in": [ 1, 2 ] } }' ORDER BY object_id$cmd$ );
-                                                                        run_explain_and_trim                                                                        
+                                                                           run_explain_and_trim                                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -1215,13 +1261,15 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 40 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=1 loops=1)
-               Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
-               Filter: (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::documentdb_core.bson)
-(10 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+               indexName: _id_
+               ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=1 loops=1)
+                     Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
+                     Filter: (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::documentdb_core.bson)
+(12 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$all": [ 2 ], "$ne": 40 }}' ORDER BY object_id$cmd$ );
-                                                                        run_explain_and_trim                                                                        
+                                                                           run_explain_and_trim                                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -1230,13 +1278,15 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 40 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=1 loops=1)
-               Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
-               Filter: (document OPERATOR(documentdb_api_catalog.@!=) '{ "_id" : { "$numberInt" : "40" } }'::documentdb_core.bson)
-(10 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+               indexName: _id_
+               ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=1 loops=1)
+                     Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
+                     Filter: (document OPERATOR(documentdb_api_catalog.@!=) '{ "_id" : { "$numberInt" : "40" } }'::documentdb_core.bson)
+(12 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2, "$all" : [ 1, 2 ] }}' ORDER BY object_id$cmd$ );
-                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                            
+                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Task Count: 1
@@ -1245,12 +1295,14 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 0 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=0 loops=1)
-               Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
-(9 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+               indexName: _id_
+               ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=0 loops=1)
+                     Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
+(11 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$gt" : 1, "$lte" : 5 }}' ORDER BY object_id$cmd$ );
-                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                          
+                                                                                                                                                                                                                                             run_explain_and_trim                                                                                                                                                                                                                                             
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=4 loops=1)
    Task Count: 1
@@ -1259,12 +1311,14 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 172 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=4 loops=1)
-               Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.>) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberInt" : "5" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberDouble" : "-Infinity" } }'::documentdb_core.bson))
-(9 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+               indexName: _id_
+               ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=4 loops=1)
+                     Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.>) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberInt" : "5" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberDouble" : "-Infinity" } }'::documentdb_core.bson))
+(11 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [{"_id":1},{"_id":1}]}' ORDER BY object_id$cmd$ );
-                                                                                                                          run_explain_and_trim                                                                                                                          
+                                                                                                                             run_explain_and_trim                                                                                                                             
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -1273,12 +1327,14 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 40 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=1 loops=1)
-               Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson))
-(9 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+               indexName: _id_
+               ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=1 loops=1)
+                     Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+(11 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [{"_id":1},{"_id":2}]}' ORDER BY object_id$cmd$ );
-                                                                                                                          run_explain_and_trim                                                                                                                          
+                                                                                                                             run_explain_and_trim                                                                                                                             
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=0 loops=1)
    Task Count: 1
@@ -1287,12 +1343,14 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 0 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=0 loops=1)
-               Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
-(9 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
+               indexName: _id_
+               ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=0 loops=1)
+                     Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson))
+(11 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or"  : [{"_id":1},{"_id":2}]}' ORDER BY object_id$cmd$ );
-                                                                                                        run_explain_and_trim                                                                                                        
+                                                                                                           run_explain_and_trim                                                                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Task Count: 1
@@ -1304,12 +1362,14 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          ->  Sort (actual rows=2 loops=1)
                Sort Key: object_id
                Sort Method: quicksort  Memory: xxxkB
-               ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=2 loops=1)
-                     Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) ANY ('{"{ \"\" : { \"$numberInt\" : \"1\" } }","{ \"\" : { \"$numberInt\" : \"2\" } }"}'::documentdb_core.bson[])))
-(12 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+                     indexName: _id_
+                     ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=2 loops=1)
+                           Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) ANY ('{"{ \"\" : { \"$numberInt\" : \"1\" } }","{ \"\" : { \"$numberInt\" : \"2\" } }"}'::documentdb_core.bson[])))
+(14 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or"  : [{"_id": { "$gt": 1, "$lte" : 5 }}, {"_id":1}]}' ORDER BY object_id$cmd$ );
-                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                          
+                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                             
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=5 loops=1)
    Task Count: 1
@@ -1321,17 +1381,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          ->  Sort (actual rows=5 loops=1)
                Sort Key: object_id
                Sort Method: quicksort  Memory: xxxkB
-               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=5 loops=1)
-                     Recheck Cond: (shard_key_value = '1100'::bigint)
-                     Filter: (((document OPERATOR(documentdb_api_catalog.@>) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<=) '{ "_id" : { "$numberInt" : "5" } }'::documentdb_core.bson)) OR (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson))
-                     Rows Removed by Filter: 22
-                     Heap Blocks: exact=1
-                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                           Index Cond: (shard_key_value = '1100'::bigint)
-(17 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+                     indexName: _id_
+                     ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=5 loops=1)
+                           Recheck Cond: (shard_key_value = '1100'::bigint)
+                           Filter: (((document OPERATOR(documentdb_api_catalog.@>) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<=) '{ "_id" : { "$numberInt" : "5" } }'::documentdb_core.bson)) OR (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson))
+                           Rows Removed by Filter: 22
+                           Heap Blocks: exact=1
+                           ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                                 Index Cond: (shard_key_value = '1100'::bigint)
+(19 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$and" : [{"_id":1}, {"_id": { "$gte": 1, "$lte" : 5 }}]}' ORDER BY object_id$cmd$ );
-                                                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                                                             
+                                                                                                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                                                                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -1340,9 +1402,11 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    ->  Task
          Tuple data received from node: 40 bytes
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=1 loops=1)
-               Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberInt" : "5" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberDouble" : "-Infinity" } }'::documentdb_core.bson))
-(9 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+               indexName: _id_
+               ->  Index Scan using _id_ on documents_1100_1100001 collection (actual rows=1 loops=1)
+                     Index Cond: ((shard_key_value = '1100'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberInt" : "5" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : { "$numberDouble" : "-Infinity" } }'::documentdb_core.bson))
+(11 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a"  : {"$all" : [{"$elemMatch" : {"b" : "M", "c" : {"$gt" : 50} } }, {"$elemMatch" : {"c" : 100, "d" : "Y" } }]}}' ORDER BY object_id$cmd$ );
                                                                                                                                                                                                                                                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                     
@@ -1775,7 +1839,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
 (23 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a" : { "$nin": [ 1 ]} }' ORDER BY object_id$cmd$ );
-                                                         run_explain_and_trim                                                         
+                                                            run_explain_and_trim                                                            
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=25 loops=1)
    Task Count: 1
@@ -1787,17 +1851,19 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          ->  Sort (actual rows=25 loops=1)
                Sort Key: object_id
                Sort Method: quicksort  Memory: xxxkB
-               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=25 loops=1)
-                     Recheck Cond: (shard_key_value = '1100'::bigint)
-                     Filter: (document OPERATOR(documentdb_api_catalog.@!=) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-                     Rows Removed by Filter: 2
-                     Heap Blocks: exact=1
-                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                           Index Cond: (shard_key_value = '1100'::bigint)
-(17 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=25 loops=1)
+                     indexName: _id_
+                     ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=25 loops=1)
+                           Recheck Cond: (shard_key_value = '1100'::bigint)
+                           Filter: (document OPERATOR(documentdb_api_catalog.@!=) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                           Rows Removed by Filter: 2
+                           Heap Blocks: exact=1
+                           ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                                 Index Cond: (shard_key_value = '1100'::bigint)
+(19 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a" : { "$nin": [ ]} }' ORDER BY object_id$cmd$ );
-                                       run_explain_and_trim                                       
+                                          run_explain_and_trim                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=27 loops=1)
    Task Count: 1
@@ -1809,15 +1875,17 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          ->  Sort (actual rows=27 loops=1)
                Sort Key: object_id
                Sort Method: quicksort  Memory: xxxkB
-               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=27 loops=1)
-                     Recheck Cond: (shard_key_value = '1100'::bigint)
-                     Heap Blocks: exact=1
-                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                           Index Cond: (shard_key_value = '1100'::bigint)
-(15 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=27 loops=1)
+                     indexName: _id_
+                     ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=27 loops=1)
+                           Recheck Cond: (shard_key_value = '1100'::bigint)
+                           Heap Blocks: exact=1
+                           ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                                 Index Cond: (shard_key_value = '1100'::bigint)
+(17 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a" : { "$nin": [ 1, 2 ]} }' ORDER BY object_id$cmd$ );
-                                                                       run_explain_and_trim                                                                        
+                                                                          run_explain_and_trim                                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=25 loops=1)
    Task Count: 1
@@ -1829,14 +1897,16 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          ->  Sort (actual rows=25 loops=1)
                Sort Key: object_id
                Sort Method: quicksort  Memory: xxxkB
-               ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=25 loops=1)
-                     Recheck Cond: (shard_key_value = '1100'::bigint)
-                     Filter: (document OPERATOR(documentdb_api_catalog.@!*=) '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::documentdb_core.bson)
-                     Rows Removed by Filter: 2
-                     Heap Blocks: exact=1
-                     ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
-                           Index Cond: (shard_key_value = '1100'::bigint)
-(17 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=25 loops=1)
+                     indexName: _id_
+                     ->  Bitmap Heap Scan on documents_1100_1100001 collection (actual rows=25 loops=1)
+                           Recheck Cond: (shard_key_value = '1100'::bigint)
+                           Filter: (document OPERATOR(documentdb_api_catalog.@!*=) '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::documentdb_core.bson)
+                           Rows Removed by Filter: 2
+                           Heap Blocks: exact=1
+                           ->  Bitmap Index Scan on _id_ (actual rows=27 loops=1)
+                                 Index Cond: (shard_key_value = '1100'::bigint)
+(19 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "$or" : [ { "a": 3 }, { "a": { "$in": [ 4 ] }} ] }' ORDER BY object_id$cmd$ );
                                                                                run_explain_and_trim                                                                               
