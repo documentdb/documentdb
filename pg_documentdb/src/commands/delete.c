@@ -38,6 +38,8 @@
 #include "utils/query_utils.h"
 #include "api_hooks.h"
 
+extern bool EnableDeleteOnePlanCacheOptimization;
+
 
 /*
  * DeletionSpec describes a single delete operation.
@@ -1149,7 +1151,6 @@ command_delete_worker(PG_FUNCTION_ARGS)
 	uint64 collectionId = PG_GETARG_INT64(0);
 	int64 shardKeyHash = PG_GETARG_INT64(1);
 	Oid shardOid = PG_GETARG_OID(2);
-
 	pgbson *deleteInternalSpec = PG_GETARG_PGBSON_PACKED(3);
 
 	if (shardOid == InvalidOid)
@@ -1192,7 +1193,6 @@ command_delete_worker(PG_FUNCTION_ARGS)
 	{
 		BatchDeletionSpec batchDeletionSpec = { 0 };
 		BatchDeletionResult result = { 0 };
-
 		DeserializeDeleteWorkerSpecForUnsharded(&commandElement.bsonValue,
 												&batchDeletionSpec);
 		batchDeletionSpec.deletionSequence = specDocuments;
@@ -1249,8 +1249,6 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 		applyObjectIdFilter = !isIdFilterCollationAware;
 	}
 
-	argCount += applyObjectIdFilter ? 1 : 0;
-
 	int nextSqlArgIndex = 1;
 	MemoryContext outerContext = CurrentMemoryContext;
 
@@ -1272,22 +1270,22 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 	 * For this reason, here we use a materialized cte to compute the ctid of the
 	 * tuple that needs to be deleted.
 	 */
-	StringInfoData selectQuery;
-	initStringInfo(&selectQuery);
-	appendStringInfo(&selectQuery, "WITH s AS MATERIALIZED (SELECT ctid FROM ");
+	StringInfoData deleteQuery;
+	initStringInfo(&deleteQuery);
+	appendStringInfo(&deleteQuery, "WITH s AS MATERIALIZED (SELECT ctid FROM ");
 
 	if (collection->shardTableName[0] != '\0')
 	{
-		appendStringInfo(&selectQuery, " %s.%s", ApiDataSchemaName,
+		appendStringInfo(&deleteQuery, " %s.%s", ApiDataSchemaName,
 						 collection->shardTableName);
 	}
 	else
 	{
-		appendStringInfo(&selectQuery, " %s.documents_" UINT64_FORMAT, ApiDataSchemaName,
+		appendStringInfo(&deleteQuery, " %s.documents_" UINT64_FORMAT, ApiDataSchemaName,
 						 collection->collectionId);
 	}
 
-	appendStringInfo(&selectQuery, " WHERE shard_key_value = $1 AND");
+	appendStringInfo(&deleteQuery, " WHERE shard_key_value = $1 ");
 	nextSqlArgIndex++;
 	argCount++;
 
@@ -1306,32 +1304,48 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 		planId = QUERY_DELETE_ONE_LET_AND_COLLATION;
 
 		/* utilize the collation and/or variables in matching the document */
-		appendStringInfo(&selectQuery,
-						 " %s.bson_query_match(document, $2, $3, $4)",
+		appendStringInfo(&deleteQuery,
+						 " AND %s.bson_query_match(document, $2, $3, $4) ",
 						 ApiInternalSchemaNameV2);
 
 		nextSqlArgIndex += 3;
 		argCount += 3;
 	}
-	else
+	else if (!EnableDeleteOnePlanCacheOptimization || queryHasNonIdFilters)
 	{
-		appendStringInfo(&selectQuery,
-						 " document OPERATOR(%s.@@) $2::%s",
+		appendStringInfo(&deleteQuery,
+						 " AND document OPERATOR(%s.@@) $2::%s ",
 						 ApiCatalogSchemaName, FullBsonTypeName);
 
 		nextSqlArgIndex += 1;
 		argCount += 1;
 	}
+	else
+	{
+		/* No query filter clause needed — only shard_key_value filter
+		 * delete({})
+		 */
+		planId = QUERY_DELETE_ONE_NO_FILTER;
+	}
 
 	int objectIdArgIndex = -1;
 	if (applyObjectIdFilter)
 	{
-		planId = (applyVariableSpec || applyCollation) ?
-				 QUERY_DELETE_ONE_ID_LET_AND_COLLATION :
-				 QUERY_DELETE_ONE_ID;
+		if (applyVariableSpec || applyCollation)
+		{
+			planId = QUERY_DELETE_ONE_ID_LET_AND_COLLATION;
+		}
+		else if (!EnableDeleteOnePlanCacheOptimization || queryHasNonIdFilters)
+		{
+			planId = QUERY_DELETE_ONE_ID;
+		}
+		else
+		{
+			planId = QUERY_DELETE_ONE_ID_ONLY;
+		}
 
-		appendStringInfo(&selectQuery,
-						 " AND object_id OPERATOR(%s.=) $%d::%s",
+		appendStringInfo(&deleteQuery,
+						 " AND object_id OPERATOR(%s.=) $%d::%s ",
 						 CoreSchemaName, nextSqlArgIndex, FullBsonTypeName);
 
 		objectIdArgIndex = nextSqlArgIndex - 1;
@@ -1348,15 +1362,20 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 	argValues[0] = Int64GetDatum(shardKeyHash);
 	argNulls[0] = ' ';
 
-	/* assign query value*/
-	pgbson *query = PgbsonInitFromDocumentBsonValue(deleteOneParams->query);
-	Oid bsonTypeId = BsonTypeId();
-	argTypes[1] = bsonTypeId;
-	argValues[1] = PointerGetDatum(query);
-	argNulls[1] = ' ';
+	/* assign query value only when it is referenced in the SQL query */
+	pgbson *query = NULL;
+	if (planId != QUERY_DELETE_ONE_ID_ONLY)
+	{
+		query = PgbsonInitFromDocumentBsonValue(deleteOneParams->query);
+	}
 
+	Oid bsonTypeId = BsonTypeId();
 	if (applyVariableSpec || applyCollation)
 	{
+		argTypes[1] = bsonTypeId;
+		argValues[1] = PointerGetDatum(query);
+		argNulls[1] = ' ';
+
 		/* set the variable spec */
 		argTypes[2] = bsonTypeId;
 		argValues[2] = applyVariableSpec ? PointerGetDatum(variableSpecBson) :
@@ -1370,6 +1389,12 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 					   CStringGetTextDatum("");
 		argNulls[3] = ' ';
 	}
+	else if (!EnableDeleteOnePlanCacheOptimization || queryHasNonIdFilters)
+	{
+		argTypes[1] = bsonTypeId;
+		argValues[1] = PointerGetDatum(query);
+		argNulls[1] = ' ';
+	}
 
 	/* set id filter value */
 	if (objectIdArgIndex != -1)
@@ -1382,7 +1407,7 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 	/* assign sorting values */
 	if (sortFieldDocumentsLength > 0)
 	{
-		appendStringInfoString(&selectQuery, " ORDER BY");
+		appendStringInfoString(&deleteQuery, " ORDER BY");
 
 		int sortItemSqlArgBaseIndex = nextSqlArgIndex;
 		for (int i = 0; i < sortFieldDocumentsLength; i++)
@@ -1394,7 +1419,7 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 
 			if (applyCollation)
 			{
-				appendStringInfo(&selectQuery,
+				appendStringInfo(&deleteQuery,
 								 "%s %s.bson_orderby(document, $%d::%s.bson, $4) USING OPERATOR(%s.%s)",
 								 i > 0 ? "," : "", ApiInternalSchemaNameV2,
 								 sqlArgPosition, CoreSchemaNameV2,
@@ -1402,7 +1427,7 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 			}
 			else
 			{
-				appendStringInfo(&selectQuery,
+				appendStringInfo(&deleteQuery,
 								 "%s %s.bson_orderby(document, $%d) %s",
 								 i > 0 ? "," : "", ApiCatalogSchemaName,
 								 sqlArgPosition, isAscending ? "ASC" : "DESC");
@@ -1414,12 +1439,11 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 		}
 	}
 
-	appendStringInfo(&selectQuery,
+	appendStringInfo(&deleteQuery,
 					 " LIMIT 1 FOR UPDATE)");
 
-	StringInfoData deleteQuery;
-	initStringInfo(&deleteQuery);
-	appendStringInfo(&deleteQuery, "%s DELETE FROM", selectQuery.data);
+	/* Now build the actual delete query in the same string buffer */
+	appendStringInfo(&deleteQuery, " DELETE FROM");
 
 	if (collection->shardTableName[0] != '\0')
 	{
@@ -1438,7 +1462,38 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 
 	if (deleteOneParams->returnDeletedDocument)
 	{
-		planId = QUERY_DELETE_ONE_ID_RETURN_DOCUMENT;
+		if (planId == QUERY_DELETE_ONE_NO_FILTER)
+		{
+			planId = QUERY_DELETE_ONE_NO_FILTER_RETURN_DOCUMENT;
+		}
+		else if (planId == QUERY_DELETE_ONE_ID_ONLY)
+		{
+			planId = QUERY_DELETE_ONE_ID_ONLY_RETURN_DOCUMENT;
+		}
+		else if (planId == QUERY_DELETE_ONE_LET_AND_COLLATION)
+		{
+			planId = QUERY_DELETE_ONE_LET_AND_COLLATION_RETURN_DOCUMENT;
+		}
+		else if (planId == QUERY_DELETE_ONE_ID_LET_AND_COLLATION)
+		{
+			planId = QUERY_DELETE_ONE_ID_LET_AND_COLLATION_RETURN_DOCUMENT;
+		}
+		else if (planId == QUERY_DELETE_ONE)
+		{
+			planId = QUERY_DELETE_ONE_RETURN_DOCUMENT;
+		}
+		else if (planId == QUERY_DELETE_ONE_ID)
+		{
+			planId = QUERY_DELETE_ONE_ID_RETURN_DOCUMENT;
+		}
+		else
+		{
+			/* Error out the unexpected planId here. Every plan should have its own return document plan */
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"unexpected planId %lu when adding return document clause",
+								planId)));
+		}
 		appendStringInfo(&deleteQuery, ", document");
 	}
 
