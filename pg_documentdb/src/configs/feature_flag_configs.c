@@ -257,6 +257,11 @@ bool EnableNewWithExprAccumulators = DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS;
 bool EnableCursorPlanBeforeRestrictionPathUpdate =
 	DEFAULT_ENABLE_CURSOR_PLAN_BEFORE_RESTRICTION_PATH_UPDATE;
 
+/* Added in v114, enabled on v114, remove after v116 */
+#define DEFAULT_ENABLE_DELETE_ONE_PLAN_CACHE_OPTIMIZATION true
+bool EnableDeleteOnePlanCacheOptimization =
+	DEFAULT_ENABLE_DELETE_ONE_PLAN_CACHE_OPTIMIZATION;
+
 /* Added in v113, pending stabilization, enable in v116 */
 #define DEFAULT_ENABLE_DYNAMIC_CURSORS false
 bool EnableDynamicCursors = DEFAULT_ENABLE_DYNAMIC_CURSORS;
@@ -636,6 +641,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable running the streaming cursor plan rewrite before path replacement."),
 		NULL, &EnableCursorPlanBeforeRestrictionPathUpdate,
 		DEFAULT_ENABLE_CURSOR_PLAN_BEFORE_RESTRICTION_PATH_UPDATE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableDeleteOnePlanCacheOptimization", newGucPrefix),
+		gettext_noop(
+			"Whether to enable optimized plan caching for delete-one operations."),
+		NULL, &EnableDeleteOnePlanCacheOptimization,
+		DEFAULT_ENABLE_DELETE_ONE_PLAN_CACHE_OPTIMIZATION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

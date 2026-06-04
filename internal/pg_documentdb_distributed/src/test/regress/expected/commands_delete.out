@@ -298,7 +298,7 @@ begin;
 set local citus.log_remote_commands to on;
 select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6},"limit":1}]}');
 NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS delete_worker FROM documentdb_data.documents_6390_639005 documents_6390 WHERE (shard_key_value OPERATOR(pg_catalog.=) 6390)
-NOTICE:  executing the command locally: WITH s AS MATERIALIZED (SELECT documents_6390.ctid FROM documentdb_data.documents_6390_639005 documents_6390 WHERE ((documents_6390.shard_key_value OPERATOR(pg_catalog.=) $1) AND ((documents_6390.document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : { "$numberInt" : "6" } }'::documentdb_core.bsonquery) AND (documents_6390.shard_key_value OPERATOR(pg_catalog.=) '6390'::bigint) AND (documents_6390.object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "6" } }'::documentdb_core.bson) AND documentdb_api_catalog.bson_true_match($2::documentdb_core.bson)) AND (documents_6390.object_id OPERATOR(documentdb_core.=) ($3)::documentdb_core.bson)) LIMIT 1 FOR UPDATE OF documents_6390) DELETE FROM documentdb_data.documents_6390_639005 d USING s WHERE ((d.ctid OPERATOR(pg_catalog.=) s.ctid) AND (d.shard_key_value OPERATOR(pg_catalog.=) $1)) RETURNING d.object_id
+NOTICE:  executing the command locally: WITH s AS MATERIALIZED (SELECT documents_6390.ctid FROM documentdb_data.documents_6390_639005 documents_6390 WHERE ((documents_6390.shard_key_value OPERATOR(pg_catalog.=) $1) AND (documents_6390.object_id OPERATOR(documentdb_core.=) ($2)::documentdb_core.bson)) LIMIT 1 FOR UPDATE OF documents_6390) DELETE FROM documentdb_data.documents_6390_639005 d USING s WHERE ((d.ctid OPERATOR(pg_catalog.=) s.ctid) AND (d.shard_key_value OPERATOR(pg_catalog.=) $1)) RETURNING d.object_id
                                          delete                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
@@ -1710,3 +1710,296 @@ EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_6391
 (6 rows)
 
 ROLLBACK;
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":1,"_id":1}');
+NOTICE:  creating collection
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":2,"_id":2}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":3,"_id":3}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":4,"_id":4}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":5,"_id":5}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":6,"_id":6}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":7,"_id":7}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":8,"_id":8}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":9,"_id":9}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":10,"_id":10}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+-- validate _id-only delete_one generates optimized SQL (no @@ operator)
+begin;
+set local citus.log_remote_commands to on;
+set local documentdb.enableDeleteOnePlanCacheOptimization to true;
+-- _id-only filter: should NOT have @@ operator, should have object_id = $2
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6},"limit":1}]}');
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS delete_worker FROM documentdb_data.documents_6398_639112 documents_6398 WHERE (shard_key_value OPERATOR(pg_catalog.=) 6398)
+NOTICE:  executing the command locally: WITH s AS MATERIALIZED (SELECT documents_6398.ctid FROM documentdb_data.documents_6398_639112 documents_6398 WHERE ((documents_6398.shard_key_value OPERATOR(pg_catalog.=) $1) AND (documents_6398.object_id OPERATOR(documentdb_core.=) ($2)::documentdb_core.bson)) LIMIT 1 FOR UPDATE OF documents_6398) DELETE FROM documentdb_data.documents_6398_639112 d USING s WHERE ((d.ctid OPERATOR(pg_catalog.=) s.ctid) AND (d.shard_key_value OPERATOR(pg_catalog.=) $1)) RETURNING d.object_id
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+-- _id with other filters: should STILL have @@ operator AND object_id
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6, "a":5},"limit":1}]}');
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS delete_worker FROM documentdb_data.documents_6398_639112 documents_6398 WHERE (shard_key_value OPERATOR(pg_catalog.=) 6398)
+NOTICE:  executing the command locally: WITH s AS MATERIALIZED (SELECT documents_6398.ctid FROM documentdb_data.documents_6398_639112 documents_6398 WHERE ((documents_6398.shard_key_value OPERATOR(pg_catalog.=) $1) AND ((documents_6398.document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : { "$numberInt" : "6" } }'::documentdb_core.bsonquery) AND (documents_6398.document OPERATOR(documentdb_api_catalog.#=) '{ "a" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND (documents_6398.shard_key_value OPERATOR(pg_catalog.=) '6398'::bigint) AND (documents_6398.object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "6" } }'::documentdb_core.bson)) AND (documents_6398.object_id OPERATOR(documentdb_core.=) ($5)::documentdb_core.bson)) LIMIT 1 FOR UPDATE OF documents_6398) DELETE FROM documentdb_data.documents_6398_639112 d USING s WHERE ((d.ctid OPERATOR(pg_catalog.=) s.ctid) AND (d.shard_key_value OPERATOR(pg_catalog.=) $1)) RETURNING d.object_id
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+-- empty query: should have only shard_key_value filter (no @@ or object_id)
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{},"limit":1}]}');
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS delete_worker FROM documentdb_data.documents_6398_639112 documents_6398 WHERE (shard_key_value OPERATOR(pg_catalog.=) 6398)
+NOTICE:  executing the command locally: WITH s AS MATERIALIZED (SELECT documents_6398.ctid FROM documentdb_data.documents_6398_639112 documents_6398 WHERE (documents_6398.shard_key_value OPERATOR(pg_catalog.=) $1) LIMIT 1 FOR UPDATE OF documents_6398) DELETE FROM documentdb_data.documents_6398_639112 d USING s WHERE ((d.ctid OPERATOR(pg_catalog.=) s.ctid) AND (d.shard_key_value OPERATOR(pg_catalog.=) $1)) RETURNING d.object_id
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+reset citus.log_remote_commands;
+rollback;
+-- validate legacy _id-only delete_one generates SQL with @@ operator
+begin;
+set local citus.log_remote_commands to on;
+set local documentdb.enableDeleteOnePlanCacheOptimization to false;
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6},"limit":1}]}');
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS delete_worker FROM documentdb_data.documents_6398_639112 documents_6398 WHERE (shard_key_value OPERATOR(pg_catalog.=) 6398)
+NOTICE:  executing the command locally: WITH s AS MATERIALIZED (SELECT documents_6398.ctid FROM documentdb_data.documents_6398_639112 documents_6398 WHERE ((documents_6398.shard_key_value OPERATOR(pg_catalog.=) $1) AND ((documents_6398.document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : { "$numberInt" : "6" } }'::documentdb_core.bsonquery) AND (documents_6398.shard_key_value OPERATOR(pg_catalog.=) '6398'::bigint) AND (documents_6398.object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "6" } }'::documentdb_core.bson) AND documentdb_api_catalog.bson_true_match($2::documentdb_core.bson)) AND (documents_6398.object_id OPERATOR(documentdb_core.=) ($3)::documentdb_core.bson)) LIMIT 1 FOR UPDATE OF documents_6398) DELETE FROM documentdb_data.documents_6398_639112 d USING s WHERE ((d.ctid OPERATOR(pg_catalog.=) s.ctid) AND (d.shard_key_value OPERATOR(pg_catalog.=) $1)) RETURNING d.object_id
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6, "a":5},"limit":1}]}');
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS delete_worker FROM documentdb_data.documents_6398_639112 documents_6398 WHERE (shard_key_value OPERATOR(pg_catalog.=) 6398)
+NOTICE:  executing the command locally: WITH s AS MATERIALIZED (SELECT documents_6398.ctid FROM documentdb_data.documents_6398_639112 documents_6398 WHERE ((documents_6398.shard_key_value OPERATOR(pg_catalog.=) $1) AND ((documents_6398.document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : { "$numberInt" : "6" } }'::documentdb_core.bsonquery) AND (documents_6398.document OPERATOR(documentdb_api_catalog.#=) '{ "a" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND (documents_6398.shard_key_value OPERATOR(pg_catalog.=) '6398'::bigint) AND (documents_6398.object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "6" } }'::documentdb_core.bson)) AND (documents_6398.object_id OPERATOR(documentdb_core.=) ($5)::documentdb_core.bson)) LIMIT 1 FOR UPDATE OF documents_6398) DELETE FROM documentdb_data.documents_6398_639112 d USING s WHERE ((d.ctid OPERATOR(pg_catalog.=) s.ctid) AND (d.shard_key_value OPERATOR(pg_catalog.=) $1)) RETURNING d.object_id
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{},"limit":1}]}');
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS delete_worker FROM documentdb_data.documents_6398_639112 documents_6398 WHERE (shard_key_value OPERATOR(pg_catalog.=) 6398)
+NOTICE:  executing the command locally: WITH s AS MATERIALIZED (SELECT documents_6398.ctid FROM documentdb_data.documents_6398_639112 documents_6398 WHERE ((documents_6398.shard_key_value OPERATOR(pg_catalog.=) $1) AND documentdb_api_catalog.bson_true_match($2::documentdb_core.bson)) LIMIT 1 FOR UPDATE OF documents_6398) DELETE FROM documentdb_data.documents_6398_639112 d USING s WHERE ((d.ctid OPERATOR(pg_catalog.=) s.ctid) AND (d.shard_key_value OPERATOR(pg_catalog.=) $1)) RETURNING d.object_id
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+reset citus.log_remote_commands;
+rollback;
+begin;
+-- delete_one with after 5 attempts should use generic plans, we can't enforce generic plan for all in sharded collection
+select count(*) from documentdb_api.collection('db', 'removeme');
+ count 
+---------------------------------------------------------------------
+    10
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":1},"limit":1}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":2},"limit":1}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":3},"limit":1}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":4},"limit":1}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":5},"limit":1}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6},"limit":1}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":7},"limit":1}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select count(*) from documentdb_api.collection('db', 'removeme');
+ count 
+---------------------------------------------------------------------
+     3
+(1 row)
+
+rollback;
+-- test sharded deleteOne cache plans
+select documentdb_api.shard_collection('db', 'removeme', '{"_id":"hashed"}', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- validate _id-only delete_one generates optimized SQL (no @@ operator)
+begin;
+set local citus.log_remote_commands to on;
+set local documentdb.enableDeleteOnePlanCacheOptimization to true;
+-- _id-only filter: should NOT have @@ operator, should have object_id = $2
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6},"limit":1}]}');
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS delete_worker FROM documentdb_data.documents_6398_639126 documents_6398 WHERE (shard_key_value OPERATOR(pg_catalog.=) '-26336680357580367'::bigint)
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+-- _id with other filters: should STILL have @@ operator AND object_id
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6, "a":6},"limit":1}]}');
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS delete_worker FROM documentdb_data.documents_6398_639126 documents_6398 WHERE (shard_key_value OPERATOR(pg_catalog.=) '-26336680357580367'::bigint)
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+reset citus.log_remote_commands;
+rollback;
+-- validate legacy _id-only delete_one generates SQL with @@ operator
+begin;
+set local citus.log_remote_commands to on;
+set local documentdb.enableDeleteOnePlanCacheOptimization to false;
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6},"limit":1}]}');
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS delete_worker FROM documentdb_data.documents_6398_639126 documents_6398 WHERE (shard_key_value OPERATOR(pg_catalog.=) '-26336680357580367'::bigint)
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6, "a":6},"limit":1}]}');
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker($1, $2, $3, ($4)::documentdb_core.bson, ($5)::documentdb_core.bsonsequence, $6) AS delete_worker FROM documentdb_data.documents_6398_639126 documents_6398 WHERE (shard_key_value OPERATOR(pg_catalog.=) '-26336680357580367'::bigint)
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+reset citus.log_remote_commands;
+rollback;
+begin;
+-- delete_one with after 5 attempts should use generic plans, we can't enforce generic plan for all in sharded collection
+select count(*) from documentdb_api.collection('db', 'removeme');
+ count 
+---------------------------------------------------------------------
+    10
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":1},"limit":1}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":2},"limit":1}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":3},"limit":1}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":4},"limit":1}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":5},"limit":1}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":6},"limit":1}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select documentdb_api.delete('db', '{"delete":"removeme", "deletes":[{"q":{"_id":7},"limit":1}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select count(*) from documentdb_api.collection('db', 'removeme');
+ count 
+---------------------------------------------------------------------
+     3
+(1 row)
+
+rollback;
+select documentdb_api.drop_collection('db','removeme');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
