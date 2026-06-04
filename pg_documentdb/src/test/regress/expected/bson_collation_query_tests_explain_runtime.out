@@ -41,38 +41,47 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SE
 --------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-   ->  Bitmap Heap Scan on documents_8901 collection
-         Recheck Cond: (shard_key_value = '8901'::bigint)
-         Filter: (document @= '{ "a" : "CAT", "collation" : "en-u-ks-level1" }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (shard_key_value = '8901'::bigint)
-(7 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: coll_q_runtime_explain_db.coll_simple
+         indexName: _id_
+         ->  Bitmap Heap Scan on documents_8901 collection
+               Recheck Cond: (shard_key_value = '8901'::bigint)
+               Filter: (document @= '{ "a" : "CAT", "collation" : "en-u-ks-level1" }'::bson)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (shard_key_value = '8901'::bigint)
+(10 rows)
 
 -- find with $expr equality on collation
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_q_runtime_explain_db', '{ "find": "coll_simple", "filter": { "$expr": {"$eq": ["$a", "CAT"]} }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
-                                                                                                  run_explain_and_trim                                                                                                   
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                     run_explain_and_trim                                                                                                      
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-   ->  Bitmap Heap Scan on documents_8901 collection
-         Recheck Cond: (shard_key_value = '8901'::bigint)
-         Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$eq" : [ "$a", "CAT" ] }, "collation" : "en-u-ks-level1" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (shard_key_value = '8901'::bigint)
-(7 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: coll_q_runtime_explain_db.coll_simple
+         indexName: _id_
+         ->  Bitmap Heap Scan on documents_8901 collection
+               Recheck Cond: (shard_key_value = '8901'::bigint)
+               Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$eq" : [ "$a", "CAT" ] }, "collation" : "en-u-ks-level1" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (shard_key_value = '8901'::bigint)
+(10 rows)
 
 -- find with $expr inequality on collation (different locale)
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_q_runtime_explain_db', '{ "find": "coll_simple", "filter": { "$expr": {"$gte": ["$a", "CAT"]} }, "sort": { "_id": 1 }, "collation": { "locale": "fr", "strength": 1 } }') $cmd$);
-                                                                                                   run_explain_and_trim                                                                                                   
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                      run_explain_and_trim                                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text)) USING <<< NULLS FIRST
-   ->  Bitmap Heap Scan on documents_8901 collection
-         Recheck Cond: (shard_key_value = '8901'::bigint)
-         Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$gte" : [ "$a", "CAT" ] }, "collation" : "fr-u-ks-level1" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (shard_key_value = '8901'::bigint)
-(7 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: coll_q_runtime_explain_db.coll_simple
+         indexName: _id_
+         ->  Bitmap Heap Scan on documents_8901 collection
+               Recheck Cond: (shard_key_value = '8901'::bigint)
+               Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$gte" : [ "$a", "CAT" ] }, "collation" : "fr-u-ks-level1" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (shard_key_value = '8901'::bigint)
+(10 rows)
 
 -- aggregation pipeline with $match and collation
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_q_runtime_explain_db', '{ "aggregate": "coll_simple", "pipeline": [ { "$match": { "a": "DOG" } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
@@ -80,10 +89,13 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SE
 --------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-   ->  Bitmap Heap Scan on documents_8901 collection
-         Recheck Cond: (shard_key_value = '8901'::bigint)
-         Filter: (document @= '{ "a" : "DOG", "collation" : "en-u-ks-level1" }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (shard_key_value = '8901'::bigint)
-(7 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: coll_q_runtime_explain_db.coll_simple
+         indexName: _id_
+         ->  Bitmap Heap Scan on documents_8901 collection
+               Recheck Cond: (shard_key_value = '8901'::bigint)
+               Filter: (document @= '{ "a" : "DOG", "collation" : "en-u-ks-level1" }'::bson)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (shard_key_value = '8901'::bigint)
+(10 rows)
 

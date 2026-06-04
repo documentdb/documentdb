@@ -43,67 +43,85 @@ SELECT documentdb_api.insert_one('coll_operators_runtime_explain_db','single_fie
 
 -- $eq with collation
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_operators_runtime_explain_db', '{ "find": "single_field", "filter": { "a": { "$eq": "Apple" } }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
-                               run_explain_and_trim                                
------------------------------------------------------------------------------------
- Bitmap Heap Scan on documents_9601 collection
-   Recheck Cond: (shard_key_value = '9601'::bigint)
-   Filter: (document @= '{ "a" : "Apple", "collation" : "en-u-ks-level1" }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '9601'::bigint)
-(5 rows)
+                                  run_explain_and_trim                                   
+-----------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: coll_operators_runtime_explain_db.single_field
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_9601 collection
+         Recheck Cond: (shard_key_value = '9601'::bigint)
+         Filter: (document @= '{ "a" : "Apple", "collation" : "en-u-ks-level1" }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '9601'::bigint)
+(8 rows)
 
 -- $gt with collation
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_operators_runtime_explain_db', '{ "find": "single_field", "filter": { "a": { "$gt": "banana" } }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
-                                run_explain_and_trim                                
-------------------------------------------------------------------------------------
- Bitmap Heap Scan on documents_9601 collection
-   Recheck Cond: (shard_key_value = '9601'::bigint)
-   Filter: (document @> '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '9601'::bigint)
-(5 rows)
+                                   run_explain_and_trim                                   
+------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: coll_operators_runtime_explain_db.single_field
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_9601 collection
+         Recheck Cond: (shard_key_value = '9601'::bigint)
+         Filter: (document @> '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '9601'::bigint)
+(8 rows)
 
 -- $ne with collation
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_operators_runtime_explain_db', '{ "find": "single_field", "filter": { "a": { "$ne": "apple" } }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
-                                run_explain_and_trim                                
-------------------------------------------------------------------------------------
- Bitmap Heap Scan on documents_9601 collection
-   Recheck Cond: (shard_key_value = '9601'::bigint)
-   Filter: (document @!= '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '9601'::bigint)
-(5 rows)
+                                   run_explain_and_trim                                   
+------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: coll_operators_runtime_explain_db.single_field
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_9601 collection
+         Recheck Cond: (shard_key_value = '9601'::bigint)
+         Filter: (document @!= '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '9601'::bigint)
+(8 rows)
 
 -- $not on $gt with collation
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_operators_runtime_explain_db', '{ "find": "single_field", "filter": { "a": { "$not": { "$gt": "BANANA" } } }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
-                                                 run_explain_and_trim                                                  
------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on documents_9601 collection
-   Recheck Cond: (shard_key_value = '9601'::bigint)
-   Filter: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "BANANA", "collation" : "en-u-ks-level1" }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '9601'::bigint)
-(5 rows)
+                                                    run_explain_and_trim                                                     
+-----------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: coll_operators_runtime_explain_db.single_field
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_9601 collection
+         Recheck Cond: (shard_key_value = '9601'::bigint)
+         Filter: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "BANANA", "collation" : "en-u-ks-level1" }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '9601'::bigint)
+(8 rows)
 
 -- $not on $lte with collation
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_operators_runtime_explain_db', '{ "find": "single_field", "filter": { "a": { "$not": { "$lte": "banana" } } }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
-                                                  run_explain_and_trim                                                  
-------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on documents_9601 collection
-   Recheck Cond: (shard_key_value = '9601'::bigint)
-   Filter: (document OPERATOR(documentdb_api_internal.@!<=) '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '9601'::bigint)
-(5 rows)
+                                                     run_explain_and_trim                                                     
+------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: coll_operators_runtime_explain_db.single_field
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_9601 collection
+         Recheck Cond: (shard_key_value = '9601'::bigint)
+         Filter: (document OPERATOR(documentdb_api_internal.@!<=) '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '9601'::bigint)
+(8 rows)
 
 -- $not $lt against numeric (non-string operand bypasses collation)
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_operators_runtime_explain_db', '{ "find": "single_field", "filter": { "a": { "$not": { "$lt": 100 } } }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
-                                                         run_explain_and_trim                                                          
----------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on documents_9601 collection
-   Recheck Cond: (shard_key_value = '9601'::bigint)
-   Filter: (document OPERATOR(documentdb_api_internal.@!<) '{ "a" : { "$numberInt" : "100" }, "collation" : "en-u-ks-level1" }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '9601'::bigint)
-(5 rows)
+                                                            run_explain_and_trim                                                             
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: coll_operators_runtime_explain_db.single_field
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_9601 collection
+         Recheck Cond: (shard_key_value = '9601'::bigint)
+         Filter: (document OPERATOR(documentdb_api_internal.@!<) '{ "a" : { "$numberInt" : "100" }, "collation" : "en-u-ks-level1" }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '9601'::bigint)
+(8 rows)
 

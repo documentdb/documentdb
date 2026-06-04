@@ -2146,23 +2146,29 @@ $cmd$);
  Sort (actual rows=17 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level2'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Index Scan using _id_ on documents_8115 collection (actual rows=17 loops=1)
-         Index Cond: (shard_key_value = '8115'::bigint)
-         Filter: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "de-u-ks-level2" }'::bson)
-         Rows Removed by Filter: 10
-(7 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_not_intervals
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_8115 collection (actual rows=17 loops=1)
+               Index Cond: (shard_key_value = '8115'::bigint)
+               Filter: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "de-u-ks-level2" }'::bson)
+               Rows Removed by Filter: 10
+(10 rows)
 
 -- No collation on query — should also fall back
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 } }')
 $cmd$);
-                                 run_explain_and_trim                                  
----------------------------------------------------------------------------------------
- Index Scan using _id_ on documents_8115 collection (actual rows=18 loops=1)
-   Index Cond: (shard_key_value = '8115'::bigint)
-   Filter: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry" }'::bson)
-   Rows Removed by Filter: 9
-(4 rows)
+                                    run_explain_and_trim                                     
+---------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=18 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_not_intervals
+   indexName: _id_
+   ->  Index Scan using _id_ on documents_8115 collection (actual rows=18 loops=1)
+         Index Cond: (shard_key_value = '8115'::bigint)
+         Filter: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry" }'::bson)
+         Rows Removed by Filter: 9
+(7 rows)
 
 -- ===== Section 16: Composite index (a, b) — positive on first key, negation on second =====
 -- Setup: collection with two string fields, dense data across both dimensions
@@ -5879,11 +5885,14 @@ $cmd$);
  Sort (actual rows=5 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Index Scan using _id_ on documents_8121 collection (actual rows=5 loops=1)
-         Index Cond: (shard_key_value = '8121'::bigint)
-         Filter: (document @#? '{ "a" : { "$not" : { "$gt" : "cherry" } }, "collation" : "en-u-ks-level1" }'::bson)
-         Rows Removed by Filter: 5
-(7 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_8121 collection (actual rows=5 loops=1)
+               Index Cond: (shard_key_value = '8121'::bigint)
+               Filter: (document @#? '{ "a" : { "$not" : { "$gt" : "cherry" } }, "collation" : "en-u-ks-level1" }'::bson)
+               Rows Removed by Filter: 5
+(10 rows)
 
 -- 28h: $elemMatch $ne + sort {a: 1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$ne": "apple" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5906,11 +5915,14 @@ $cmd$);
  Sort (actual rows=7 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Index Scan using _id_ on documents_8121 collection (actual rows=7 loops=1)
-         Index Cond: (shard_key_value = '8121'::bigint)
-         Filter: (document @#? '{ "a" : { "$ne" : "apple" }, "collation" : "en-u-ks-level1" }'::bson)
-         Rows Removed by Filter: 3
-(7 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_8121 collection (actual rows=7 loops=1)
+               Index Cond: (shard_key_value = '8121'::bigint)
+               Filter: (document @#? '{ "a" : { "$ne" : "apple" }, "collation" : "en-u-ks-level1" }'::bson)
+               Rows Removed by Filter: 3
+(10 rows)
 
 -- 28i: $elemMatch with mismatched collation + sort
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -5921,11 +5933,14 @@ $cmd$);
  Sort (actual rows=3 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Index Scan using _id_ on documents_8121 collection (actual rows=3 loops=1)
-         Index Cond: (shard_key_value = '8121'::bigint)
-         Filter: (document @#? '{ "a" : { "$eq" : "apple" }, "collation" : "de-u-ks-level1" }'::bson)
-         Rows Removed by Filter: 7
-(7 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_8121 collection (actual rows=3 loops=1)
+               Index Cond: (shard_key_value = '8121'::bigint)
+               Filter: (document @#? '{ "a" : { "$eq" : "apple" }, "collation" : "de-u-ks-level1" }'::bson)
+               Rows Removed by Filter: 7
+(10 rows)
 
 -- 28j: $elemMatch with non-string value + sort
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": 42 } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -6082,11 +6097,14 @@ $cmd$);
  Sort (actual rows=7 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Index Scan using _id_ on documents_8121 collection (actual rows=7 loops=1)
-         Index Cond: (shard_key_value = '8121'::bigint)
-         Filter: (document @#? '{ "a" : { "$not" : { "$eq" : "apple" } }, "collation" : "en-u-ks-level1" }'::bson)
-         Rows Removed by Filter: 3
-(7 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_8121 collection (actual rows=7 loops=1)
+               Index Cond: (shard_key_value = '8121'::bigint)
+               Filter: (document @#? '{ "a" : { "$not" : { "$eq" : "apple" } }, "collation" : "en-u-ks-level1" }'::bson)
+               Rows Removed by Filter: 3
+(10 rows)
 
 -- 28o: $elemMatch three-way ($gt + $lt + $ne) + sort {a: 1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gt": "apple", "$lt": "fox", "$ne": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
