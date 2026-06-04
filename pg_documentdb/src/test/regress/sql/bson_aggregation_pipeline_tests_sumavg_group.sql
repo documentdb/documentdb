@@ -612,17 +612,18 @@ SET documentdb.enableNewWithExprAccumulators TO on;
 SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 
 -- =============================================================================
--- Test 27: enableCollation off → collation ignored, binary comparison applies
+-- Test 27: enableCollation off + skipFailOnCollation on → collation ignored, binary comparison applies
 -- =============================================================================
-
+-- With enableCollation off and skipFailOnCollation on, collation is ignored and binary comparison applies.
 SET documentdb_core.enableCollation TO off;
--- With enableCollation off, collation is simply ignored and binary comparison applies.
+SET documentdb.skipFailOnCollation TO on;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
 
 -- Cleanup GUC settings
+RESET documentdb.skipFailOnCollation;
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb_core.enableCollation TO off;
 RESET documentdb.enableNewWithExprAccumulators;
