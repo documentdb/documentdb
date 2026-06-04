@@ -1,0 +1,602 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+SET documentdb.next_collection_id TO 2100;
+SET documentdb.next_collection_index_id TO 2100;
+SET documentdb.defaultUseCompositeOpClass TO on;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+-- set the rum fillfactor to 100
+SET documentdb_rum.rum_default_page_fill_factor TO 100;
+-- ===== Section 1: Padded non-collation index with fill factor 100 =====
+-- Padded strings (item00001, item00002...) are monotonically increasing,
+-- so fill factor 100 should be respected.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'collff_db',
+  '{
+    "createIndexes": "collff_nocoll",
+    "indexes": [{
+      "key": { "c": 1, "a": 1 },
+      "name": "a_nocoll_ff_idx"
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- insert 2000 docs with monotonically increasing "a" string values and padding in "c"
+SELECT COUNT(documentdb_api.insert_one('collff_db', 'collff_nocoll',
+    bson_build_document('_id', i, 'a', concat('item', lpad(i::text, 5, '0')), 'c', repeat('a', 1024))))
+FROM generate_series(1, 2000) i;
+ count 
+-------
+  2000
+(1 row)
+
+-- Collection ID layout (single db collff_db):
+--   2100: db metadata
+--   2101: collff_nocoll      -> pk 2101, rum index 2102
+--   2102: collff_coll        -> pk 2103, rum index 2104
+--   2103: collff_np_nocoll   -> pk 2105, rum index 2106
+--   2104: collff_np_coll     -> pk 2107, rum index 2108
+--   2105: collff_numeric     -> pk 2109, rum index 2110
+\d documentdb_data.documents_2101
+          Table "documentdb_data.documents_2101"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_2101" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_2102" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c", "a" ]', tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '2101'::bigint)
+
+VACUUM (FREEZE ON, INDEX_CLEANUP ON) documentdb_data.documents_2101;
+-- exclude the rightmost leaf page since it may not be fully filled
+WITH r1 AS (
+    SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+        public.get_raw_page('documentdb_data.documents_rum_index_2102', 0)
+    )->>'totalPages' AS total_pages),
+r2 AS (
+    SELECT i AS page_num, documentdb_api_internal.documentdb_rum_page_get_stats(
+        public.get_raw_page('documentdb_data.documents_rum_index_2102', i)
+    ) AS page_stats
+    FROM generate_series(1, (SELECT total_pages::int4 FROM r1) - 1) i),
+r3 AS (
+    SELECT page_num, page_stats FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF')
+SELECT CASE
+    WHEN percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 90 AND 130
+    THEN 'PASS: fill factor 100 respected without collation'
+    ELSE 'FAIL: fill factor 100 NOT respected without collation - test invalid'
+END AS fillfactor_check,
+percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) AS median_nentries
+FROM r3
+WHERE page_num < (SELECT MAX(page_num) FROM r3);
+                 fillfactor_check                  | median_nentries 
+---------------------------------------------------+-----------------
+ PASS: fill factor 100 respected without collation |              97
+(1 row)
+
+-- verify reindex also keeps fill factor 100
+SET maintenance_work_mem TO '1024';
+REINDEX INDEX documentdb_data.documents_rum_index_2102;
+WITH r1 AS (
+    SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+        public.get_raw_page('documentdb_data.documents_rum_index_2102', 0)
+    )->>'totalPages' AS total_pages),
+r2 AS (
+    SELECT i AS page_num, documentdb_api_internal.documentdb_rum_page_get_stats(
+        public.get_raw_page('documentdb_data.documents_rum_index_2102', i)
+    ) AS page_stats
+    FROM generate_series(1, (SELECT total_pages::int4 FROM r1) - 1) i),
+r3 AS (
+    SELECT page_num, page_stats FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF')
+SELECT CASE
+    WHEN percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 90 AND 130
+    THEN 'PASS: fill factor 100 respected without collation after reindex'
+    ELSE 'FAIL: fill factor 100 NOT respected without collation after reindex - test invalid'
+END AS fillfactor_check,
+percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) AS median_nentries
+FROM r3
+WHERE page_num < (SELECT MAX(page_num) FROM r3);
+                        fillfactor_check                         | median_nentries 
+-----------------------------------------------------------------+-----------------
+ PASS: fill factor 100 respected without collation after reindex |              97
+(1 row)
+
+RESET maintenance_work_mem;
+-- ===== Section 2: Padded collation index with fill factor 100 =====
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'collff_db',
+  '{
+    "createIndexes": "collff_coll",
+    "indexes": [{
+      "key": { "c": 1, "a": 1 },
+      "name": "a_coll_ff_idx",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- insert 2000 docs with monotonically increasing string "a" values and padding in "c"
+SELECT COUNT(documentdb_api.insert_one('collff_db', 'collff_coll',
+    bson_build_document('_id', i, 'a', concat('item', lpad(i::text, 5, '0')), 'c', repeat('a', 1024))))
+FROM generate_series(1, 2000) i;
+ count 
+-------
+  2000
+(1 row)
+
+\d documentdb_data.documents_2102
+          Table "documentdb_data.documents_2102"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_2102" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_2104" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c", "a" ]', tl='2691', cl='en-u-ks-level1'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '2102'::bigint)
+
+VACUUM (FREEZE ON, INDEX_CLEANUP ON) documentdb_data.documents_2102;
+-- exclude the rightmost leaf page since it may not be fully filled
+WITH r1 AS (
+    SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+        public.get_raw_page('documentdb_data.documents_rum_index_2104', 0)
+    )->>'totalPages' AS total_pages),
+r2 AS (
+    SELECT i AS page_num, documentdb_api_internal.documentdb_rum_page_get_stats(
+        public.get_raw_page('documentdb_data.documents_rum_index_2104', i)
+    ) AS page_stats
+    FROM generate_series(1, (SELECT total_pages::int4 FROM r1) - 1) i),
+r3 AS (
+    SELECT page_num, page_stats FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF')
+SELECT CASE
+    WHEN percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 90 AND 130
+    THEN 'PASS: fill factor 100 respected with collation'
+    ELSE 'FAIL: fill factor 100 NOT respected with collation - test invalid'
+END AS fillfactor_check,
+percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) AS median_nentries
+FROM r3
+WHERE page_num < (SELECT MAX(page_num) FROM r3);
+                fillfactor_check                | median_nentries 
+------------------------------------------------+-----------------
+ PASS: fill factor 100 respected with collation |              97
+(1 row)
+
+-- verify by reindexing with fill factor still 100
+SET maintenance_work_mem TO '1024';
+REINDEX INDEX documentdb_data.documents_rum_index_2104;
+WITH r1 AS (
+    SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+        public.get_raw_page('documentdb_data.documents_rum_index_2104', 0)
+    )->>'totalPages' AS total_pages),
+r2 AS (
+    SELECT i AS page_num, documentdb_api_internal.documentdb_rum_page_get_stats(
+        public.get_raw_page('documentdb_data.documents_rum_index_2104', i)
+    ) AS page_stats
+    FROM generate_series(1, (SELECT total_pages::int4 FROM r1) - 1) i),
+r3 AS (
+    SELECT page_num, page_stats FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF')
+SELECT CASE
+    WHEN percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 90 AND 130
+    THEN 'PASS: fill factor 100 respected with collation after reindex'
+    ELSE 'FAIL: fill factor 100 NOT respected with collation after reindex - test invalid'
+END AS fillfactor_check,
+percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) AS median_nentries
+FROM r3
+WHERE page_num < (SELECT MAX(page_num) FROM r3);
+                       fillfactor_check                       | median_nentries 
+--------------------------------------------------------------+-----------------
+ PASS: fill factor 100 respected with collation after reindex |              97
+(1 row)
+
+-- verify that disabling fill factor causes it to drop for the collation index
+SET documentdb_rum.enable_page_fill_factor TO off;
+REINDEX INDEX documentdb_data.documents_rum_index_2104;
+WITH r1 AS (
+    SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+        public.get_raw_page('documentdb_data.documents_rum_index_2104', 0)
+    )->>'totalPages' AS total_pages),
+r2 AS (
+    SELECT i AS page_num, documentdb_api_internal.documentdb_rum_page_get_stats(
+        public.get_raw_page('documentdb_data.documents_rum_index_2104', i)
+    ) AS page_stats
+    FROM generate_series(1, (SELECT total_pages::int4 FROM r1) - 1) i),
+r3 AS (
+    SELECT page_num, page_stats FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF')
+SELECT CASE
+    WHEN percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 40 AND 65
+    THEN 'PASS: fill factor dropped as expected when disabled'
+    ELSE 'FAIL: fill factor did not drop when disabled - test invalid'
+END AS fillfactor_check,
+percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) AS median_nentries
+FROM r3
+WHERE page_num < (SELECT MAX(page_num) FROM r3);
+                  fillfactor_check                   | median_nentries 
+-----------------------------------------------------+-----------------
+ PASS: fill factor dropped as expected when disabled |              50
+(1 row)
+
+RESET documentdb_rum.enable_page_fill_factor;
+RESET maintenance_work_mem;
+-- ===== Section 3: Non-padded strings (non-monotonic sort order) =====
+-- With unpadded strings (item1, item10, item2...) inserts are non-monotonic,
+-- causing mid-tree page splits and lower fill factor on insert.
+SET documentdb_rum.rum_default_page_fill_factor TO 100;
+-- non-collation with non-padded string
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'collff_db',
+  '{
+    "createIndexes": "collff_np_nocoll",
+    "indexes": [{
+      "key": { "c": 1, "a": 1 },
+      "name": "a_np_nocoll_ff_idx"
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- insert 2000 docs with non-monotonic string "a" values (item1, item10, item100, item2...)
+SELECT COUNT(documentdb_api.insert_one('collff_db', 'collff_np_nocoll',
+    bson_build_document('_id', i, 'a', concat('item', i::text), 'c', repeat('a', 1024))))
+FROM generate_series(1, 2000) i;
+ count 
+-------
+  2000
+(1 row)
+
+\d documentdb_data.documents_2103
+          Table "documentdb_data.documents_2103"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_2103" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_2106" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c", "a" ]', tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '2103'::bigint)
+
+VACUUM (FREEZE ON, INDEX_CLEANUP ON) documentdb_data.documents_2103;
+-- non-padded non-collation: fill factor will be lower due to non-monotonic insert order
+-- exclude the rightmost leaf page since it may not be fully filled
+WITH r1 AS (
+    SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+        public.get_raw_page('documentdb_data.documents_rum_index_2106', 0)
+    )->>'totalPages' AS total_pages),
+r2 AS (
+    SELECT i AS page_num, documentdb_api_internal.documentdb_rum_page_get_stats(
+        public.get_raw_page('documentdb_data.documents_rum_index_2106', i)
+    ) AS page_stats
+    FROM generate_series(1, (SELECT total_pages::int4 FROM r1) - 1) i),
+r3 AS (
+    SELECT page_num, page_stats FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF')
+SELECT CASE
+    WHEN percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 90 AND 130
+    THEN 'PASS: fill factor 100 respected without collation (non-padded)'
+    ELSE 'FAIL: fill factor 100 NOT respected without collation (non-padded) - expected due to non-monotonic order'
+END AS fillfactor_check,
+percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) AS median_nentries
+FROM r3
+WHERE page_num < (SELECT MAX(page_num) FROM r3);
+                                             fillfactor_check                                             | median_nentries 
+----------------------------------------------------------------------------------------------------------+-----------------
+ FAIL: fill factor 100 NOT respected without collation (non-padded) - expected due to non-monotonic order |              55
+(1 row)
+
+-- reindex recovers fill factor since serial build sorts entries
+SET maintenance_work_mem TO '1024';
+REINDEX INDEX documentdb_data.documents_rum_index_2106;
+WITH r1 AS (
+    SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+        public.get_raw_page('documentdb_data.documents_rum_index_2106', 0)
+    )->>'totalPages' AS total_pages),
+r2 AS (
+    SELECT i AS page_num, documentdb_api_internal.documentdb_rum_page_get_stats(
+        public.get_raw_page('documentdb_data.documents_rum_index_2106', i)
+    ) AS page_stats
+    FROM generate_series(1, (SELECT total_pages::int4 FROM r1) - 1) i),
+r3 AS (
+    SELECT page_num, page_stats FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF')
+SELECT CASE
+    WHEN percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 90 AND 130
+    THEN 'PASS: fill factor 100 respected without collation (non-padded) after reindex'
+    ELSE 'FAIL: fill factor 100 NOT respected without collation (non-padded) after reindex - test invalid'
+END AS fillfactor_check,
+percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) AS median_nentries
+FROM r3
+WHERE page_num < (SELECT MAX(page_num) FROM r3);
+                               fillfactor_check                               | median_nentries 
+------------------------------------------------------------------------------+-----------------
+ PASS: fill factor 100 respected without collation (non-padded) after reindex |             107
+(1 row)
+
+RESET maintenance_work_mem;
+-- ===== Section 4: Non-padded collation index =====
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'collff_db',
+  '{
+    "createIndexes": "collff_np_coll",
+    "indexes": [{
+      "key": { "c": 1, "a": 1 },
+      "name": "a_np_coll_ff_idx",
+      "collation": { "locale": "en", "strength": 1 }
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- insert 2000 docs with non-monotonic string "a" values
+SELECT COUNT(documentdb_api.insert_one('collff_db', 'collff_np_coll',
+    bson_build_document('_id', i, 'a', concat('item', i::text), 'c', repeat('a', 1024))))
+FROM generate_series(1, 2000) i;
+ count 
+-------
+  2000
+(1 row)
+
+\d documentdb_data.documents_2104
+          Table "documentdb_data.documents_2104"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_2104" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_2108" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c", "a" ]', tl='2691', cl='en-u-ks-level1'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '2104'::bigint)
+
+VACUUM (FREEZE ON, INDEX_CLEANUP ON) documentdb_data.documents_2104;
+-- non-padded collation: fill factor will be lower due to non-monotonic insert order
+-- exclude the rightmost leaf page since it may not be fully filled
+WITH r1 AS (
+    SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+        public.get_raw_page('documentdb_data.documents_rum_index_2108', 0)
+    )->>'totalPages' AS total_pages),
+r2 AS (
+    SELECT i AS page_num, documentdb_api_internal.documentdb_rum_page_get_stats(
+        public.get_raw_page('documentdb_data.documents_rum_index_2108', i)
+    ) AS page_stats
+    FROM generate_series(1, (SELECT total_pages::int4 FROM r1) - 1) i),
+r3 AS (
+    SELECT page_num, page_stats FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF')
+SELECT CASE
+    WHEN percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 90 AND 130
+    THEN 'PASS: fill factor 100 respected with collation (non-padded)'
+    ELSE 'FAIL: fill factor 100 NOT respected with collation (non-padded) - expected due to non-monotonic order'
+END AS fillfactor_check,
+percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) AS median_nentries
+FROM r3
+WHERE page_num < (SELECT MAX(page_num) FROM r3);
+                                           fillfactor_check                                            | median_nentries 
+-------------------------------------------------------------------------------------------------------+-----------------
+ FAIL: fill factor 100 NOT respected with collation (non-padded) - expected due to non-monotonic order |              55
+(1 row)
+
+-- reindex recovers fill factor since serial build sorts entries
+SET maintenance_work_mem TO '1024';
+REINDEX INDEX documentdb_data.documents_rum_index_2108;
+WITH r1 AS (
+    SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+        public.get_raw_page('documentdb_data.documents_rum_index_2108', 0)
+    )->>'totalPages' AS total_pages),
+r2 AS (
+    SELECT i AS page_num, documentdb_api_internal.documentdb_rum_page_get_stats(
+        public.get_raw_page('documentdb_data.documents_rum_index_2108', i)
+    ) AS page_stats
+    FROM generate_series(1, (SELECT total_pages::int4 FROM r1) - 1) i),
+r3 AS (
+    SELECT page_num, page_stats FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF')
+SELECT CASE
+    WHEN percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 90 AND 130
+    THEN 'PASS: fill factor 100 respected with collation (non-padded) after reindex'
+    ELSE 'FAIL: fill factor 100 NOT respected with collation (non-padded) after reindex - test invalid'
+END AS fillfactor_check,
+percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) AS median_nentries
+FROM r3
+WHERE page_num < (SELECT MAX(page_num) FROM r3);
+                             fillfactor_check                              | median_nentries 
+---------------------------------------------------------------------------+-----------------
+ PASS: fill factor 100 respected with collation (non-padded) after reindex |             107
+(1 row)
+
+RESET maintenance_work_mem;
+-- ===== Section 5: Numeric collation - strings sorted numerically =====
+-- With numericOrdering: true, string values "1","2"..."1000" sort numerically
+-- (1 < 2 < 10 < 100), so inserts are monotonically increasing → fill factor ~100%.
+-- With fill factor disabled, reindex produces ~50% fill factor.
+SET documentdb_rum.rum_default_page_fill_factor TO 100;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'collff_db',
+  '{
+    "createIndexes": "collff_numeric",
+    "indexes": [{
+      "key": { "c": 1, "a": 1 },
+      "name": "a_numeric_coll_ff_idx",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- insert 1000 docs with string values of numbers "1", "2", ... "1000"
+SELECT COUNT(documentdb_api.insert_one('collff_db', 'collff_numeric',
+    bson_build_document('_id', i, 'a', i::text, 'c', repeat('a', 1024))))
+FROM generate_series(1, 1000) i;
+ count 
+-------
+  1000
+(1 row)
+
+\d documentdb_data.documents_2105
+          Table "documentdb_data.documents_2105"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_2105" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_2110" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "c", "a" ]', tl='2691', cl='en-u-ks-level3-kn-true'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '2105'::bigint)
+
+VACUUM (FREEZE ON, INDEX_CLEANUP ON) documentdb_data.documents_2105;
+-- numeric collation: inserts are in sorted order so fill factor 100 should be respected
+WITH r1 AS (
+    SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+        public.get_raw_page('documentdb_data.documents_rum_index_2110', 0)
+    )->>'totalPages' AS total_pages),
+r2 AS (
+    SELECT i AS page_num, documentdb_api_internal.documentdb_rum_page_get_stats(
+        public.get_raw_page('documentdb_data.documents_rum_index_2110', i)
+    ) AS page_stats
+    FROM generate_series(1, (SELECT total_pages::int4 FROM r1) - 1) i),
+r3 AS (
+    SELECT page_num, page_stats FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF')
+SELECT CASE
+    WHEN percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 90 AND 130
+    THEN 'PASS: fill factor 100 respected with numeric collation'
+    ELSE 'FAIL: fill factor 100 NOT respected with numeric collation - test invalid'
+END AS fillfactor_check,
+percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) AS median_nentries
+FROM r3
+WHERE page_num < (SELECT MAX(page_num) FROM r3);
+                    fillfactor_check                    | median_nentries 
+--------------------------------------------------------+-----------------
+ PASS: fill factor 100 respected with numeric collation |             107
+(1 row)
+
+-- verify reindex also keeps fill factor 100
+SET maintenance_work_mem TO '1024';
+REINDEX INDEX documentdb_data.documents_rum_index_2110;
+WITH r1 AS (
+    SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+        public.get_raw_page('documentdb_data.documents_rum_index_2110', 0)
+    )->>'totalPages' AS total_pages),
+r2 AS (
+    SELECT i AS page_num, documentdb_api_internal.documentdb_rum_page_get_stats(
+        public.get_raw_page('documentdb_data.documents_rum_index_2110', i)
+    ) AS page_stats
+    FROM generate_series(1, (SELECT total_pages::int4 FROM r1) - 1) i),
+r3 AS (
+    SELECT page_num, page_stats FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF')
+SELECT CASE
+    WHEN percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 90 AND 130
+    THEN 'PASS: fill factor 100 respected with numeric collation after reindex'
+    ELSE 'FAIL: fill factor 100 NOT respected with numeric collation after reindex - test invalid'
+END AS fillfactor_check,
+percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) AS median_nentries
+FROM r3
+WHERE page_num < (SELECT MAX(page_num) FROM r3);
+                           fillfactor_check                           | median_nentries 
+----------------------------------------------------------------------+-----------------
+ PASS: fill factor 100 respected with numeric collation after reindex |             107
+(1 row)
+
+-- verify that disabling fill factor causes it to drop
+SET documentdb_rum.enable_page_fill_factor TO off;
+REINDEX INDEX documentdb_data.documents_rum_index_2110;
+WITH r1 AS (
+    SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+        public.get_raw_page('documentdb_data.documents_rum_index_2110', 0)
+    )->>'totalPages' AS total_pages),
+r2 AS (
+    SELECT i AS page_num, documentdb_api_internal.documentdb_rum_page_get_stats(
+        public.get_raw_page('documentdb_data.documents_rum_index_2110', i)
+    ) AS page_stats
+    FROM generate_series(1, (SELECT total_pages::int4 FROM r1) - 1) i),
+r3 AS (
+    SELECT page_num, page_stats FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF')
+SELECT CASE
+    WHEN percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 40 AND 65
+    THEN 'PASS: fill factor dropped as expected with numeric collation when disabled'
+    ELSE 'FAIL: fill factor did not drop with numeric collation when disabled - test invalid'
+END AS fillfactor_check,
+percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) AS median_nentries
+FROM r3
+WHERE page_num < (SELECT MAX(page_num) FROM r3);
+                              fillfactor_check                              | median_nentries 
+----------------------------------------------------------------------------+-----------------
+ PASS: fill factor dropped as expected with numeric collation when disabled |              55
+(1 row)
+
+RESET documentdb_rum.enable_page_fill_factor;
+-- verify that with fill factor 100 but compare function fmgr disabled,
+-- inserts don't benefit from the optimized compare path → fill factor drops
+SET documentdb_rum.rum_default_page_fill_factor TO 100;
+SET documentdb_rum.enable_compare_function_fmgr TO off;
+-- delete all docs and reinsert with fmgr disabled
+SELECT documentdb_api.delete('collff_db', '{"delete": "collff_numeric", "deletes": [{"q": {}, "limit": 0}]}');
+                                          delete                                           
+-------------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1000"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+VACUUM (FREEZE ON, INDEX_CLEANUP ON) documentdb_data.documents_2105;
+SELECT COUNT(documentdb_api.insert_one('collff_db', 'collff_numeric',
+    bson_build_document('_id', i, 'a', i::text, 'c', repeat('a', 1024))))
+FROM generate_series(1, 1000) i;
+ count 
+-------
+  1000
+(1 row)
+
+VACUUM (FREEZE ON, INDEX_CLEANUP ON) documentdb_data.documents_2105;
+WITH r1 AS (
+    SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(
+        public.get_raw_page('documentdb_data.documents_rum_index_2110', 0)
+    )->>'totalPages' AS total_pages),
+r2 AS (
+    SELECT i AS page_num, documentdb_api_internal.documentdb_rum_page_get_stats(
+        public.get_raw_page('documentdb_data.documents_rum_index_2110', i)
+    ) AS page_stats
+    FROM generate_series(1, (SELECT total_pages::int4 FROM r1) - 1) i),
+r3 AS (
+    SELECT page_num, page_stats FROM r2 WHERE page_stats->>'flagsStr' = 'LEAF')
+SELECT CASE
+    WHEN percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) BETWEEN 40 AND 65
+    THEN 'PASS: fill factor low with numeric collation when fmgr disabled'
+    ELSE 'FAIL: fill factor unexpectedly high with numeric collation when fmgr disabled - test invalid'
+END AS fillfactor_check,
+percentile_cont(0.5) WITHIN GROUP (ORDER BY (page_stats->>'nEntries')::int4) AS median_nentries
+FROM r3
+WHERE page_num < (SELECT MAX(page_num) FROM r3);
+                        fillfactor_check                         | median_nentries 
+-----------------------------------------------------------------+-----------------
+ PASS: fill factor low with numeric collation when fmgr disabled |              55
+(1 row)
+
+RESET documentdb_rum.enable_compare_function_fmgr;
+RESET maintenance_work_mem;
