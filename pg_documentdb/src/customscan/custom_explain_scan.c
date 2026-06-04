@@ -183,63 +183,10 @@ IsValidPath(Path *inputPath)
 	}
 
 	if (inputPath->pathtype == T_IndexScan ||
-		inputPath->pathtype == T_IndexOnlyScan)
+		inputPath->pathtype == T_IndexOnlyScan ||
+		inputPath->pathtype == T_BitmapHeapScan)
 	{
-		IndexPath *indexPath = (IndexPath *) inputPath;
-		return IsBsonRegularIndexAm(indexPath->indexinfo->relam);
-	}
-	else if (inputPath->pathtype == T_BitmapHeapScan)
-	{
-		BitmapHeapPath *bitmapHeapPath = (BitmapHeapPath *) inputPath;
-		if (bitmapHeapPath->bitmapqual->pathtype == T_IndexScan ||
-			bitmapHeapPath->bitmapqual->pathtype == T_IndexOnlyScan)
-		{
-			IndexPath *indexPath = (IndexPath *) bitmapHeapPath->bitmapqual;
-			return IsBsonRegularIndexAm(indexPath->indexinfo->relam);
-		}
-		else if (bitmapHeapPath->bitmapqual->pathtype == T_BitmapAnd)
-		{
-			/* BitmapAnd is valid if all its children are valid */
-			BitmapAndPath *bitmapAndPath =
-				(BitmapAndPath *) bitmapHeapPath->bitmapqual;
-			ListCell *bitmapCell;
-			bool isValidPath = true;
-			foreach(bitmapCell, bitmapAndPath->bitmapquals)
-			{
-				Path *childPath = (Path *) lfirst(bitmapCell);
-				if ((childPath->pathtype != T_IndexScan &&
-					 childPath->pathtype != T_IndexOnlyScan) ||
-					!IsBsonRegularIndexAm(
-						((IndexPath *) childPath)->indexinfo->relam))
-				{
-					isValidPath = false;
-					break;
-				}
-			}
-
-			return isValidPath;
-		}
-		else if (bitmapHeapPath->bitmapqual->pathtype == T_BitmapOr)
-		{
-			/* BitmapOr is valid if all its children are valid */
-			BitmapOrPath *bitmapOrPath = (BitmapOrPath *) bitmapHeapPath->bitmapqual;
-			ListCell *bitmapCell;
-			bool isValidPath = true;
-			foreach(bitmapCell, bitmapOrPath->bitmapquals)
-			{
-				Path *childPath = (Path *) lfirst(bitmapCell);
-				if ((childPath->pathtype != T_IndexScan &&
-					 childPath->pathtype != T_IndexOnlyScan) ||
-					!IsBsonRegularIndexAm(
-						((IndexPath *) childPath)->indexinfo->relam))
-				{
-					isValidPath = false;
-					break;
-				}
-			}
-
-			return isValidPath;
-		}
+		return true;
 	}
 	else if (inputPath->pathtype == T_CustomScan)
 	{
@@ -257,7 +204,7 @@ IsValidPath(Path *inputPath)
 		return true;
 	}
 
-	/* we only wrap IndexScan and BitmapHeapScan */
+	/* we only wrap IndexScan, IndexOnlyScan, and BitmapHeapScan */
 	return false;
 }
 

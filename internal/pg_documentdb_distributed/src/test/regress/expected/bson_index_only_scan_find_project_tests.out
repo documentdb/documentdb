@@ -442,12 +442,15 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 -- supported end-to-end. Once supported, this should use IOS on _id_ (BTREE)
 -- or the RUM compound index when applicable.
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "filter": { "_id": { "$gt": 3 } }, "projection": { "_id": 0 } }')$$, p_ignore_heap_fetches => true);
-                                                                                                  run_explain_and_trim                                                                                                   
+                                                                                                   run_explain_and_trim                                                                                                   
 ---------------------------------------------------------------------
- Index Scan using _id_ on documentdb_data.documents_6961_696002 collection (actual rows=7 loops=1)
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "0" } }'::bson, '{ "_id" : { "$gt" : { "$numberInt" : "3" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   Index Cond: ((collection.shard_key_value = '6961'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
-(3 rows)
+   indexName: _id_
+   ->  Index Scan using _id_ on documentdb_data.documents_6961_696002 collection (actual rows=7 loops=1)
+         Output: document
+         Index Cond: ((collection.shard_key_value = '6961'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(6 rows)
 
 -- ===========================================================================
 -- SECTION D: aggregation pipeline $project (uses bson_dollar_project)

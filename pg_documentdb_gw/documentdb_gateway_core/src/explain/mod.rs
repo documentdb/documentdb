@@ -1617,6 +1617,7 @@ fn limited_array_from_contents(contents: Vec<(&'static str, RawDocumentBuf)>) ->
     reason = "values are checked for Some before unwrapping"
 )]
 fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocumentBuf {
+    let plan = skip_stage(plan, query_catalog);
     let (total_rows_examined, total_keys_examined) = get_total_examined(&plan);
     let execution_time = smallest_from_f64(truncate_latency(plan.actual_total_time.unwrap_or(0.0)));
     let execution_start_at_time =
