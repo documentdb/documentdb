@@ -14,7 +14,7 @@ use std::{
     str::FromStr,
 };
 
-use bson::RawDocument;
+use bson::{RawDocument, RawDocumentBuf};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::{
@@ -200,6 +200,30 @@ pub fn parse_cmd<'a>(command: &'a RawDocument, extra: Option<&'a [u8]>) -> Resul
 
         let request_type = RequestType::from_str(cmd_name)?;
         Ok(Request::Raw(request_type, command, extra))
+    } else {
+        Err(DocumentDBError::bad_value(
+            "Admin command received without a command.".to_owned(),
+        ))
+    }
+}
+
+/// Parse a command from an owned `RawDocumentBuf` — used when the gateway
+/// has constructed a synthetic document (e.g., injecting `$db` for `OP_QUERY`).
+///
+/// # Errors
+/// Returns an error if the command document is empty or contains an unrecognized command.
+pub fn parse_cmd_buf(command: RawDocumentBuf) -> Result<Request<'static>> {
+    if let Some(result) = command.iter().next() {
+        let cmd_name = result?.0;
+
+        let explain = command.get_bool("explain").unwrap_or(false);
+        if explain {
+            return Ok(Request::RawBuf(RequestType::Explain, command));
+        }
+
+        let request_type = RequestType::from_str(cmd_name)?;
+
+        Ok(Request::RawBuf(request_type, command))
     } else {
         Err(DocumentDBError::bad_value(
             "Admin command received without a command.".to_owned(),
