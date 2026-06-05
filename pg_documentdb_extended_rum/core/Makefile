@@ -63,4 +63,10 @@ create_objdir:
 
 $(OBJS): $(OBJDIR)/src/%.o: $(CORESRCDIR)/%.c | create_objdir
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
+
+# Mirror the .o rule for LLVM bitcode so JIT-enabled builds (deb/rpm packaging)
+# can locate the source. PGXS's default %.bc:%.c rule only matches when the .c
+# and .bc are in the same directory, which is not the case for OBJDIR builds.
+$(patsubst %.o,%.bc,$(OBJS)): $(OBJDIR)/src/%.bc: $(CORESRCDIR)/%.c | create_objdir
+	$(COMPILE.c.bc) -o $@ $<
 endif
