@@ -48,6 +48,10 @@ whoami.workspace = true
 criterion.workspace = true
 
 [[bench]]
+name = "hot_path_bench"
+harness = false
+
+[[bench]]
 name = "request_insert_bench"
 harness = false
 

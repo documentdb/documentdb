@@ -24,6 +24,7 @@ use crate::{
         message::{self, Message, MessageSection},
         op_insert, op_query,
         opcode::OpCode,
+        MESSAGE_SIZE_EXCEEDED_ERROR,
     },
     requests::{Request, RequestMessage, RequestType},
 };
@@ -82,7 +83,7 @@ where
     if !authenticated && header.message_length() > crate::protocol::MAX_PRE_AUTH_MESSAGE_SIZE_BYTES
     {
         return Err(DocumentDBError::internal_error(
-            "Message size exceeds the maximum allowed size.".to_owned(),
+            MESSAGE_SIZE_EXCEEDED_ERROR.to_owned(),
         ));
     }
 
