@@ -10,7 +10,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
     error::{DocumentDBError, Result},
-    protocol::opcode::OpCode,
+    protocol::{opcode::OpCode, MESSAGE_SIZE_EXCEEDED_ERROR},
 };
 
 /// Represents the message header (first 16 bytes of wire protocol message).
@@ -57,7 +57,7 @@ impl Header {
 
         if message_size > crate::protocol::MAX_MESSAGE_SIZE_BYTES as usize {
             return Err(DocumentDBError::bad_value(
-                "Message size exceeds the maximum allowed size.".to_owned(),
+                MESSAGE_SIZE_EXCEEDED_ERROR.to_owned(),
             ));
         }
 
