@@ -15,6 +15,19 @@
 
 #include "pg_documentdb_rum.h"
 
+/* How to prepare the entry page for insertion */
+typedef enum EntryPrepareMode
+{
+	/* Force delete the existing tuple */
+	EntryPrepareMode_ForceDelete = 0,
+
+	/* Allow replacing the existing tuple if it exists and can fit */
+	EntryPrepareMode_AllowReplace = 1,
+
+	/* Delete the existing tuple, but we don't need to reclaim space */
+	EntryPrepareMode_Delete = 2
+} EntryPrepareMode;
+
 
 /*
  * Form a tuple for entry tree.
@@ -564,7 +577,8 @@ entryIsEnoughSpace(RumBtree btree, Buffer buf, OffsetNumber off)
  * if child split occurred
  */
 static BlockNumber
-entryPreparePage(RumBtree btree, Page page, OffsetNumber off, bool canReplace,
+entryPreparePage(RumBtree btree, Page page, OffsetNumber off,
+				 EntryPrepareMode prepareMode,
 				 bool *doReplace, bool *needsOverwrite)
 {
 	BlockNumber ret = InvalidBlockNumber;
@@ -576,28 +590,37 @@ entryPreparePage(RumBtree btree, Page page, OffsetNumber off, bool canReplace,
 	if (btree->isDelete)
 	{
 		Assert(RumPageIsLeaf(page));
-
-		if (RumAllowReplaceOnInsertTuple && canReplace)
+		if (RumAllowReplaceOnInsertTuple && prepareMode != EntryPrepareMode_ForceDelete)
 		{
 			ItemId currentItemId = PageGetItemId(page, off);
-			IndexTuple itup = (IndexTuple) PageGetItem(page, currentItemId);
 			if (!ItemIdIsNormal(currentItemId))
 			{
 				/* LP_DEAD entries - needs to replace and rewrite and revive */
 				btree->isDelete = true;
 				PageIndexTupleDelete(page, off);
 			}
-			else if (MAXALIGN(IndexTupleSize(itup)) >= MAXALIGN(IndexTupleSize(
-																	btree->entry)))
-			{
-				*doReplace = true;
-			}
-			else
+			else if (prepareMode != EntryPrepareMode_AllowReplace)
 			{
 				/* Since we're just about to add PageAddItem - skip the compact on this delete */
 				btree->isDelete = true;
 				PageIndexTupleDeleteNoCompact(page, off);
 				*needsOverwrite = true;
+			}
+			else
+			{
+				IndexTuple itup = (IndexTuple) PageGetItem(page, currentItemId);
+				if (MAXALIGN(IndexTupleSize(itup)) >= MAXALIGN(IndexTupleSize(
+																   btree->entry)))
+				{
+					*doReplace = true;
+				}
+				else
+				{
+					/* Since we're just about to add PageAddItem - skip the compact on this delete */
+					btree->isDelete = true;
+					PageIndexTupleDeleteNoCompact(page, off);
+					*needsOverwrite = true;
+				}
 			}
 		}
 		else
@@ -624,15 +647,25 @@ entryPreparePage(RumBtree btree, Page page, OffsetNumber off, bool canReplace,
  * Place tuple on page and fills WAL record
  */
 static bool
-entryPlaceToPage(RumBtree btree, Page page, OffsetNumber off, bool
-				 requireWalFromPlaceToPage)
+entryPlaceToPage(RumBtree btree, Page page, OffsetNumber off,
+				 bool requireWalFromPlaceToPage)
 {
 	OffsetNumber placed;
 
-	bool canReplace = RumPageIsLeaf(page);
+	/* Don't do a replace if we're writing custom WAL - this ensures that
+	 * the physical bits layout is identical between the primary and standby.
+	 */
+	EntryPrepareMode prepareMode = EntryPrepareMode_ForceDelete;
 	bool needsOverwrite = false;
 	bool doReplace = false;
-	entryPreparePage(btree, page, off, canReplace, &doReplace, &needsOverwrite);
+
+	if (RumPageIsLeaf(page))
+	{
+		prepareMode = requireWalFromPlaceToPage ? EntryPrepareMode_Delete :
+					  EntryPrepareMode_AllowReplace;
+	}
+
+	entryPreparePage(btree, page, off, prepareMode, &doReplace, &needsOverwrite);
 
 	if (doReplace)
 	{
@@ -698,10 +731,10 @@ entrySplitPage(RumBtree btree, Buffer lbuf, Buffer rbuf,
 	static char tupstoreStorage[2 * BLCKSZ + MAXIMUM_ALIGNOF];
 	char *tupstore = (char *) MAXALIGN(tupstoreStorage);
 
-	bool canReplace = false;
 	bool needsOverwrite = false;
 	bool doReplace = false;
-	entryPreparePage(btree, newlPage, off, canReplace, &doReplace, &needsOverwrite);
+	entryPreparePage(btree, newlPage, off, EntryPrepareMode_ForceDelete, &doReplace,
+					 &needsOverwrite);
 
 	Assert(!needsOverwrite && !doReplace);
 	maxoff = PageGetMaxOffsetNumber(newlPage);
