@@ -18,7 +18,7 @@ use Test::More;
 # PART 1: Initialize primary node
 # ============================================================================
 my $node_primary = PostgreSQL::Test::Cluster->new('primary');
-$node_primary->init(allows_streaming => 1);
+$node_primary->init(allows_streaming => 1, extra => ['--data-checksums']);
 
 # Include shared configuration (TESTDIR is set by the Makefile)
 my $test_dir = $ENV{TESTDIR};
@@ -53,6 +53,9 @@ is($result, 'on', 'enable_xlog_insert_entry is on');
 $result = $node_primary->safe_psql('postgres',
     "SHOW documentdb_rum.allow_replace_on_insert_tuple");
 is($result, 'on', 'allow_replace_on_insert_tuple is on');
+
+my $checksum = $node_primary->safe_psql('postgres', 'SHOW data_checksums;');
+is($checksum, 'on', 'checksums are enabled');
 
 # Set deterministic collection IDs and create collection + index
 $node_primary->safe_psql('postgres', q{
@@ -97,7 +100,7 @@ $node_primary->backup($backup_name);
 
 my $node_standby = PostgreSQL::Test::Cluster->new('standby');
 $node_standby->init_from_backup($node_primary, $backup_name,
-    has_streaming => 1);
+    has_streaming => 1, extra => ['--data-checksums']);
 $node_standby->start;
 
 # Verify standby is in recovery
@@ -119,16 +122,35 @@ BEGIN
             FORMAT('{"_id": %s, "val": %s, "data": "doc_%s"}', i, i % 50, i)::documentdb_core.bson
         );
     END LOOP;
+
+    FOR i IN 10001..15000 LOOP
+        PERFORM documentdb_api.insert_one(
+            'testdb',
+            'wal_redo_test',
+            FORMAT('{"_id": %s, "val": %s, "data": "doc_%s"}', i, 10000 + (i - 10000) / 50, i)::documentdb_core.bson
+        );
+    END LOOP;
+    
+
+    FOR i IN 15001..20000 LOOP
+        PERFORM documentdb_api.insert_one(
+            'testdb',
+            'wal_redo_test',
+            FORMAT('{"_id": %s, "val": %s, "data": "doc_%s"}', i, 20000, i)::documentdb_core.bson
+        );
+    END LOOP;
 END;
 $$;
 });
+
+$node_primary->safe_psql('postgres', q{ CHECKPOINT });
 
 # Verify primary has all rows
 $result = $node_primary->safe_psql('postgres', q{
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal;
 SELECT COUNT(*) FROM documentdb_api.collection('testdb', 'wal_redo_test');
 });
-is($result, '1000', 'primary has 1000 rows');
+is($result, '11000', 'primary has 11000 rows');
 
 # ============================================================================
 # PART 5: Wait for standby to replay WAL and validate
@@ -140,7 +162,7 @@ $result = $node_standby->safe_psql('postgres', q{
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal;
 SELECT COUNT(*) FROM documentdb_api.collection('testdb', 'wal_redo_test');
 });
-is($result, '1000', 'standby has 1000 rows after WAL redo');
+is($result, '11000', 'standby has 11000 rows after WAL redo');
 
 # Verify index scan works on standby (force index usage)
 $result = $node_standby->safe_psql('postgres', q{
@@ -233,7 +255,7 @@ $result = $node_standby->safe_psql('postgres', q{
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal;
 SELECT COUNT(*) FROM documentdb_api.collection('testdb', 'wal_redo_test');
 });
-is($result, '1500', 'standby has 1500 rows after second batch WAL redo');
+is($result, '11500', 'standby has 11500 rows after second batch WAL redo');
 
 # Verify index scan still works correctly after VACUUM redo
 $result = $node_standby->safe_psql('postgres', q{
