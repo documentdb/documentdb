@@ -1,0 +1,1 @@
+\i sql/bson_collation_index_ordering_tests.sql

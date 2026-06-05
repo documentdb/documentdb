@@ -308,6 +308,8 @@ static bool TryBuildSuffixSortSpec(const bson_value_t *groupValue,
 								   bson_value_t *suffixSortSpec);
 static bool CanPushSortFilterToIndex(Query *query,
 									 AggregationPipelineBuildContext *context);
+static Const * AddCollationToSortSpec(pgbsonelement *sortElement,
+									  const char *collationString);
 
 #define COMPATIBLE_CHANGE_STREAM_STAGES_COUNT 8
 const char *CompatibleChangeStreamPipelineStages[COMPATIBLE_CHANGE_STREAM_STAGES_COUNT] =
@@ -4727,8 +4729,8 @@ HandleDistinct(const StringView *distinctKey, Query *query,
 		sortSpecElement.bsonValue.value_type = BSON_TYPE_INT32;
 		sortSpecElement.bsonValue.value.v_int32 = 1;
 
-		pgbson *sortBson = PgbsonElementToPgbson(&sortSpecElement);
-		Const *sortConst = MakeBsonConst(sortBson);
+		Const *sortConst = AddCollationToSortSpec(&sortSpecElement,
+												  context->collationString);
 		List *rangeArgs = list_make2(currentProjection, sortConst);
 		Expr *fullScanExpr = (Expr *) makeFuncExpr(
 			BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
@@ -5046,6 +5048,24 @@ CanPushSortFilterToIndex(Query *query, AggregationPipelineBuildContext *context)
 }
 
 
+static Const *
+AddCollationToSortSpec(pgbsonelement *sortElement, const char *collationString)
+{
+	if (!IsCollationValid(collationString))
+	{
+		return MakeBsonConst(PgbsonElementToPgbson(sortElement));
+	}
+
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	PgbsonWriterAppendValue(&writer, sortElement->path, sortElement->pathLength,
+							&sortElement->bsonValue);
+	PgbsonWriterAppendUtf8(&writer, "collation", 9, collationString);
+
+	return MakeBsonConst(PgbsonWriterGetPgbson(&writer));
+}
+
+
 /*
  * Handles the $sort stage.
  * Creates a subquery if there's a skip/limit (Since those need to be
@@ -5243,7 +5263,9 @@ HandleSort(const bson_value_t *existingValue, Query *query,
 				 */
 				if (CanPushSortFilterToIndex(query, context))
 				{
-					List *rangeArgs = list_make2(sortInput, sortBson);
+					Const *fullScanSortConst = AddCollationToSortSpec(
+						&element, context->collationString);
+					List *rangeArgs = list_make2(sortInput, fullScanSortConst);
 					Expr *fullScanExpr = (Expr *) makeFuncExpr(
 						BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
 						InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
@@ -7604,8 +7626,8 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			sortElement.pathLength = groupByFieldPaths[i].length;
 			sortElement.bsonValue.value_type = BSON_TYPE_INT32;
 			sortElement.bsonValue.value.v_int32 = 1;
-			pgbson *sortSpec = PgbsonElementToPgbson(&sortElement);
-			Const *sortConst = MakeBsonConst(sortSpec);
+			Const *sortConst = AddCollationToSortSpec(&sortElement,
+													  context->collationString);
 			List *rangeArgs = list_make2(origEntry->expr, sortConst);
 			Expr *fullScanExpr = (Expr *) makeFuncExpr(
 				BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
@@ -7631,8 +7653,8 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			{
 				pgbsonelement suffixSortElement;
 				BsonIterToPgbsonElement(&suffixSortIter, &suffixSortElement);
-				Const *suffixSortConst = MakeBsonConst(
-					PgbsonElementToPgbson(&suffixSortElement));
+				Const *suffixSortConst = AddCollationToSortSpec(
+					&suffixSortElement, context->collationString);
 				List *rangeArgs = list_make2(origEntry->expr, suffixSortConst);
 				Expr *fullScanExpr = (Expr *) makeFuncExpr(
 					BsonFullScanFunctionOid(), BOOLOID, rangeArgs,

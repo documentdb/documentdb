@@ -8894,6 +8894,104 @@ $cmd$);
 (10 rows)
 
 -- ======================================================================
+-- Section 49: ORDER BY strategy EXPLAIN coverage for collated index
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','ord_strategies', '{"_id": 1, "a": "item20"}', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','ord_strategies', '{"_id": 2, "a": "item3"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','ord_strategies', '{"_id": 3, "a": "item11"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','ord_strategies', '{"_id": 4, "a": "item1"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','ord_strategies', '{"_id": 5, "a": "item100"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','ord_strategies', '{"_id": 6, "a": "item2"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_operators_index_explain_db',
+  '{ "createIndexes": "ord_strategies",
+     "indexes": [{ "key": {"a": 1}, "name": "idx_a_en_num_ord_strategies",
+                   "collation": {"locale": "en", "numericOrdering": true} }] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT collection_id AS ord_strategies_id FROM documentdb_api_catalog.collections WHERE collection_name = 'ord_strategies' AND database_name = 'coll_operators_index_explain_db' \gset
+ANALYZE documentdb_data.documents_:ord_strategies_id;
+-- 49.1: ASC matching collation, enableOrderByIndexTerm OFF — Sort via bson_orderby (runtime comparator)
+BEGIN;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "ord_strategies", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                                                     run_explain_and_trim                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=6 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3-kn-true'::text)) USING <<< NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+         namespaceName: coll_operators_index_explain_db.ord_strategies
+         indexName: idx_a_en_num_ord_strategies
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey]]
+         ->  Index Scan using idx_a_en_num_ord_strategies on documents_9522 collection (actual rows=6 loops=1)
+               Index Cond: (document @>= '{ "a" : { "$minKey" : 1 }, "collation" : "en-u-ks-level3-kn-true" }'::bson)
+(11 rows)
+
+END;
+-- 49.2: DESC matching collation, enableOrderByIndexTerm OFF — Sort via bson_orderby USING >>> (runtime comparator)
+BEGIN;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "ord_strategies", "filter": { "a": { "$exists": true } }, "sort": { "a": -1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                                                     run_explain_and_trim                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=6 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level3-kn-true'::text)) USING >>> NULLS LAST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+         namespaceName: coll_operators_index_explain_db.ord_strategies
+         indexName: idx_a_en_num_ord_strategies
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey]]
+         ->  Index Scan using idx_a_en_num_ord_strategies on documents_9522 collection (actual rows=6 loops=1)
+               Index Cond: (document @>= '{ "a" : { "$minKey" : 1 }, "collation" : "en-u-ks-level3-kn-true" }'::bson)
+(11 rows)
+
+END;
+-- ======================================================================
 -- Cleanup
 -- ======================================================================
 RESET documentdb.enableExtendedExplainPlans;
