@@ -65,7 +65,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
  Incremental Sort (actual rows=1 loops=1)
    Sort Key: (bson_orderby(document, '{ "a.b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "a.c" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Presorted Key: (bson_orderby(document, '{ "a.b" : { "$numberInt" : "1" } }'::bson))
-   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
+   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: xxxkB  Peak Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          namespaceName: mkey_db.mkey_coll
          indexName: a_b_c_1
@@ -157,7 +157,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
  Incremental Sort (actual rows=1 loops=1)
    Sort Key: (bson_orderby(document, '{ "a.b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "a.c" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Presorted Key: (bson_orderby(document, '{ "a.b" : { "$numberInt" : "1" } }'::bson))
-   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
+   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: xxxkB  Peak Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          namespaceName: mkey_db.mkey_coll
          indexName: a_b_c_1

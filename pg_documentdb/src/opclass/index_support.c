@@ -176,6 +176,7 @@ extern bool EnableObjectIdFuncExprConversion;
 extern bool EnableExtendedIndexes;
 extern bool EnableDynamicCursors;
 extern bool EnableDistinctIndexPushdown;
+extern bool EnableCollationWithNonUniqueOrderedIndexes;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -211,6 +212,8 @@ static OpExpr * CreateExistsTrueOpExpr(Expr *documentExpr, const char *sourcePat
 									   uint32_t sourcePathLength);
 static List * GetSortDetails(PlannerInfo *root, Index rti,
 							 bool *hasGroupby, bool *isOrderById);
+static bool IsQueryCollationCompatibleWithIndex(const char *queryCollation,
+												bytea *indexOptions);
 static bool IsValidIndexPathForIdOrderBy(IndexPath *indexPath, List *sortDetails);
 
 static Expr * HandleSupportRequestForBtreeObjectIdCondition(
@@ -2245,6 +2248,7 @@ IsSortPathFunctionOid(Oid oid)
 	{
 		return true;
 	}
+
 	if (IsClusterVersionAtleast(DocDB_V0, 110, 0) &&
 		oid == BsonOrderByIndexWithCollationFunctionOid())
 	{
@@ -2894,6 +2898,7 @@ GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby, bool *isOrderById
 		}
 
 		FuncExpr *func = (FuncExpr *) member->em_expr;
+		Const *collationConst = NULL;
 		bool isGroupByEntry = false;
 		if (func->funcid == BsonOrderByFunctionOid())
 		{
@@ -2908,7 +2913,40 @@ GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby, bool *isOrderById
 				 (func->funcid == BsonOrderByIndexFunctionOid() ||
 				  func->funcid == BsonOrderByIndexReverseFunctionOid()))
 		{
-			/* TODO: Collation index pushdown support. */
+			if (hasDistinct)
+			{
+				return NIL;
+			}
+
+			hasOrderBy = true;
+		}
+		else if (EnableOrderByIndexTerm &&
+				 (func->funcid == BsonOrderByIndexWithCollationFunctionOid() ||
+				  func->funcid == BsonOrderByIndexWithCollationReverseFunctionOid()))
+		{
+			if (list_length(func->args) < 3)
+			{
+				return NIL;
+			}
+
+			Expr *thirdArg = lthird(func->args);
+			if (IsA(thirdArg, RelabelType))
+			{
+				thirdArg = ((RelabelType *) thirdArg)->arg;
+			}
+
+			if (!IsA(thirdArg, Const))
+			{
+				return NIL;
+			}
+
+			Const *thirdConst = (Const *) thirdArg;
+			if (thirdConst->constisnull || thirdConst->consttype != TEXTOID)
+			{
+				return NIL;
+			}
+
+			collationConst = thirdConst;
 			if (hasDistinct)
 			{
 				return NIL;
@@ -3091,6 +3129,7 @@ GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby, bool *isOrderById
 		sortDetailsInput->sortVar = (Expr *) firstVar;
 		sortDetailsInput->sortDatum = (Expr *) secondConst;
 		sortDetailsInput->funcOid = func->funcid;
+		sortDetailsInput->collationConst = collationConst;
 		sortDetails = lappend(sortDetails, sortDetailsInput);
 
 		*isOrderById = *isOrderById ||
@@ -3099,6 +3138,38 @@ GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby, bool *isOrderById
 	}
 
 	return sortDetails;
+}
+
+
+static bool
+IsQueryCollationCompatibleWithIndex(const char *queryCollation, bytea *indexOptions)
+{
+	const char *indexCollation = NULL;
+	uint32_t indexCollationLength = 0;
+	if (indexOptions != NULL)
+	{
+		Get_Index_Collation_Option((BsonGinIndexOptionsBase *) indexOptions, collation,
+								   indexCollation, indexCollationLength);
+	}
+
+	bool queryHasCollation = IsCollationValid(queryCollation);
+	bool indexHasCollation = IsCollationValid(indexCollation);
+	if (!EnableCollationWithNonUniqueOrderedIndexes)
+	{
+		return !queryHasCollation && !indexHasCollation;
+	}
+
+	if (queryHasCollation != indexHasCollation)
+	{
+		return false;
+	}
+
+	if (!queryHasCollation)
+	{
+		return true;
+	}
+
+	return strcmp(queryCollation, indexCollation) == 0;
 }
 
 
@@ -3121,6 +3192,14 @@ IsValidIndexPathForIdOrderBy(IndexPath *indexPath, List *sortDetails)
 	 */
 	SortIndexInputDetails *sortDetailsInput = linitial(sortDetails);
 	if (strcmp(sortDetailsInput->sortPath, "_id") != 0)
+	{
+		return false;
+	}
+
+	/* The primary key index has no collation, so we cannot honor a collation-
+	 * aware sort by streaming results from this index when _id values would
+	 * be compared as strings under that collation. */
+	if (sortDetailsInput->collationConst != NULL)
 	{
 		return false;
 	}
@@ -3246,6 +3325,16 @@ ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel, RangeTblEn
 		!hasIndexPaths && context->plannerOrderByData.shardKeyEqualityExpr != NULL)
 	{
 		SortIndexInputDetails *sortDetailsInput = linitial(sortDetails);
+
+		/* The primary key index has no collation; skip the synthetic _id index
+		 * path when the orderby is collation-aware so we don't return rows in
+		 * the wrong order. */
+		if (sortDetailsInput->collationConst != NULL)
+		{
+			list_free_deep(sortDetails);
+			return;
+		}
+
 		IndexOptInfo *primaryKeyIndex = GetPrimaryKeyIndexOptInfo(rel);
 
 		if (primaryKeyIndex != NULL)
@@ -3289,8 +3378,8 @@ ProcessOrderByStatements(PlannerInfo *root,
 {
 	int i = 0, sortDetailsIndex = 0;
 
-	bool isOrderById = false;
 	bool hasGroupby = false;
+	bool isOrderById = false;
 	List *sortDetails = GetSortDetails(root, path->path.parent->relid, &hasGroupby,
 									   &isOrderById);
 
@@ -3362,7 +3451,10 @@ ProcessOrderByStatements(PlannerInfo *root,
 			/* Now we've reached the first orderby */
 			OpExpr *orderElement;
 			if (sortDetailsInput->funcOid == BsonOrderByIndexFunctionOid() ||
-				sortDetailsInput->funcOid == BsonOrderByIndexReverseFunctionOid())
+				sortDetailsInput->funcOid == BsonOrderByIndexReverseFunctionOid() ||
+				sortDetailsInput->funcOid == BsonOrderByIndexWithCollationFunctionOid() ||
+				sortDetailsInput->funcOid ==
+				BsonOrderByIndexWithCollationReverseFunctionOid())
 			{
 				Oid indexOperator = BsonOrderByBsonIndexTypeOperatorId();
 
@@ -6377,14 +6469,19 @@ ProcessFullScanForOrderBy(SupportRequestIndexCondition *req, List *args)
 		return NULL;
 	}
 
+	pgbsonelement sortElement;
+	const char *queryCollation = PgbsonToSinglePgbsonElementWithCollation(
+		DatumGetPgBson(queryValue), &sortElement);
+	if (!IsQueryCollationCompatibleWithIndex(queryCollation, options))
+	{
+		return NULL;
+	}
+
 	if (!ValidateIndexForQualifierValue(options, queryValue,
 										BSON_INDEX_STRATEGY_DOLLAR_ORDERBY))
 	{
 		return NULL;
 	}
-
-	pgbsonelement sortElement;
-	PgbsonToSinglePgbsonElement(DatumGetPgBson(queryValue), &sortElement);
 
 	int8_t sortDirection;
 	GetCompositeOpClassColumnNumber(sortElement.path, options,
@@ -6415,7 +6512,8 @@ CreateKnownFullScanExpr(Datum queryValue, Expr *documentExpr, int sortDirection)
 	 * $range full scan.
 	 */
 	pgbsonelement sourceElement;
-	PgbsonToSinglePgbsonElement(DatumGetPgBson(queryValue), &sourceElement);
+	PgbsonToSinglePgbsonElementWithCollation(DatumGetPgBson(queryValue),
+											 &sourceElement);
 
 	if (sortDirection == 0)
 	{

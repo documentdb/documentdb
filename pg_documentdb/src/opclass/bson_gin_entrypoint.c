@@ -1728,11 +1728,21 @@ IsCollationApplicableToStrategy(BsonGinIndexOptionsBase *indexOptions,
 			return false;
 		}
 
-		/* TODO (COLLATION): To be supported */
-		case BSON_INDEX_STRATEGY_DOLLAR_RANGE:
+		/*
+		 * $orderby pushdown — collation-aware matching of the sort to a
+		 * collated index is enforced by the planner before ordered output
+		 * is attached. Validation here only needs to confirm the index can
+		 * be considered for ordered output; allow it through.
+		 */
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY:
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE:
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_INDEXTERM:
+		{
+			return true;
+		}
+
+		/* TODO (COLLATION): To be supported */
+		case BSON_INDEX_STRATEGY_DOLLAR_RANGE:
 
 		/* TODO (COLLATION): Pending unique index support */
 		case BSON_INDEX_STRATEGY_UNIQUE_EQUAL:

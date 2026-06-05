@@ -5241,21 +5241,24 @@ BsonOrderByIndexReverseFunctionOid(void)
 Oid
 BsonOrderByIndexWithCollationFunctionOid(void)
 {
-	return GetOperatorFunctionIdThreeArgs(&Cache.BsonOrderByIndexWithCollationFunctionId,
-										  DocumentDBApiInternalSchemaName,
-										  "bson_orderby_index", BsonTypeId(),
-										  BsonTypeId(), TEXTOID);
+	Oid argTypes[3] = { BsonTypeId(), BsonTypeId(), TEXTOID };
+	bool missingOk = true;
+	return GetSchemaFunctionIdWithNargs(&Cache.BsonOrderByIndexWithCollationFunctionId,
+										DocumentDBApiInternalSchemaName,
+										"bson_orderby_index", 3, argTypes,
+										missingOk);
 }
 
 
 Oid
 BsonOrderByIndexWithCollationReverseFunctionOid(void)
 {
-	return GetOperatorFunctionIdThreeArgs(
+	Oid argTypes[3] = { BsonTypeId(), BsonTypeId(), TEXTOID };
+	bool missingOk = true;
+	return GetSchemaFunctionIdWithNargs(
 		&Cache.BsonOrderByIndexWithCollationReverseFunctionId,
 		DocumentDBApiInternalSchemaName,
-		"bson_orderby_index_reverse", BsonTypeId(),
-		BsonTypeId(), TEXTOID);
+		"bson_orderby_index_reverse", 3, argTypes, missingOk);
 }
 
 
