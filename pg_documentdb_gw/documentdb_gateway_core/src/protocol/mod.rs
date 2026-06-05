@@ -20,6 +20,7 @@ pub mod util;
 pub const MAX_BSON_OBJECT_SIZE: i32 = 16 * 1024 * 1024; // 16 MB
 pub const MAX_MESSAGE_SIZE_BYTES: i32 = 48_000_000; // 48 MB
 pub const MAX_PRE_AUTH_MESSAGE_SIZE_BYTES: i32 = 250_000; // 250 KB
+pub const MESSAGE_SIZE_EXCEEDED_ERROR: &str = "Message size exceeds the maximum allowed size.";
 pub const LOGICAL_SESSION_TIMEOUT_MINUTES: u8 = 30;
 
 pub const OK_SUCCEEDED: f64 = 1.0;
