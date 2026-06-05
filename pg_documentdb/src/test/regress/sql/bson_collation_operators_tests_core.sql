@@ -1415,6 +1415,41 @@ SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "bson_types_
 -- 47.8: multi-element $nin ObjectId mismatched collation — index NOT used (array path)
 SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "bson_types_coll", "filter": { "a": { "$nin": [ {"$oid": "507f1f77bcf86cd799439011"}, {"$oid": "507f1f77bcf86cd799439022"} ] } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 2 } }');
 
+-- ======================================================================
+-- Section 48: ORDER BY strategies with collation
+-- ======================================================================
+
+SELECT documentdb_api.insert_one('coll_op_db','ord_strategies', '{"_id": 1, "a": "item20"}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','ord_strategies', '{"_id": 2, "a": "item3"}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','ord_strategies', '{"_id": 3, "a": "item11"}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','ord_strategies', '{"_id": 4, "a": "item1"}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','ord_strategies', '{"_id": 5, "a": "item100"}', NULL);
+SELECT documentdb_api.insert_one('coll_op_db','ord_strategies', '{"_id": 6, "a": "item2"}', NULL);
+
+-- 48.1: ASC sort, matching collation - bson_orderby_with_collation strategy
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "ord_strategies", "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+
+-- 48.2: DESC sort, matching collation - reverse strategy
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "ord_strategies", "sort": { "a": -1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+
+-- 48.3: locale mismatch - no pushdown; runtime sort with collation
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "ord_strategies", "sort": { "a": 1 }, "collation": { "locale": "fr", "numericOrdering": true } }');
+
+-- 48.4: uncollated query - binary sort order
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "ord_strategies", "sort": { "a": 1 } }');
+
+-- 48.5: enableOrderByIndexTerm ON - ASC matching collation
+BEGIN;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "ord_strategies", "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+END;
+
+-- 48.6: enableOrderByIndexTerm ON - DESC matching collation
+BEGIN;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "ord_strategies", "sort": { "a": -1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+END;
+
 SELECT documentdb_api.drop_collection('coll_op_db', 'write_in_coll');
 SELECT documentdb_api.drop_collection('coll_op_db', 'nested_path_coll');
 SELECT documentdb_api.drop_collection('coll_op_db', 'bson_types_coll');
@@ -1433,6 +1468,7 @@ SELECT documentdb_api.drop_collection('coll_op_db', 'insensitive_ops');
 SELECT documentdb_api.drop_collection('coll_op_db', 'mixed_types');
 SELECT documentdb_api.drop_collection('coll_op_db', 'multi_coll');
 SELECT documentdb_api.drop_collection('coll_op_db', 'multikey_coll');
+SELECT documentdb_api.drop_collection('coll_op_db', 'ord_strategies');
 SELECT documentdb_api.drop_collection('coll_op_db', 'single_field');
 SELECT documentdb_api.drop_collection('coll_op_db', 'three_key');
 

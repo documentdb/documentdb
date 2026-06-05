@@ -723,7 +723,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          Output: NULL::bson, (bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson)), (bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson))
          Sort Key: (bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          Presorted Key: (bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson))
-         Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 26kB  Peak Memory: 26kB
+         Full-sort Groups: 1  Sort Method: quicksort  Average Memory: xxxkB  Peak Memory: xxxkB
          ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
                Output: NULL::bson, bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson)
                Index Cond: (collection.document @>= '{ "city" : "A" }'::bson)
@@ -887,7 +887,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          Output: NULL::bson, (bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson)), (bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson))
          Sort Key: (bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          Presorted Key: (bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson))
-         Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 26kB  Peak Memory: 26kB
+         Full-sort Groups: 1  Sort Method: quicksort  Average Memory: xxxkB  Peak Memory: xxxkB
          ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
                Output: NULL::bson, bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson)
                Index Cond: (collection.document @>= '{ "city" : "A" }'::bson)
@@ -971,7 +971,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                      Output: collection.document, (bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson)), (bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson))
                      Sort Key: (bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
                      Presorted Key: (bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson))
-                     Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 27kB  Peak Memory: 27kB
+                     Full-sort Groups: 1  Sort Method: quicksort  Average Memory: xxxkB  Peak Memory: xxxkB
                      ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
                            Output: collection.document, bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson)
                            Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)

@@ -2737,10 +2737,49 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "elemmatch_coll", "filter": { "items": { "$elemMatch": { "$not": { "$eq": "Cherry" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
 
+
+-- ======================================================================
+-- Section 49: ORDER BY strategy EXPLAIN coverage for collated index
+-- ======================================================================
+
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','ord_strategies', '{"_id": 1, "a": "item20"}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','ord_strategies', '{"_id": 2, "a": "item3"}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','ord_strategies', '{"_id": 3, "a": "item11"}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','ord_strategies', '{"_id": 4, "a": "item1"}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','ord_strategies', '{"_id": 5, "a": "item100"}', NULL);
+SELECT documentdb_api.insert_one('coll_operators_index_explain_db','ord_strategies', '{"_id": 6, "a": "item2"}', NULL);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_operators_index_explain_db',
+  '{ "createIndexes": "ord_strategies",
+     "indexes": [{ "key": {"a": 1}, "name": "idx_a_en_num_ord_strategies",
+                   "collation": {"locale": "en", "numericOrdering": true} }] }', TRUE);
+
+SELECT collection_id AS ord_strategies_id FROM documentdb_api_catalog.collections WHERE collection_name = 'ord_strategies' AND database_name = 'coll_operators_index_explain_db' \gset
+ANALYZE documentdb_data.documents_:ord_strategies_id;
+
+-- 49.1: ASC matching collation, enableOrderByIndexTerm OFF — Sort via bson_orderby (runtime comparator)
+BEGIN;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "ord_strategies", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+END;
+
+-- 49.2: DESC matching collation, enableOrderByIndexTerm OFF — Sort via bson_orderby USING >>> (runtime comparator)
+BEGIN;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "ord_strategies", "filter": { "a": { "$exists": true } }, "sort": { "a": -1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+END;
+
+
 -- ======================================================================
 -- Cleanup
 -- ======================================================================
-
 RESET documentdb.enableExtendedExplainPlans;
 RESET enable_seqscan;
 RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
