@@ -224,7 +224,8 @@ aggregate_cursor_first_page(text *database, pgbson *aggregationSpec,
 {
 	ReportFeatureUsage(FEATURE_COMMAND_AGG_CURSOR_FIRST_PAGE);
 
-	CursorParamKind cursorParamKind = CursorParamKind_Streaming;
+	CursorParamKind cursorParamKind = EnableDynamicCursors ? CursorParamKind_Dynamic :
+									  CursorParamKind_Streaming;
 	bool setStatementTimeout = true;
 	QueryData queryData = GenerateFirstPageQueryData();
 	Query *query = GenerateAggregationQuery(database, aggregationSpec, &queryData,

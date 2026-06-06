@@ -12,6 +12,7 @@
 #include <access/stratnum.h>
 #include <utils/lsyscache.h>
 #include <utils/typcache.h>
+#include <utils/selfuncs.h>
 
 #include "utils/type_cache.h"
 
@@ -119,6 +120,7 @@ bson_operator_selectivity(PG_FUNCTION_ARGS)
 		}
 	}
 
+	CLAMP_PROBABILITY(selectivity);
 	PG_RETURN_FLOAT8(selectivity);
 }
 
@@ -135,6 +137,7 @@ bson_eqsel(PG_FUNCTION_ARGS)
 															PG_GETARG_DATUM(1),
 															PG_GETARG_DATUM(2),
 															PG_GETARG_DATUM(3)));
+	CLAMP_PROBABILITY(selectivity);
 	PG_RETURN_FLOAT8(selectivity);
 }
 
@@ -152,6 +155,7 @@ bson_scalargtsel(PG_FUNCTION_ARGS)
 															PG_GETARG_DATUM(1),
 															PG_GETARG_DATUM(2),
 															PG_GETARG_DATUM(3)));
+	CLAMP_PROBABILITY(selectivity);
 	PG_RETURN_FLOAT8(selectivity);
 }
 
@@ -169,6 +173,7 @@ bson_scalargesel(PG_FUNCTION_ARGS)
 															PG_GETARG_DATUM(1),
 															PG_GETARG_DATUM(2),
 															PG_GETARG_DATUM(3)));
+	CLAMP_PROBABILITY(selectivity);
 	PG_RETURN_FLOAT8(selectivity);
 }
 
@@ -186,6 +191,7 @@ bson_scalarltsel(PG_FUNCTION_ARGS)
 															PG_GETARG_DATUM(1),
 															PG_GETARG_DATUM(2),
 															PG_GETARG_DATUM(3)));
+	CLAMP_PROBABILITY(selectivity);
 	PG_RETURN_FLOAT8(selectivity);
 }
 
@@ -203,6 +209,7 @@ bson_scalarlesel(PG_FUNCTION_ARGS)
 															PG_GETARG_DATUM(1),
 															PG_GETARG_DATUM(2),
 															PG_GETARG_DATUM(3)));
+	CLAMP_PROBABILITY(selectivity);
 	PG_RETURN_FLOAT8(selectivity);
 }
 
@@ -219,5 +226,6 @@ bson_neqsel(PG_FUNCTION_ARGS)
 															PG_GETARG_DATUM(1),
 															PG_GETARG_DATUM(2),
 															PG_GETARG_DATUM(3)));
+	CLAMP_PROBABILITY(selectivity);
 	PG_RETURN_FLOAT8(selectivity);
 }
