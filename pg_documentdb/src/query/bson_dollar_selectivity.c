@@ -156,16 +156,20 @@ GetDollarExistsSelectivity(PlannerInfo *planner, Oid selectivityOpExpr, Node *le
 	rightValue->value_type = BSON_TYPE_NULL;
 	List *args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
 														   rightValue)));
-	double selectivity = DirectFunctionCall4(eqsel, PointerGetDatum(planner),
-											 ObjectIdGetDatum(selectivityOpExpr),
-											 PointerGetDatum(args), Int32GetDatum(
-												 varRelId));
+	double selectivity = DatumGetFloat8(DirectFunctionCall4(eqsel,
+															PointerGetDatum(planner),
+															ObjectIdGetDatum(
+																selectivityOpExpr),
+															PointerGetDatum(args),
+															Int32GetDatum(
+																varRelId)));
 
 	if (isExistsTrue)
 	{
 		selectivity = 1.0 - selectivity;
 	}
 
+	CLAMP_PROBABILITY(selectivity);
 	list_free(args);
 	return selectivity;
 }
@@ -292,12 +296,9 @@ GetCustomStatisticsSelectivity(PlannerInfo *planner, BsonIndexStrategy
 		{
 			args = list_make2(leftOperand, MakeBsonConst(BsonValueToDocumentPgbson(
 															 rightValue)));
-			selectivity = DatumGetFloat8(DirectFunctionCall4(neqsel, PointerGetDatum(
-																 planner),
-															 ObjectIdGetDatum(
-																 selectivityOpExpr),
-															 PointerGetDatum(args),
-															 Int32GetDatum(varRelId)));
+			selectivity = generic_restriction_selectivity(planner, selectivityOpExpr,
+														  collation, args, varRelId,
+														  defaultInputSelectivity);
 			break;
 		}
 	}

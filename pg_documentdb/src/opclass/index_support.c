@@ -955,8 +955,8 @@ CheckRestrictionPathNodeForIndexOperation(Expr *currentExpr,
 		{
 			context->hasStreamingContinuationScan = true;
 		}
-		else if (IsClusterVersionAtleast(DocDB_V0, 113, 0) && funcExpr->funcid ==
-				 ApiCursorTrackerFunctionId())
+		else if (IsClusterVersionAtleast(DocDB_V0, 112, 1) &&
+				 funcExpr->funcid == ApiCursorTrackerFunctionId())
 		{
 			context->hasDynamicStreamingContinuationScan = true;
 		}

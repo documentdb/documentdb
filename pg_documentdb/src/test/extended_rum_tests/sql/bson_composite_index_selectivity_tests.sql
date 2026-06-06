@@ -262,6 +262,41 @@ SELECT document FROM bson_aggregation_find('comp_idb',
 -- Cleanup: drop the collection to free resources
 SELECT documentdb_api.drop_collection('comp_idb', 'btree_selectivity');
 
+-- ============================================================================
+-- Root cause: GetDollarExistsSelectivity scenario
+-- ============================================================================
+
+SET documentdb.enablePerCollectionPlannerStatistics = on;
+SET documentdb.enablePlannerStatisticsNewCollections = on;
+
+-- Create a collection with a sparse field (some docs have "b", some don't)
+SELECT documentdb_api.insert_one('comp_idb', 'exists_sel', '{ "_id": 1, "a": 1 }');
+SELECT documentdb_api.insert_one('comp_idb', 'exists_sel', '{ "_id": 2, "a": 2, "b": 1 }');
+SELECT documentdb_api.insert_one('comp_idb', 'exists_sel', '{ "_id": 3, "a": 3 }');
+SELECT documentdb_api.insert_one('comp_idb', 'exists_sel', '{ "_id": 4, "a": 4, "b": 2 }');
+SELECT documentdb_api.insert_one('comp_idb', 'exists_sel', '{ "_id": 5, "a": 5 }');
+
+-- Create compound index (generates extended statistics when GUCs are on)
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'comp_idb',
+    '{ "createIndexes": "exists_sel", "indexes": [{ "key": { "a": 1, "b": 1 }, "name": "idx_exists_sel" }] }',
+    true
+);
+
+\d documentdb_data.documents_204
+
+-- Force stats collection
+ANALYZE documentdb_data.documents_204;
+
+-- $exists: true on field "a" with stats - exercises GetDollarExistsSelectivity
+SELECT document from documentdb_api_catalog.bson_aggregation_find('comp_idb', '{ "find": "exists_sel", "filter": { "a": { "$exists": true } } }');
+
+-- $exists: false on field "a" with stats
+SELECT document from documentdb_api_catalog.bson_aggregation_find('comp_idb', '{ "find": "exists_sel", "filter": { "a": { "$exists": false } } }');
+
+-- Cleanup
+SELECT documentdb_api.drop_collection('comp_idb', 'exists_sel');
+
 RESET enable_seqscan;
 RESET enable_bitmapscan;
 RESET documentdb.enablePerCollectionPlannerStatistics;
