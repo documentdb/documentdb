@@ -1316,7 +1316,7 @@ inline static bool
 TryAddDynamicCursorQuery(CursorParamKind cursorParamKind, QueryData *queryData,
 						 Query *query, AggregationPipelineBuildContext *context)
 {
-	if (!IsClusterVersionAtleast(DocDB_V0, 113, 0))
+	if (!IsClusterVersionAtleast(DocDB_V0, 112, 1))
 	{
 		return false;
 	}

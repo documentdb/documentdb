@@ -418,6 +418,38 @@ END $$;
 
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
 
+-- ===========================================================================
+-- Test: Aggregate cursor - verify aggregate_cursor_first_page uses dynamic cursors
+-- ===========================================================================
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+
+-- Aggregate with $match only (streamable pipeline)
+CREATE TEMP TABLE agg_cursor_test AS
+SELECT cursorPage, continuation FROM aggregate_cursor_first_page(
+    database => 'dyncursordb',
+    commandSpec => '{ "aggregate": "dyncursor_coll", "pipeline": [ { "$match": { "sk": 1 } } ], "cursor": { "batchSize": 2 } }',
+    cursorId => 540);
+
+SELECT bson_dollar_project(cursorPage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }')
+    FROM agg_cursor_test;
+
+-- Check cursor type: qd = dynamic, qc = streaming
+SELECT bson_dollar_project(continuation, '{ "qd": 1, "qc": 1 }') AS agg_cursor_type FROM agg_cursor_test;
+
+-- Compare with equivalent find (should also be dynamic)
+CREATE TEMP TABLE find_cursor_test AS
+SELECT cursorPage, continuation FROM find_cursor_first_page(
+    database => 'dyncursordb',
+    commandSpec => '{ "find": "dyncursor_coll", "filter": { "sk": 1 }, "batchSize": 2 }',
+    cursorId => 541);
+
+SELECT bson_dollar_project(continuation, '{ "qd": 1, "qc": 1 }') AS find_cursor_type FROM find_cursor_test;
+
+DROP TABLE agg_cursor_test;
+DROP TABLE find_cursor_test;
+
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
+
 -- Restore defaults
 SET documentdb.enablePrimaryKeyCursorScan TO off;
 SET documentdb.enableCursorPlanBeforeRestrictionPathUpdate TO off;
