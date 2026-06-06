@@ -4836,24 +4836,32 @@ GenerateCompositedUniqueEqualQueryValues(Datum *indexEntries, bool *partialMatch
 				}
 
 				/* If we're a partial match, then we are matching for nulls */
-				indexTerm.element.bsonValue.value_type = BSON_TYPE_MINKEY;
 				IndexTermCreateMetadata metadata = GetSinglePathTermCreateMetadata(
 					options, (int32_t) pathCount);
 				metadata.isDescending = IsIndexTermValueDescending(&indexTerm);
-				BsonIndexTermSerialized nullSerialized = SerializeBsonIndexTerm(
+
+				BsonIndexTermSerialized nullKeySerialized = SerializeBsonIndexTerm(
 					&indexTerm.element, &metadata);
 
-				compositeDatums[j] = nullSerialized.indexTermVal;
+				indexTerm.element.bsonValue.value_type = BSON_TYPE_MINKEY;
+				BsonIndexTermSerialized minKeySerialized = SerializeBsonIndexTerm(
+					&indexTerm.element, &metadata);
+
+				compositeDatums[j] = minKeySerialized.indexTermVal;
 				runDataForEntry->indexBounds[j].lowerBound.bound.value_type =
 					BSON_TYPE_MINKEY;
 				runDataForEntry->indexBounds[j].lowerBound.indexTermValue.element.
 				bsonValue.value_type = BSON_TYPE_MINKEY;
 				runDataForEntry->indexBounds[j].lowerBound.isBoundInclusive = false;
+				runDataForEntry->indexBounds[j].lowerBound.serializedTerm =
+					minKeySerialized.indexTermVal;
 				runDataForEntry->indexBounds[j].upperBound.indexTermValue.element.
 				bsonValue.value_type = BSON_TYPE_NULL;
 				runDataForEntry->indexBounds[j].upperBound.bound.value_type =
 					BSON_TYPE_NULL;
 				runDataForEntry->indexBounds[j].upperBound.isBoundInclusive = true;
+				runDataForEntry->indexBounds[j].upperBound.serializedTerm =
+					nullKeySerialized.indexTermVal;
 				runDataForEntry->indexBounds[j].isEqualityBound = false;
 			}
 			else
@@ -4863,6 +4871,10 @@ GenerateCompositedUniqueEqualQueryValues(Datum *indexEntries, bool *partialMatch
 					indexTerm.element.bsonValue;
 				runDataForEntry->indexBounds[j].upperBound.bound =
 					indexTerm.element.bsonValue;
+				runDataForEntry->indexBounds[j].lowerBound.serializedTerm =
+					DatumGetByteaPP(term);
+				runDataForEntry->indexBounds[j].upperBound.serializedTerm =
+					DatumGetByteaPP(term);
 				runDataForEntry->indexBounds[j].lowerBound.indexTermValue = indexTerm;
 				runDataForEntry->indexBounds[j].upperBound.indexTermValue = indexTerm;
 				runDataForEntry->indexBounds[j].upperBound.isBoundInclusive = true;
