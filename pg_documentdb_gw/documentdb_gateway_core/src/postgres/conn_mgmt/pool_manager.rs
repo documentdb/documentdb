@@ -619,10 +619,8 @@ mod tests {
             .get_data_pool("missing-user", &dynamic_configuration)
             .unwrap_err();
 
-        assert!(matches!(
-            err.kind(),
-            ErrorKind::DocumentDBError(ErrorCode::InternalError, _, _, _, _)
-        ));
+        assert_eq!(err.kind(), &ErrorKind::Gateway);
+        assert_eq!(err.error_code(), ErrorCode::InternalError);
     }
 
     #[tokio::test]
@@ -714,10 +712,8 @@ mod tests {
         let error = startup_validation_query(&query_catalog)
             .expect_err("Expected missing startup validation query to error");
 
-        assert!(matches!(
-            error.kind(),
-            ErrorKind::DocumentDBError(ErrorCode::InternalError, _, _, _, _)
-        ));
+        assert_eq!(error.kind(), &ErrorKind::Gateway);
+        assert_eq!(error.error_code(), ErrorCode::InternalError);
     }
 
     #[tokio::test]

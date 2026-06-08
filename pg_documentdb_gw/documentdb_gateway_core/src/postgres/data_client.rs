@@ -445,7 +445,7 @@ pub trait PgDataClient: Send + Sync {
             }
         };
 
-        let (_, request_info, request_tracker) = request_context.get_components();
+        let request_info = request_context.info();
         let command_timeout_ms = request_info.max_time_ms.map(i64::cast_unsigned);
         let req_opts = self.request_options(command_timeout_ms);
 
@@ -458,7 +458,7 @@ pub trait PgDataClient: Send + Sync {
                     .setup_configuration()
                     .postgres_command_timeout_secs(),
             ),
-            Some(request_tracker),
+            request_context,
             run_func,
         )
         .await

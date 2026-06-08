@@ -101,7 +101,6 @@ pub async fn process_kill_cursors(
         .ok_or(DocumentDBError::documentdb_error(
             ErrorCode::TypeMismatch,
             "killCursors cursors should be an array".to_owned(),
-            0,
         ))?;
 
     let mut cursor_ids = Vec::new();
@@ -177,7 +176,6 @@ pub async fn process_get_more(
             .ok_or(DocumentDBError::documentdb_error(
                 ErrorCode::CursorNotFound,
                 "Cursor not found in server".to_owned(),
-                0,
             ))?;
 
     // Validate Get More Request
@@ -202,7 +200,6 @@ pub async fn process_get_more(
         .ok_or(DocumentDBError::documentdb_error(
             ErrorCode::CursorNotFound,
             "Cursor not found in server".to_owned(),
-            0,
         ))?;
 
     let results = pg_data_client

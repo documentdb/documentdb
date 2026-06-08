@@ -10,12 +10,12 @@ use scc::HashSet;
 use std::sync::Arc;
 use tokio_postgres::IsolationLevel;
 
-use crate::context::transaction::TransactionNumber;
+use crate::context::transaction::{TransactionError, TransactionNumber};
 use crate::context::CursorId;
 use crate::security::principal::Principal;
 use crate::{
     context::LogicalSessionId,
-    error::{DocumentDBError, ErrorCode, Result},
+    error::ErrorCode,
     postgres::{self, conn_mgmt::Connection},
 };
 
@@ -47,7 +47,7 @@ impl GatewayTransaction {
         isolation_level: IsolationLevel,
         lsid: LogicalSessionId,
         owner: Principal,
-    ) -> Result<Self> {
+    ) -> Result<Self, TransactionError> {
         Ok(Self {
             lsid,
             transaction_number: request.transaction_number,
@@ -72,14 +72,13 @@ impl GatewayTransaction {
     /// # Errors
     ///
     /// Returns an error if the operation fails.
-    pub async fn commit(&mut self) -> Result<()> {
+    pub async fn commit(&mut self) -> Result<(), TransactionError> {
         self.pg_transaction
             .as_mut()
             .ok_or_else(|| {
-                DocumentDBError::documentdb_error(
+                TransactionError::SimpleError(
                     ErrorCode::NoSuchTransaction,
                     "No transaction found to commit".to_owned(),
-                    0,
                 )
             })?
             .commit()
@@ -89,14 +88,13 @@ impl GatewayTransaction {
     /// # Errors
     ///
     /// Returns an error if the operation fails.
-    pub async fn abort(&mut self) -> Result<()> {
+    pub async fn abort(&mut self) -> Result<(), TransactionError> {
         self.pg_transaction
             .as_mut()
             .ok_or_else(|| {
-                DocumentDBError::documentdb_error(
+                TransactionError::SimpleError(
                     ErrorCode::NoSuchTransaction,
                     "No transaction found to abort".to_owned(),
-                    0,
                 )
             })?
             .abort()

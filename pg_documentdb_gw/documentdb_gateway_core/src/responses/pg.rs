@@ -20,7 +20,7 @@ use crate::{
             duplicate_key_violation_message, generic_internal_error_message,
             pg_returned_invalid_response_message,
         },
-        CustomPostgresErrorMapper,
+        global_custom_error_mapper,
     },
 };
 
@@ -65,45 +65,58 @@ pub fn postgres_sqlstate_to_i32(sql_state: &SqlState) -> i32 {
 
 documentdb_int_error_mapping!();
 
-/// First applies any custom error mapping logic provided
-/// by the consumer of the documentdb gateway.
+/// Converts a raw [`tokio_postgres::Error`] into a [`DocumentDBError`].
 ///
-/// Then falls back to the generic error mapping logic in `map_pg_error_generic`
+/// If the error carries a [`SqlState`] code, the code and message are extracted
+/// and forwarded to [`map_pg_db_error`] for semantic mapping, with the original
+/// error preserved as the error source. Errors without a SQL state (e.g. I/O or
+/// connection errors) are returned as [`ErrorCode::InternalError`].
+#[must_use]
+pub fn map_pg_error(
+    pg_error: tokio_postgres::Error,
+    in_transaction: bool,
+    is_replica_cluster: bool,
+    activity_id: &str,
+) -> DocumentDBError {
+    let Some(sql_state) = pg_error.code().cloned() else {
+        return DocumentDBError::internal_error(format!("Non db postgres error: {pg_error}"));
+    };
+
+    let db_error_message = pg_error
+        .as_db_error()
+        .map_or(String::new(), |e| e.message().to_owned());
+
+    let mapped_result = map_pg_db_error(
+        in_transaction,
+        is_replica_cluster,
+        &sql_state,
+        &db_error_message,
+        activity_id,
+    );
+
+    DocumentDBError::from_mapped_postgres_error(
+        mapped_result.error_code(),
+        mapped_result.error_message(),
+        mapped_result.internal_note(),
+        pg_error,
+    )
+}
+
+/// First applies any registered custom error mapping logic,
+/// then falls back to the generic error mapping logic in `map_pg_error_generic`
 /// if the custom mapper returns `None`.
 ///
 /// Errors which are related to open sourced documentdb extension functionality
 /// should be mapped in `map_pg_error_generic`.
 #[must_use]
-pub fn map_pg_error<'a>(
-    connection_context: &'a ConnectionContext,
-    sql_state: &'a SqlState,
-    msg: &'a str,
-    activity_id: &str,
-) -> PostgresErrorMappedResult<'a> {
-    let is_in_transaction = connection_context.transaction.is_some();
-    let is_replica_cluster = connection_context
-        .dynamic_configuration()
-        .is_replica_cluster();
-    let custom_pg_error_mapper = connection_context.service_context.custom_pg_error_mapper();
-    map_pg_error_helper(
-        is_in_transaction,
-        is_replica_cluster,
-        sql_state,
-        msg,
-        activity_id,
-        custom_pg_error_mapper,
-    )
-}
-
-fn map_pg_error_helper<'a>(
+pub fn map_pg_db_error<'a>(
     is_in_transaction: bool,
     is_replica_cluster: bool,
     sql_state: &'a SqlState,
     msg: &'a str,
     activity_id: &str,
-    custom_pg_error_mapper: Option<&dyn CustomPostgresErrorMapper>,
 ) -> PostgresErrorMappedResult<'a> {
-    if let Some(mapper) = custom_pg_error_mapper {
+    if let Some(mapper) = global_custom_error_mapper() {
         // Check `CustomPostgresErrorMapper` trait definition for more details.
         if let Some(mapped_error) = mapper.map_postgres_error(sql_state, msg, activity_id) {
             return mapped_error;
@@ -525,7 +538,13 @@ fn transform_error(
 
     let pg_code = i32_to_postgres_sqlstate(*code)?;
 
-    let mapped_response = map_pg_error(context, &pg_code, &msg, activity_id);
+    let mapped_response = map_pg_db_error(
+        context.transaction.is_some(),
+        context.dynamic_configuration().is_replica_cluster(),
+        &pg_code,
+        &msg,
+        activity_id,
+    );
 
     if mapped_response.error_code() == ErrorCode::WriteConflict
         || mapped_response.error_code() == ErrorCode::InternalError
@@ -701,7 +720,18 @@ impl<'a> PostgresErrorMappedResult<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Once;
+
     use super::*;
+    use crate::responses::{register_custom_error_mapper, CustomPostgresErrorMapper};
+
+    static REGISTER_TEST_MAPPER: Once = Once::new();
+
+    fn register_test_mapper() {
+        REGISTER_TEST_MAPPER.call_once(|| {
+            let _ = register_custom_error_mapper(Box::new(TestMapper));
+        });
+    }
 
     #[derive(Debug)]
     struct TestMapper;
@@ -710,10 +740,10 @@ mod tests {
         fn map_postgres_error<'a>(
             &self,
             sql_state: &'a SqlState,
-            _msg: &'a str,
+            msg: &'a str,
             _activity_id: &str,
         ) -> Option<PostgresErrorMappedResult<'a>> {
-            (*sql_state == SqlState::DISK_FULL).then(|| {
+            ((*sql_state == SqlState::DISK_FULL) && msg.contains("custom_mapper_test")).then(|| {
                 PostgresErrorMappedResult::new(
                     ErrorCode::CommandNotSupported,
                     "custom mapped error",
@@ -725,28 +755,27 @@ mod tests {
 
     #[test]
     fn test_custom_postgres_error_mapper() {
-        let mapper = TestMapper;
+        register_test_mapper();
 
-        // Custom mapper handles DISK_FULL and overrides the default OutOfDiskSpace mapping.
-        let result = map_pg_error_helper(
+        // Custom mapper handles DISK_FULL with a test marker and overrides the default
+        // OutOfDiskSpace mapping.
+        let result = map_pg_db_error(
             false,
             false,
             &SqlState::DISK_FULL,
-            "could not extend file: No space left on device",
+            "custom_mapper_test: could not extend file: No space left on device",
             "test-activity",
-            Some(&mapper),
         );
         assert_eq!(result.error_code(), ErrorCode::CommandNotSupported);
         assert_eq!(result.error_message(), "custom mapped error");
 
         // For a state the custom mapper doesn't handle, it falls through to the generic logic.
-        let result = map_pg_error_helper(
+        let result = map_pg_db_error(
             false,
             false,
             &SqlState::FEATURE_NOT_SUPPORTED,
             "this feature is not supported",
             "test-activity",
-            Some(&mapper),
         );
         assert_eq!(result.error_code(), ErrorCode::CommandNotSupported);
         assert_eq!(result.error_message(), "this feature is not supported");
@@ -754,14 +783,14 @@ mod tests {
 
     #[test]
     fn test_no_custom_mapper_falls_through_to_generic() {
-        // When no custom mapper is provided, the generic mapping is used directly.
-        let result = map_pg_error_helper(
+        // When the message doesn't match custom mapper conditions,
+        // generic mapping is used directly.
+        let result = map_pg_db_error(
             false,
             false,
             &SqlState::DISK_FULL,
             "disk full",
             "test-activity",
-            None,
         );
         assert_eq!(result.error_code(), ErrorCode::OutOfDiskSpace);
         assert_eq!(result.error_message(), "disk full");
@@ -769,13 +798,12 @@ mod tests {
 
     #[test]
     fn test_map_with_unique_violation_in_transaction_returns_write_conflict() {
-        let result = map_pg_error_helper(
+        let result = map_pg_db_error(
             true,
             false,
             &SqlState::UNIQUE_VIOLATION,
             "duplicate key value violates unique constraint",
             "test-activity",
-            None,
         );
 
         assert_eq!(result.error_code(), ErrorCode::WriteConflict);
@@ -784,13 +812,12 @@ mod tests {
 
     #[test]
     fn test_map_with_unique_violation_no_transaction_returns_duplicate_key() {
-        let result = map_pg_error_helper(
+        let result = map_pg_db_error(
             false,
             false,
             &SqlState::UNIQUE_VIOLATION,
             "duplicate key value violates unique constraint",
             "test-activity",
-            None,
         );
 
         assert_eq!(result.error_code(), ErrorCode::DuplicateKey);
@@ -799,13 +826,12 @@ mod tests {
 
     #[test]
     fn test_map_with_query_canceled_in_transaction_returns_timeout_message() {
-        let result = map_pg_error_helper(
+        let result = map_pg_db_error(
             true,
             false,
             &SqlState::QUERY_CANCELED,
             "canceling statement due to statement timeout",
             "test-activity",
-            None,
         );
 
         assert_eq!(result.error_code(), ErrorCode::ExceededTimeLimit);
@@ -817,13 +843,12 @@ mod tests {
 
     #[test]
     fn test_map_with_query_canceled_no_transaction_suggests_max_time_ms() {
-        let result = map_pg_error_helper(
+        let result = map_pg_db_error(
             false,
             false,
             &SqlState::QUERY_CANCELED,
             "canceling statement due to statement timeout",
             "test-activity",
-            None,
         );
 
         assert_eq!(result.error_code(), ErrorCode::ExceededTimeLimit);
@@ -834,13 +859,12 @@ mod tests {
 
     #[test]
     fn test_map_with_read_only_transaction_on_replica_returns_illegal_operation() {
-        let result = map_pg_error_helper(
+        let result = map_pg_db_error(
             false,
             true,
             &SqlState::READ_ONLY_SQL_TRANSACTION,
             "cannot execute INSERT in a read-only transaction",
             "test-activity",
-            None,
         );
 
         assert_eq!(result.error_code(), ErrorCode::IllegalOperation);
@@ -852,13 +876,12 @@ mod tests {
 
     #[test]
     fn test_map_with_read_only_transaction_no_replica_returns_exceeded_time_limit() {
-        let result = map_pg_error_helper(
+        let result = map_pg_db_error(
             false,
             false,
             &SqlState::READ_ONLY_SQL_TRANSACTION,
             "cannot execute INSERT in a read-only transaction",
             "test-activity",
-            None,
         );
 
         assert_eq!(result.error_code(), ErrorCode::ExceededTimeLimit);
@@ -870,13 +893,12 @@ mod tests {
 
     #[test]
     fn test_map_with_program_limit_exceeded_memory_message_returns_exceeded_memory_limit() {
-        let result = map_pg_error_helper(
+        let result = map_pg_db_error(
             false,
             false,
             &SqlState::PROGRAM_LIMIT_EXCEEDED,
             "memory required is 120 MB, maintenance_work_mem is 64 MB",
             "test-activity",
-            None,
         );
 
         assert_eq!(result.error_code(), ErrorCode::ExceededMemoryLimit);
@@ -887,13 +909,12 @@ mod tests {
 
     #[test]
     fn test_map_with_numeric_out_of_range_halfvec_returns_bad_value() {
-        let result = map_pg_error_helper(
+        let result = map_pg_db_error(
             false,
             false,
             &SqlState::NUMERIC_VALUE_OUT_OF_RANGE,
             "value is out of range for type halfvec",
             "test-activity",
-            None,
         );
 
         assert_eq!(result.error_code(), ErrorCode::BadValue);
@@ -905,13 +926,12 @@ mod tests {
 
     #[test]
     fn test_map_with_internal_error_tsquery_stack_returns_bad_value() {
-        let result = map_pg_error_helper(
+        let result = map_pg_db_error(
             false,
             false,
             &SqlState::INTERNAL_ERROR,
             "tsquery stack too small",
             "test-activity",
-            None,
         );
 
         assert_eq!(result.error_code(), ErrorCode::BadValue);
@@ -922,13 +942,12 @@ mod tests {
 
     #[test]
     fn test_map_with_cannot_connect_now_returns_shutdown_in_progress() {
-        let result = map_pg_error_helper(
+        let result = map_pg_db_error(
             false,
             false,
             &SqlState::CANNOT_CONNECT_NOW,
             "the database system is shutting down",
             "test-activity",
-            None,
         );
 
         assert_eq!(result.error_code(), ErrorCode::ShutdownInProgress);

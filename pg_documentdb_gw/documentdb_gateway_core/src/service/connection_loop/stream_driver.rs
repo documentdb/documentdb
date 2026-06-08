@@ -51,13 +51,8 @@ where
             }
 
             Err(error) => {
-                if let Err(write_error) = responses::writer::write_error_without_header(
-                    &connection_context,
-                    error,
-                    &mut writer,
-                    connection_activity_id_as_str,
-                )
-                .await
+                if let Err(write_error) =
+                    responses::writer::write_error_without_header(error, &mut writer).await
                 {
                     tracing::warn!(
                         activity_id = connection_activity_id_as_str,

@@ -7,12 +7,11 @@
  */
 
 use crate::{
-    context::ConnectionContext,
     error::{DocumentDBError, Result},
     protocol::{
         header::Header, opcode::OpCode, MAX_MESSAGE_SIZE_BYTES, MESSAGE_SIZE_EXCEEDED_ERROR,
     },
-    responses::{CommandError, Response},
+    responses::{error_to_raw_document_buf, Response},
 };
 use bson::RawDocument;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
@@ -159,17 +158,11 @@ where
 
 /// # Errors
 /// Returns error if the operation fails.
-pub async fn write_error_without_header<S>(
-    connection_context: &ConnectionContext,
-    err: DocumentDBError,
-    stream: &mut S,
-    activity_id: &str,
-) -> Result<()>
+pub async fn write_error_without_header<S>(err: DocumentDBError, stream: &mut S) -> Result<()>
 where
     S: AsyncWrite + Unpin,
 {
-    let response =
-        CommandError::from_error(connection_context, &err, activity_id).to_raw_document_buf();
+    let response = error_to_raw_document_buf(&err);
 
     write_message_for_request_id(0, &response, stream).await?;
     stream.flush().await?;

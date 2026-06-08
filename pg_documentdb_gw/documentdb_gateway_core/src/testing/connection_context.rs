@@ -71,7 +71,6 @@ pub async fn test_connection_context(
         dynamic_configuration,
         pool_manager,
         test_tls_provider().await,
-        None,
     );
 
     ConnectionContext::new(

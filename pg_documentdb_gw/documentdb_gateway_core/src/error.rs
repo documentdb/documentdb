@@ -17,42 +17,177 @@ use tokio_postgres::error::SqlState;
 use crate::responses::constant::{
     generic_internal_error_message, pg_returned_invalid_response_message,
 };
+use crate::responses::{postgres_sqlstate_to_i32, CustomPgDbError};
 
 documentdb_error_code_enum!();
 documentdb_extensive_log_postgres_errors!();
 
+#[derive(Debug, PartialEq, Eq, strum_macros::AsRefStr, strum_macros::Display)]
 pub enum ErrorKind {
-    IoError(io::Error, Backtrace),
-    DocumentDBError(
-        ErrorCode,
-        String, // Error message shown to user. This should not be logged as it may contain PII.
-        Option<String>, // Error message for logging, must be PII free.
-        i32,    // Optional numeric sub-status code for telemetry and response payloads.
-        Backtrace,
-    ),
-    PostgresError(tokio_postgres::Error, Backtrace),
-    PostgresDocumentDBError(i32, String, Backtrace),
-    PoolError(PoolError, Backtrace),
-    CreatePoolError(CreatePoolError, Backtrace),
-    BuildPoolError(BuildError, Backtrace),
-    RawBsonError(bson::raw::Error, Backtrace),
-    SSLError(openssl::ssl::Error, Backtrace),
-    SSLErrorStack(ErrorStack, Backtrace),
+    Io,
+    Gateway,
+    Postgres,
+    Pool,
+    RawBson,
+    Ssl,
 }
 
-pub struct DocumentDBError(Box<ErrorKind>);
+struct ErrorInner {
+    kind: ErrorKind,
+    error_code: ErrorCode,
+    error_message_user: String,
+    error_message_internal: Option<String>,
+    source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    backtrace: Backtrace,
+}
+
+pub struct DocumentDBError(Box<ErrorInner>);
 
 impl DocumentDBError {
     #[must_use]
-    pub fn new(document_db_error: ErrorKind) -> Self {
-        Self(Box::new(document_db_error))
+    pub fn kind(&self) -> &ErrorKind {
+        &self.0.kind
     }
 
     #[must_use]
-    pub const fn kind(&self) -> &ErrorKind {
-        &self.0
+    pub const fn error_code(&self) -> ErrorCode {
+        self.0.error_code
     }
 
+    /// Returns the HTTP status code corresponding to this error's error code.
+    #[must_use]
+    pub const fn http_status_code(&self) -> u16 {
+        match self.0.error_code {
+            ErrorCode::AuthenticationFailed => 401,
+            ErrorCode::Unauthorized => 403,
+            ErrorCode::InternalError => 500,
+            ErrorCode::ExceededTimeLimit => 408,
+            ErrorCode::DuplicateKey => 409,
+            _ => 400,
+        }
+    }
+
+    /// Returns the sub-status code derived from the underlying `PostgreSQL`
+    /// `SqlState`, if one is available.
+    #[must_use]
+    pub fn sub_status_code(&self) -> Option<i32> {
+        if let Some(db_error) = self.as_db_error() {
+            return Some(postgres_sqlstate_to_i32(db_error.code()));
+        }
+
+        if let Some(custom) = self
+            .0
+            .source
+            .as_ref()
+            .and_then(|s| s.downcast_ref::<CustomPgDbError>())
+        {
+            return Some(postgres_sqlstate_to_i32(custom.status_code()));
+        }
+
+        None
+    }
+
+    #[must_use]
+    pub fn error_message_user(&self) -> &str {
+        &self.0.error_message_user
+    }
+
+    #[must_use]
+    pub fn error_message_internal(&self) -> Option<&str> {
+        self.0.error_message_internal.as_deref()
+    }
+
+    #[must_use]
+    pub fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.0
+            .source
+            .as_deref()
+            .map(|source| source as &(dyn std::error::Error + 'static))
+    }
+
+    #[must_use = "backtrace is captured for diagnostic purposes"]
+    pub const fn backtrace(&self) -> &Backtrace {
+        &self.0.backtrace
+    }
+
+    #[must_use]
+    pub fn as_postgres_error(&self) -> Option<&tokio_postgres::Error> {
+        self.0
+            .source
+            .as_ref()
+            .and_then(|source| source.downcast_ref::<tokio_postgres::Error>())
+    }
+
+    #[must_use]
+    pub fn as_db_error(&self) -> Option<&tokio_postgres::error::DbError> {
+        self.as_postgres_error()
+            .and_then(tokio_postgres::Error::as_db_error)
+    }
+
+    #[must_use]
+    pub fn as_io_error(&self) -> Option<&std::io::Error> {
+        self.0
+            .source
+            .as_ref()
+            .and_then(|source| source.downcast_ref::<std::io::Error>())
+    }
+
+    #[must_use]
+    pub fn as_pool_error(&self) -> Option<&PoolError> {
+        self.0
+            .source
+            .as_ref()
+            .and_then(|source| source.downcast_ref::<PoolError>())
+    }
+
+    fn new_documentdb_error(
+        error_code: ErrorCode,
+        error_message_user: String,
+        error_message_internal: Option<String>,
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+        kind: ErrorKind,
+    ) -> Self {
+        Self(Box::new(ErrorInner {
+            error_code,
+            error_message_user,
+            error_message_internal,
+            backtrace: Backtrace::capture(),
+            source,
+            kind,
+        }))
+    }
+
+    #[must_use]
+    pub fn from_mapped_postgres_error(
+        code: ErrorCode,
+        message: &str,
+        error_message_internal: Option<&str>,
+        pg_error: tokio_postgres::Error,
+    ) -> Self {
+        Self::new_documentdb_error(
+            code,
+            message.to_owned(),
+            error_message_internal.map(std::borrow::ToOwned::to_owned),
+            Some(Box::new(pg_error)),
+            ErrorKind::Postgres,
+        )
+    }
+
+    #[must_use]
+    pub fn from_mapped_custom_postgres_error(
+        code: ErrorCode,
+        error_message_user: &str,
+        error_message_internal: Option<&str>,
+        custom_pg_db_error: CustomPgDbError,
+    ) -> Self {
+        Self::new_documentdb_error(
+            code,
+            error_message_user.to_owned(),
+            error_message_internal.map(std::borrow::ToOwned::to_owned),
+            Some(Box::new(custom_pg_db_error)),
+            ErrorKind::Postgres,
+        )
+    }
     pub fn parse_failure<'a, E: std::fmt::Display>() -> impl Fn(E) -> Self + 'a {
         move |e| Self::bad_value(format!("Failed to parse: {e}"))
     }
@@ -76,129 +211,134 @@ impl DocumentDBError {
     /// to ensure a clear separation of these concerns and informs what kind of error message
     /// to return to the client.
     #[must_use]
-    pub fn not_authenticated(msg: String) -> Self {
-        Self::unauthorized(msg)
+    pub fn not_authenticated(error_message_user: String) -> Self {
+        Self::unauthorized(error_message_user)
     }
 
     #[must_use]
-    pub fn unauthorized(msg: String) -> Self {
-        Self::new(ErrorKind::DocumentDBError(
+    pub fn unauthorized(error_message_user: String) -> Self {
+        Self::new_documentdb_error(
             ErrorCode::Unauthorized,
-            msg.clone(),
-            msg.into(),
-            0,
-            Backtrace::capture(),
-        ))
+            error_message_user.clone(),
+            Some(error_message_user),
+            None,
+            ErrorKind::Gateway,
+        )
     }
 
     #[must_use]
-    pub fn authentication_failed(msg: String) -> Self {
-        Self::new(ErrorKind::DocumentDBError(
+    pub fn authentication_failed(error_message_user: String) -> Self {
+        Self::new_documentdb_error(
             ErrorCode::AuthenticationFailed,
-            msg.clone(),
-            msg.into(),
-            0,
-            Backtrace::capture(),
-        ))
+            error_message_user.clone(),
+            Some(error_message_user),
+            None,
+            ErrorKind::Gateway,
+        )
     }
 
     #[must_use]
-    pub fn authentication_failed_internal_error(msg: String, message_log: &str) -> Self {
-        Self::new(ErrorKind::DocumentDBError(
+    pub fn authentication_failed_internal_error(
+        error_message_user: String,
+        error_message_internal: &str,
+    ) -> Self {
+        Self::new_documentdb_error(
             ErrorCode::AuthenticationFailed,
-            msg,
-            Some(message_log.to_owned()),
-            -11,
-            Backtrace::capture(),
-        ))
+            error_message_user,
+            Some(format!(
+                "[Authentication][InternalServerError] {error_message_internal}"
+            )),
+            None,
+            ErrorKind::Gateway,
+        )
     }
 
     #[must_use]
-    pub fn bad_value(msg: String) -> Self {
-        Self::new(ErrorKind::DocumentDBError(
+    pub fn bad_value(error_message_user: String) -> Self {
+        Self::new_documentdb_error(
             ErrorCode::BadValue,
-            msg.clone(),
-            msg.into(),
-            0,
-            Backtrace::capture(),
-        ))
+            error_message_user.clone(),
+            Some(error_message_user),
+            None,
+            ErrorKind::Gateway,
+        )
     }
 
     #[must_use]
-    pub fn internal_error(message_log: String) -> Self {
-        Self::new(ErrorKind::DocumentDBError(
+    pub fn internal_error(error_message_internal: String) -> Self {
+        Self::new_documentdb_error(
             ErrorCode::InternalError,
             generic_internal_error_message().to_owned(),
-            message_log.into(),
-            -11,
-            Backtrace::capture(),
-        ))
+            Some(error_message_internal),
+            None,
+            ErrorKind::Gateway,
+        )
     }
 
     #[must_use]
-    pub fn type_mismatch(msg: String) -> Self {
-        Self::new(ErrorKind::DocumentDBError(
+    pub fn type_mismatch(error_message_user: String) -> Self {
+        Self::new_documentdb_error(
             ErrorCode::TypeMismatch,
-            msg.clone(),
-            msg.into(),
-            0,
-            Backtrace::capture(),
-        ))
+            error_message_user.clone(),
+            Some(error_message_user),
+            None,
+            ErrorKind::Gateway,
+        )
     }
 
     #[must_use]
-    pub fn user_not_found(msg: String) -> Self {
-        Self::new(ErrorKind::DocumentDBError(
+    pub fn user_not_found(error_message_user: String) -> Self {
+        Self::new_documentdb_error(
             ErrorCode::UserNotFound,
-            msg.clone(),
-            msg.into(),
-            0,
-            Backtrace::capture(),
-        ))
+            error_message_user.clone(),
+            Some(error_message_user),
+            None,
+            ErrorKind::Gateway,
+        )
     }
 
     #[must_use]
-    pub fn role_not_found(msg: String) -> Self {
-        Self::new(ErrorKind::DocumentDBError(
+    pub fn role_not_found(error_message_user: String) -> Self {
+        Self::new_documentdb_error(
             ErrorCode::RoleNotFound,
-            msg.clone(),
-            msg.into(),
-            0,
-            Backtrace::capture(),
-        ))
+            error_message_user.clone(),
+            Some(error_message_user),
+            None,
+            ErrorKind::Gateway,
+        )
     }
 
     #[must_use]
-    pub fn duplicate_user(msg: String) -> Self {
-        Self::new(ErrorKind::DocumentDBError(
+    pub fn duplicate_user(error_message_user: String) -> Self {
+        Self::new_documentdb_error(
             ErrorCode::Location51003,
-            msg.clone(),
-            msg.into(),
-            0,
-            Backtrace::capture(),
-        ))
+            error_message_user.clone(),
+            Some(error_message_user),
+            None,
+            ErrorKind::Gateway,
+        )
     }
 
     #[must_use]
-    pub fn duplicate_role(msg: String) -> Self {
-        Self::new(ErrorKind::DocumentDBError(
+    pub fn duplicate_role(error_message_user: String) -> Self {
+        Self::new_documentdb_error(
             ErrorCode::Location51002,
-            msg.clone(),
-            msg.into(),
-            0,
-            Backtrace::capture(),
-        ))
+            error_message_user.clone(),
+            Some(error_message_user),
+            None,
+            ErrorKind::Gateway,
+        )
     }
 
     #[must_use]
-    pub fn reauthentication_required(msg: String) -> Self {
-        Self::new(ErrorKind::DocumentDBError(
+    pub fn reauthentication_required(error_message_user: String) -> Self {
+        Self::new_documentdb_error(
             ErrorCode::ReauthenticationRequired,
-            msg.clone(),
-            msg.into(),
-            0,
-            Backtrace::capture(),
-        ))
+            error_message_user.clone(),
+            Some(error_message_user),
+            None,
+            ErrorKind::Gateway,
+        )
     }
 
     #[expect(
@@ -206,60 +346,40 @@ impl DocumentDBError {
         reason = "need to refactor as a separate change"
     )]
     #[must_use]
-    pub fn documentdb_error(
-        error_code: ErrorCode,
-        error_message: String,
-        sub_status_code: i32,
-    ) -> Self {
-        Self::new(ErrorKind::DocumentDBError(
+    pub fn documentdb_error(error_code: ErrorCode, error_message_user: String) -> Self {
+        Self::new_documentdb_error(
             error_code,
-            error_message.clone(),
-            error_message.into(),
-            sub_status_code,
-            Backtrace::capture(),
-        ))
+            error_message_user.clone(),
+            Some(error_message_user),
+            None,
+            ErrorKind::Gateway,
+        )
     }
 
     #[must_use]
     pub fn error_with_loggable_message(
         code: ErrorCode,
-        message: &str,
-        error_message_loggable: &str,
+        error_message_user: &str,
+        error_message_internal: &str,
     ) -> Self {
-        Self::new(ErrorKind::DocumentDBError(
+        Self::new_documentdb_error(
             code,
-            message.to_owned(),
-            Some(error_message_loggable.to_owned()),
-            0,
-            Backtrace::capture(),
-        ))
+            error_message_user.to_owned(),
+            Some(error_message_internal.to_owned()),
+            None,
+            ErrorKind::Gateway,
+        )
     }
 
     #[must_use]
-    pub const fn error_code_enum(&self) -> Option<ErrorCode> {
-        match self.kind() {
-            ErrorKind::DocumentDBError(code, _, _, _, _) => Some(*code),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub const fn sub_status_code(&self) -> Option<i32> {
-        match self.kind() {
-            ErrorKind::DocumentDBError(_, _, _, sub_status_code, _) => Some(*sub_status_code),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub fn command_not_supported(msg: String) -> Self {
-        Self::new(ErrorKind::DocumentDBError(
+    pub fn command_not_supported(error_message_user: String) -> Self {
+        Self::new_documentdb_error(
             ErrorCode::CommandNotSupported,
-            msg.clone(),
-            msg.into(),
-            0,
-            Backtrace::capture(),
-        ))
+            error_message_user.clone(),
+            Some(error_message_user),
+            None,
+            ErrorKind::Gateway,
+        )
     }
 }
 
@@ -268,66 +388,104 @@ pub type Result<T> = std::result::Result<T, DocumentDBError>;
 
 impl From<io::Error> for DocumentDBError {
     fn from(error: io::Error) -> Self {
-        Self::new(ErrorKind::IoError(error, Backtrace::capture()))
+        Self::new_documentdb_error(
+            ErrorCode::InternalError,
+            generic_internal_error_message().to_owned(),
+            Some(error.to_string()),
+            Some(Box::new(error)),
+            ErrorKind::Io,
+        )
     }
 }
 
 impl From<tokio_postgres::Error> for DocumentDBError {
     fn from(error: tokio_postgres::Error) -> Self {
-        Self::new(ErrorKind::PostgresError(error, Backtrace::capture()))
+        Self::new_documentdb_error(
+            ErrorCode::InternalError,
+            generic_internal_error_message().to_owned(),
+            Some(error.to_string()),
+            Some(Box::new(error)),
+            ErrorKind::Postgres,
+        )
     }
 }
 
 impl From<bson::raw::Error> for DocumentDBError {
     fn from(error: bson::raw::Error) -> Self {
-        Self::new(ErrorKind::RawBsonError(error, Backtrace::capture()))
+        Self::new_documentdb_error(
+            ErrorCode::InternalError,
+            generic_internal_error_message().to_owned(),
+            Some(error.to_string()),
+            None,
+            ErrorKind::RawBson,
+        )
     }
 }
 
 impl From<PoolError> for DocumentDBError {
     fn from(error: PoolError) -> Self {
-        Self::new(ErrorKind::PoolError(error, Backtrace::capture()))
+        Self::new_documentdb_error(
+            ErrorCode::InternalError,
+            generic_internal_error_message().to_owned(),
+            Some(error.to_string()),
+            Some(Box::new(error)),
+            ErrorKind::Pool,
+        )
     }
 }
 
 impl From<CreatePoolError> for DocumentDBError {
     fn from(error: CreatePoolError) -> Self {
-        Self::new(ErrorKind::CreatePoolError(error, Backtrace::capture()))
+        Self::new_documentdb_error(
+            ErrorCode::InternalError,
+            generic_internal_error_message().to_owned(),
+            Some(error.to_string()),
+            None,
+            ErrorKind::Pool,
+        )
     }
 }
 
 impl From<BuildError> for DocumentDBError {
     fn from(error: BuildError) -> Self {
-        Self::new(ErrorKind::BuildPoolError(error, Backtrace::capture()))
+        Self::new_documentdb_error(
+            ErrorCode::InternalError,
+            generic_internal_error_message().to_owned(),
+            Some(error.to_string()),
+            None,
+            ErrorKind::Pool,
+        )
     }
 }
 
 impl From<ErrorStack> for DocumentDBError {
     fn from(error: ErrorStack) -> Self {
-        Self::new(ErrorKind::SSLErrorStack(error, Backtrace::capture()))
+        Self::new_documentdb_error(
+            ErrorCode::InternalError,
+            generic_internal_error_message().to_owned(),
+            Some(error.to_string()),
+            None,
+            ErrorKind::Ssl,
+        )
     }
 }
 
 impl From<openssl::ssl::Error> for DocumentDBError {
     fn from(error: openssl::ssl::Error) -> Self {
-        Self::new(ErrorKind::SSLError(error, Backtrace::capture()))
-    }
-}
-
-#[expect(
-    clippy::use_debug,
-    reason = "debug formatting for Display implementation"
-)]
-impl Display for ErrorCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
+        Self::new_documentdb_error(
+            ErrorCode::InternalError,
+            generic_internal_error_message().to_owned(),
+            Some(error.to_string()),
+            None,
+            ErrorKind::Ssl,
+        )
     }
 }
 
 // Please keep this output PII free.
 impl Display for DocumentDBError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        fmt_error_kind_pii_safe(self.kind(), f)
+        fmt_error_kind_pii_safe(self, f)
     }
 }
 
@@ -340,61 +498,29 @@ impl std::fmt::Debug for DocumentDBError {
     }
 }
 
-impl std::fmt::Debug for ErrorKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        fmt_error_kind_pii_safe(self, f)
-    }
-}
-
 fn fmt_error_kind_pii_safe(
-    error_kind: &ErrorKind,
+    error: &DocumentDBError,
     f: &mut std::fmt::Formatter<'_>,
 ) -> std::fmt::Result {
-    match error_kind {
-        ErrorKind::IoError(e, _) => {
-            write!(f, "I/O error while processing request: {e}")
-        }
-        ErrorKind::DocumentDBError(code, _, error_message_loggable, _, _) => {
-            let msg = error_message_loggable.as_deref().unwrap_or("None");
-            write!(
-                f,
-                "Request failed with error code {code}, error_message_loggable: {msg}"
-            )
-        }
-        ErrorKind::PostgresError(e, _) => {
-            let error_message = match e.as_db_error() {
-                Some(db_error) => format!(
-                    "Postgres db error, code={}, hint={}, file={}, line={}",
-                    db_error.code().code(),
-                    db_error.hint().unwrap_or("None"),
-                    db_error.file().unwrap_or("None"),
-                    db_error.line().unwrap_or(0),
-                ),
-                None => e.to_string(),
-            };
-            write!(f, "Postgres operation failed: {error_message}")
-        }
-        ErrorKind::PostgresDocumentDBError(code, _, _) => {
-            write!(f, "Postgres operation failed with error code {code}")
-        }
-        ErrorKind::PoolError(e, _) => {
-            write!(f, "Connection pool error: {e}")
-        }
-        ErrorKind::CreatePoolError(e, _) => {
-            write!(f, "Unable to create connection pool: {e}")
-        }
-        ErrorKind::BuildPoolError(e, _) => {
-            write!(f, "Unable to build connection pool: {e}")
-        }
-        ErrorKind::RawBsonError(e, _) => {
-            write!(f, "Invalid BSON error: {e}")
-        }
-        ErrorKind::SSLError(e, _) => {
-            write!(f, "TLS/SSL error: {e}")
-        }
-        ErrorKind::SSLErrorStack(e, _) => {
-            write!(f, "TLS/SSL error: {e}")
-        }
+    let kind = error.kind();
+    let error_code = error.error_code();
+    let error_message_internal = error
+        .error_message_internal()
+        .unwrap_or("no_internal_message");
+    if let Some(db_error) = error.as_db_error() {
+        write!(
+            f,
+            "Request failed with kind {kind}, code {error_code}, error_message_internal: {error_message_internal}, db_error_code: {}, db_error_hint: {}, db_error_file: {}, db_error_line: {}",
+            db_error.code().code(),
+            db_error.hint().unwrap_or_default(),
+            db_error.file().unwrap_or("not_found"),
+            db_error.line().unwrap_or_default()
+        )
+    } else {
+        write!(
+            f,
+            "Request failed with kind {kind}, code {error_code}, error_message_internal: {error_message_internal}"
+        )
     }
 }
 

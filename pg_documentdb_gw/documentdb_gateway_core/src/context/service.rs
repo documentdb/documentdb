@@ -12,7 +12,6 @@ use crate::{
     configuration::{DynamicConfiguration, SetupConfiguration},
     context::{CursorStore, SessionManager, TransactionStore},
     postgres::{conn_mgmt::PoolManager, QueryCatalog},
-    responses::CustomPostgresErrorMapper,
     service::TlsProvider,
     telemetry::TelemetryConfig,
 };
@@ -23,7 +22,6 @@ pub struct ServiceContextInner {
     pub dynamic_configuration: Arc<dyn DynamicConfiguration>,
     pub connection_pool_manager: Arc<PoolManager>,
     pub tls_provider: TlsProvider,
-    pub custom_pg_error_mapper: Option<Box<dyn CustomPostgresErrorMapper>>,
     pub request_metrics_enabled: bool,
     session_manager: SessionManager,
 }
@@ -38,7 +36,6 @@ impl ServiceContext {
         dynamic_configuration: Arc<dyn DynamicConfiguration>,
         connection_pool_manager: Arc<PoolManager>,
         tls_provider: TlsProvider,
-        custom_pg_error_mapper: Option<Box<dyn CustomPostgresErrorMapper>>,
     ) -> Self {
         let request_metrics_enabled = TelemetryConfig::new(setup_configuration.telemetry_options())
             .metrics()
@@ -57,7 +54,6 @@ impl ServiceContext {
             dynamic_configuration,
             connection_pool_manager,
             tls_provider,
-            custom_pg_error_mapper,
             request_metrics_enabled,
             session_manager,
         };
@@ -97,11 +93,6 @@ impl ServiceContext {
     #[must_use]
     pub fn connection_pool_manager(&self) -> &PoolManager {
         &self.0.connection_pool_manager
-    }
-
-    #[must_use]
-    pub fn custom_pg_error_mapper(&self) -> Option<&dyn CustomPostgresErrorMapper> {
-        self.0.custom_pg_error_mapper.as_deref()
     }
 
     #[must_use]
