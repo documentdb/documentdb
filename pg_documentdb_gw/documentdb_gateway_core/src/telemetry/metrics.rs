@@ -21,7 +21,7 @@ use crate::{
     error::{DocumentDBError, Result},
     protocol::header::Header,
     requests::{request_tracker::RequestTracker, Request, RequestIntervalKind, RequestType},
-    responses::{CommandError, Response},
+    responses::Response,
     telemetry::config::{env_var, DEFAULT_EXPORT_TIMEOUT_MS, DEFAULT_OTLP_ENDPOINT},
 };
 
@@ -245,7 +245,7 @@ static GATEWAY_METRICS: LazyLock<GatewayMetrics> = LazyLock::new(|| {
 pub fn record_gateway_metrics(
     header: &Header,
     request: Option<&Request<'_>>,
-    response: Either<&Response, (&CommandError, usize)>,
+    response: Either<&Response, (&DocumentDBError, usize)>,
     collection: &str,
     request_tracker: &RequestTracker,
 ) {
@@ -266,7 +266,7 @@ pub fn record_gateway_metrics(
         KeyValue::new("db.namespace", db_name.to_owned()),
     ];
     if let Either::Right((err, _)) = &response {
-        base_attrs.push(KeyValue::new("error.type", err.code().to_string()));
+        base_attrs.push(KeyValue::new("error.type", err.error_code().to_string()));
     }
 
     metrics.operations_count.add(1, &base_attrs);

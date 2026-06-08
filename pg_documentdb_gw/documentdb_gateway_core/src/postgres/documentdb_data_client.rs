@@ -15,7 +15,7 @@ use tokio_postgres::{error::SqlState, types::Type, Row};
 use crate::{
     auth::AuthState,
     context::{ConnectionContext, Cursor, RequestContext, ServiceContext},
-    error::{DocumentDBError, ErrorKind, Result},
+    error::{DocumentDBError, Result},
     explain::Verbosity,
     postgres::{
         conn_mgmt::{Connection, ConnectionPool, PoolConnection, PullConnection, QueryOptions},
@@ -35,11 +35,9 @@ pub fn remap_error(
     remap_func: fn(String) -> DocumentDBError,
     target_error_message: &str,
 ) -> DocumentDBError {
-    if let ErrorKind::PostgresError(pg_error, _) = error.kind() {
-        if let Some(code) = pg_error.code() {
-            if code == source_sql_state {
-                return remap_func(target_error_message.to_owned());
-            }
+    if let Some(db_error) = error.as_db_error() {
+        if db_error.code() == source_sql_state {
+            return remap_func(target_error_message.to_owned());
         }
     }
     error

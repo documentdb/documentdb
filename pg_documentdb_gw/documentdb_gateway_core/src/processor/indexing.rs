@@ -14,10 +14,11 @@ use tokio::time::{Duration, Instant};
 use crate::{
     configuration::DynamicConfiguration,
     context::{ConnectionContext, RequestContext},
-    error::{DocumentDBError, ErrorCode, ErrorKind, Result},
+    error::{DocumentDBError, ErrorCode, Result},
     postgres::{PgDataClient, PgDocument},
     responses::{
-        constant::pg_returned_invalid_response_message, PgResponse, RawResponse, Response,
+        constant::pg_returned_invalid_response_message, i32_to_postgres_sqlstate, map_pg_db_error,
+        CustomPgDbError, PgResponse, RawResponse, Response,
     },
 };
 
@@ -32,7 +33,6 @@ pub async fn process_create_indexes(
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::IllegalOperation,
             "Creating indexes in the \"config\" or \"admin\" databases is not allowed".to_owned(),
-            0,
         ));
     }
 
@@ -55,7 +55,7 @@ pub async fn process_create_indexes(
         )
         .await
     } else {
-        parse_create_index_error(&response)
+        parse_create_index_error(&response, connection_context, request_context.activity_id)
     }
 }
 
@@ -90,7 +90,11 @@ pub async fn wait_for_index(
         let success: bool = row.get(1);
 
         if !success {
-            return parse_create_index_error(&PgResponse::new(wait_for_index_rows));
+            return parse_create_index_error(
+                &PgResponse::new(wait_for_index_rows),
+                connection_context,
+                request_context.activity_id,
+            );
         }
 
         let complete: bool = row.get(2);
@@ -104,13 +108,51 @@ pub async fn wait_for_index(
                 DocumentDBError::internal_error("Failed to convert max_time_ms to u128".to_owned())
             })?;
             if start_time.elapsed().as_millis() > max_time_ms {
-                return Err(DocumentDBError::documentdb_error(ErrorCode::ExceededTimeLimit, "The command being executed was terminated due to a command timeout. This may be due to concurrent transactions. Consider increasing the maxTimeMS on the command.".to_owned(), 0));
+                return Err(DocumentDBError::documentdb_error(
+                    ErrorCode::ExceededTimeLimit,
+                    "The command being executed was terminated due to a command timeout. This may be due to concurrent transactions. Consider increasing the maxTimeMS on the command.".to_owned(),
+                ));
             }
         }
     }
 }
+fn map_postgres_index_error(
+    error_code: i32,
+    error_message: &str,
+    connection_context: &ConnectionContext,
+    activity_id: &str,
+) -> DocumentDBError {
+    if let Ok(sql_state) = i32_to_postgres_sqlstate(error_code) {
+        let mapped_result = map_pg_db_error(
+            connection_context.transaction.is_some(),
+            connection_context
+                .dynamic_configuration()
+                .is_replica_cluster(),
+            &sql_state,
+            error_message,
+            activity_id,
+        );
 
-fn parse_create_index_error(response: &PgResponse) -> Result<Response> {
+        DocumentDBError::from_mapped_custom_postgres_error(
+            mapped_result.error_code(),
+            mapped_result.error_message(),
+            mapped_result.internal_note(),
+            CustomPgDbError::new(sql_state.clone()),
+        )
+    } else {
+        let custom_message = format!(
+            "Unable to parse postgres sql state code from index operation error: {error_code}, message: {error_message}"
+        );
+        tracing::error!(activity_id = activity_id, "{custom_message}");
+        DocumentDBError::internal_error(custom_message)
+    }
+}
+
+fn parse_create_index_error(
+    response: &PgResponse,
+    connection_context: &ConnectionContext,
+    activity_id: &str,
+) -> Result<Response> {
     let response = response.as_raw_document()?;
     let raw = response
         .get_document("raw")
@@ -145,11 +187,12 @@ fn parse_create_index_error(response: &PgResponse) -> Result<Response> {
     let errmsg = errmsg.ok_or(DocumentDBError::internal_error(
         "errmsg was missing in create index result".to_owned(),
     ))?;
-    Err(DocumentDBError::new(ErrorKind::PostgresDocumentDBError(
+    Err(map_postgres_index_error(
         code,
-        errmsg.to_owned(),
-        std::backtrace::Backtrace::capture(),
-    )))
+        errmsg,
+        connection_context,
+        activity_id,
+    ))
 }
 
 pub async fn process_reindex(
@@ -191,11 +234,12 @@ pub async fn process_drop_indexes(
             DocumentDBError::internal_error(pg_returned_invalid_response_message(e))
         })?;
 
-        Err(DocumentDBError::new(ErrorKind::PostgresDocumentDBError(
+        Err(map_postgres_index_error(
             error_code,
-            error_message.to_owned(),
-            std::backtrace::Backtrace::capture(),
-        )))
+            error_message,
+            connection_context,
+            request_context.activity_id,
+        ))
     }
 }
 

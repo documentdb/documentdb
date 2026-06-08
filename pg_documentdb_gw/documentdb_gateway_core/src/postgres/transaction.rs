@@ -11,7 +11,8 @@ use std::sync::Arc;
 use tokio_postgres::IsolationLevel;
 
 use crate::{
-    error::{DocumentDBError, Result},
+    context::TransactionError,
+    error::ErrorCode,
     postgres::{conn_mgmt::Connection, QueryCatalog},
 };
 
@@ -24,14 +25,18 @@ pub struct Transaction {
 impl Transaction {
     /// # Errors
     /// Returns error if the operation fails.
-    pub async fn start(conn: Arc<Connection>, isolation_level: IsolationLevel) -> Result<Self> {
+    pub async fn start(
+        conn: Arc<Connection>,
+        isolation_level: IsolationLevel,
+    ) -> Result<Self, TransactionError> {
         let isolation = match isolation_level {
             IsolationLevel::RepeatableRead => "REPEATABLE READ",
             IsolationLevel::ReadCommitted => "READ COMMITTED",
             other => {
-                return Err(DocumentDBError::bad_value(format!(
-                    "Isolation level not supported: {other:?}"
-                )))
+                return Err(TransactionError::SimpleError(
+                    ErrorCode::BadValue,
+                    format!("Isolation level not supported: {other:?}"),
+                ))
             }
         };
 
@@ -53,7 +58,7 @@ impl Transaction {
 
     /// # Errors
     /// Returns error if the operation fails.
-    pub async fn commit(&mut self) -> Result<()> {
+    pub async fn commit(&mut self) -> Result<(), TransactionError> {
         self.conn.batch_execute("COMMIT").await?;
         self.committed = true;
         Ok(())
@@ -61,11 +66,7 @@ impl Transaction {
 
     /// # Errors
     /// Returns error if the operation fails.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the operation fails.
-    pub async fn abort(&mut self) -> Result<()> {
+    pub async fn abort(&mut self) -> Result<(), TransactionError> {
         self.conn.batch_execute("ROLLBACK").await?;
         self.committed = true;
         Ok(())
@@ -73,10 +74,13 @@ impl Transaction {
 
     /// # Errors
     /// Returns error if the operation fails.
-    pub async fn allow_writes_in_readonly(&self, query_catalog: &QueryCatalog) -> Result<()> {
+    pub async fn allow_writes_in_readonly(
+        &self,
+        query_catalog: &QueryCatalog,
+    ) -> Result<(), TransactionError> {
         self.conn
             .batch_execute(query_catalog.set_allow_write())
-            .await
-            .map_err(DocumentDBError::from)
+            .await?;
+        Ok(())
     }
 }

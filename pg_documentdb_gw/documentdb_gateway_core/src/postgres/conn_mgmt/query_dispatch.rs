@@ -8,20 +8,21 @@
  *-------------------------------------------------------------------------
  */
 
-use std::{backtrace::Backtrace, future::Future, io, sync::Arc};
+use std::{future::Future, io, sync::Arc};
 
-use deadpool_postgres::{HookError, PoolError};
 use tokio::time::{Duration, Instant};
 use tokio_postgres::error::SqlState;
 
 use crate::{
-    error::{DocumentDBError, ErrorCode, ErrorKind, Result},
+    context::RequestContext,
+    error::{DocumentDBError, ErrorCode, Result},
     postgres::conn_mgmt::{
         connection::{Connection, QueryOptions, RequestOptions},
         retry_policies::{LongRetryPolicy, RetryPolicyBuilder, ShortRetryPolicy},
         ConnectionPool,
     },
     requests::{request_tracker::RequestTracker, RequestIntervalKind},
+    responses::map_pg_error,
 };
 
 /// Caller-facing enum describing how to obtain a connection for a query.
@@ -183,15 +184,22 @@ fn retry_policy(
 /// Extracts a `tokio_postgres::Error` from a `DocumentDBError`, if present.
 ///
 /// Works for both pool-related errors and direct postgres errors
-const fn extract_pg_error(error: &DocumentDBError) -> Option<&tokio_postgres::Error> {
-    match error.kind() {
-        ErrorKind::PoolError(
-            PoolError::Backend(e) | PoolError::PostCreateHook(HookError::Backend(e)),
-            _,
-        )
-        | ErrorKind::PostgresError(e, _) => Some(e),
-        _ => None,
+fn extract_pg_error(error: &DocumentDBError) -> Option<&tokio_postgres::Error> {
+    if let Some(pg_error) = error.as_postgres_error() {
+        return Some(pg_error);
     }
+
+    if let Some(pool_error) = error.as_pool_error() {
+        return match pool_error {
+            deadpool_postgres::PoolError::Backend(e)
+            | deadpool_postgres::PoolError::PostCreateHook(
+                deadpool_postgres::HookError::Backend(e),
+            ) => Some(e),
+            _ => None,
+        };
+    }
+
+    None
 }
 
 /// Returns the retry interval for the given retry classification, or `None` if exhausted.
@@ -227,7 +235,6 @@ fn check_for_command_timeout_error(
                     "Query exceeded command timeout of {}ms",
                     command_timeout.as_millis()
                 ),
-                0,
             ))
         }
         _ => Ok(()),
@@ -242,7 +249,7 @@ async fn set_statement_timeout(
     max_time: Option<Duration>,
     query_options: &QueryOptions,
     in_user_transaction: bool,
-    request_tracker: Option<&RequestTracker>,
+    request_tracker: &RequestTracker,
 ) -> std::result::Result<bool, tokio_postgres::Error> {
     let max_time_ms = match max_time {
         Some(d) if !in_user_transaction && !query_options.supports_backend_timeout() => {
@@ -260,9 +267,7 @@ async fn set_statement_timeout(
     if use_transaction {
         let start = Instant::now();
         connection.batch_execute("BEGIN").await?;
-        if let Some(request_tracker) = request_tracker {
-            request_tracker.record_duration(RequestIntervalKind::PostgresBeginTransaction, start);
-        }
+        request_tracker.record_duration(RequestIntervalKind::PostgresBeginTransaction, start);
 
         connection.set_in_transaction(true);
     }
@@ -282,10 +287,7 @@ async fn set_statement_timeout(
         }
         return Err(e);
     }
-    if let Some(request_tracker) = request_tracker {
-        request_tracker
-            .record_duration(RequestIntervalKind::PostgresSetStatementTimeout, set_start);
-    }
+    request_tracker.record_duration(RequestIntervalKind::PostgresSetStatementTimeout, set_start);
 
     Ok(use_transaction)
 }
@@ -310,7 +312,7 @@ pub async fn run_request_with_retries<T, F, Fut>(
     query_options: QueryOptions,
     request_options: RequestOptions,
     max_time: Duration,
-    request_tracker: Option<&RequestTracker>,
+    request_context: &RequestContext<'_>,
     run_func: F,
 ) -> Result<T>
 where
@@ -352,12 +354,10 @@ where
                     } else {
                         pool.acquire_connection().await
                     };
-                    if let Some(request_tracker) = request_tracker {
-                        request_tracker.record_duration(
-                            RequestIntervalKind::OpenBackendConnection,
-                            open_backend_connection_start,
-                        );
-                    }
+                    request_context.tracker.record_duration(
+                        RequestIntervalKind::OpenBackendConnection,
+                        open_backend_connection_start,
+                    );
 
                     match acquire {
                         Ok(pool_conn) => Arc::new(Connection::new(pool_conn, false)),
@@ -368,10 +368,7 @@ where
                                 );
                             }
 
-                            break 'attempt Err(DocumentDBError::new(ErrorKind::PoolError(
-                                e,
-                                Backtrace::capture(),
-                            )));
+                            break 'attempt Err(DocumentDBError::from(e));
                         }
                     }
                 }
@@ -387,16 +384,18 @@ where
                     request_options.command_timeout(),
                     &query_options,
                     in_transaction,
-                    request_tracker,
+                    request_context.tracker,
                 )
                 .await
                 {
                     Ok(v) => v,
                     Err(e) => {
-                        break 'attempt Err(DocumentDBError::new(ErrorKind::PostgresError(
+                        break 'attempt Err(map_pg_error(
                             e,
-                            Backtrace::capture(),
-                        )))
+                            in_transaction,
+                            request_options.in_replica_cluster_mode(),
+                            request_context.activity_id,
+                        ))
                     }
                 }
             } else {
@@ -409,54 +408,61 @@ where
                 // Gateway transaction active — clone Arc because we need
                 // the connection afterwards for COMMIT/ROLLBACK.
                 let query_result = run_func(Arc::clone(&connection)).await;
-                if let Some(request_tracker) = request_tracker {
-                    request_tracker
-                        .record_duration(RequestIntervalKind::ProcessRequest, request_start);
-                }
+                request_context
+                    .tracker
+                    .record_duration(RequestIntervalKind::ProcessRequest, request_start);
 
                 match query_result {
                     Ok(value) => {
                         let commit_start = Instant::now();
                         match connection.batch_execute("COMMIT").await {
                             Ok(()) => {
-                                if let Some(request_tracker) = request_tracker {
-                                    request_tracker.record_duration(
-                                        RequestIntervalKind::PostgresCommitTransaction,
-                                        commit_start,
-                                    );
-                                }
+                                request_context.tracker.record_duration(
+                                    RequestIntervalKind::PostgresCommitTransaction,
+                                    commit_start,
+                                );
                                 Ok(value)
                             }
                             Err(e) => {
                                 // PostgreSQL auto-rolls-back a failed COMMIT, so the
                                 // connection is no longer in a transaction.
                                 connection.set_in_transaction(false);
-                                Err(DocumentDBError::new(ErrorKind::PostgresError(
+                                let mapped_error = map_pg_error(
                                     e,
-                                    Backtrace::capture(),
-                                )))
+                                    in_transaction,
+                                    request_options.in_replica_cluster_mode(),
+                                    request_context.activity_id,
+                                );
+                                Err(mapped_error)
                             }
                         }
                     }
                     Err(e) => {
                         let _ = connection.batch_execute("ROLLBACK").await;
                         connection.set_in_transaction(false);
-                        Err(DocumentDBError::new(ErrorKind::PostgresError(
+                        let mapped_error = map_pg_error(
                             e,
-                            Backtrace::capture(),
-                        )))
+                            in_transaction,
+                            request_options.in_replica_cluster_mode(),
+                            request_context.activity_id,
+                        );
+                        Err(mapped_error)
                     }
                 }
             } else {
                 // No gateway transaction -> move the Arc directly into the
                 // closure call, avoiding an Arc::clone + drop pair.
                 let query_result = run_func(connection).await;
-                if let Some(request_tracker) = request_tracker {
-                    request_tracker
-                        .record_duration(RequestIntervalKind::ProcessRequest, request_start);
-                }
+                request_context
+                    .tracker
+                    .record_duration(RequestIntervalKind::ProcessRequest, request_start);
                 query_result.map_err(|e| {
-                    DocumentDBError::new(ErrorKind::PostgresError(e, Backtrace::capture()))
+                    map_pg_error(
+                        e,
+                        in_transaction,
+                        request_options.in_replica_cluster_mode(),
+                        request_context.activity_id,
+                    )
                 })
             }
         };
@@ -923,7 +929,7 @@ mod tests {
         )
         .unwrap_err();
 
-        assert_eq!(error.error_code_enum(), Some(ErrorCode::ExceededTimeLimit));
+        assert_eq!(error.error_code(), ErrorCode::ExceededTimeLimit);
         assert!(error
             .to_string()
             .contains("Query exceeded command timeout of 30ms"));
@@ -937,6 +943,6 @@ mod tests {
         )
         .unwrap_err();
 
-        assert_eq!(error.error_code_enum(), Some(ErrorCode::ExceededTimeLimit));
+        assert_eq!(error.error_code(), ErrorCode::ExceededTimeLimit);
     }
 }

@@ -12,15 +12,19 @@ use crate::{error::Result, protocol::OK_SUCCEEDED};
 
 pub mod constant;
 pub mod custom_error_mapping;
+mod custom_pg_db_error;
 mod error;
 mod pg;
 mod raw;
 pub mod writer;
 
-pub use custom_error_mapping::CustomPostgresErrorMapper;
-pub use error::CommandError;
+pub use custom_error_mapping::{
+    global_custom_error_mapper, register_custom_error_mapper, CustomPostgresErrorMapper,
+};
+pub use custom_pg_db_error::CustomPgDbError;
+pub use error::error_to_raw_document_buf;
 pub use pg::{
-    from_known_external_error_code, i32_to_postgres_sqlstate, map_pg_error,
+    from_known_external_error_code, i32_to_postgres_sqlstate, map_pg_db_error, map_pg_error,
     postgres_sqlstate_to_i32, PgResponse, PostgresErrorMappedResult,
 };
 pub use raw::RawResponse;

@@ -130,7 +130,6 @@ where
             header,
             Some(request_context.payload),
             Left(&response),
-            None,
             collection,
             request_context.tracker,
             request_context.activity_id,
@@ -280,10 +279,7 @@ mod tests {
             .await
             .expect_err("expired external identity should require reauthentication");
 
-        assert_eq!(
-            error.error_code_enum(),
-            Some(ErrorCode::ReauthenticationRequired)
-        );
+        assert_eq!(error.error_code(), ErrorCode::ReauthenticationRequired);
     }
 
     #[tokio::test]

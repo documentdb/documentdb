@@ -16,7 +16,7 @@ use crate::{
     error::DocumentDBError,
     protocol::header::Header,
     requests::{request_tracker::RequestTracker, Request},
-    responses::{CommandError, Response},
+    responses::Response,
 };
 
 /// `TelemetryProvider` takes care of emitting events and metrics for tracking the gateway.
@@ -27,16 +27,13 @@ use crate::{
 pub trait TelemetryProvider: Send + Sync + DynClone + Debug {
     /// Emits an event for every CRUD request dispatched to backend.
     ///
-    /// `error` is `Some` only on the error path and carries the originating
-    /// `DocumentDBError` so providers can extract sub-status codes or other
-    /// fields that aren't surfaced through `CommandError`.
+    /// `error` is `Some` only on the error path.
     fn emit_request_event(
         &self,
         _: &ConnectionContext,
         _: &Header,
         _: Option<&Request<'_>>,
-        _: Either<&Response, (&CommandError, usize)>,
-        _: Option<&DocumentDBError>,
+        _: Either<&Response, (&DocumentDBError, usize)>,
         _: String,
         _: &RequestTracker,
         _: &str,
