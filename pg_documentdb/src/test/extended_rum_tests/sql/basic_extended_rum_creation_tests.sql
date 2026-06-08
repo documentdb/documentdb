@@ -69,6 +69,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests", "filter": { "b.c": "hello world" }, "hint": "b_wildcard" }');
 $cmd$);
 
+-- Re-enable index scans for the ordered-index hint-pushdown queries below.
+-- Keep bitmap scans disabled so the hinted plan is deterministically an Index Scan.
+set enable_indexscan to on;
+set enable_bitmapscan to off;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests_ordered", "filter": { "a": "hello world" }, "hint": "a_1" }');
 $cmd$);
