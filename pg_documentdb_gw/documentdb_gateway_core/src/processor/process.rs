@@ -8,7 +8,7 @@
 
 use crate::{
     context::{ConnectionContext, RequestContext},
-    error::{DocumentDBError, ErrorCode, ErrorKind, Result},
+    error::{DocumentDBError, ErrorCode, Result},
     explain,
     postgres::PgDataClient,
     processor::{
@@ -244,8 +244,12 @@ pub async fn process_request(
             .await
         }
         RequestType::PrepareTransaction => constant::process_prepare_transaction(),
-        RequestType::CommitTransaction => transaction::process_commit(connection_context).await,
-        RequestType::AbortTransaction => transaction::process_abort(connection_context).await,
+        RequestType::CommitTransaction => {
+            transaction::process_commit(connection_context, request_context.activity_id).await
+        }
+        RequestType::AbortTransaction => {
+            transaction::process_abort(connection_context, request_context.activity_id).await
+        }
         RequestType::ListCommands => Ok(constant::list_commands()),
         RequestType::EndSessions | RequestType::KillSessions => {
             session::end_or_kill_sessions(request_context, connection_context, pg_data_client).await
@@ -346,27 +350,21 @@ pub async fn process_request(
                 "Command '{}' not supported.",
                 request_context.payload.request_type().to_command_str()
             ),
-            0,
         )),
     };
 
     if connection_context.transaction.is_some() {
         match &result {
             // In the case of write conflict, we need to abort the transaction.
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    ErrorKind::DocumentDBError(ErrorCode::WriteConflict, _, _, _, _)
-                ) =>
-            {
-                transaction::process_abort(connection_context).await?;
+            Err(error) if error.error_code() == ErrorCode::WriteConflict => {
+                transaction::process_abort(connection_context, request_context.activity_id).await?;
             }
             // In the case of failures with aggregate/find, we need to abort the transaction.
             Err(_)
                 if request_context.payload.request_type() == RequestType::Find
                     || request_context.payload.request_type() == RequestType::Aggregate =>
             {
-                transaction::process_abort(connection_context).await?;
+                transaction::process_abort(connection_context, request_context.activity_id).await?;
             }
             _ => {}
         }

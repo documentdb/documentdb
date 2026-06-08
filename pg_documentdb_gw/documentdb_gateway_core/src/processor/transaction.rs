@@ -7,8 +7,8 @@
  */
 
 use crate::{
-    context::{ConnectionContext, RequestContext},
-    error::{DocumentDBError, ErrorCode, ErrorKind, Result},
+    context::{map_transaction_error, ConnectionContext, RequestContext},
+    error::{DocumentDBError, ErrorCode, Result},
     postgres::PgDataClient,
     requests::RequestType,
     responses::Response,
@@ -46,6 +46,7 @@ pub async fn handle(
                 lsid.clone(),
                 pg_data_client,
                 caller,
+                request_context.activity_id,
             )
             .await;
 
@@ -53,10 +54,7 @@ pub async fn handle(
             return match (request.request_type(), &e) {
                 // Especially allow the transaction to remain unfilled if it is committing a committed transaction
                 (RequestType::CommitTransaction, error)
-                    if matches!(
-                        error.kind(),
-                        ErrorKind::DocumentDBError(ErrorCode::TransactionCommitted, _, _, _, _)
-                    ) =>
+                    if error.error_code() == ErrorCode::TransactionCommitted =>
                 {
                     Ok(())
                 }
@@ -69,17 +67,21 @@ pub async fn handle(
     Ok(())
 }
 
-pub async fn process_commit(context: &ConnectionContext) -> Result<Response> {
+pub async fn process_commit(context: &ConnectionContext, activity_id: &str) -> Result<Response> {
     if let Some((lsid, _)) = context.transaction.as_ref() {
         let store = context.service_context.transaction_store();
         let caller = context.auth_state.principal()?;
+        let is_replica_cluster = context.dynamic_configuration().is_replica_cluster();
 
-        store.commit(lsid, caller).await?;
+        store
+            .commit(lsid, caller)
+            .await
+            .map_err(|e| map_transaction_error(e, is_replica_cluster, activity_id))?;
     }
     Ok(Response::ok())
 }
 
-pub async fn process_abort(context: &ConnectionContext) -> Result<Response> {
+pub async fn process_abort(context: &ConnectionContext, activity_id: &str) -> Result<Response> {
     let (lsid, _) = context
         .transaction
         .as_ref()
@@ -89,7 +91,11 @@ pub async fn process_abort(context: &ConnectionContext) -> Result<Response> {
 
     let caller = context.auth_state.principal()?;
     let store = context.service_context.transaction_store();
+    let is_replica_cluster = context.dynamic_configuration().is_replica_cluster();
 
-    store.abort(lsid, caller).await?;
+    store
+        .abort(lsid, caller)
+        .await
+        .map_err(|e| map_transaction_error(e, is_replica_cluster, activity_id))?;
     Ok(Response::ok())
 }

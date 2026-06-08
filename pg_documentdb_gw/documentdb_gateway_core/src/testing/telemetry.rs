@@ -17,7 +17,7 @@ use crate::{
     error::DocumentDBError,
     protocol::header::Header,
     requests::{request_tracker::RequestTracker, Request, RequestType},
-    responses::{CommandError, Response},
+    responses::Response,
     telemetry::TelemetryProvider,
 };
 
@@ -82,19 +82,19 @@ impl TelemetryProvider for RecordingTelemetryProvider {
         _: &ConnectionContext,
         _: &Header,
         request: Option<&Request<'_>>,
-        response: Either<&Response, (&CommandError, usize)>,
-        error: Option<&DocumentDBError>,
+        response: Either<&Response, (&DocumentDBError, usize)>,
         collection: String,
         _: &RequestTracker,
         activity_id: &str,
         user_agent: &str,
     ) {
-        let sub_status_code = error
-            .and_then(DocumentDBError::sub_status_code)
-            .unwrap_or(0);
-        let (is_error, error_code_name) = match response {
-            Either::Left(_) => (false, None),
-            Either::Right((command_error, _)) => (true, Some(command_error.code().to_string())),
+        let (is_error, error_code_name, sub_status_code) = match response {
+            Either::Left(_) => (false, None, 0),
+            Either::Right((err, _)) => (
+                true,
+                Some(err.error_code().to_string()),
+                err.sub_status_code().unwrap_or(0),
+            ),
         };
 
         self.events

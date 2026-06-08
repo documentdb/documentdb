@@ -14,7 +14,7 @@ use crate::{
     error::{DocumentDBError, ErrorCode, Result},
     protocol::header::Header,
     requests::{request_tracker::RequestTracker, Request, RequestIntervalKind},
-    responses::{self, CommandError},
+    responses::{self, error_to_raw_document_buf},
     telemetry::{self, client_info},
 };
 
@@ -36,8 +36,7 @@ pub(super) async fn log_and_write_error<W>(
 where
     W: AsyncWrite + Unpin,
 {
-    let command_error = CommandError::from_error(connection_context, error, activity_id);
-    let response = command_error.to_raw_document_buf();
+    let response = error_to_raw_document_buf(error);
 
     if let Some(start) = handle_message_start {
         request_tracker.record_duration(RequestIntervalKind::HandleMessage, start);
@@ -48,7 +47,7 @@ where
     request_tracker.record_duration(RequestIntervalKind::WriteResponse, write_response_start);
 
     // telemetry can block so do it after write and flush.
-    telemetry::log_request_failure(error, connection_context, activity_id, request);
+    telemetry::log_request_failure(error, activity_id, request);
 
     let collection = collection.unwrap_or_default();
 
@@ -56,7 +55,7 @@ where
         telemetry::record_gateway_metrics(
             header,
             request,
-            Right((&command_error, response.as_bytes().len())),
+            Right((error, response.as_bytes().len())),
             &collection,
             request_tracker,
         );
@@ -67,8 +66,7 @@ where
             connection_context,
             header,
             request,
-            Right((&command_error, response.as_bytes().len())),
-            Some(error),
+            Right((error, response.as_bytes().len())),
             collection,
             request_tracker,
             activity_id,
@@ -137,7 +135,6 @@ where
     let error = DocumentDBError::documentdb_error(
         ErrorCode::ShutdownInProgress,
         "Graceful shutdown requested".to_owned(),
-        0,
     );
     reply_with_request_error(
         connection_context,
@@ -274,7 +271,6 @@ mod tests {
         let error = DocumentDBError::documentdb_error(
             ErrorCode::BadValue,
             "bad request payload".to_owned(),
-            0,
         );
         let (mut response_writer, mut response_reader) = tokio::io::duplex(4096);
 

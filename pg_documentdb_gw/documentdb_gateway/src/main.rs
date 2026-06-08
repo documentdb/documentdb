@@ -126,7 +126,6 @@ async fn start_gateway(setup_configuration: DocumentDBSetupConfiguration) {
         dynamic_configuration,
         connection_pool_manager,
         tls_provider,
-        None, // custom_pg_error_mapper
     );
 
     run_gateway::<DocumentDBDataClient>(service_context, None, shutdown_token)

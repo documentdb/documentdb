@@ -49,7 +49,6 @@ pub fn process(
             return Err(DocumentDBError::documentdb_error(
                 ErrorCode::ClientMetadataCannotBeMutated,
                 "Client metadata cannot be mutated".to_owned(),
-                0,
             ));
         }
         connection_context.client_information = Some(client.to_raw_document_buf());

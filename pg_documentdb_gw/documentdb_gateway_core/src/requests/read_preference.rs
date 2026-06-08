@@ -32,7 +32,6 @@ impl FromStr for ReadPreferenceMode {
             unsupported => Err(DocumentDBError::documentdb_error(
                 ErrorCode::FailedToParse,
                 format!("Unsupported read preference mode '{unsupported}'"),
-                0,
             )),
         }
     }
@@ -62,7 +61,6 @@ impl ReadPreference {
             None => Err(DocumentDBError::documentdb_error(
                 ErrorCode::FailedToParse,
                 "'$readPreference' must be a document".to_owned(),
-                0,
             )),
             Some(doc) => {
                 let mut read_preference_mode: Option<ReadPreferenceMode> = None;
@@ -77,7 +75,6 @@ impl ReadPreference {
                                 return Err(DocumentDBError::documentdb_error(
                                     ErrorCode::FailedToParse,
                                     "'mode' field is already specified".to_owned(),
-                                    0,
                                 ));
                             }
 
@@ -85,7 +82,6 @@ impl ReadPreference {
                                 DocumentDBError::documentdb_error(
                                     ErrorCode::FailedToParse,
                                     "'mode' field must be a string".to_owned(),
-                                    0,
                                 )
                             })?;
 
@@ -96,7 +92,6 @@ impl ReadPreference {
                                 return Err(DocumentDBError::documentdb_error(
                                     ErrorCode::FailedToParse,
                                     "'maxStalenessSeconds' field is already specified".to_owned(),
-                                    0,
                                 ));
                             }
 
@@ -104,7 +99,6 @@ impl ReadPreference {
                                 DocumentDBError::documentdb_error(
                                     ErrorCode::FailedToParse,
                                     "'maxStalenessSeconds' field must be an integer".to_owned(),
-                                    0,
                                 )
                             })?;
 
@@ -112,7 +106,6 @@ impl ReadPreference {
                                 return Err(DocumentDBError::documentdb_error(
                                     ErrorCode::FailedToParse,
                                     "'maxStalenessSeconds' field must be non-negative".to_owned(),
-                                    0,
                                 ));
                             }
 
@@ -123,7 +116,6 @@ impl ReadPreference {
                                 return Err(DocumentDBError::documentdb_error(
                                     ErrorCode::FailedToParse,
                                     "'hedge' field is already specified".to_owned(),
-                                    0,
                                 ));
                             }
 
@@ -131,7 +123,6 @@ impl ReadPreference {
                                 DocumentDBError::documentdb_error(
                                     ErrorCode::FailedToParse,
                                     "'hedge' field must be a document".to_owned(),
-                                    0,
                                 )
                             })?;
 
@@ -144,7 +135,6 @@ impl ReadPreference {
                                             ErrorCode::FailedToParse,
                                             "'enabled' field in 'hedge' must be a boolean"
                                                 .to_owned(),
-                                            0,
                                         )
                                     })?);
                                 }
@@ -155,7 +145,6 @@ impl ReadPreference {
                                 ErrorCode::FailedToSatisfyReadPreference,
                                 "no server available for query with specified tag set list"
                                     .to_owned(),
-                                0,
                             ));
                         }
                         _ => {}
@@ -166,7 +155,6 @@ impl ReadPreference {
                     return Err(DocumentDBError::documentdb_error(
                         ErrorCode::FailedToParse,
                         "'mode' field is required".to_owned(),
-                        0,
                     ));
                 }
 
@@ -177,7 +165,6 @@ impl ReadPreference {
                         return Err(DocumentDBError::documentdb_error(
                             ErrorCode::FailedToParse,
                             "mode 'primary' does not allow for 'maxStalenessSeconds'".to_owned(),
-                            0,
                         ));
                     }
 
@@ -185,7 +172,6 @@ impl ReadPreference {
                         return Err(DocumentDBError::documentdb_error(
                             ErrorCode::FailedToParse,
                             "mode 'primary' does not allow for 'hedge'".to_owned(),
-                            0,
                         ));
                     }
                 }
@@ -194,7 +180,6 @@ impl ReadPreference {
                     return Err(DocumentDBError::documentdb_error(
                         ErrorCode::FailedToSatisfyReadPreference,
                         "no server available for query with ReadPreference secondary".to_owned(),
-                        0,
                     ));
                 }
 
@@ -202,7 +187,6 @@ impl ReadPreference {
                     return Err(DocumentDBError::documentdb_error(
                         ErrorCode::BadValue,
                         "hedged reads are not supported".to_owned(),
-                        0,
                     ));
                 }
 
