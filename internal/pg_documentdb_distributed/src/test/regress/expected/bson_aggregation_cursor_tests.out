@@ -653,7 +653,7 @@ SET documentdb.enableNewWithExprAccumulators TO off;
 ROLLBACK;
 -- With local execution off.
 BEGIN;
-set local citus.enable_local_execution to off;
+set citus.enable_local_execution to off;
 SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2);
                                                                                                                 filtereddoc                                                                                                                 | docsize  |                                                                                                continuationfiltered                                                                                                | persistconnection 
 ---------------------------------------------------------------------
@@ -1245,7 +1245,7 @@ SET documentdb.enableNewWithExprAccumulators TO off;
 ROLLBACK;
 -- With local execution off.
 BEGIN;
-set local citus.enable_local_execution to off;
+set citus.enable_local_execution to off;
 SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2, obfuscate_id => true);
                                                                                                        filtereddoc                                                                                                        | docsize  |                                                                                                continuationfiltered                                                                                                | persistconnection 
 ---------------------------------------------------------------------

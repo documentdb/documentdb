@@ -49,6 +49,7 @@
 
 extern char *ApiGucPrefix;
 extern bool UseFileBasedPersistedCursors;
+extern bool CleanupCursorFiles;
 extern int MaxAllowedCursorIntermediateFileSizeMB;
 extern int DefaultCursorExpiryTimeLimitSeconds;
 extern int MaxCursorFileCount;
@@ -113,7 +114,7 @@ typedef struct CursorStoreSharedData
 
 	int32_t currentCursorCount;
 
-	int32_t cleanupCursorFileCount;
+	int64_t cleanupCursorFileCount;
 	int64_t cleanupTotalCursorSize;
 } CursorStoreSharedData;
 
@@ -207,8 +208,8 @@ cursor_directory_cleanup(PG_FUNCTION_ARGS)
 	FreeDir(dirdesc);
 
 	pg_memory_barrier();
-	CursorStoreSharedState->cleanupCursorFileCount = totalCursorCount;
-	CursorStoreSharedState->cleanupTotalCursorSize = totalCursorSize;
+	CursorStoreSharedState->cleanupCursorFileCount += totalCursorCount;
+	CursorStoreSharedState->cleanupTotalCursorSize += totalCursorSize;
 
 	ereport(DEBUG1, (errmsg("Total size of cursor files: %ld, count %d", totalCursorSize,
 							totalCursorCount)));
@@ -257,7 +258,7 @@ SetupCursorStorage(void)
  * files.
  */
 CursorFileState *
-CreateCursorFile(const char *cursorName)
+CreateCursorFile(const char *cursorName, bool useFileBasedCursors)
 {
 	if (!cursor_set_initialized)
 	{
@@ -265,7 +266,7 @@ CreateCursorFile(const char *cursorName)
 							"Cursor storage has not been properly initialized. Before using cursors, the server must be restarted")));
 	}
 
-	if (!UseFileBasedPersistedCursors)
+	if (!useFileBasedCursors)
 	{
 		ereport(ERROR, (errmsg("File based cursors are not enabled. "
 							   "set %s.useFileBasedPersistedCursors to true",
@@ -341,7 +342,7 @@ WriteToCursorFile(CursorFileState *cursorFileState, pgbson *dataBson)
 		FlushBuffer(cursorFileState);
 	}
 
-	int32_t dataSize = VARSIZE(dataBson);
+	int32_t dataSize = VARSIZE_ANY(dataBson);
 	char *data = (char *) dataBson;
 
 	/* Write the length to the buffer */
@@ -375,7 +376,8 @@ void
 GetCurrentCursorCount(int32_t *currentCursorCount, int32_t *measuredCursorCount,
 					  int64_t *lastCursorSize)
 {
-	if (!cursor_set_initialized || !UseFileBasedPersistedCursors)
+	if (!cursor_set_initialized || !UseFileBasedPersistedCursors ||
+		!CleanupCursorFiles)
 	{
 		*currentCursorCount = 0;
 		*measuredCursorCount = 0;
@@ -441,14 +443,14 @@ DeleteCursorFile(const char *cursorName)
  * The file is expected to be in the cursor directory.
  */
 CursorFileState *
-DeserializeFileState(bytea *cursorFileState)
+DeserializeFileState(bytea *cursorFileState, bool useFileBasedCursors)
 {
 	if (!cursor_set_initialized)
 	{
 		ereport(ERROR, (errmsg("Cursor storage has not been properly initialized")));
 	}
 
-	if (!UseFileBasedPersistedCursors)
+	if (!useFileBasedCursors)
 	{
 		ereport(ERROR, (errmsg("File based cursor is not enabled")));
 	}

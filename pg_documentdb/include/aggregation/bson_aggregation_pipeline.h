@@ -16,6 +16,7 @@
 #include "operators/bson_expression.h"
 #include "utils/documentdb_errors.h"
 #include "utils/version_utils.h"
+#include "metadata/collection.h"
 
 typedef enum QueryCursorType
 {
@@ -140,6 +141,18 @@ typedef struct
 
 Query * GenerateFindQuery(text *database, pgbson *findSpec, QueryData *queryData,
 						  CursorParamKind cursorParamKind, bool setStatementTimeout);
+
+/*
+ * Opaque handle for the two-phase find query path: ParseFindQueryAndLookupCollection
+ * parses the spec and looks up the collection (without generating the query), and
+ * ApplyParsedFindQuery generates the local query from the parsed handle.
+ */
+typedef struct FindQueryPlan FindQueryPlan;
+FindQueryPlan * ParseFindQueryAndLookupCollection(text *database, pgbson *findSpec,
+												  QueryData *queryData,
+												  bool setStatementTimeout,
+												  MongoCollection **outCollection);
+Query * ApplyParsedFindQuery(FindQueryPlan *plan, CursorParamKind cursorParamKind);
 Query * GenerateGetMoreQuery(text *database, pgbson *getMoreSpec,
 							 pgbson *continuationSpec,
 							 QueryData *queryData, bool setStatementTimeout);
@@ -156,6 +169,23 @@ Query * GenerateListIndexesQuery(text *database, pgbson *listIndexesSpec,
 Query * GenerateAggregationQuery(text *database, pgbson *aggregationSpec,
 								 QueryData *queryData, CursorParamKind cursorParamKind,
 								 bool setStatementTimeout);
+
+/*
+ * Opaque handle for the two-phase aggregation query path:
+ * ParseAggregationQueryAndLookupCollection parses the spec, extracts the pipeline
+ * stages, and looks up the collection (without generating the query);
+ * ApplyParsedAggregationQuery generates the local query from the parsed handle.
+ */
+typedef struct AggregationQueryPlan AggregationQueryPlan;
+AggregationQueryPlan * ParseAggregationQueryAndLookupCollection(text *database,
+																pgbson *aggregationSpec,
+																QueryData *queryData,
+																CursorParamKind
+																cursorParamKind,
+																bool setStatementTimeout,
+																MongoCollection **
+																outCollection);
+Query * ApplyParsedAggregationQuery(AggregationQueryPlan *plan);
 
 int64_t ParseGetMore(text **databaseName, pgbson *getMoreSpec, QueryData *queryData, bool
 					 setStatementTimeout);

@@ -113,6 +113,7 @@ Oid IndexBuildIsInProgressFunctionId(void);
 Oid ApiCursorStateFunctionId(void);
 Oid ApiCurrentCursorStateFunctionId(void);
 Oid ApiCursorTrackerFunctionId(void);
+Oid ApiCursorDynamicDrainPageFunctionId(void);
 Oid ExtensionTableSampleSystemRowsFunctionId(void);
 Oid BsonInRangeNumericFunctionId(void);
 Oid BsonInRangeIntervalFunctionId(void);

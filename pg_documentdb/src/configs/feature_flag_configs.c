@@ -294,6 +294,10 @@ bool EnableContinuationFastBitmapLookup = DEFAULT_ENABLE_CONTINUATION_FAST_BITMA
 #define DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS false
 bool UseFileBasedPersistedCursors = DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS;
 
+/* Added in v114, Enabled in v114, remove after v117 */
+#define DEFAULT_CLEANUP_CURSOR_FILES true
+bool CleanupCursorFiles = DEFAULT_CLEANUP_CURSOR_FILES;
+
 /* Added in v111, Pending stabilization, enable in v115 */
 #define DEFAULT_FAIL_ON_GROUP_ID_DUPLICATE false
 bool FailOnGroupIdDuplicate =
@@ -698,6 +702,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to use file based persisted cursors."),
 		NULL, &UseFileBasedPersistedCursors,
 		DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.cleanupCursorFiles", newGucPrefix),
+		gettext_noop(
+			"Whether or not to clean up cursor files via cleanup worker."),
+		NULL, &CleanupCursorFiles,
+		DEFAULT_CLEANUP_CURSOR_FILES,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

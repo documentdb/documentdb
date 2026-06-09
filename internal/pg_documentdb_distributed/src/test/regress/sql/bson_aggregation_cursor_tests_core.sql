@@ -206,7 +206,7 @@ ROLLBACK;
 
 -- With local execution off.
 BEGIN;
-set local citus.enable_local_execution to off;
+set citus.enable_local_execution to off;
 SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2);
 SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 4, pageSize => 100000, filter => '{ "_id": { "$gt": 2 }} ');
 SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 4, pageSize => 100000, limitVal => 3);
@@ -295,7 +295,7 @@ ROLLBACK;
 
 -- With local execution off.
 BEGIN;
-set local citus.enable_local_execution to off;
+set citus.enable_local_execution to off;
 SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2, obfuscate_id => true);
 SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 4, pageSize => 100000, filter => '{ "_id": { "$gt": 2 }} ', obfuscate_id => true);
 SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 4, pageSize => 100000, limitVal => 3, obfuscate_id => true);

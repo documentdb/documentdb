@@ -22,12 +22,14 @@ void DeletePendingCursorFiles(void);
 void GetCurrentCursorCount(int32_t *currentCursorCount, int32_t *measuredCursorCount,
 						   int64_t *lastCursorSize);
 void DeleteCursorFile(const char *cursorName);
-CursorFileState * CreateCursorFile(const char *cursorName);
+CursorFileState * CreateCursorFile(const char *cursorName,
+								   bool useFileBasedCursors);
 void WriteToCursorFile(CursorFileState *cursorFileState, pgbson *bson);
 pgbson * ReadFromCursorFile(CursorFileState *cursorFileState);
 bytea * CursorFileStateClose(CursorFileState *cursorFileState, MemoryContext
 							 writerContext);
 
-CursorFileState * DeserializeFileState(bytea *cursorFileState);
+CursorFileState * DeserializeFileState(bytea *cursorFileState,
+									   bool useFileBasedCursors);
 
 #endif

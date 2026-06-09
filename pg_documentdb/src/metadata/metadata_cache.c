@@ -529,6 +529,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* Oid of the cursor tracker state function */
 	Oid CursorTrackerFunctionId;
 
+	/* Oid of the cursor_dynamic_drain_page pushdown function */
+	Oid CursorDynamicDrainPageFunctionId;
+
 	/* OID of the $bitsAllClear function for bson */
 	Oid BsonBitsAllClearFunctionId;
 
@@ -3340,6 +3343,30 @@ ApiCursorTrackerFunctionId(void)
 	}
 
 	return Cache.CursorTrackerFunctionId;
+}
+
+
+/*
+ * ApiCursorDynamicDrainPageFunctionId returns the OID of the
+ * cursor_dynamic_drain_page function used for remote dynamic cursor pushdown.
+ */
+Oid
+ApiCursorDynamicDrainPageFunctionId(void)
+{
+	if (Cache.CursorDynamicDrainPageFunctionId == InvalidOid)
+	{
+		List *functionNameList = list_make2(makeString(ApiInternalSchemaNameV2),
+											makeString("cursor_dynamic_drain_page"));
+		Oid paramOids[6] = {
+			TEXTOID, BsonTypeId(), REGCLASSOID, BsonTypeId(), INT4OID, BsonTypeId()
+		};
+		bool missingOK = true;
+
+		Cache.CursorDynamicDrainPageFunctionId =
+			LookupFuncName(functionNameList, 6, paramOids, missingOK);
+	}
+
+	return Cache.CursorDynamicDrainPageFunctionId;
 }
 
 

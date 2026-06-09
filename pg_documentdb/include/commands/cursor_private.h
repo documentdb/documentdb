@@ -13,6 +13,7 @@
 #define CURSOR_PRIVATE_H
 
 typedef struct QueryCursorPlanResult QueryCursorPlanResult;
+
 bool DrainStreamingQuery(HTAB *cursorMap, Query *query, int batchSize,
 						 int32_t *numIterations, uint32_t accumulatedSize,
 						 pgbson_array_writer *arrayWriters);
@@ -34,14 +35,15 @@ bytea * CreateAndDrainPersistedQueryWithFiles(const char *cursorName,
 											  uint32_t
 											  accumulatedSize,
 											  pgbson_array_writer *arrayWriter, bool
-											  closeCursor);
+											  closeCursor, bool useFileBasedCursors);
 bool DrainPersistedCursor(const char *cursorName, int batchSize,
 						  int32_t *numIterations, uint32_t accumulatedSize,
 						  pgbson_array_writer *arrayWriter);
 bytea * DrainPersistedFileCursor(const char *cursorName, int batchSize,
 								 int32_t *numIterations, uint32_t accumulatedSize,
 								 pgbson_array_writer *arrayWriter,
-								 bytea *cursorFileState);
+								 bytea *cursorFileState,
+								 bool useFileBasedCursors);
 
 void CreateAndDrainPointReadQuery(const char *cursorName, Query *query,
 								  int32_t *numIterations, uint32_t

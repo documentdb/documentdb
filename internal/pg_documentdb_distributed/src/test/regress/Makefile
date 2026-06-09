@@ -26,7 +26,7 @@ export PGISOLATIONTIMEOUT = 60
 
 # Helper to run a multinode test suite: start cluster -> run tests -> stop cluster
 define run_multinode_test
-	$(OSS_SRC_DIR)scripts/start_oss_server.sh -c -x -r -n 1 -w 5808 -p 58070 -d ./tmp/multinode/data -f $(CURDIR)/regression_opts.conf -l $(CURDIR)/log/pglog_multinode.log
+	$(OSS_SRC_DIR)scripts/start_oss_server.sh -c -x -r -n 1 -w 5808 -p 58070 -d ./tmp/multinode/data -f $(CURDIR)/multinode_opts.conf -l $(CURDIR)/log/pglog_multinode.log
 	{ $(top_builddir)/src/test/regress/pg_regress --port 58070 --encoding=UTF8 --dlpath=$(BASEPATH) --use-existing --dbname=postgres $(1) $(2) 2>&1; echo $$? > log/.exitcode; } | tee log/summary_$(3).out;
 	exitcode=$$(cat log/.exitcode); \
 	if test $$exitcode -ne 0; then \
