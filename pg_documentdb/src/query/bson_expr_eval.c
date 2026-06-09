@@ -21,6 +21,8 @@
 #include "utils/documentdb_errors.h"
 #include "metadata/metadata_cache.h"
 
+extern bool EnablePullNestedArrayEqFix;
+
 
 /* --------------------------------------------------------- */
 /* Data-types */
@@ -264,18 +266,33 @@ EvalExpressionAgainstArrayGetAllMatchingIndices(ExprEvalState *evalState,
 		BsonIterToPgbsonElement(&arrayIterator, &element);
 
 		/*
-		 * If the value itself is array then check for any match consider the complete array a match
+		 * For each element of the source array (arrayValue), try matching it as a
+		 * whole value first (handles exact array equality, e.g. $pull: { $eq: [Binary] }
+		 * on source [..., [Binary], ...] correctly removes [Binary] rather than the
+		 * inner Binary). Only recurse into the nested array if the whole-value check
+		 * fails.
 		 */
-		Datum result;
-		if (shouldRecurseIfArray && element.bsonValue.value_type == BSON_TYPE_ARRAY)
+		bool matched;
+		if (EnablePullNestedArrayEqFix)
 		{
-			result = EvalBooleanExpressionAgainstArray(evalState, &(element.bsonValue));
+			matched = EvalBooleanExpressionAgainstValue(evalState,
+														&(element.bsonValue),
+														shouldRecurseIfArray);
 		}
 		else
 		{
-			result = ExpressionEval(evalState, &element);
+			if (shouldRecurseIfArray && element.bsonValue.value_type == BSON_TYPE_ARRAY)
+			{
+				matched = DatumGetBool(EvalBooleanExpressionAgainstArray(evalState,
+																		 &(element.
+																		   bsonValue)));
+			}
+			else
+			{
+				matched = DatumGetBool(ExpressionEval(evalState, &element));
+			}
 		}
-		if (DatumGetBool(result))
+		if (matched)
 		{
 			matchingIndices = lappend_int(matchingIndices, index);
 		}

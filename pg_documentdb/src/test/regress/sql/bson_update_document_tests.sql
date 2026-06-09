@@ -808,6 +808,32 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "results": [{ "i
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[1],[2],[3],[4],[5],[6],[7],[8],[9],[10]]}', '{ "": { "$pull": { "a": {"$gte": 5} } } }', '{}', NULL, NULL, NULL) as update_bson_document;
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "arr": [[{"a": 1, "b" : 1}], [{"a": 2, "b": 2}], [{"a": 3, "b": 3}]]}', '{ "": { "$pull": { "arr":  {"$eq": {"a": 1, "b": 1} } } } }', '{}', NULL, NULL, NULL) as update_bson_document;
 
+-- $pull with $eq:[array] must remove nested array elements matching the whole array value
+-- [1] should be removed (exact match), scalar 1 and [1,2] should not be removed
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1, [1], [1, 2]]}', '{"": {"$pull": {"key": {"$eq": [1]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
+-- Binary nested array: [Binary] should be removed, plain Binary and [Binary,"other"] should not
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [{"$binary":{"base64":"pmajuNcUhjGdgg==","subType":"00"}}, [{"$binary":{"base64":"pmajuNcUhjGdgg==","subType":"00"}}], [{"$binary":{"base64":"pmajuNcUhjGdgg==","subType":"00"}}, "other"]]}', '{"": {"$pull": {"key": {"$eq": [{"$binary":{"base64":"pmajuNcUhjGdgg==","subType":"00"}}]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
+-- Object inside nested array: [{"a":1}] should be removed, plain {"a":1} and [{"a":1},{"a":2}] should not
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [{"a": 1}, [{"a": 1}], [{"a": 1}, {"a": 2}]]}', '{"": {"$pull": {"key": {"$eq": [{"a": 1}]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
+-- Dotted-path: key.0.a resolves to scalar 1 (not array) -> error, matches mongo
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [{"a": 1}, [{"a": 1}], [{"a": 1}, {"a": 2}]]}', '{"": {"$pull": {"key.0.a": 1}}}', '{}', NULL, NULL, NULL) as update_bson_document;
+-- Dotted-path: key.a traverses array with field name -> error, matches mongo
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [{"a": 1}, [{"a": 1}], [{"a": 1}, {"a": 2}]]}', '{"": {"$pull": {"key.a": 1}}}', '{}', NULL, NULL, NULL) as update_bson_document;
+-- Doubly-nested: $eq:[1] recurses one level; both [1] and [[1],2] removed (inner [1] matches), scalar 1 kept
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1, [1], [[1], 2]]}', '{"": {"$pull": {"key": {"$eq": [1]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
+-- Literal [1] form on same input does NOT recurse: only exact [1] removed, [[1],2] kept
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1, [1], [[1], 2]]}', '{"": {"$pull": {"key": [1]}}}', '{}', NULL, NULL, NULL) as update_bson_document;
+-- $eq:[1,2] multi-value: order-sensitive whole-array equality; only exact [1,2] removed
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1, 2, [1,2], [1,2,3], [2,1], 3]}', '{"": {"$pull": {"key": {"$eq": [1,2]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
+-- $eq:[1,2,3] across nested arrays: only exact [1,2,3] removed, subset/reversed/superset kept
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [[1,2,3], [1,2], [2,1], [1,2,3,4]]}', '{"": {"$pull": {"key": {"$eq": [1,2,3]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
+-- $in with mixed scalars and nested arrays: recursion makes nested arrays match if any inner element matches
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1, [1,2], [1,2,3], [1,2,3,4], 2, 3, [2,3], 4, [1,2,3,4], [5,6]]}', '{"": {"$pull": {"key": {"$in": [1,2,3]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
+-- $in:[1] removes all elements: scalar 1, [1] (recursion), [1,2] (recursion finds 1)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1, [1], [1,2]]}', '{"": {"$pull": {"key": {"$in": [1]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
+-- $eq:[1] with deeper nesting: only one level of recursion; [[[1]]] is kept
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [[1], [[1]], [[[1]]]]}', '{"": {"$pull": {"key": {"$eq": [1]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
+
 -- First level of nested array is not recursed if $pull spec value is plain value
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "arr": [[1],[2],[3],[4],[5],[6],[7],[8],[9],[10]]}', '{ "": { "$pull": { "a":  5 } } }', '{}', NULL, NULL, NULL) as update_bson_document;
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "arr": [[{"a": 1, "b" : 1}], [{"a": 2, "b": 2}], [{"a": 3, "b": 3}]]}', '{ "": { "$pull": { "arr":  {"a": 1, "b": 1} } } }', '{}', NULL, NULL, NULL) as update_bson_document;

@@ -303,6 +303,10 @@ bool CleanupCursorFiles = DEFAULT_CLEANUP_CURSOR_FILES;
 bool FailOnGroupIdDuplicate =
 	DEFAULT_FAIL_ON_GROUP_ID_DUPLICATE;
 
+/* Added in v114, enabled in v114, remove after v116 */
+#define DEFAULT_ENABLE_PULL_NESTED_ARRAY_EQ_FIX true
+bool EnablePullNestedArrayEqFix = DEFAULT_ENABLE_PULL_NESTED_ARRAY_EQ_FIX;
+
 /* Added in v108, enabled in v109, remove after v114 */
 #define DEFAULT_ENABLE_DELAYED_HOLD_PORTAL true
 bool EnableDelayedHoldPortal = DEFAULT_ENABLE_DELAYED_HOLD_PORTAL;
@@ -643,6 +647,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL, &EnablePrimaryKeyCursorScan,
 		DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enablePullNestedArrayEqFix", newGucPrefix),
+		gettext_noop(
+			"Enables fix for $pull with $eq to correctly remove matching nested array elements."),
+		NULL, &EnablePullNestedArrayEqFix,
+		DEFAULT_ENABLE_PULL_NESTED_ARRAY_EQ_FIX,
+		PGC_USERSET, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableCursorPlanBeforeRestrictionPathUpdate", newGucPrefix),
