@@ -1041,6 +1041,7 @@ extern bool SupportsXLogInsertForEntry(Page page, Buffer childbuf);
 extern void WriteInsertWalRecord(Buffer buffer, Page page);
 extern void WriteInsertEntryWalRecord(bool isDelete, OffsetNumber off, IndexTuple entry);
 extern void DefineCustomRumRmgr(void);
+extern void RumLogReusePage(Relation index, Buffer buf);
 
 /* rumutil.c */
 extern void initialize_rumoptions(void);
@@ -1130,6 +1131,7 @@ extern PGDLLIMPORT bool RumEnableNewBulkDelete;
 extern PGDLLIMPORT bool RumNewBulkDeleteInlineDataPages;
 extern PGDLLIMPORT bool RumVacuumSkipPrunePostingTreePages;
 extern PGDLLIMPORT bool RumEnableSupportDeadIndexItems;
+extern PGDLLIMPORT bool RumEnableEmitReusePageOnRecycle;
 extern PGDLLIMPORT bool RumSkipResetOnDeadEntryPage;
 extern PGDLLIMPORT bool RumEnableOrderedOperatorScans;
 extern PGDLLIMPORT int RumDefaultPageFillFactor;
