@@ -152,7 +152,7 @@ static const char *cursor_directory = "pg_documentdb_cursor_files";
 Datum
 cursor_directory_cleanup(PG_FUNCTION_ARGS)
 {
-	if (!cursor_set_initialized || !UseFileBasedPersistedCursors)
+	if (!cursor_set_initialized || !CleanupCursorFiles)
 	{
 		PG_RETURN_VOID();
 	}
