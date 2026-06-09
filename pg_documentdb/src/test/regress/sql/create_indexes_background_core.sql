@@ -300,6 +300,34 @@ DELETE FROM documentdb_api_catalog.documentdb_index_queue;
 
 SELECT * FROM documentdb_api_internal.check_build_index_status('{"indexRequest" : {"cmdType" : "C", "ids" :[32101]}}');
 
+-- ============================================================
+-- Tests for skipWaitForIndex flag
+-- ============================================================
+
+-- Create the collection first so that indexes are queued in the background
+SELECT documentdb_api.create_collection('db', 'skip_wait_coll');
+
+-- skipWaitForIndex: true — should return empty requests (no polling)
+SELECT * FROM documentdb_api.create_indexes_background('db', '{ "createIndexes": "skip_wait_coll", "indexes": [ { "key" : { "a": 1 }, "name": "skip_wait_idx_1"}], "skipWaitForIndex": true }');
+
+-- verify the index is queued
+SELECT index_cmd_status FROM documentdb_api_catalog.documentdb_index_queue
+  WHERE collection_id = (SELECT collection_id FROM documentdb_api_catalog.collections
+    WHERE database_name = 'db' AND collection_name = 'skip_wait_coll');
+
+-- skipWaitForIndex: false — should return requests with index id (normal behavior)
+SELECT * FROM documentdb_api.create_indexes_background('db', '{ "createIndexes": "skip_wait_coll", "indexes": [ { "key" : { "b": 1 }, "name": "skip_wait_idx_2"}], "skipWaitForIndex": false }');
+
+-- without skipWaitForIndex (default) — should return requests with index id
+SELECT * FROM documentdb_api.create_indexes_background('db', '{ "createIndexes": "skip_wait_coll", "indexes": [ { "key" : { "c": 1 }, "name": "skip_wait_idx_3"}] }');
+
+-- skipWaitForIndex with multiple indexes — should return empty requests
+SELECT * FROM documentdb_api.create_indexes_background('db', '{ "createIndexes": "skip_wait_coll", "indexes": [ { "key" : { "d": 1 }, "name": "skip_wait_idx_4"}, { "key" : { "e": 1 }, "name": "skip_wait_idx_5"}], "skipWaitForIndex": true }');
+
+-- clean up queued indexes from skipWaitForIndex tests
+DELETE FROM documentdb_api_catalog.documentdb_index_queue;
+SELECT documentdb_api.drop_collection('db', 'skip_wait_coll');
+
 -- test multiple scheduled builds drain together.
 DELETE FROM documentdb_api_catalog.documentdb_index_queue;
 

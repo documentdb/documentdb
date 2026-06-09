@@ -262,6 +262,9 @@ typedef struct
 	/* CreateIndex using CREATE INDEX (NON-CONCURRENTLY) blocking the write operations*/
 	bool blocking;
 
+	/* Flag to indicate whether to skip waiting for the index to be built */
+	bool skipWaitForIndex;
+
 	/* TODO: other things such as commitQuorum, comment ... */
 } CreateIndexesArg;
 

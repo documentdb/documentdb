@@ -159,6 +159,7 @@ bool EnableCreateCollectionOnInsert = true;
 extern bool UseLocalExecutionShardQueries;
 extern bool EnableBypassDocumentValidation;
 extern int BatchUpdateLockTimeoutMs;
+extern bool EnableInsertDuplicateInlineHandling;
 
 /*
  * command_insert handles the insert command invocation through a PostgreSQL function.
@@ -579,8 +580,8 @@ static bool
 DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts, Oid
 								  shardOid,
 								  BatchInsertionResult *batchResult, int insertIndex,
-								  int *insertCountResult, ExprEvalState *evalState,
-								  WriteMode writeMode)
+								  int *insertCountResult, int *insertIncrIndex,
+								  ExprEvalState *evalState, WriteMode writeMode)
 {
 	/* declared volatile because of the longjmp in PG_CATCH */
 	volatile int insertInnerIndex = insertIndex;
@@ -641,6 +642,7 @@ DoMultiInsertWithoutTransactionId(MongoCollection *collection, List *inserts, Oi
 			insertInnerIndex++;
 		}
 
+		*insertIncrIndex = insertInnerIndex;
 		paramListInfo->numParams = paramIndex;
 
 		uint64_t rowsProcessed = 0;
@@ -907,6 +909,7 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 	bool isOrdered = batchSpec->isOrdered;
 
 	int insertIndex = 0;
+	int insertIncrIndex = -1;
 	bool hasBatchedInsertFailed = false;
 
 	ListCell *insertCell = NULL;
@@ -927,6 +930,7 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 		{
 			/* Optimistically try to do multiple updates together, if it fails, try again one by one to figure out which one failed */
 			int incrementCount = 0;
+			int failedBatchIndexEnd = -1;
 			bool performedBatchInsert = DoMultiInsertWithoutTransactionId(collection,
 																		  insertions,
 																		  batchSpec->
@@ -934,6 +938,8 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 																		  batchResult,
 																		  insertIndex,
 																		  &incrementCount,
+																		  &
+																		  failedBatchIndexEnd,
 																		  evalState,
 																		  writeMode);
 
@@ -942,10 +948,13 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 			{
 				/* Has a failure, set hasFailures and retry */
 				hasBatchedInsertFailed = true;
+				insertIncrIndex = failedBatchIndexEnd;
 			}
-
-			insertIndex += incrementCount;
-			continue;
+			else
+			{
+				insertIndex += incrementCount;
+				continue;
+			}
 		}
 
 		insertCell = list_nth_cell(insertions, insertIndex);
@@ -961,6 +970,13 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 		{
 			/* stop trying insert operations after a failure if using ordered:true */
 			break;
+		}
+
+		if (EnableInsertDuplicateInlineHandling &&
+			hasBatchedInsertFailed && insertIndex > insertIncrIndex)
+		{
+			insertIncrIndex = -1;
+			hasBatchedInsertFailed = false;
 		}
 	}
 }

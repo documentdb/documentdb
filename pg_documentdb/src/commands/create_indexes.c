@@ -1405,6 +1405,15 @@ ParseCreateIndexesArg(Datum *dbNameDatum, pgbson *arg, bool buildAsUniqueForPrep
 					bson_iter_value(&argIter));
 			}
 		}
+		else if (strcmp(argKey, "skipWaitForIndex") == 0)
+		{
+			if (EnsureTopLevelFieldIsBooleanLikeNullOk(
+					"skipWaitForIndex", &argIter))
+			{
+				createIndexesArg.skipWaitForIndex = BsonValueAsBool(
+					bson_iter_value(&argIter));
+			}
+		}
 		else if (strcmp(argKey, "$db") == 0)
 		{
 			ValidateOrExtractDatabaseNameFromSpec(&argIter, dbNameDatum);

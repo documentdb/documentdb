@@ -1555,7 +1555,7 @@ SubmitCreateIndexesRequest(Datum dbNameDatum,
 	}
 
 	result.numIndexesAfter = result.numIndexesBefore + indexCount;
-	if (indexIdList != NIL)
+	if (indexIdList != NIL && !createIndexesArg.skipWaitForIndex)
 	{
 		result.request = palloc0(sizeof(SubmittedIndexRequests));
 		result.request->cmdType = CREATE_INDEX_COMMAND_TYPE;
