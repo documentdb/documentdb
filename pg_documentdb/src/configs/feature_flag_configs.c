@@ -381,6 +381,11 @@ bool EnableSortPushToAccumulatorWithPrefix =
 bool EnableDuplicateFieldFix = DEFAULT_ENABLE_DUPLICATE_FIELD_FIX;
 
 /* Added in v114, enabled in v114, remove after v117 */
+#define DEFAULT_ENABLE_STRICT_ADDTOSET_MODIFIER_VALIDATION true
+bool EnableStrictAddToSetModifierValidation =
+	DEFAULT_ENABLE_STRICT_ADDTOSET_MODIFIER_VALIDATION;
+
+/* Added in v114, enabled in v114, remove after v117 */
 #define DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVERSION true
 bool EnableObjectIdFuncExprConversion = DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVERSION;
 
@@ -1263,6 +1268,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable fix for duplicate fields in addToSet."),
 		NULL, &EnableDuplicateFieldFix,
 		DEFAULT_ENABLE_DUPLICATE_FIELD_FIX,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableStrictAddToSetModifierValidation", newGucPrefix),
+		gettext_noop(
+			"Reject $position/$slice/$sort (or any non-$each sibling) inside $addToSet, matching MongoDB behavior."),
+		NULL, &EnableStrictAddToSetModifierValidation,
+		DEFAULT_ENABLE_STRICT_ADDTOSET_MODIFIER_VALIDATION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
