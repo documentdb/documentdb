@@ -46,7 +46,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO off;
+SET LOCAL documentdb.enableGroupByDistinctScan TO off;
 
 -- Correctness: verify returned distinct values
 SELECT document FROM bson_aggregation_pipeline('db',
@@ -77,7 +77,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 -- Correctness: same distinct values as Test 1
 SELECT document FROM bson_aggregation_pipeline('db',
@@ -110,7 +110,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 -- Correctness: same distinct values as Test 1 / Test 2
 SELECT document FROM bson_aggregation_pipeline('db',
@@ -141,7 +141,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO on;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 -- Correctness: same distinct values as Tests 1-3
 SELECT document FROM bson_aggregation_pipeline('db',
@@ -180,7 +180,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 -- Correctness: per-group sum of y
 SELECT document FROM bson_aggregation_pipeline('db',
@@ -209,7 +209,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -235,7 +235,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -263,7 +263,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -297,7 +297,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -329,7 +329,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -363,7 +363,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -392,7 +392,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -424,7 +424,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -460,7 +460,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -488,7 +488,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -519,7 +519,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -551,7 +551,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -580,7 +580,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist_arr", "hint": "idx_arr_x", "pipeline": [
@@ -614,7 +614,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -642,7 +642,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -670,7 +670,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -765,7 +765,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist_more", "hint": "idx_x", "pipeline": [
@@ -802,7 +802,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
 SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
 
@@ -834,7 +834,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_mk", "hint": "idx_tags", "pipeline": [
@@ -863,7 +863,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_part", "hint": "idx_x_partial", "pipeline": [
@@ -892,7 +892,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist_more", "hint": "idx_x", "pipeline": [
@@ -921,7 +921,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
 SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
 
@@ -950,7 +950,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist_more", "hint": "idx_x", "pipeline": [
@@ -976,7 +976,7 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByCustomScan TO on;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist_more", "hint": "idx_y", "pipeline": [

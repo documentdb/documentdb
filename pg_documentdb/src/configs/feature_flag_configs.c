@@ -275,8 +275,8 @@ bool EnableIndexPathKeySummarization = DEFAULT_ENABLE_INDEX_PATH_KEY_SUMMARIZATI
 bool EnableDistinctCustomScan = DEFAULT_ENABLE_DISTINCT_CUSTOM_SCAN;
 
 /* Added in v114, pending stabilization, enable in v116 */
-#define DEFAULT_ENABLE_GROUP_BY_CUSTOM_SCAN false
-bool EnableGroupByCustomScan = DEFAULT_ENABLE_GROUP_BY_CUSTOM_SCAN;
+#define DEFAULT_ENABLE_GROUP_BY_DISTINCT_SCAN false
+bool EnableGroupByDistinctScan = DEFAULT_ENABLE_GROUP_BY_DISTINCT_SCAN;
 
 /*
  * SECTION: Aggregation & Query feature flags
@@ -702,12 +702,12 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableGroupByCustomScan", newGucPrefix),
+		psprintf("%s.enableGroupByDistinctScan", newGucPrefix),
 		gettext_noop(
 			"Whether or not to enable the distinct custom scan wrapper for "
 			"$group pipelines that have no aggregate accumulators."),
-		NULL, &EnableGroupByCustomScan,
-		DEFAULT_ENABLE_GROUP_BY_CUSTOM_SCAN,
+		NULL, &EnableGroupByDistinctScan,
+		DEFAULT_ENABLE_GROUP_BY_DISTINCT_SCAN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

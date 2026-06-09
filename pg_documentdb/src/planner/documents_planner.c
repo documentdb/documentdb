@@ -139,7 +139,7 @@ extern bool EnableCursorPlanBeforeRestrictionPathUpdate;
 extern bool EnableExtendedIndexes;
 extern bool EnableDynamicCursors;
 extern bool EnableDistinctCustomScan;
-extern bool EnableGroupByCustomScan;
+extern bool EnableGroupByDistinctScan;
 
 planner_hook_type ExtensionPreviousPlannerHook = NULL;
 set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook = NULL;
@@ -538,7 +538,7 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	}
 
 	if ((EnableDistinctCustomScan && list_length(root->distinct_pathkeys) > 0) ||
-		(EnableGroupByCustomScan && list_length(root->group_pathkeys) > 0))
+		(EnableGroupByDistinctScan && list_length(root->group_pathkeys) > 0))
 	{
 		AddDistinctCustomScanWrapper(root, rel, rte);
 	}
