@@ -3,26 +3,35 @@
  * rumxlogcompat.c
  *	  xlog utilities routines for the postgres extended rum inverted index access method.
  *
- * This file provides WAL (Write-Ahead Log) compatibility functions that allow
- * RUM entry page inserts to emit GIN-format xlog records instead of the
- * default Generic xlog records. This is safe because:
+ * This file hosts WAL helpers that emit *standard* PostgreSQL rmgr records
+ * on behalf of RUM, along with the cross-PG-version struct shims those
+ * records require. Two families of helpers live here today:
  *
- * 1. RUM entry pages share the same physical page layout as GIN entry pages.
- *    The entry page structure (leaf entries with index tuples at offsets) is
- *    identical between GIN and RUM.
+ * (a) RUM entry-page inserts that emit GIN-format xlog records instead of
+ *     the default Generic xlog records. This is safe because:
  *
- * 2. The GIN INSERT redo logic for entry pages performs the same mutation
- *    that RUM does: it optionally deletes an existing tuple at the given
- *    offset and then adds the new tuple at that offset. This delete + add
- *    operation is exactly what RUM needs when replacing an entry (e.g.,
- *    updating a posting list pointer after the posting list grows into a
- *    posting tree).
+ *     1. RUM entry pages share the same physical page layout as GIN entry
+ *        pages. The entry page structure (leaf entries with index tuples
+ *        at offsets) is identical between GIN and RUM.
  *
- * 3. By using GIN's record-level xlog format, we avoid the Generic xlog
- *    approach which stores a full-page XOR diff (~8KB worst case per page
- *    modification). The GIN entry insert record only stores the inserted
- *    tuple data (typically tens of bytes), dramatically reducing WAL volume
- *    for workloads with many duplicate keys.
+ *     2. The GIN INSERT redo logic for entry pages performs the same
+ *        mutation that RUM does: it optionally deletes an existing tuple
+ *        at the given offset and then adds the new tuple at that offset.
+ *        This delete + add operation is exactly what RUM needs when
+ *        replacing an entry (e.g., updating a posting list pointer after
+ *        the posting list grows into a posting tree).
+ *
+ *     3. By using GIN's record-level xlog format, we avoid the Generic
+ *        xlog approach which stores a full-page XOR diff (~8KB worst case
+ *        per page modification). The GIN entry insert record only stores
+ *        the inserted tuple data (typically tens of bytes), dramatically
+ *        reducing WAL volume for workloads with many duplicate keys.
+ *
+ * (b) XLOG_BTREE_REUSE_PAGE markers emitted before RUM reclaims space from
+ *     dead entries on an entry page. Borrowing nbtree's record format lets
+ *     hot standbys resolve recovery conflicts using the existing built-in
+ *     btree rmgr, with no custom redo path required.
+ *
  *
  * Portions Copyright (c) Microsoft Corporation.  All rights reserved.
  * Portions Copyright (c) 2015-2022, Postgres Professional
@@ -42,9 +51,69 @@
 #include "access/bufmask.h"
 #include "access/xlogreader.h"
 #include "access/xlogutils.h"
+#include "access/nbtxlog.h"
+#include "access/transam.h"
+#include "storage/procarray.h"
 
 #include "pg_documentdb_rum.h"
 #include "pg_documentdb_rum_xlogprivate.h"
+
+
+/*
+ * Promote a 32-bit horizon TransactionId to a FullTransactionId.
+ *
+ * Mirrors widen_snapshot_xid() in src/backend/utils/adt/xid8funcs.c, which
+ * is static there. The 64-bit result must be <= next_fxid; every snapshot
+ * xid is therefore from the same epoch as next_fxid or the epoch before.
+ */
+static FullTransactionId
+WidenSnapshotXid(TransactionId xid, FullTransactionId next_fxid)
+{
+	TransactionId nextXid = XidFromFullTransactionId(next_fxid);
+	uint32 epoch = EpochFromFullTransactionId(next_fxid);
+
+	if (!TransactionIdIsNormal(xid))
+	{
+		return FullTransactionIdFromEpochAndXid(0, xid);
+	}
+
+	if (xid > nextXid)
+	{
+		epoch--;
+	}
+
+	return FullTransactionIdFromEpochAndXid(epoch, xid);
+}
+
+
+/*
+ * Emit an XLOG_BTREE_REUSE_PAGE marker so hot standbys can resolve recovery
+ * conflicts before we reuse space freed by dead index entries on `buf`.
+ */
+void
+RumLogReusePage(Relation index, Buffer buf)
+{
+	Page page = BufferGetPage(buf);
+	TransactionId horizon = RumPageGetDeleteXid(page);
+	FullTransactionId conflictHorizon =
+		WidenSnapshotXid(horizon, ReadNextFullTransactionId());
+	xl_btree_reuse_page xlrec_reuse;
+
+	xlrec_reuse.block = BufferGetBlockNumber(buf);
+#if PG_VERSION_NUM >= 160000
+	xlrec_reuse.locator = index->rd_locator;
+	xlrec_reuse.snapshotConflictHorizon = conflictHorizon;
+	xlrec_reuse.isCatalogRel = false;
+#else
+	xlrec_reuse.node = index->rd_node;
+	xlrec_reuse.latestRemovedFullXid = conflictHorizon;
+#endif
+
+	XLogBeginInsert();
+	XLogRegisterData((char *) &xlrec_reuse, SizeOfBtreeReusePage);
+	XLogInsert(RM_BTREE_ID, XLOG_BTREE_REUSE_PAGE);
+}
+
 
 #if PG_VERSION_NUM >= 190000
 #error "rumxlogcompat.c is not expected to be compiled for PG 19 or later"

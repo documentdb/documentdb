@@ -157,6 +157,12 @@ PGDLLEXPORT bool RumEnableTargetedPostingTreePruning =
 PGDLLEXPORT bool RumEnableSupportDeadIndexItems =
 	RUM_DEFAULT_ENABLE_SUPPORT_DEAD_INDEX_ITEMS;
 
+/* rumutil.c */
+/* TestingConfig: This is not ready for real consumption */
+#define RUM_DEFAULT_ENABLE_EMIT_REUSE_PAGE_ON_RECYCLE false
+PGDLLEXPORT bool RumEnableEmitReusePageOnRecycle =
+	RUM_DEFAULT_ENABLE_EMIT_REUSE_PAGE_ON_RECYCLE;
+
 /* FeatureFlag: Added on v108, Enabled in v108, remove after v116 */
 #define RUM_DEFAULT_ENABLE_ORDERED_OPERATOR_SCANS true
 PGDLLEXPORT bool RumEnableOrderedOperatorScans =
@@ -324,6 +330,15 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumEnableSupportDeadIndexItems,
 		RUM_DEFAULT_ENABLE_SUPPORT_DEAD_INDEX_ITEMS,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_emit_reuse_page_on_recycle", documentDBRumGucPrefix),
+		"Test GUC - emit a btree REUSE_PAGE WAL marker before reusing a vacuum-deleted RUM page from the FSM, so streaming standbys resolve recovery conflicts before the page contents are overwritten. Not ready for real consumption.",
+		NULL,
+		&RumEnableEmitReusePageOnRecycle,
+		RUM_DEFAULT_ENABLE_EMIT_REUSE_PAGE_ON_RECYCLE,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 

@@ -1,4 +1,5 @@
 ### documentdb v0.114-0 (Unreleased) ###
+* Emit a btree `REUSE_PAGE` WAL marker before a RUM page is reused from the FSM, so streaming standbys resolve recovery conflicts before the page contents are overwritten. Mirrors nbtree's `_bt_allocbuf` behavior. Guarded by `documentdb_rum.enable_emit_reuse_page_on_recycle` feature flag, disabled by default while pending stabilization. *[Perf]*
 * Support non-blocking background unique index build for ordered indexes via `CREATE INDEX CONCURRENTLY` with post-processing to register exclusion constraints and validate existing rows. Guarded by `documentdb.enableNonBlockingUniqueIndexBuild` flag, enabled by default. *[Feature]*
 * Add feature-flagged targeted RUM posting-tree pruning to shorten root cleanup-lock hold time during vacuum. Guarded by `enable_targeted_posting_tree_pruning`, disabled by default while pending stabilization. *[Perf]*
 * Fix crash when `$natural` sort on non-base relations that are already sorted by pipeline. *[Bugfix]* (#532)

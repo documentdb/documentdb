@@ -559,6 +559,12 @@ RumNewBuffer(Relation index)
 			}
 			if (RumPageIsDeleted(page))
 			{
+				if (RumEnableEmitReusePageOnRecycle &&
+					XLogStandbyInfoActive())
+				{
+					RumLogReusePage(index, buffer);
+				}
+
 				return buffer;  /* OK to use */
 			}
 			LockBuffer(buffer, RUM_UNLOCK);
