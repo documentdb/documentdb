@@ -83,12 +83,14 @@ jobs:
       # Same docker build step as build_gateway.yml, single arch
       - name: Build documentdb-local image
         run: |
-          DEB_FILE=$(ls downloaded-artifacts/ | grep -v 'dbgsym' | head -1)
-          echo "Building documentdb-local image with deb: $DEB_FILE"
+          mapfile -t EXT_DEBS < <(find downloaded-artifacts -maxdepth 1 -type f -name '*-documentdb_*.deb' ! -name '*dbgsym*' | sort)
+          EXT_DEB="${EXT_DEBS[0]:-}"
+          [ -n "$EXT_DEB" ] || { echo "Extension DEB not found"; exit 1; }
+          echo "Building documentdb-local image with ext=$EXT_DEB"
           docker build \
             --build-arg BASE_IMAGE=debian:trixie-slim \
             --build-arg POSTGRES_VERSION=${{ env.PG_VERSION }} \
-            --build-arg DEB_PACKAGE_REL_PATH=downloaded-artifacts/$DEB_FILE \
+            --build-arg DEB_PACKAGE_REL_PATH="$EXT_DEB" \
             -t documentdb-local:ci \
             -f packaging/gateway/docker/Dockerfile_documentdb_local .
 
@@ -187,6 +189,7 @@ jobs:
             python3 documentdb-local/functional-tests/tools/functional_gate.py \
               --image documentdb-local/functional-tests/config/image.yml \
               --allowlist documentdb-local/functional-tests/config/allowlist.yml \
+              --engine-name "${{ env.ENGINE_NAME }}" \
               summarize-gate \
               --report .test-results/functional-tests/report.json \
               --output-dir .test-results/functional-tests
@@ -290,6 +293,7 @@ jobs:
             python3 documentdb-local/functional-tests/tools/functional_gate.py \
               --image documentdb-local/functional-tests/config/image.yml \
               --allowlist documentdb-local/functional-tests/config/allowlist.yml \
+              --engine-name "${{ env.ENGINE_NAME }}" \
               summarize-daily \
               --report .test-results/functional-tests-daily/report.json \
               --output-dir .test-results/functional-tests-daily
