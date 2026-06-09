@@ -563,6 +563,31 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "arr": [], "x": 
 (1 row)
 
 RESET documentdb.enableDuplicateFieldFix;
+-- $addToSet with $each must reject $position/$slice/$sort ($push-only modifiers are invalid here)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1,2]}', '{ "": { "$addToSet": { "key": { "$each": [3,4], "$position": 1 } } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+ERROR:  Found unexpected fields after $each in $addToSet: $position
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1,2]}', '{ "": { "$addToSet": { "key": { "$each": [3,4], "$slice": 2 } } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+ERROR:  Found unexpected fields after $each in $addToSet: $slice
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1,2]}', '{ "": { "$addToSet": { "key": { "$each": [3,4], "$sort": 1 } } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+ERROR:  Found unexpected fields after $each in $addToSet: $sort
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1,2]}', '{ "": { "$addToSet": { "key": { "$position": 1, "$each": [3,4] } } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+ERROR:  Found unexpected fields after $each in $addToSet: $position
+-- $addToSet with no $each: dollar-prefixed key is treated as a literal value to add
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1,2]}', '{ "": { "$addToSet": { "key": { "$position": 1 } } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+                                                                  update_bson_document
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "key" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$position" : { "$numberInt" : "1" } } ] }
+(1 row)
+
+-- GUC off path: lenient mode preserved (no error, modifier silently ignored)
+SET documentdb.enableStrictAddToSetModifierValidation TO off;
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1,2]}', '{ "": { "$addToSet": { "key": { "$each": [3,4], "$position": 1 } } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+                                                                  update_bson_document
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "key" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] }
+(1 row)
+
+RESET documentdb.enableStrictAddToSetModifierValidation;
 -- update scenario negative tests: $inc
 SELECT documentdb_api_internal.update_bson_document('{"_id": 5, "a": [1,2] }', '{ "": { "$inc": { "a": 30 } } }', '{}', NULL, NULL, NULL);
 ERROR:  Operation $inc cannot be performed because the target value is not numeric. Document { _id: 5 } contains the field 'a' which is of non-numeric type array.

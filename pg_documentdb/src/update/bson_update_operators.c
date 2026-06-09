@@ -24,6 +24,8 @@
 /* Forward declaration */
 /* --------------------------------------------------------- */
 
+extern bool EnableStrictAddToSetModifierValidation;
+
 typedef enum
 {
 	BITWISE_OPERATOR_AND,
@@ -1220,8 +1222,10 @@ RenameSourceGetValue(const pgbson *sourceDocument, const char *sourcePathString)
 
 /*
  * For an $addToSet operator, inspects the updateSpec value
- * and validates whether it is a $each modifier or just add a single
- * value.
+ * and validates whether it is a $each modifier or just adds a single
+ * value. When the modifier doc contains $each, any non-$each sibling
+ * key is rejected as an unexpected field — the first such key
+ * encountered is reported.
  */
 static void
 ValidateAddToSetWithDollarEach(const bson_value_t *updateValue,
@@ -1229,21 +1233,55 @@ ValidateAddToSetWithDollarEach(const bson_value_t *updateValue,
 							   bson_value_t *elementsToAdd)
 {
 	*isEach = false;
-	pgbsonelement element;
-	if (TryGetBsonValueToPgbsonElement(updateValue, &element) &&
-		(strcmp(element.path, "$each") == 0))
-	{
-		*isEach = true;
 
-		/* The value provided to the $each within the $addToSet must specifically be an array, otherwise the operation will result in an error. */
-		if (element.bsonValue.value_type != BSON_TYPE_ARRAY)
+	if (updateValue->value_type != BSON_TYPE_DOCUMENT)
+	{
+		return;
+	}
+
+	bson_iter_t iter;
+	BsonValueInitIterator(updateValue, &iter);
+
+	const char *unexpectedKey = NULL;
+
+	while (bson_iter_next(&iter))
+	{
+		const char *key = bson_iter_key(&iter);
+
+		if (strcmp(key, "$each") == 0)
 		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
-							errmsg(
-								"Expected 'array' type for $each but found '%s' type",
-								BsonTypeName(element.bsonValue.value_type))));
+			*isEach = true;
+			const bson_value_t *eachValue = bson_iter_value(&iter);
+
+			/* The value provided to the $each within the $addToSet must specifically be an array, otherwise the operation will result in an error. */
+			if (eachValue->value_type != BSON_TYPE_ARRAY)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
+								errmsg(
+									"Expected 'array' type for $each but found '%s' type",
+									BsonTypeName(eachValue->value_type))));
+			}
+			*elementsToAdd = *eachValue;
 		}
-		*elementsToAdd = element.bsonValue;
+		else if (unexpectedKey == NULL)
+		{
+			unexpectedKey = key;
+		}
+
+		/* First unexpected key wins (matches MongoDB); once we have both
+		 * $each and an unexpected sibling, no further inspection is needed. */
+		if (*isEach && unexpectedKey != NULL)
+		{
+			break;
+		}
+	}
+
+	if (EnableStrictAddToSetModifierValidation && *isEach && unexpectedKey != NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg(
+							"Found unexpected fields after $each in $addToSet: %s",
+							unexpectedKey)));
 	}
 }
 
