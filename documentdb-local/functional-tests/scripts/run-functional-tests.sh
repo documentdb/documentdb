@@ -490,6 +490,7 @@ case "$MODE" in
             if ! python3 "$GATE_TOOL" \
                 --image "$IMAGE_YML" \
                 --allowlist "$ALLOWLIST_YML" \
+                --engine-name "$ENGINE_NAME" \
                 summarize-gate \
                 --report "$RESULTS_DIR/report.json" \
                 --output-dir "$RESULTS_DIR"; then
@@ -559,6 +560,7 @@ case "$MODE" in
                 python3 "$GATE_TOOL" \
                     --image "$IMAGE_YML" \
                     --allowlist "$ALLOWLIST_YML" \
+                    --engine-name "$ENGINE_NAME" \
                     summarize-daily \
                     --report "$RESULTS_DIR/report.json" \
                     --output-dir "$RESULTS_DIR" \
@@ -630,8 +632,16 @@ import yaml
 
 output_path = sys.argv[1]
 tests = sorted(line.strip() for line in sys.stdin if line.strip())
+header = (
+    "# Bootstrap output: every entry is a bare string (= applies to all engines).\n"
+    "# Bootstrap cannot infer per-engine scoping. If a candidate test should only\n"
+    "# run on one engine, convert it manually before promoting:\n"
+    "#   - id: <node-id>\n"
+    "#     engines: [<engine>]\n"
+)
 with open(output_path, "w") as f:
-    yaml.dump({"schema_version": 1, "tests": tests}, f, default_flow_style=False, width=200)
+    f.write(header)
+    yaml.dump({"schema_version": 2, "tests": tests}, f, default_flow_style=False, width=200)
 print(f"Wrote {len(tests)} tests to {output_path}")
 ' "$OUTPUT" <<< "$ALL_PASSING"
         fi

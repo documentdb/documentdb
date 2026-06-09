@@ -6,6 +6,8 @@ Provides config validation, PR gate result summarization, and daily delta
 reporting for the allowlist PR gate framework (RFC-0007).
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -57,41 +59,141 @@ def validate_image_config(path: str) -> list[ConfigError]:
     return errors
 
 
-def validate_allowlist_config(path: str) -> list[ConfigError]:
-    """Validate allowlist.yml and return a list of errors (empty = valid)."""
-    errors = []
-    try:
-        data = load_yaml(path)
-    except Exception as e:
-        errors.append(ConfigError("INVALID_SCHEMA", f"Cannot parse {path}: {e}"))
-        return errors
+SUPPORTED_ALLOWLIST_SCHEMA_VERSIONS = (1, 2)
+_ALLOWED_ENTRY_KEYS = {"id", "engines"}
+
+
+def parse_allowlist_entries(data: dict) -> tuple[list[tuple[str, frozenset[str] | None]], list[ConfigError]]:
+    """Parse an allowlist mapping and return (entries, errors).
+
+    Each entry is normalized to ``(test_id, engines_or_None)`` where ``None``
+    means "applies to all engines". Schema v1 produces only ``(id, None)``
+    tuples. Schema v2 supports both bare strings (= all engines) and
+    ``{id, engines: [...]}`` dicts.
+    """
+    errors: list[ConfigError] = []
+    entries: list[tuple[str, frozenset[str] | None]] = []
+
+    if not isinstance(data, dict):
+        errors.append(ConfigError(
+            "INVALID_SCHEMA",
+            f"Allowlist must be a YAML mapping, got {type(data).__name__}"))
+        return entries, errors
 
     schema_version = data.get("schema_version")
-    if schema_version != 1:
-        errors.append(ConfigError("INVALID_SCHEMA",
-                                  f"Unsupported schema_version: {schema_version} (expected 1)"))
-        return errors
+    if schema_version not in SUPPORTED_ALLOWLIST_SCHEMA_VERSIONS:
+        supported = ", ".join(str(v) for v in SUPPORTED_ALLOWLIST_SCHEMA_VERSIONS)
+        errors.append(ConfigError(
+            "INVALID_SCHEMA",
+            f"Unsupported schema_version: {schema_version} (expected one of: {supported})"))
+        return entries, errors
 
     tests = data.get("tests")
     if tests is None:
         errors.append(ConfigError("INVALID_SCHEMA", "Missing required field 'tests'"))
-        return errors
+        return entries, errors
 
     if not isinstance(tests, list):
         errors.append(ConfigError("INVALID_SCHEMA",
                                   f"'tests' must be a list, got {type(tests).__name__}"))
-        return errors
+        return entries, errors
 
-    seen = set()
+    seen_ids: set[str] = set()
     for entry in tests:
-        if not isinstance(entry, str):
-            errors.append(ConfigError("INVALID_SCHEMA",
-                                      f"Test ID must be a string, got {type(entry).__name__}: {entry}"))
-            continue
-        if entry in seen:
-            errors.append(ConfigError("DUPLICATE_TEST_ID", f"Duplicate test ID: {entry}"))
-        seen.add(entry)
+        if isinstance(entry, str):
+            test_id = entry
+            engines: frozenset[str] | None = None
+        elif isinstance(entry, dict):
+            if schema_version < 2:
+                errors.append(ConfigError(
+                    "INVALID_SCHEMA",
+                    f"Dict entries require schema_version >= 2, got: {entry}"))
+                continue
 
+            unknown_keys = set(entry.keys()) - _ALLOWED_ENTRY_KEYS
+            if unknown_keys:
+                errors.append(ConfigError(
+                    "INVALID_SCHEMA",
+                    f"Unknown keys in entry {entry}: {sorted(unknown_keys)} "
+                    f"(allowed: {sorted(_ALLOWED_ENTRY_KEYS)})"))
+                continue
+
+            test_id = entry.get("id")
+            if not isinstance(test_id, str) or not test_id:
+                errors.append(ConfigError(
+                    "INVALID_SCHEMA",
+                    f"Entry 'id' must be a non-empty string, got: {entry}"))
+                continue
+
+            if "engines" in entry:
+                engines_raw = entry["engines"]
+                if not isinstance(engines_raw, list):
+                    errors.append(ConfigError(
+                        "INVALID_SCHEMA",
+                        f"Entry 'engines' must be a list, got {type(engines_raw).__name__} for {test_id}"))
+                    continue
+                if len(engines_raw) == 0:
+                    errors.append(ConfigError(
+                        "INVALID_SCHEMA",
+                        f"Entry 'engines' must be a non-empty list for {test_id} "
+                        f"(omit the field to apply to all engines)"))
+                    continue
+                bad_engines = [e for e in engines_raw if not isinstance(e, str) or not e]
+                if bad_engines:
+                    errors.append(ConfigError(
+                        "INVALID_SCHEMA",
+                        f"Entry 'engines' for {test_id} must contain non-empty strings, got: {bad_engines}"))
+                    continue
+                engines = frozenset(engines_raw)
+            else:
+                engines = None
+        else:
+            errors.append(ConfigError(
+                "INVALID_SCHEMA",
+                f"Test entry must be a string or mapping, got {type(entry).__name__}: {entry}"))
+            continue
+
+        if test_id in seen_ids:
+            errors.append(ConfigError("DUPLICATE_TEST_ID", f"Duplicate test ID: {test_id}"))
+            continue
+        seen_ids.add(test_id)
+        entries.append((test_id, engines))
+
+    return entries, errors
+
+
+def load_allowlist_entries(path: str) -> list[tuple[str, frozenset[str] | None]]:
+    """Load and parse an allowlist file. Raises ValueError on any schema error."""
+    data = load_yaml(path)
+    entries, errors = parse_allowlist_entries(data)
+    if errors:
+        joined = "; ".join(f"[{e.subtype}] {e.message}" for e in errors)
+        raise ValueError(f"Invalid allowlist {path}: {joined}")
+    return entries
+
+
+def load_allowlist_ids(path: str, engine_name: str) -> set[str]:
+    """Return the set of allowlisted test IDs that apply to ``engine_name``.
+
+    An entry with ``engines = None`` (bare string in v1/v2, or v2 dict with no
+    ``engines`` field) applies to every engine. An entry with an explicit
+    ``engines`` list is in-scope only when ``engine_name`` is in that list.
+    """
+    in_scope: set[str] = set()
+    for test_id, engines in load_allowlist_entries(path):
+        if engines is None or engine_name in engines:
+            in_scope.add(test_id)
+    return in_scope
+
+
+def validate_allowlist_config(path: str) -> list[ConfigError]:
+    """Validate allowlist.yml and return a list of errors (empty = valid)."""
+    try:
+        data = load_yaml(path)
+    except Exception as e:
+        return [ConfigError("INVALID_SCHEMA", f"Cannot parse {path}: {e}")]
+
+    _, errors = parse_allowlist_entries(data)
     return errors
 
 
@@ -139,18 +241,28 @@ class GateResult:
         }
 
 
-def summarize_gate(allowlist_path: str, report_path: str, image_path: str = "") -> GateResult:
-    """Analyze pytest JSON report against the allowlist and produce a gate result."""
+def summarize_gate(allowlist_path: str, report_path: str, image_path: str = "",
+                   engine_name: str = "documentdb",
+                   image_override: str = "") -> GateResult:
+    """Analyze pytest JSON report against the allowlist and produce a gate result.
+
+    Only entries that apply to ``engine_name`` (per the v2 schema) are
+    considered in scope. v1 files are read as if every entry applies to all
+    engines. ``image_override`` (if non-empty) is reported as the image used
+    in place of whatever is pinned in ``image_path`` — used when a CI run
+    is parameterized with a one-off image instead of the on-disk pinned one.
+    """
     result = GateResult()
 
     # Load image info
-    if image_path and os.path.exists(image_path):
+    if image_override:
+        result.image = image_override
+    elif image_path and os.path.exists(image_path):
         image_data = load_yaml(image_path)
         result.image = image_data.get("image", "")
 
-    # Load allowlist
-    al_data = load_yaml(allowlist_path)
-    allowed_ids = set(al_data.get("tests", []))
+    # Load allowlist filtered by engine
+    allowed_ids = load_allowlist_ids(allowlist_path, engine_name)
     result.selected = len(allowed_ids)
 
     # Load pytest JSON report
@@ -195,7 +307,7 @@ def summarize_gate(allowlist_path: str, report_path: str, image_path: str = "") 
                 "outcome": outcome,
                 "short_name": test_id.rsplit("/", 1)[-1] if "/" in test_id else test_id,
             })
-        elif outcome == "xfail":
+        elif outcome in ("xfailed", "xfail"):
             result.non_pass += 1
             result.errors.append({
                 "subtype": "NON_PASS_OUTCOME",
@@ -203,7 +315,7 @@ def summarize_gate(allowlist_path: str, report_path: str, image_path: str = "") 
                 "outcome": outcome,
                 "message": f"Allowlisted test has non-pass outcome: {outcome}",
             })
-        elif outcome == "xpass":
+        elif outcome in ("xpassed", "xpass"):
             result.non_pass += 1
             result.errors.append({
                 "subtype": "ALLOWLISTED_XPASS",
@@ -315,23 +427,42 @@ def render_gate_markdown(result: GateResult) -> str:
 # Daily delta summarization
 # ---------------------------------------------------------------------------
 
-def summarize_daily(allowlist_path: str, report_path: str, image_path: str = "") -> dict:
-    """Analyze a full-suite pytest JSON report against the allowlist for daily delta."""
-    al_data = load_yaml(allowlist_path)
-    allowed_ids = set(al_data.get("tests", []))
+def summarize_daily(allowlist_path: str, report_path: str, image_path: str = "",
+                    engine_name: str = "documentdb",
+                    image_override: str = "") -> dict:
+    """Analyze a full-suite pytest JSON report against the allowlist for daily delta.
+
+    Only entries that apply to ``engine_name`` (per the v2 schema) are
+    considered in scope. v1 files are read as if every entry applies to all
+    engines. ``image_override`` (if non-empty) is reported as the image used
+    in place of whatever is pinned in ``image_path``.
+    """
+    allowed_ids = load_allowlist_ids(allowlist_path, engine_name)
+
+    # All node IDs present in the allowlist, regardless of engine scoping.
+    # Used to separate "truly outside the file" from "in the file but scoped
+    # to a different engine" so the promotion snippet never recommends a
+    # bare-string addition that would collide with an existing scoped entry.
+    all_listed_ids = {tid for tid, _ in load_allowlist_entries(allowlist_path)}
+    scoped_other_engine_ids = all_listed_ids - allowed_ids
 
     with open(report_path) as f:
         report = json.load(f)
 
-    image = ""
-    if image_path and os.path.exists(image_path):
+    if image_override:
+        image = image_override
+    elif image_path and os.path.exists(image_path):
         image_data = load_yaml(image_path)
         image = image_data.get("image", "")
+    else:
+        image = ""
 
     tests_in_report = report.get("tests", [])
 
     allowlisted_passed = []
     allowlisted_failed = []
+    scoped_other_engine_passed = []
+    scoped_other_engine_not_passing = []
     outside_passed = []
     outside_not_passing = []
 
@@ -344,6 +475,11 @@ def summarize_daily(allowlist_path: str, report_path: str, image_path: str = "")
                 allowlisted_passed.append(nodeid)
             else:
                 allowlisted_failed.append({"test_id": nodeid, "outcome": outcome})
+        elif nodeid in scoped_other_engine_ids:
+            if outcome == "passed":
+                scoped_other_engine_passed.append(nodeid)
+            else:
+                scoped_other_engine_not_passing.append(nodeid)
         else:
             if outcome == "passed":
                 outside_passed.append(nodeid)
@@ -360,9 +496,15 @@ def summarize_daily(allowlist_path: str, report_path: str, image_path: str = "")
         area = derive_area(nodeid)
         area_counts[area] = area_counts.get(area, 0) + 1
 
-    # Generate promotion YAML snippet
+    # Generate promotion YAML snippet.
+    # IMPORTANT: only emit truly outside-the-file IDs. IDs already present
+    # under a different engine scope are handled separately so a maintainer
+    # never copy-pastes a bare-string line that would duplicate an existing
+    # scoped entry.
     promotion_snippet_lines = [
         "# Promotion candidates from one daily run; rerun/bootstrap before promoting.",
+        "# These are bare-string (all-engines) entries. If a candidate should only",
+        "# run on one engine, change it to: { id: ..., engines: [<engine>] }",
         "tests:",
     ]
     for nodeid in sorted(outside_passed):
@@ -374,6 +516,8 @@ def summarize_daily(allowlist_path: str, report_path: str, image_path: str = "")
         "allowlisted_passed": len(allowlisted_passed),
         "allowlisted_failed": allowlisted_failed,
         "allowlisted_missing": missing_from_report,
+        "scoped_other_engine_passed": sorted(scoped_other_engine_passed),
+        "scoped_other_engine_not_passing": len(scoped_other_engine_not_passing),
         "outside_passed": len(outside_passed),
         "outside_not_passing": len(outside_not_passing),
         "promotion_areas": area_counts,
@@ -403,6 +547,25 @@ def render_daily_markdown(delta: dict) -> str:
     lines.append(f"- passed: {delta['outside_passed']}")
     lines.append(f"- not passing: {delta['outside_not_passing']}")
     lines.append("")
+
+    scoped_passed = delta.get("scoped_other_engine_passed") or []
+    scoped_not_passing = delta.get("scoped_other_engine_not_passing", 0)
+    if scoped_passed or scoped_not_passing:
+        lines.append("**Allowlisted but scoped to a different engine on this run:**")
+        lines.append(
+            "These tests are in the allowlist but with `engines:` excluding the engine "
+            "this daily ran. They are NOT enforced here and not promotion candidates. "
+            "To require any of them on this engine, widen the existing entry's `engines:` "
+            "list instead of adding a new bare-string line (a duplicate `id` is rejected)."
+        )
+        lines.append(f"- passed: {len(scoped_passed)}")
+        lines.append(f"- not passing: {scoped_not_passing}")
+        if scoped_passed:
+            for nodeid in scoped_passed[:10]:
+                lines.append(f"  - `{nodeid}`")
+            if len(scoped_passed) > 10:
+                lines.append(f"  - ... and {len(scoped_passed) - 10} more")
+        lines.append("")
 
     if delta.get("promotion_areas"):
         lines.append("**Manual promotion candidates by area:**")
@@ -491,6 +654,175 @@ def derive_area(nodeid: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Engine comparison
+# ---------------------------------------------------------------------------
+
+def compare_engines(report_a_path: str, report_b_path: str,
+                    engine_a: str, engine_b: str,
+                    image_path: str = "") -> dict:
+    """Compare pytest JSON reports from two engines and classify differences."""
+    image = ""
+    if image_path and os.path.exists(image_path):
+        image_data = load_yaml(image_path)
+        image = image_data.get("image", "")
+
+    with open(report_a_path) as f:
+        report_a = json.load(f)
+    with open(report_b_path) as f:
+        report_b = json.load(f)
+
+    # Build outcome maps
+    def build_outcome_map(report):
+        m = {}
+        for test in report.get("tests", []):
+            m[test.get("nodeid", "")] = test.get("outcome", "unknown")
+        return m
+
+    map_a = build_outcome_map(report_a)
+    map_b = build_outcome_map(report_b)
+    all_ids = sorted(set(map_a.keys()) | set(map_b.keys()))
+
+    both_pass = []
+    both_fail = []
+    a_only_pass = []  # a pass, b fail/error
+    b_only_pass = []  # b pass, a fail/error — compatibility gaps
+    both_skip = []
+    other = []
+
+    pass_outcomes = {"passed"}
+    fail_outcomes = {"failed", "error"}
+    skip_outcomes = {"skipped", "xfailed", "xpassed"}
+
+    for test_id in all_ids:
+        outcome_a = map_a.get(test_id, "missing")
+        outcome_b = map_b.get(test_id, "missing")
+        area = derive_area(test_id)
+        entry = {"test_id": test_id, "area": area,
+                 engine_a: outcome_a, engine_b: outcome_b}
+
+        if outcome_a in pass_outcomes and outcome_b in pass_outcomes:
+            both_pass.append(entry)
+        elif outcome_a in fail_outcomes and outcome_b in fail_outcomes:
+            both_fail.append(entry)
+        elif outcome_a in pass_outcomes and outcome_b in fail_outcomes:
+            a_only_pass.append(entry)
+        elif outcome_b in pass_outcomes and outcome_a in fail_outcomes:
+            b_only_pass.append(entry)
+        elif outcome_a in skip_outcomes and outcome_b in skip_outcomes:
+            both_skip.append(entry)
+        else:
+            other.append(entry)
+
+    return {
+        "image": image,
+        "engine_a": engine_a,
+        "engine_b": engine_b,
+        "total_compared": len(all_ids),
+        "summary": {
+            engine_a: {"passed": sum(1 for t in all_ids if map_a.get(t) in pass_outcomes),
+                        "failed": sum(1 for t in all_ids if map_a.get(t) in fail_outcomes),
+                        "skipped": sum(1 for t in all_ids if map_a.get(t) in skip_outcomes),
+                        "missing": sum(1 for t in all_ids if map_a.get(t, "missing") == "missing")},
+            engine_b: {"passed": sum(1 for t in all_ids if map_b.get(t) in pass_outcomes),
+                        "failed": sum(1 for t in all_ids if map_b.get(t) in fail_outcomes),
+                        "skipped": sum(1 for t in all_ids if map_b.get(t) in skip_outcomes),
+                        "missing": sum(1 for t in all_ids if map_b.get(t, "missing") == "missing")},
+        },
+        "both_pass": both_pass,
+        "both_fail": both_fail,
+        "a_only_pass": a_only_pass,
+        "b_only_pass": b_only_pass,
+        "both_skip": both_skip,
+        "other": other,
+    }
+
+
+def render_comparison_markdown(result: dict) -> str:
+    """Render a Markdown comparison report between two engines."""
+    engine_a = result["engine_a"]
+    engine_b = result["engine_b"]
+    summary = result["summary"]
+    lines = []
+
+    lines.append(f"## Engine Comparison: {engine_a} vs {engine_b}")
+    lines.append("")
+    if result.get("image"):
+        lines.append(f"**Image:** `{result['image']}`")
+        lines.append("")
+
+    lines.append("### Summary")
+    lines.append("")
+    lines.append(f"| | {engine_a} | {engine_b} |")
+    lines.append("|---|---|---|")
+    lines.append(f"| Passed | {summary[engine_a]['passed']} | {summary[engine_b]['passed']} |")
+    lines.append(f"| Failed | {summary[engine_a]['failed']} | {summary[engine_b]['failed']} |")
+    lines.append(f"| Skipped | {summary[engine_a]['skipped']} | {summary[engine_b]['skipped']} |")
+    lines.append(f"| Missing | {summary[engine_a]['missing']} | {summary[engine_b]['missing']} |")
+    lines.append(f"| **Total** | **{result['total_compared']}** | **{result['total_compared']}** |")
+    lines.append("")
+
+    # Compatibility gaps: engine_b passes but engine_a fails
+    b_only = result["b_only_pass"]
+    if b_only:
+        lines.append(f"### Compatibility Gaps ({engine_a} fail, {engine_b} pass): {len(b_only)}")
+        lines.append("")
+        lines.append(f"| Test | Area | {engine_a} | {engine_b} |")
+        lines.append("|---|---|---|---|")
+        for t in b_only:
+            lines.append(f"| `{t['test_id']}` | {t['area']} | {t[engine_a]} | {t[engine_b]} |")
+        lines.append("")
+    else:
+        lines.append(f"### Compatibility Gaps ({engine_a} fail, {engine_b} pass): 0")
+        lines.append("")
+
+    # engine_a advantages: engine_a passes but engine_b fails
+    a_only = result["a_only_pass"]
+    if a_only:
+        lines.append(f"### {engine_a} Advantages ({engine_a} pass, {engine_b} fail): {len(a_only)}")
+        lines.append("")
+        lines.append(f"| Test | Area | {engine_a} | {engine_b} |")
+        lines.append("|---|---|---|---|")
+        for t in a_only:
+            lines.append(f"| `{t['test_id']}` | {t['area']} | {t[engine_a]} | {t[engine_b]} |")
+        lines.append("")
+
+    # Both failed
+    both_fail = result["both_fail"]
+    if both_fail:
+        lines.append(f"### Both Failed: {len(both_fail)}")
+        lines.append("")
+        lines.append(f"| Test | Area | {engine_a} | {engine_b} |")
+        lines.append("|---|---|---|---|")
+        for t in both_fail[:20]:
+            lines.append(f"| `{t['test_id']}` | {t['area']} | {t[engine_a]} | {t[engine_b]} |")
+        if len(both_fail) > 20:
+            lines.append(f"| ... and {len(both_fail) - 20} more | | | |")
+        lines.append("")
+
+    # Other (mixed skip/xfail/missing)
+    other = result["other"]
+    if other:
+        lines.append(f"### Other Differences: {len(other)}")
+        lines.append("")
+        lines.append(f"| Test | Area | {engine_a} | {engine_b} |")
+        lines.append("|---|---|---|---|")
+        for t in other[:20]:
+            lines.append(f"| `{t['test_id']}` | {t['area']} | {t[engine_a]} | {t[engine_b]} |")
+        if len(other) > 20:
+            lines.append(f"| ... and {len(other) - 20} more | | | |")
+        lines.append("")
+
+    # Both passed and both skipped (counts only)
+    lines.append(f"### Both Passed: {len(result['both_pass'])} tests")
+    lines.append("")
+    if result["both_skip"]:
+        lines.append(f"### Both Skipped/XFail: {len(result['both_skip'])} tests")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -506,7 +838,8 @@ def cmd_validate_config(args):
 
 
 def cmd_summarize_gate(args):
-    result = summarize_gate(args.allowlist, args.report, args.image)
+    result = summarize_gate(args.allowlist, args.report, args.image, args.engine_name,
+                            image_override=getattr(args, "image_override", "") or "")
     md = render_gate_markdown(result)
 
     # Write summary to stdout
@@ -530,7 +863,8 @@ def cmd_summarize_gate(args):
 
 
 def cmd_summarize_daily(args):
-    delta = summarize_daily(args.allowlist, args.report, args.image)
+    delta = summarize_daily(args.allowlist, args.report, args.image, args.engine_name,
+                            image_override=getattr(args, "image_override", "") or "")
     md = render_daily_markdown(delta)
 
     print(md)
@@ -557,6 +891,29 @@ def cmd_summarize_daily(args):
     return 1 if has_allowlisted_contract_violations else 0
 
 
+def cmd_compare_engines(args):
+    result = compare_engines(args.report_a, args.report_b,
+                             args.engine_a, args.engine_b, args.image)
+    md = render_comparison_markdown(result)
+
+    print(md)
+
+    if args.output_dir:
+        os.makedirs(args.output_dir, exist_ok=True)
+        with open(os.path.join(args.output_dir, "comparison-summary.md"), "w") as f:
+            f.write(md)
+        with open(os.path.join(args.output_dir, "comparison-summary.json"), "w") as f:
+            json.dump(result, f, indent=2)
+
+    summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_file:
+        with open(summary_file, "a") as f:
+            f.write(md + "\n")
+
+    # Comparison is informational; always succeed so the pipeline stays green
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="DocumentDB Functional Test Gate Tooling (RFC-0007)")
@@ -564,6 +921,10 @@ def main():
                         help="Path to image.yml")
     parser.add_argument("--allowlist", default="documentdb-local/functional-tests/config/allowlist.yml",
                         help="Path to allowlist.yml")
+    parser.add_argument("--engine-name", default="documentdb",
+                        help="Engine name for filtering schema_version=2 allowlist entries "
+                             "with explicit 'engines:' scoping (default: documentdb). "
+                             "Ignored by validate-config since schema validation is engine-agnostic.")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -574,11 +935,31 @@ def main():
     gate_parser = subparsers.add_parser("summarize-gate", help="Summarize PR gate results")
     gate_parser.add_argument("--report", required=True, help="Path to pytest JSON report")
     gate_parser.add_argument("--output-dir", default="", help="Directory for output artifacts")
+    gate_parser.add_argument("--image-override", default="",
+                             help="Docker ref of the image actually used (overrides image.yml "
+                                  "in the report only; used when CI is parameterized with a one-off image)")
 
     # summarize-daily
     daily_parser = subparsers.add_parser("summarize-daily", help="Summarize daily delta")
     daily_parser.add_argument("--report", required=True, help="Path to pytest JSON report")
     daily_parser.add_argument("--output-dir", default="", help="Directory for output artifacts")
+    daily_parser.add_argument("--image-override", default="",
+                              help="Docker ref of the image actually used (overrides image.yml "
+                                   "in the report only; used when CI is parameterized with a one-off image)")
+
+    # compare-engines
+    compare_parser = subparsers.add_parser("compare-engines",
+                                           help="Compare test results from two engines")
+    compare_parser.add_argument("--report-a", required=True,
+                                help="Path to pytest JSON report for engine A")
+    compare_parser.add_argument("--report-b", required=True,
+                                help="Path to pytest JSON report for engine B")
+    compare_parser.add_argument("--engine-a", default="documentdb",
+                                help="Name of engine A (default: documentdb)")
+    compare_parser.add_argument("--engine-b", default="reference",
+                                help="Name of engine B (default: reference)")
+    compare_parser.add_argument("--output-dir", default="",
+                                help="Directory for output artifacts")
 
     args = parser.parse_args()
 
@@ -588,6 +969,8 @@ def main():
         return cmd_summarize_gate(args)
     elif args.command == "summarize-daily":
         return cmd_summarize_daily(args)
+    elif args.command == "compare-engines":
+        return cmd_compare_engines(args)
 
 
 if __name__ == "__main__":

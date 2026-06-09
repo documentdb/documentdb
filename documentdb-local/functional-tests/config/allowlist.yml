@@ -1,4 +1,16 @@
-schema_version: 1
+# DocumentDB PR-gate allowlist.
+#
+# Schema versions:
+#   1 - Flat list of pytest node IDs (still accepted; treated as "all engines")
+#   2 - List of either bare strings (= all engines) OR
+#       { id: <node-id>, engines: [<engine-name>, ...] } dicts for the
+#       rare case where a test must be scoped to a subset of engines.
+#       Example:
+#         - id: compatibility/tests/foo/test_bar.py::test_baz
+#           engines: [pgmongo]
+#       Almost every entry should stay a bare string. See the README section
+#       "Adding an engine-scoped test" before reaching for the dict form.
+schema_version: 2
 
 tests:
   - compatibility/tests/core/aggregation/commands/aggregate/test_smoke_aggregate.py::test_smoke_aggregate

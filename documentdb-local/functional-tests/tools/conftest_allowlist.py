@@ -6,11 +6,27 @@ against an allowlist. Uses @pytest.hookimpl(tryfirst=True) so it sees the
 full collection before upstream hooks (e.g. no_parallel deselection) mutate
 the item list.
 
-See RFC-0007 for design details.
+Supports allowlist schema versions 1 (flat list of node IDs) and 2 (list of
+either bare strings or ``{id, engines: [...]}`` dicts). v2's ``engines:``
+field scopes an entry to a subset of engines; missing/absent means "all
+engines". Per-engine filtering happens BEFORE the no_parallel /
+engine_xfail / missing-IDs guards so an out-of-scope entry on the current
+engine is silently ignored, never falsely flagged.
+
+The parsing rules in this file MUST stay in sync with
+``functional_gate.parse_allowlist_entries``; the
+``test_conftest_allowlist.TestEngineScoping`` golden tests guard against
+drift.
+
+See RFC-0007 for the underlying gate design.
 """
 
 import pytest
 import yaml
+
+
+SUPPORTED_SCHEMA_VERSIONS = (1, 2)
+_ALLOWED_ENTRY_KEYS = {"id", "engines"}
 
 
 def pytest_addoption(parser):
@@ -22,32 +38,30 @@ def pytest_addoption(parser):
     parser.addoption(
         "--allowlist-engine-name",
         default="documentdb",
-        help="Engine name to check for engine_xfail markers (default: documentdb)",
+        help="Engine name for filtering schema_version=2 'engines:' entries "
+             "and for checking engine_xfail markers (default: documentdb)",
     )
 
 
-@pytest.hookimpl(tryfirst=True)
-def pytest_collection_modifyitems(session, config, items):
-    allowlist_path = config.getoption("--allowlist")
-    if not allowlist_path:
-        raise pytest.UsageError(
-            "[MISSING_ALLOWLIST] conftest_allowlist was loaded without --allowlist. "
-            "Pass --allowlist <path> or do not load the plugin."
-        )
+def _parse_allowlist(data, engine_name):
+    """Parse the loaded YAML mapping and return the set of in-scope test IDs.
 
-    # Load and validate allowlist
-    with open(allowlist_path) as f:
-        data = yaml.safe_load(f)
-
+    Raises ``pytest.UsageError`` on any schema problem. Entries with
+    ``engines = None`` (bare string in v1/v2, or v2 dict with no ``engines``)
+    apply to every engine; entries with an explicit ``engines`` list are in
+    scope only when ``engine_name`` is in that list.
+    """
     if not isinstance(data, dict):
         raise pytest.UsageError(
             f"[INVALID_SCHEMA] allowlist.yml must be a YAML mapping, got {type(data).__name__}"
         )
 
     schema_version = data.get("schema_version")
-    if schema_version != 1:
+    if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
+        supported = ", ".join(str(v) for v in SUPPORTED_SCHEMA_VERSIONS)
         raise pytest.UsageError(
-            f"[INVALID_SCHEMA] Unsupported schema_version: {schema_version} (expected 1)"
+            f"[INVALID_SCHEMA] Unsupported schema_version: {schema_version} "
+            f"(expected one of: {supported})"
         )
 
     tests = data.get("tests")
@@ -59,17 +73,66 @@ def pytest_collection_modifyitems(session, config, items):
             f"[INVALID_SCHEMA] 'tests' must be a list, got {type(tests).__name__}"
         )
 
-    # Check for duplicates
-    seen = set()
+    seen_ids = set()
     duplicates = []
+    in_scope = set()
+
     for entry in tests:
-        if not isinstance(entry, str):
+        if isinstance(entry, str):
+            test_id = entry
+            engines = None
+        elif isinstance(entry, dict):
+            if schema_version < 2:
+                raise pytest.UsageError(
+                    f"[INVALID_SCHEMA] Dict entries require schema_version >= 2, got: {entry}"
+                )
+
+            unknown_keys = set(entry.keys()) - _ALLOWED_ENTRY_KEYS
+            if unknown_keys:
+                raise pytest.UsageError(
+                    f"[INVALID_SCHEMA] Unknown keys in entry {entry}: {sorted(unknown_keys)} "
+                    f"(allowed: {sorted(_ALLOWED_ENTRY_KEYS)})"
+                )
+
+            test_id = entry.get("id")
+            if not isinstance(test_id, str) or not test_id:
+                raise pytest.UsageError(
+                    f"[INVALID_SCHEMA] Entry 'id' must be a non-empty string, got: {entry}"
+                )
+
+            if "engines" in entry:
+                engines_raw = entry["engines"]
+                if not isinstance(engines_raw, list):
+                    raise pytest.UsageError(
+                        f"[INVALID_SCHEMA] Entry 'engines' must be a list, "
+                        f"got {type(engines_raw).__name__} for {test_id}"
+                    )
+                if len(engines_raw) == 0:
+                    raise pytest.UsageError(
+                        f"[INVALID_SCHEMA] Entry 'engines' must be a non-empty list for {test_id} "
+                        f"(omit the field to apply to all engines)"
+                    )
+                bad_engines = [e for e in engines_raw if not isinstance(e, str) or not e]
+                if bad_engines:
+                    raise pytest.UsageError(
+                        f"[INVALID_SCHEMA] Entry 'engines' for {test_id} must contain "
+                        f"non-empty strings, got: {bad_engines}"
+                    )
+                engines = frozenset(engines_raw)
+            else:
+                engines = None
+        else:
             raise pytest.UsageError(
-                f"[INVALID_SCHEMA] Test ID must be a string, got {type(entry).__name__}: {entry}"
+                f"[INVALID_SCHEMA] Test entry must be a string or mapping, "
+                f"got {type(entry).__name__}: {entry}"
             )
-        if entry in seen:
-            duplicates.append(entry)
-        seen.add(entry)
+
+        if test_id in seen_ids:
+            duplicates.append(test_id)
+        seen_ids.add(test_id)
+
+        if engines is None or engine_name in engines:
+            in_scope.add(test_id)
 
     if duplicates:
         dup_list = ", ".join(duplicates[:5])
@@ -78,8 +141,23 @@ def pytest_collection_modifyitems(session, config, items):
             f"[DUPLICATE_TEST_ID] allowlist.yml contains duplicate test IDs: {dup_list}{suffix}"
         )
 
-    allowed_ids = seen
+    return in_scope
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(session, config, items):
+    allowlist_path = config.getoption("--allowlist")
+    if not allowlist_path:
+        raise pytest.UsageError(
+            "[MISSING_ALLOWLIST] conftest_allowlist was loaded without --allowlist. "
+            "Pass --allowlist <path> or do not load the plugin."
+        )
+
+    with open(allowlist_path) as f:
+        data = yaml.safe_load(f)
+
     engine_name = config.getoption("--allowlist-engine-name", default="documentdb")
+    allowed_ids = _parse_allowlist(data, engine_name)
 
     # Classify items
     selected = []
