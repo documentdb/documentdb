@@ -361,8 +361,23 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 		"cursor_sharded_saop_on_shard_key",
 	[FEATURE_CURSOR_TOPOLOGY_SHARDED_WITH_SHARD_KEY_EQUALITY] =
 		"cursor_sharded_equality_on_shard_key",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_FILE_REMOTE] = "cursor_type_dynamic_file_remote",
 	[FEATURE_CURSOR_TYPE_DYNAMIC_PERSISTENT] = "cursor_type_dynamic_persistent",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_REMOTE_FIRSTPAGE] =
+		"cursor_type_dynamic_remote_firstpage",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_REMOTE_GETMORE] =
+		"cursor_type_dynamic_remote_getmore",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_REMOTE_WORKER_FIRSTPAGE_FILE] =
+		"cursor_type_dynamic_remote_worker_firstpage_file",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_REMOTE_WORKER_FIRSTPAGE_STREAMING] =
+		"cursor_type_dynamic_remote_worker_firstpage_streaming",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_REMOTE_WORKER_GETMORE_FILE] =
+		"cursor_type_dynamic_remote_worker_getmore_file",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_REMOTE_WORKER_GETMORE_STREAMING] =
+		"cursor_type_dynamic_remote_worker_getmore_streaming",
 	[FEATURE_CURSOR_TYPE_DYNAMIC_STREAMING] = "cursor_type_dynamic_streaming",
+	[FEATURE_CURSOR_TYPE_DYNAMIC_STREAMING_REMOTE] =
+		"cursor_type_dynamic_streaming_remote",
 	[FEATURE_CURSOR_TYPE_PERSISTENT] = "cursor_type_persistent",
 	[FEATURE_CURSOR_TYPE_POINT_READ] = "cursor_type_point_read",
 	[FEATURE_CURSOR_TYPE_SINGLE_BATCH] = "cursor_type_single_batch",

@@ -1,0 +1,691 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal;
+
+SET documentdb.next_collection_id TO 42000;
+SET citus.next_shard_id TO 4200000;
+SET documentdb.next_collection_index_id TO 42000;
+
+SET documentdb.enablePrimaryKeyCursorScan TO on;
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enableIndexOnlyScan TO on;
+SET documentdb.enableIndexOnlyScanForFindProject TO on;
+SET enable_seqscan TO off;
+
+-- ===========================================================================
+-- SECTION R: Remote-unsharded end-to-end test
+-- Simple smoke test: collection on remote worker, index on {a:1}, 100 docs,
+-- find({}) with batchSize=10 — verify first page + all getMore pages drain
+-- correctly using the remote-unsharded streaming or file cursor path.
+-- ===========================================================================
+
+SELECT documentdb_api.drop_collection('dyncur_sp_db', 'remote_e2e_coll');
+
+SELECT COUNT(documentdb_api.insert_one('dyncur_sp_db', 'remote_e2e_coll',
+    FORMAT('{ "_id": %s, "a": %s, "b": "doc_%s" }', i, i, i)::documentdb_core.bson))
+FROM generate_series(1, 95) AS i;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncur_sp_db',
+    '{"createIndexes": "remote_e2e_coll", "indexes": [{"key": {"a": 1}, "name": "idx_a", "enableOrderedIndex": true}]}', true);
+
+ANALYZE;
+
+SELECT documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'remote_e2e_coll', 1);
+
+\d documentdb_data.documents_41001
+-- ===========================================================================
+-- Helper UDF: drain a remote cursor and report per-page summary
+-- p_find_spec    - full find command JSON
+-- p_getmore_spec - full getMore command JSON (cursor id + collection + batchSize)
+-- p_print_cont   - if true, also print the full continuation token
+-- ===========================================================================
+CREATE OR REPLACE FUNCTION remote_drain_and_report(
+    p_find_spec    text,
+    p_getmore_spec text,
+    p_print_cont   bool DEFAULT false
+) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+    v_page        documentdb_core.bson;
+    v_cont        documentdb_core.bson;
+    v_persist     bool;
+    v_page_num    int := 1;
+    v_batch_count bigint;
+    v_cursor_type int;
+    v_cursor_type_name text;
+    v_cursor_kind text;
+    v_tbl         text;
+    v_idx         text;
+    v_portal_name text;
+    v_is_aggregate bool;
+BEGIN
+    -- Detect find vs aggregate from the spec itself (keeps the helper signature
+    -- identical to the full test's so the two co-scheduled definitions don't
+    -- create an ambiguous overload).
+    v_is_aggregate := (bson_dollar_project(p_find_spec::documentdb_core.bson,
+        '{ "aggregate": 1 }') ->> 'aggregate') IS NOT NULL;
+
+    -- First page (find or aggregate entry point)
+    IF v_is_aggregate THEN
+        SELECT fp.cursorPage, fp.continuation, fp.persistconnection
+        INTO v_page, v_cont, v_persist
+        FROM aggregate_cursor_first_page(
+            database    => 'dyncur_sp_db',
+            commandSpec => p_find_spec::documentdb_core.bson,
+            cursorId    => 538
+        ) fp;
+    ELSE
+        SELECT fp.cursorPage, fp.continuation, fp.persistconnection
+        INTO v_page, v_cont, v_persist
+        FROM find_cursor_first_page(
+            database    => 'dyncur_sp_db',
+            commandSpec => p_find_spec::documentdb_core.bson,
+            cursorId    => 538
+        ) fp;
+    END IF;
+
+    SELECT (bson_dollar_project(v_page,
+        '{ "c": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }') ->> 'c')::bigint
+    INTO v_batch_count;
+
+    IF v_cont IS NOT NULL THEN
+        -- Determine cursor kind from the query-spec key:
+        --   qr + wc.dc.type = remote unsharded streaming
+        --   qr without wc.dc.type = remote unsharded file
+        --   qd = CursorKind_DynamicStreaming          (local streaming)
+        --   qc = CursorKind_Streaming                 (legacy streaming)
+        --   qp = true + qn = CursorKind_Persisted     (coordinator portal)
+        IF (bson_dollar_project(v_cont, '{ "qr": 1 }') ->> 'qr') IS NOT NULL THEN
+            -- A file cursor's worker continuation ("wc") has no scan "type" field.
+            IF (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type') IS NULL THEN
+                v_cursor_kind := 'DynamicFileCursorRemote';
+            ELSE
+                v_cursor_kind := 'DynamicStreamingRemote';
+            END IF;
+        ELSIF (bson_dollar_project(v_cont, '{ "qd": 1 }') ->> 'qd') IS NOT NULL THEN
+            v_cursor_kind := 'DynamicStreaming';
+        ELSIF (bson_dollar_project(v_cont, '{ "qc": 1 }') ->> 'qc') IS NOT NULL THEN
+            v_cursor_kind := 'Streaming';
+        ELSIF v_persist THEN
+            v_cursor_kind := 'Persisted';
+        ELSE
+            v_cursor_kind := 'Unknown';
+        END IF;
+
+        -- IF v_cursor_kind NOT IN ('DynamicStreamingRemote', 'DynamicFileCursorRemote') THEN
+        --     RAISE EXCEPTION 'Page 1: expected remote unsharded cursor, got Kind=%, Continuation=%', v_cursor_kind, v_cont;
+        -- END IF;
+
+        SELECT (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type')::int
+        INTO v_cursor_type;
+        IF v_cursor_type IS NULL THEN
+            v_cursor_type := 0;
+        END IF;
+        v_cursor_type_name := CASE
+            WHEN v_cursor_kind IN ('Persisted', 'Unknown') THEN 'N/A'
+            WHEN v_cursor_type =  0 THEN 'DynamicFileCursorRemote'
+            WHEN v_cursor_type =  1 THEN 'QueryScanType_TidRangeScan'
+            WHEN v_cursor_type =  2 THEN 'QueryScanType_PrimaryKeyScan'
+            WHEN v_cursor_type =  3 THEN 'QueryScanType_SecondaryIndexScan'
+            WHEN v_cursor_type =  4 THEN 'QueryScanType_SecondaryIndexBitmapScan'
+            WHEN v_cursor_type =  5 THEN 'QueryScanType_SecondaryIndexBitmapAnd'
+            WHEN v_cursor_type =  6 THEN 'QueryScanType_SecondaryIndexBitmapOr'
+            WHEN v_cursor_type =  7 THEN 'QueryScanType_SecondaryIndexOnlyScan'
+            WHEN v_cursor_type = -1 THEN 'Done'
+            ELSE 'Unknown(' || v_cursor_type || ')'
+        END;
+
+        v_tbl         := bson_dollar_project(v_cont, '{ "wc.dc.tbl": 1 }') ->> 'wc.dc.tbl';
+        v_idx         := bson_dollar_project(v_cont, '{ "wc.dc.idx": 1 }') ->> 'wc.dc.idx';
+        v_portal_name := bson_dollar_project(v_cont, '{ "qn": 1 }') ->> 'qn';
+    ELSE
+        v_cursor_kind      := 'Done';
+        v_cursor_type      := -1;
+        v_cursor_type_name := 'Done';
+        v_tbl              := NULL;
+        v_idx              := NULL;
+        v_portal_name      := NULL;
+    END IF;
+
+    IF p_print_cont THEN
+        RAISE NOTICE 'Page %: batch=%, coordinator_holds_portal=%, kind=%, scan_type=%, remote_shard=%, idx=%, portal=%, continuation=%',
+            v_page_num, v_batch_count, v_persist, v_cursor_kind, v_cursor_type_name, v_tbl, v_idx, v_portal_name, v_cont;
+    ELSE
+        RAISE NOTICE 'Page %: batch=%, coordinator_holds_portal=%, kind=%, scan_type=%, remote_shard=%, idx=%, portal=%',
+            v_page_num, v_batch_count, v_persist, v_cursor_kind, v_cursor_type_name, v_tbl, v_idx, v_portal_name;
+    END IF;
+
+    -- getMore pages
+    WHILE v_cont IS NOT NULL LOOP
+        v_page_num := v_page_num + 1;
+
+        SELECT gm.cursorPage, gm.continuation
+        INTO v_page, v_cont
+        FROM cursor_get_more(
+            database         => 'dyncur_sp_db',
+            getMoreSpec      => p_getmore_spec::documentdb_core.bson,
+            continuationSpec => v_cont
+        ) gm;
+
+        SELECT (bson_dollar_project(v_page,
+            '{ "c": { "$size": { "$ifNull": ["$cursor.nextBatch", []] } } }') ->> 'c')::bigint
+        INTO v_batch_count;
+
+        IF v_cont IS NOT NULL THEN
+            IF (bson_dollar_project(v_cont, '{ "qr": 1 }') ->> 'qr') IS NOT NULL THEN
+                -- A file cursor's worker continuation ("wc") has no scan "type" field.
+                IF (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type') IS NULL THEN
+                    v_cursor_kind := 'DynamicFileCursorRemote';
+                ELSE
+                    v_cursor_kind := 'DynamicStreamingRemote';
+                END IF;
+            ELSIF (bson_dollar_project(v_cont, '{ "qd": 1 }') ->> 'qd') IS NOT NULL THEN
+                v_cursor_kind := 'DynamicStreaming';
+            ELSIF v_persist THEN
+                v_cursor_kind := 'Persisted';
+            ELSE
+                v_cursor_kind := 'Unknown';
+            END IF;
+
+            SELECT (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type')::int
+            INTO v_cursor_type;
+            IF v_cursor_type IS NULL THEN
+                v_cursor_type := 0;
+            END IF;
+            v_cursor_type_name := CASE
+                WHEN v_cursor_kind IN ('Persisted', 'Unknown') THEN 'N/A'
+                WHEN v_cursor_type =  0 THEN 'DynamicFileCursorRemote'
+                WHEN v_cursor_type =  1 THEN 'QueryScanType_TidRangeScan'
+                WHEN v_cursor_type =  2 THEN 'QueryScanType_PrimaryKeyScan'
+                WHEN v_cursor_type =  3 THEN 'QueryScanType_SecondaryIndexScan'
+                WHEN v_cursor_type =  4 THEN 'QueryScanType_SecondaryIndexBitmapScan'
+                WHEN v_cursor_type =  5 THEN 'QueryScanType_SecondaryIndexBitmapAnd'
+                WHEN v_cursor_type =  6 THEN 'QueryScanType_SecondaryIndexBitmapOr'
+                WHEN v_cursor_type =  7 THEN 'QueryScanType_SecondaryIndexOnlyScan'
+                WHEN v_cursor_type = -1 THEN 'Done'
+                ELSE 'Unknown(' || v_cursor_type || ')'
+            END;
+
+            v_tbl         := bson_dollar_project(v_cont, '{ "wc.dc.tbl": 1 }') ->> 'wc.dc.tbl';
+            v_idx         := bson_dollar_project(v_cont, '{ "wc.dc.idx": 1 }') ->> 'wc.dc.idx';
+            v_portal_name := bson_dollar_project(v_cont, '{ "qn": 1 }') ->> 'qn';
+        ELSE
+            v_cursor_kind      := 'Done';
+            v_cursor_type      := -1;
+            v_cursor_type_name := 'Done';
+            v_tbl              := NULL;
+            v_idx              := NULL;
+            v_portal_name      := NULL;
+        END IF;
+
+        IF p_print_cont THEN
+            RAISE NOTICE 'Page %: batch=%, coordinator_holds_portal=%, kind=%, scan_type=%, remote_shard=%, idx=%, portal=%, continuation=%',
+                v_page_num, v_batch_count, v_persist, v_cursor_kind, v_cursor_type_name, v_tbl, v_idx, v_portal_name, v_cont;
+        ELSE
+            RAISE NOTICE 'Page %: batch=%, coordinator_holds_portal=%, kind=%, scan_type=%, remote_shard=%, idx=%, portal=%',
+                v_page_num, v_batch_count, v_persist, v_cursor_kind, v_cursor_type_name, v_tbl, v_idx, v_portal_name;
+        END IF;
+    END LOOP;
+
+    RAISE NOTICE 'Done: drained % pages', v_page_num;
+END;
+$$;
+
+-- ===========================================================================
+-- example DynamicStreamingRemote cursor continuation
+-- ===========================================================================
+-- {
+--     "qi": {
+--         "$numberLong": "538"
+--     },
+--     "qp": false,
+--     "qk": {
+--         "$numberInt": "1"
+--     },
+--     "qr": {
+--         "find": "remote_e2e_coll",
+--         "filter": {},
+--         "sort": {
+--             "a": {
+--                 "$numberInt": "1"
+--             }
+--         },
+--         "projection": {
+--             "_id": {
+--                 "$numberInt": "1"
+--             },
+--             "a": {
+--                 "$numberInt": "1"
+--             }
+--         },
+--         "batchSize": {
+--             "$numberInt": "10"
+--         },
+--         "hint": "idx_a"
+--     },
+--     "dc": {
+--         "type": {
+--             "$numberInt": "3"
+--         },
+--         "tbl": "documents_41001_4100002",
+--         "tid": {
+--             "$numberLong": "11"
+--         },
+--         "idx": "documents_rum_index_41002_4100002",
+--         "sik": {
+--             "$binary": {
+--                 "base64": "BRAACwAAAA==",
+--                 "subType": "00"
+--             }
+--         }
+--     },
+--     "dr": {
+--         "$numberLong": "20224"
+--     },
+--     "numIters": {
+--         "$numberInt": "1"
+--     },
+--     "sn": NOW_SYS_VARIABLE
+-- }
+
+-- ===========================================================================
+-- Example DynamicFileCursorRemote continuation
+-- ===========================================================================
+
+-- {
+--     "qi": {
+--         "$numberLong": "538"
+--     },
+--     "qp": false,
+--     "qk": {
+--         "$numberInt": "1"
+--     },
+--     "qw": {
+--         "find": "remote_e2e_coll",
+--         "filter": {},
+--         "sort": {
+--             "b": {
+--                 "$numberInt": "1"
+--             }
+--         },
+--         "projection": {
+--             "_id": {
+--                 "$numberInt": "1"
+--             },
+--             "a": {
+--                 "$numberInt": "1"
+--             }
+--         },
+--         "batchSize": {
+--             "$numberInt": "10"
+--         },
+--         "hint": "idx_a"
+--     },
+--     "dr": {
+--         "$numberLong": "20224"
+--     },
+--     "qf": {
+--         "$binary": {
+--             "base64": "MAEAAHBnX2RvY3VtZW50ZGJfY3Vyc29yX2ZpbGVzL2N1cnNvcl81MjYzMjQwMzM1MzMzMzAwAAAAAAAAAAAAAAAAAAAAAAAAMgoAAA==",
+--             "subType": "00"
+--         }
+--     },
+--     "numIters": {
+--         "$numberInt": "1"
+--     },
+--     "sn": NOW_SYS_VARIABLE
+-- }
+
+
+-- ---------------------------------------------------------------------------
+-- Test R1: find({}), batchSize=10 — drain all 10 pages
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "find": "remote_e2e_coll", "filter": { }, "projection": { "_id": 1, "a": 1 }, "batchSize": 10, "hint": "idx_a" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R2: find({ "a": { "$gt": 35 } }), batchSize=10 — drain all 10 pages
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "find": "remote_e2e_coll", "filter": { "a": { "$gt": 35 } }, "projection": { "_id": 1, "a": 1 }, "batchSize": 10, "hint": "idx_a" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R3: find({}) sort {a:1} batchSize=10 — drain all 10 pages
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "find": "remote_e2e_coll", "filter": { }, "sort": { "a": 1 }, "projection": { "_id": 1, "a": 1 }, "batchSize": 10, "hint": "idx_a" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R4: find({}) sort {b:1} batchSize=10 — drain all 10 pages
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "find": "remote_e2e_coll", "filter": { }, "sort": { "b": 1 }, "projection": { "_id": 1, "a": 1 }, "batchSize": 10, "hint": "idx_a" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+
+-- ---------------------------------------------------------------------------
+-- Test R5: find({}) sort {a:1} "projection": { "_id": 0, "a": 1 } batchSize=10 — drain all 10 pages
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "find": "remote_e2e_coll", "filter": { }, "sort": { "a": 1 }, "projection": { "_id": 0, "a": 1 }, "batchSize": 10, "hint": "idx_a" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R6: find({ "a": { "$gt": 35 } }), batchSize=10 — drain all 10 pages
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "find": "remote_e2e_coll", "filter": { "a": { "$gt": 35 } }, "projection": { "_id": 0, "a": 1 }, "batchSize": 10, "hint": "idx_a" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R7: find({ "a": { "$gt": 35 } }), batchSize=10 — drain all 10 pages
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "find": "remote_e2e_coll", "filter": { "a": { "$gt": 35 } }, "sort": { "a": 1 },"projection": { "_id": 0, "a": 1 }, "batchSize": 10, "hint": "idx_a" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+
+-- ---------------------------------------------------------------------------
+-- Test R8: find with _id range filter, PK scan, small batchSize=2
+-- filter: { _id: { $gte: 10, $lte: 18 } }, 9 docs → 5 pages
+-- No sort clause → streaming cursor (primary key scan)
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "find": "remote_e2e_coll", "filter": {  "_id": { "$gte": 10, "$lte": 18 } },"projection": { "_id": 1}, "batchSize": 2, "hint": "_id_" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 2 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R9: _id range filter + ascending _id sort, PK scan, batchSize=2
+-- filter: { _id: { $gte: 10, $lte: 18 } }, sort: { _id: 1 }
+-- PK index satisfies sort → streaming cursor
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "find": "remote_e2e_coll", "filter": {  "_id": { "$gte": 10, "$lte": 18 } }, "sort": { "_id": 1 },"projection": { "_id": 1}, "batchSize": 2 , "hint": "_id_"}',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 2 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R10: _id range filter + descending _id sort, PK backward scan, batchSize=2
+-- filter: { _id: { $gte: 10, $lte: 18 } }, sort: { _id: -1 }
+-- PK index satisfies descending sort → streaming cursor (backward scan)
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "find": "remote_e2e_coll", "filter": {  "_id": { "$gte": 10, "$lte": 18 } }, "sort": { "_id": -1 },"projection": { "_id": 1}, "batchSize": 2, "hint": "_id_" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 2 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG: aggregate pipeline on the same unsharded remote collection.
+-- pipeline: [ { $match: { a: { $gt: 35 } } } ] with hint idx_a, batchSize 10.
+-- The $match on {a:...} + hint "idx_a" forces the {a:1} index scan, mirroring
+-- the find() tests but through the aggregate_cursor_first_page entry point.
+-- The helper auto-detects the aggregate entry point from the "aggregate" key.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$match": { "a": { "$gt": 80 } } }, { "$project": { "_id": 1, "a": 1 } } ], "hint": "idx_a", "cursor": { "batchSize": 10 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-SEC-1: aggregate with $match range + $sort on secondary index.
+-- pipeline: [ { $match: { a: { $gte: 50, $lte: 90 } } }, { $sort: { a: 1 } } ]
+-- hint idx_a, batchSize 5.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$match": { "a": { "$gte": 50, "$lte": 90 } } }, { "$sort": { "a": 1 } }, { "$project": { "_id": 1, "a": 1 } } ], "hint": "idx_a", "cursor": { "batchSize": 5 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 5 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-SEC-2: aggregate with $match equality on secondary index.
+-- pipeline: [ { $match: { a: 42 } } ]
+-- hint idx_a, batchSize 10.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$match": { "a": 42 } }, { "$project": { "_id": 1, "a": 1 } } ], "hint": "idx_a", "cursor": { "batchSize": 10 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-SEC-3: aggregate with $match + $limit on secondary index.
+-- pipeline: [ { $match: { a: { $lt: 20 } } }, { $limit: 3 } ]
+-- hint idx_a, batchSize 10.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$match": { "a": { "$lt": 20 } } }, { "$limit": 3 }, { "$project": { "_id": 1, "a": 1 } } ], "hint": "idx_a", "cursor": { "batchSize": 10 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-PRI-1: aggregate with $match range on _id (primary index).
+-- pipeline: [ { $match: { _id: { $gt: 50 } } } ]
+-- hint _id_, batchSize 10.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$match": { "_id": { "$gt": 50 } } }, { "$project": { "_id": 1, "a": 1 } } ], "hint": "_id_", "cursor": { "batchSize": 10 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-PRI-2: aggregate with $match equality on _id (primary index).
+-- pipeline: [ { $match: { _id: 25 } } ]
+-- hint _id_, batchSize 10.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$match": { "_id": 25 } }, { "$project": { "_id": 1, "a": 1 } } ], "hint": "_id_", "cursor": { "batchSize": 10 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-PRI-3: aggregate with $match _id range + $sort on primary index.
+-- pipeline: [ { $match: { _id: { $gte: 10, $lte: 40 } } }, { $sort: { _id: -1 } } ]
+-- hint _id_, batchSize 5.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$match": { "_id": { "$gte": 10, "$lte": 40 } } }, { "$sort": { "_id": -1 } }, { "$project": { "_id": 1, "a": 1 } } ], "hint": "_id_", "cursor": { "batchSize": 5 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 5 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-PRI-4: aggregate with $match _id $in on primary index.
+-- pipeline: [ { $match: { _id: { $in: [5, 15, 25, 35, 45] } } } ]
+-- hint _id_, batchSize 10.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$match": { "_id": { "$in": [5, 15, 25, 35, 45] } } }, { "$project": { "_id": 1, "a": 1 } } ], "hint": "_id_", "cursor": { "batchSize": 10 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-NOSTREAM-1: $group — blocking stage, requires full scan.
+-- Groups all docs by (a mod 10) and sums counts. Cannot stream.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$group": { "_id": { "$mod": ["$a", 10] }, "count": { "$sum": 1 } } } ], "cursor": { "batchSize": 10 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-NOSTREAM-2: $group with $match — blocking due to $group.
+-- Filters a > 20, then groups by (a mod 5) with $avg.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$match": { "a": { "$gt": 20 } } }, { "$group": { "_id": { "$mod": ["$a", 5] }, "avgA": { "$avg": "$a" } } } ], "hint": "idx_a", "cursor": { "batchSize": 10 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-NOSTREAM-3: $sort on non-indexed field "b" — forces materialization.
+-- Sort by "b" (string field, no index) requires full result set in memory/file.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$match": { "a": { "$gt": 50 } } }, { "$sort": { "b": 1 } }, { "$project": { "_id": 1, "a": 1, "b": 1 } } ], "cursor": { "batchSize": 10 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-NOSTREAM-4: $count — blocking, consumes entire input.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$match": { "a": { "$gte": 10 } } }, { "$count": "total" } ], "cursor": { "batchSize": 10 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-NOSTREAM-5: $sortByCount — blocking (combines $group + $sort).
+-- Counts docs per (a mod 3) bucket, then sorts by count descending.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$sortByCount": { "$mod": ["$a", 3] } } ], "cursor": { "batchSize": 10 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-NOSTREAM-6: $bucket — blocking, partitions into ranges.
+-- Buckets values of "a" into [1,25,50,75,100] ranges with doc count.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$bucket": { "groupBy": "$a", "boundaries": [1, 25, 50, 75, 100], "default": "other", "output": { "count": { "$sum": 1 } } } } ], "cursor": { "batchSize": 10 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-NOSTREAM-7: $group + $sort — double blocking.
+-- Groups by (a mod 10), then sorts groups by sum descending.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$group": { "_id": { "$mod": ["$a", 10] }, "total": { "$sum": "$a" } } }, { "$sort": { "total": -1 } }, { "$project": { "_id": 1, "total": 1 } } ], "cursor": { "batchSize": 5 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 5 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-NOSTREAM-8: $unwind + $group — non-streamable pipeline.
+-- Splits "b" conceptually (here just groups post-unwind for blocking behavior).
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$match": { "a": { "$lte": 30 } } }, { "$addFields": { "tags": ["$b", "extra"] } }, { "$unwind": "$tags" }, { "$group": { "_id": "$tags", "count": { "$sum": 1 } } } ], "cursor": { "batchSize": 10 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-COUNT-0A: $count with batchSize 0 on a populated collection.
+-- A zero first-batch size returns an empty firstBatch plus a cursor; the
+-- getMore then drains the single { n: <count> } document. Exercises the
+-- remote-unsharded drain of a blocking ($count) pipeline with batchSize 0.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$count": "n" } ], "cursor": { "batchSize": 0 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- Show the actual { n: <count> } document the count pipeline returns.
+DO $$
+DECLARE
+    v_page documentdb_core.bson;
+    v_cont documentdb_core.bson;
+BEGIN
+    SELECT fp.cursorPage, fp.continuation INTO v_page, v_cont
+    FROM aggregate_cursor_first_page('dyncur_sp_db',
+        '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$count": "n" } ], "cursor": { "batchSize": 0 } }'::documentdb_core.bson,
+        538) fp;
+    RAISE NOTICE 'count first page: %', bson_dollar_project(v_page, '{ "cursor.firstBatch": 1 }');
+    WHILE v_cont IS NOT NULL LOOP
+        SELECT gm.cursorPage, gm.continuation INTO v_page, v_cont
+        FROM cursor_get_more('dyncur_sp_db',
+            '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }'::documentdb_core.bson,
+            v_cont) gm;
+        RAISE NOTICE 'count batch: %', bson_dollar_project(v_page, '{ "cursor.nextBatch": 1 }');
+    END LOOP;
+END $$;
+
+-- Setup: an empty (but existing) remote-unsharded collection.
+SELECT documentdb_api.drop_collection('dyncur_sp_db', 'remote_e2e_empty_coll');
+SELECT documentdb_api.create_collection('dyncur_sp_db', 'remote_e2e_empty_coll');
+SELECT documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'remote_e2e_empty_coll', 1);
+ANALYZE;
+
+-- ---------------------------------------------------------------------------
+-- Test R-AGG-COUNT-0B: $count with batchSize 0 on an EMPTY collection.
+-- Regression for the empty-shard drain: the worker UDF must run exactly once
+-- even when the shard has no rows, so the pipeline is evaluated on the worker
+-- rather than the coordinator synthesizing a result without ever dispatching.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_empty_coll", "pipeline": [ { "$count": "n" } ], "cursor": { "batchSize": 0 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_empty_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);
+
+-- Show the count pipeline result on the empty collection.
+DO $$
+DECLARE
+    v_page documentdb_core.bson;
+    v_cont documentdb_core.bson;
+BEGIN
+    SELECT fp.cursorPage, fp.continuation INTO v_page, v_cont
+    FROM aggregate_cursor_first_page('dyncur_sp_db',
+        '{ "aggregate": "remote_e2e_empty_coll", "pipeline": [ { "$count": "n" } ], "cursor": { "batchSize": 0 } }'::documentdb_core.bson,
+        538) fp;
+    RAISE NOTICE 'empty count first page: %', bson_dollar_project(v_page, '{ "cursor.firstBatch": 1 }');
+    WHILE v_cont IS NOT NULL LOOP
+        SELECT gm.cursorPage, gm.continuation INTO v_page, v_cont
+        FROM cursor_get_more('dyncur_sp_db',
+            '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_empty_coll", "batchSize": 10 }'::documentdb_core.bson,
+            v_cont) gm;
+        RAISE NOTICE 'empty count batch: %', bson_dollar_project(v_page, '{ "cursor.nextBatch": 1 }');
+    END LOOP;
+END $$;
+
+
+BEGIN;
+SET LOCAL client_min_messages TO WARNING;
+SELECT documentdb_api.shard_collection('dyncur_sp_db','remote_e2e_coll', '{"_id":"hashed"}', false);
+END;
+ANALYZE;
+
+-- ---------------------------------------------------------------------------
+-- Test R11: collection sharded after cursor tests — verify fallback to local path
+-- After shard_collection(), isShardRemote becomes false → coordinator handles
+-- query locally. Verifies remote unsharded path is not taken for sharded colls.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "find": "remote_e2e_coll", "filter": { }, "sort": { "a": 1 }, "projection": { "_id": 0, "a": 1 }, "batchSize": 10, "hint": "idx_a" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
+    false  -- print continuation token
+);

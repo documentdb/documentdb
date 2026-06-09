@@ -1515,6 +1515,12 @@ IsRTEShardForDocumentDbCollection(RangeTblEntry *rte, bool *isDocumentDbDataName
  * replacement happened.
  *
  * In the future, once distribution works across colo groups this can be removed.
+ *
+ * The same rewrite is applied to the read-side remote dynamic cursor drain
+ * function (cursor_dynamic_drain_page). Like the write workers it returns a
+ * scalar (a bson[] array), so its projector is a Var on the single output
+ * column. Rewriting its shard scan into a function scan ensures the drain runs
+ * exactly once even when the shard is empty (so count returns 0).
  */
 static bool
 ProcessWorkerWriteQueryPath(PlannerInfo *root, RelOptInfo *rel, Index rti,
@@ -1532,14 +1538,13 @@ ProcessWorkerWriteQueryPath(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	}
 
 	/* Reduce the likelihood of doing the Func OID lookup since older
-	 * schemas won't have it.
+	 * schemas won't have it. Write-worker functions take 6 arguments.
 	 */
 	FuncExpr *funcExpr = (FuncExpr *) entry->expr;
 	if (list_length(funcExpr->args) != 6)
 	{
 		return false;
 	}
-
 	if (node_worker_stmt_rewrite_hook &&
 		node_worker_stmt_rewrite_hook(root, rel, rti, rte, entry))
 	{
@@ -1547,21 +1552,30 @@ ProcessWorkerWriteQueryPath(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		return true;
 	}
 
-	if (!(funcExpr->funcid == UpdateWorkerFunctionOid() ||
-		  funcExpr->funcid == InsertWorkerFunctionOid() ||
-		  funcExpr->funcid == DeleteWorkerFunctionOid() ||
-		  funcExpr->funcid == CommandNodeWorkerFunctionOid()))
+	bool isShardWorker = (funcExpr->funcid == UpdateWorkerFunctionOid() ||
+						  funcExpr->funcid == InsertWorkerFunctionOid() ||
+						  funcExpr->funcid == DeleteWorkerFunctionOid() ||
+						  funcExpr->funcid == CommandNodeWorkerFunctionOid() ||
+						  funcExpr->funcid == ApiCursorDynamicDrainPageFunctionId());
+
+	if (!isShardWorker)
 	{
 		return false;
 	}
 
-	/* It's a shard query for a update worker projector
-	 * Transform this query into a FuncRTE with a Var projector
+	/* It's a shard query for a worker projector function.
+	 * Transform this query into a FuncRTE with a Var projector so the
+	 * function is evaluated exactly once instead of once per shard row.
 	 */
-	entry->expr = (Expr *) makeVar(rti, 1, DocumentDBCoreBsonTypeId(), -1,
+	entry->expr = (Expr *) makeVar(rti, 1, funcExpr->funcresulttype, -1,
 								   InvalidOid, 0);
+
 	rte->rtekind = RTE_FUNCTION;
 	RangeTblFunction *func = makeNode(RangeTblFunction);
+
+	/* Worker projector functions reserve their 3rd argument as a shard-OID slot
+	 * so the C function can detect that the planner rewrite ran.
+	 */
 	Node *shardArg = list_nth(funcExpr->args, 2);
 	if (IsA(shardArg, Const))
 	{

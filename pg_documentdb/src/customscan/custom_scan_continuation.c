@@ -26,6 +26,7 @@
 #include <catalog/pg_operator.h>
 #include <optimizer/restrictinfo.h>
 #include <optimizer/paths.h>
+#include <optimizer/tlist.h>
 
 #if PG_VERSION_NUM >= 180000
 #include <commands/explain_format.h>
@@ -528,8 +529,20 @@ CreateCustomScanPathForContinuation(PlannerInfo *root, RelOptInfo *rel, Path *in
 
 	/* move the 'projection' from the path to the custom path. */
 
-	/* Point the nested scan's projection to the base table's projection */
-	path->pathtarget = inputPath->pathtarget;
+	/* Point the nested scan's projection to the base table's projection.
+	 *
+	 * Copy the outer pathtarget instead of aliasing inputPath->pathtarget. A
+	 * single baseRelPathTarget is shared as the inner (nested-scan) projection
+	 * across every custom path built for this relation; if an earlier path
+	 * already repointed its inputPath->pathtarget at that shared
+	 * baseRelPathTarget, aliasing it here would make the (wide) baseRelPathTarget
+	 * the top-level pathtarget of a rel->pathlist custom path. The core planner
+	 * (apply_scanjoin_target_to_paths) then injects the narrower final-target
+	 * sortgrouprefs into that pathtarget in place, leaving the shared inner
+	 * projection with a sortgrouprefs array shorter than its exprs list. That
+	 * causes build_path_tlist() to read past the array end. An independent copy
+	 * keeps baseRelPathTarget off rel->pathlist so it is never relabeled. */
+	path->pathtarget = copy_pathtarget(inputPath->pathtarget);
 	inputPath->pathtarget = baseRelPathTarget;
 
 
@@ -560,7 +573,18 @@ GetPrimaryKeyContinuationIndexPath(PlannerInfo *root, RelOptInfo *rel,
 								   ScanDirection scandir,
 								   bool rowCompareIsInclusive)
 {
-	IndexOptInfo *info = GetPrimaryKeyIndexOpt(rel);
+	/*
+	 * Resume must honor the scan type the continuation already committed to.
+	 * Use the GUC-independent core lookup here: once a cursor's first page was
+	 * planned as a primary-key scan (chosen via GetPrimaryKeyIndexOptCore), a
+	 * subsequent getMore must be able to resume it even if the runtime
+	 * enablePrimaryKeyCursorScan GUC has since been toggled off (e.g. a config
+	 * flight, or a worker that did not inherit the coordinator's SET). The GUC
+	 * gates selection of the primary-key scan for new cursors, not resumption of
+	 * existing ones. A NULL here now means the primary key index is genuinely
+	 * absent on the relation.
+	 */
+	IndexOptInfo *info = GetPrimaryKeyIndexOptCore(rel);
 	if (info == NULL)
 	{
 		ereport(ERROR, (errmsg(

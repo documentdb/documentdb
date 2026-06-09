@@ -345,8 +345,18 @@ CreateCustomScanPathForStreaming(PlannerInfo *root, RelOptInfo *rel, Path *input
 		{
 			/* Projection of all base table columns to extract shard_key_value & object_id.
 			 * Move projection to the top level pathTarget.
+			 *
+			 * Copy the outer pathtarget instead of aliasing inputPath->pathtarget:
+			 * the shared baseRelPathTarget is reused as the inner projection of
+			 * every custom path for this relation, and aliasing here could make
+			 * that wide pathtarget the top-level target of a rel->pathlist path.
+			 * apply_scanjoin_target_to_paths() would then relabel it in place with
+			 * the narrower final-target sortgrouprefs, leaving the inner
+			 * projection with a sortgrouprefs array shorter than its exprs list
+			 * and causing build_path_tlist() to read past its end. An independent
+			 * copy keeps baseRelPathTarget off rel->pathlist.
 			 */
-			path->pathtarget = inputPath->pathtarget;
+			path->pathtarget = copy_pathtarget(inputPath->pathtarget);
 			inputPath->pathtarget = baseRelPathTarget;
 			break;
 		}
@@ -1053,6 +1063,7 @@ ExtensionCursorScanEndCustomScan(CustomScanState *node)
 {
 	ExtensionCursorScanState *extensionCursorScanState =
 		(ExtensionCursorScanState *) node;
+
 	ExecEndNode((PlanState *) extensionCursorScanState->innerScanState);
 }
 

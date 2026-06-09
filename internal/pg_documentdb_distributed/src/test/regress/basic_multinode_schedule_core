@@ -1,3 +1,5 @@
 test: multinode/basic_crud
 test: multinode/roles_reference_table
 test: multinode/schema_validation_update_multi
+test: multinode/dynamic_cursor_remote_unsharded_tests_mini 
+test: multinode/dynamic_cursor_remote_unsharded_tests

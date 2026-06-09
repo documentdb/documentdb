@@ -11,6 +11,8 @@
 #include <fmgr.h>
 #include <miscadmin.h>
 #include <funcapi.h>
+#include <nodes/plannodes.h>
+#include <nodes/params.h>
 #include <utils/portal.h>
 #include <utils/varlena.h>
 #include <utils/typcache.h>
@@ -51,6 +53,7 @@ extern bool UseFileBasedPersistedCursors;
 extern bool EnableDebugQueryText;
 extern bool EnableDelayedHoldPortal;
 extern bool EnableStreamingCursorDrainViaDestReceiver;
+
 
 /*
  * Overhead of the array index per document (The string "1", "2" etc).
@@ -114,7 +117,9 @@ typedef struct TailableCursorContinuationEntry
 
 
 /*
- * The output of planning for a query cursor.
+ * The output of planning for a query cursor. Defined here (rather than in
+ * cursor_private.h) so the type stays opaque to other translation units, which
+ * only ever hold a pointer to it.
  */
 typedef struct QueryCursorPlanResult
 {
@@ -124,16 +129,12 @@ typedef struct QueryCursorPlanResult
 	/* The query plan given the options */
 	PlannedStmt *queryPlan;
 
-	/* What type of cursor was planned */
-	QueryCursorType cursorType;
-
 	/* The options that were used to plan the cursor */
 	int cursorOptions;
 
 	/* The parameter list to pass to the plan */
 	ParamListInfo paramList;
 } QueryCursorPlanResult;
-
 
 /*
  * BsonStoreTupleDestReceiverBase is the base DestReceiver for forwarding tuples
@@ -244,6 +245,13 @@ typedef struct PersistentTupleDestReceiver
 	 * so that DrainPersistedFileCursor can resume reading on the next getMore.
 	 */
 	bytea *continuationState;
+
+	/*
+	 * When true, overflow rows beyond the first batch may be spilled to an
+	 * on-disk cursor file. Captured at creation time so the receive callback
+	 * does not depend on the ambient UseFileBasedPersistedCursors global.
+	 */
+	bool useFileBasedCursors;
 } PersistentTupleDestReceiver;
 
 typedef void (*UpdateCustomScanState)(PlanState *, DestReceiver *);
@@ -322,7 +330,9 @@ static PersistentTupleDestReceiver * CreatePersistentTupleDestReceiver(
 	uint32_t
 	accumulatedSize,
 	bool closeCursor,
-	bool isSingleResult);
+	bool isSingleResult,
+	bool
+	useFileBasedCursors);
 static void DrainStatementViaExecutor(PlannedStmt *queryPlan, ParamListInfo paramList,
 									  const char *sourceText, DestReceiver *destReceiver,
 									  MemoryContext currentContext,
@@ -367,7 +377,8 @@ DrainSingleResultQuery(Query *query)
 	bool isSingleResult = true;
 	PersistentTupleDestReceiver *receiver = CreatePersistentTupleDestReceiver(
 		arrayWriter, currentContext, batchSize, cursorName,
-		accumulatedSize, closeCursor, isSingleResult);
+		accumulatedSize, closeCursor, isSingleResult,
+		UseFileBasedPersistedCursors);
 
 	UpdateCustomScanState stateFunc = NULL;
 	DrainStatementViaExecutor(queryPlan, paramListInfo, sourceText,
@@ -584,8 +595,6 @@ PlanDynamicQueryAndDetermineCursorType(Query *query, bool *isDynamicStreamable)
 	*isDynamicStreamable = IsDynamicCustomScanPath(outerPlan);
 
 	QueryCursorPlanResult *result = palloc0(sizeof(QueryCursorPlanResult));
-	result->cursorType = *isDynamicStreamable ? QueryCursorType_Dynamic :
-						 QueryCursorType_Persistent;
 	result->queryPlan = queryPlan;
 	result->queryString = sourceText;
 	result->cursorOptions = cursorOptions;
@@ -730,7 +739,6 @@ PlanForcedPersistentQuery(Query *query, bool isHoldCursor)
 	}
 
 	QueryCursorPlanResult *result = palloc0(sizeof(QueryCursorPlanResult));
-	result->cursorType = QueryCursorType_Persistent;
 	result->queryPlan = queryPlan;
 	result->queryString = sourceText;
 	result->cursorOptions = cursorOptions;
@@ -770,7 +778,8 @@ CreateAndDrainSingleBatchQuery(const char *cursorName, Query *query,
 		cursorName,
 		accumulatedSize,
 		closeCursor,
-		isSingleResult);
+		isSingleResult,
+		UseFileBasedPersistedCursors);
 	UpdateCustomScanState stateFunc = NULL;
 	DrainStatementViaExecutor(queryPlan, paramList, sourceText, (DestReceiver *) receiver,
 							  currentContext, stateFunc);
@@ -916,7 +925,8 @@ CreateAndDrainPersistedQueryWithFiles(const char *cursorName,
 									  QueryCursorPlanResult *result,
 									  int batchSize, int32_t *numIterations, uint32_t
 									  accumulatedSize,
-									  pgbson_array_writer *arrayWriter, bool closeCursor)
+									  pgbson_array_writer *arrayWriter, bool closeCursor,
+									  bool useFileBasedCursors)
 {
 	/* Save the context before doing SPI */
 	MemoryContext currentContext = CurrentMemoryContext;
@@ -928,7 +938,8 @@ CreateAndDrainPersistedQueryWithFiles(const char *cursorName,
 																			  cursorName,
 																			  accumulatedSize,
 																			  closeCursor,
-																			  isSingleResult);
+																			  isSingleResult,
+																			  useFileBasedCursors);
 	UpdateCustomScanState stateFunc = NULL;
 	DrainStatementViaExecutor(result->queryPlan, result->paramList, result->queryString,
 							  (DestReceiver *) receiver,
@@ -983,7 +994,8 @@ CreateAndDrainPointReadQuery(const char *cursorName, Query *query,
 		batchSize, cursorName,
 		accumulatedSize,
 		closeCursor,
-		isSingleResult);
+		isSingleResult,
+		UseFileBasedPersistedCursors);
 	UpdateCustomScanState stateFunc = NULL;
 	DrainStatementViaExecutor(queryPlan, paramList, sourceText,
 							  (DestReceiver *) receiver, currentContext, stateFunc);
@@ -1228,14 +1240,14 @@ PersistentDestReceiveCore(pgbson *resultBson,
 			/* We need to close the cursor stop - no point enumerating any further */
 			return false;
 		}
-		else if (UseFileBasedPersistedCursors)
+		else if (receiver->useFileBasedCursors)
 		{
 			if (receiver->cursorFileState == NULL)
 			{
 				MemoryContext oldContext = MemoryContextSwitchTo(
 					base->writerContext);
 				receiver->cursorFileState = CreateCursorFile(
-					receiver->cursorName);
+					receiver->cursorName, receiver->useFileBasedCursors);
 				MemoryContextSwitchTo(oldContext);
 			}
 
@@ -1392,7 +1404,7 @@ CreatePersistentTupleDestReceiver(pgbson_array_writer *arrayWriter,
 								  MemoryContext writerContext,
 								  int32_t batchSize, const char *cursorName,
 								  uint32_t accumulatedSize, bool closeCursor,
-								  bool isSingleResult)
+								  bool isSingleResult, bool useFileBasedCursors)
 {
 	PersistentTupleDestReceiver *destReceiver =
 		(PersistentTupleDestReceiver *) palloc0(sizeof(PersistentTupleDestReceiver));
@@ -1407,6 +1419,7 @@ CreatePersistentTupleDestReceiver(pgbson_array_writer *arrayWriter,
 	destReceiver->cursorName = cursorName;
 	destReceiver->closeCursor = closeCursor;
 	destReceiver->isSingleResult = isSingleResult;
+	destReceiver->useFileBasedCursors = useFileBasedCursors;
 
 	if (isSingleResult)
 	{
@@ -1675,15 +1688,17 @@ DrainPersistedCursor(const char *cursorName, int batchSize,
 bytea *
 DrainPersistedFileCursor(const char *cursorName, int batchSize,
 						 int32_t *numIterations, uint32_t accumulatedSize,
-						 pgbson_array_writer *arrayWriter, bytea *cursorFileState)
+						 pgbson_array_writer *arrayWriter, bytea *cursorFileState,
+						 bool useFileBasedCursors)
 {
-	if (!UseFileBasedPersistedCursors)
+	if (!useFileBasedCursors)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 						errmsg("File based cursor is not enabled")));
 	}
 
-	CursorFileState *cursorState = DeserializeFileState(cursorFileState);
+	CursorFileState *cursorState = DeserializeFileState(cursorFileState,
+														useFileBasedCursors);
 
 	bool closeCursor = true;
 	bool isSingleResult = false;
@@ -1693,7 +1708,8 @@ DrainPersistedFileCursor(const char *cursorName, int batchSize,
 		batchSize, cursorName,
 		accumulatedSize,
 		closeCursor,
-		isSingleResult);
+		isSingleResult,
+		useFileBasedCursors);
 	destReceiver->cursorFileState = cursorState;
 
 	pgbson *nextDocument = ReadFromCursorFile(cursorState);

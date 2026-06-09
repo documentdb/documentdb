@@ -131,6 +131,7 @@ test: bson_aggregation_pipeline_tests_geonear bson_aggregation_pipeline_stage_se
 
 test: cursors_basic_support cursors_seqscan bson_aggregation_cursor_tests commands_update_txn_proc 
 test: bson_aggregation_cursor_tests_destreceiver bson_aggregation_file_cursor_tests command_insert_txn_proc
+test: bson_aggregation_cursor_tests_dynamic_remote
 test: commands_create_unique_index_stats
 
 # run sequentially since it touches the index queue

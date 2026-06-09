@@ -22,6 +22,12 @@ BEGIN
 			documentdb_core.bson_build_document('moveCollection'::text, format('%s.%s', p_database_name, p_collection_name), 'toShard'::text, format('shard_%s', p_node_number::text))
 		);
 		RETURN TRUE;
+		EXCEPTION WHEN OTHERS THEN
+			-- "cannot move shard to the same node" means it is already where we want it
+			IF SQLERRM LIKE '%same node%' THEN
+				RETURN TRUE;
+			END IF;
+		RAISE;
 	END;
 	RETURN FALSE;
 END;

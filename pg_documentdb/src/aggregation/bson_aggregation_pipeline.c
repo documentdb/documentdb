@@ -76,6 +76,7 @@
 
 extern bool EnableCursorsOnAggregationQueryRewrite;
 extern bool EnableCollation;
+extern bool EnableDynamicCursors;
 extern bool SkipFailOnCollation;
 extern bool DefaultInlineWriteOperations;
 extern int MaxAggregationStagesAllowed;
@@ -184,6 +185,87 @@ typedef struct SortGroupAnalysisResult
 	 * tell prefix-with-suffix apart from exact match. */
 	bool groupKeysFormSortPrefix;
 } SortGroupAnalysisResult;
+
+/*
+ * Parsed representation of a find command spec. Produced by ParseFindQuery and
+ * consumed by ApplyFindSpec / ApplyFindSpecCore to build the underlying query.
+ */
+typedef struct FindSpec
+{
+	/* Database name datum the find targets. */
+	text *databaseDatum;
+
+	/* Target collection name. */
+	StringView collectionName;
+
+	/* Optional collection UUID to validate against (NULL when not provided). */
+	pg_uuid_t *collectionUuid;
+
+	/* The filter ($match) spec. */
+	bson_value_t filter;
+
+	/* The limit spec (normalized for negative/zero values). */
+	bson_value_t limit;
+
+	/* The projection spec. */
+	bson_value_t projection;
+
+	/* The sort spec. */
+	bson_value_t sort;
+
+	/* The skip spec. */
+	bson_value_t skip;
+
+	/* The let (top-level variables) spec. */
+	bson_value_t let;
+
+	/* The index hint spec. */
+	bson_value_t indexHint;
+
+	/* Parsed top-level variable spec derived from let. */
+	pgbson *parsedVariables;
+} FindSpec;
+
+
+/*
+ * Opaque handle produced by ParseAggregationQueryAndLookupCollection and consumed
+ * by ApplyParsedAggregationQuery. Carries the parsed aggregation spec, the build
+ * context, the looked-up collection, and the associated query data so the parse and
+ * apply phases can be invoked separately by callers that need to branch on the
+ * collection topology before generating the local query (mirrors FindQueryPlan).
+ */
+typedef struct AggregationQueryPlan
+{
+	AggregationPipelineBuildContext context;
+	MongoCollection *collection;
+	QueryData *queryData;
+
+	/* Parsed fields needed by the apply phase. */
+	StringView collectionName;
+	List *aggregationStages;
+	pg_uuid_t *collectionUuid;
+	bson_value_t indexHint;
+	bool isCollectionAgnosticQuery;
+	bool hasCursor;
+	bool explain;
+	CursorParamKind cursorParamKind;
+} AggregationQueryPlan;
+
+
+/*
+ * Opaque handle produced by ParseFindQueryAndLookupCollection and consumed by
+ * ApplyParsedFindQuery. Carries the parsed find spec, the build context, the
+ * looked-up collection, and the associated query data so the parse and apply
+ * phases can be invoked separately by callers that need to branch on the
+ * collection topology before generating the local query.
+ */
+typedef struct FindQueryPlan
+{
+	FindSpec spec;
+	AggregationPipelineBuildContext context;
+	MongoCollection *collection;
+	QueryData *queryData;
+} FindQueryPlan;
 
 #define MAX_SUFFIX_SORT_GROUP_KEYS (INDEX_MAX_KEYS * 2)
 
@@ -308,6 +390,15 @@ static bool TryBuildSuffixSortSpec(const bson_value_t *groupValue,
 								   bson_value_t *suffixSortSpec);
 static bool CanPushSortFilterToIndex(Query *query,
 									 AggregationPipelineBuildContext *context);
+static FindSpec ParseFindQuery(pgbson *findSpec,
+							   QueryData *queryData, bool setStatementTimeout,
+							   AggregationPipelineBuildContext *context);
+static Query * ApplyFindSpec(const FindSpec *spec, MongoCollection *collection,
+							 QueryData *queryData, CursorParamKind cursorParamKind,
+							 AggregationPipelineBuildContext *context);
+static Query * ApplyFindSpecCore(const FindSpec *spec, Query *query, Query *baseQuery,
+								 QueryData *queryData, CursorParamKind cursorParamKind,
+								 AggregationPipelineBuildContext *context);
 static Const * AddCollationToSortSpec(pgbsonelement *sortElement,
 									  const char *collationString);
 
@@ -1280,9 +1371,22 @@ SetCursorTopology(QueryData *queryData,
 
 	if (context->mongoCollection->shardKey == NULL)
 	{
-		queryData->cursorTopology = context->allowShardBaseTable ?
-									CursorTopology_LocalUnsharded :
-									CursorTopology_RemoteUnsharded;
+		/*
+		 * Use isRemoteUnsharded (set only when the shard physically lives on a
+		 * remote worker) rather than !allowShardBaseTable.  allowShardBaseTable
+		 * can be false even for a local-shard collection — for example when
+		 * called from inside a PL/pgSQL function (IsTransactionBlock()=true) —
+		 * and we must not dispatch those queries to a remote worker.
+		 *
+		 * Topology is set unconditionally here; the EnableDynamicCursors GUC is
+		 * enforced at the usage sites (HandleFirstPageRequest and
+		 * TryAddDynamicCursorQuery) so that cursor_tracker injection and worker
+		 * dispatch are both suppressed when the GUC is off.
+		 */
+		queryData->cursorTopology =
+			context->mongoCollection->isShardRemote ?
+			CursorTopology_RemoteUnsharded :
+			CursorTopology_LocalUnsharded;
 	}
 	else
 	{
@@ -1340,6 +1444,7 @@ TryAddDynamicCursorQuery(CursorParamKind cursorParamKind, QueryData *queryData,
 
 				pgbson *cursorValue = queryData->cursorStateConst != NULL ?
 									  queryData->cursorStateConst : PgbsonInitEmpty();
+
 				Const *cursorConst = MakeBsonConst(cursorValue);
 				FuncExpr *cursorStateExpr = makeFuncExpr(
 					ApiCursorTrackerFunctionId(), BOOLOID, list_make2(
@@ -1347,6 +1452,7 @@ TryAddDynamicCursorQuery(CursorParamKind cursorParamKind, QueryData *queryData,
 					InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
 				quals = lappend(quals, cursorStateExpr);
 				query->jointree->quals = (Node *) make_ands_explicit(quals);
+
 				queryData->cursorKind = QueryCursorType_Dynamic;
 				return true;
 			}
@@ -1358,16 +1464,31 @@ TryAddDynamicCursorQuery(CursorParamKind cursorParamKind, QueryData *queryData,
 
 
 /*
- * Given a query and an aggregation pipeline mutates the query
- * to match the contents of the provided aggregation pipeline.
+ * Parses an aggregation command spec and looks up the target collection, WITHOUT
+ * generating the underlying SQL query (no base-table query, no pipeline mutation,
+ * no cursor-function injection). Determines whether the collection is
+ * remote-unsharded so callers may dispatch to a worker instead of generating and
+ * discarding a local query.
+ *
+ * Note: pipeline stages ARE extracted here (via ExtractAggregationStages) because
+ * the resulting context->allowShardBaseTable is required to decide remote-unsharded
+ * eligibility. This is parse/plan work only; the Query AST is built in the apply
+ * phase.
+ *
+ * On return:
+ *   *outCollection - the looked-up collection, or NULL if it doesn't exist or is agnostic.
  */
-Query *
-GenerateAggregationQuery(text *database, pgbson *aggregationSpec, QueryData *queryData,
-						 CursorParamKind cursorParamKind, bool setStatementTimeout)
+AggregationQueryPlan *
+ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec,
+										 QueryData *queryData,
+										 CursorParamKind cursorParamKind,
+										 bool setStatementTimeout,
+										 MongoCollection **outCollection)
 {
-	AggregationPipelineBuildContext context = { 0 };
-	context.databaseNameDatum = database;
-	context.optimizePipelineStages = true;
+	AggregationQueryPlan *plan = palloc0(sizeof(AggregationQueryPlan));
+	AggregationPipelineBuildContext *context = &plan->context;
+	context->databaseNameDatum = database;
+	context->optimizePipelineStages = true;
 	queryData->cursorKind = QueryCursorType_Unspecified;
 
 	bson_iter_t aggregationIterator;
@@ -1461,7 +1582,7 @@ GenerateAggregationQuery(text *database, pgbson *aggregationSpec, QueryData *que
 			{
 				EnsureTopLevelFieldType("collation", &aggregationIterator,
 										BSON_TYPE_DOCUMENT);
-				ParseAndGetCollationString(value, context.collationString);
+				ParseAndGetCollationString(value, context->collationString);
 			}
 			else if (!SkipFailOnCollation)
 			{
@@ -1478,13 +1599,9 @@ GenerateAggregationQuery(text *database, pgbson *aggregationSpec, QueryData *que
 		}
 		else if (StringViewEqualsCString(&keyView, "$db"))
 		{
-			text *prevDb = context.databaseNameDatum;
 			ValidateOrExtractDatabaseNameTextFromSpec(&aggregationIterator,
-													  &context.databaseNameDatum);
-			if (prevDb == NULL)
-			{
-				database = context.databaseNameDatum;
-			}
+													  &context->databaseNameDatum);
+			database = context->databaseNameDatum;
 		}
 		else if (!IsCommonSpecIgnoredField(keyView.string))
 		{
@@ -1494,7 +1611,7 @@ GenerateAggregationQuery(text *database, pgbson *aggregationSpec, QueryData *que
 		}
 	}
 
-	if (context.databaseNameDatum == NULL)
+	if (context->databaseNameDatum == NULL)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
 							"Required field database must be valid")));
@@ -1516,36 +1633,108 @@ GenerateAggregationQuery(text *database, pgbson *aggregationSpec, QueryData *que
 															  &queryData->
 															  timeSystemVariables);
 
-	context.variableSpec = (Expr *) MakeBsonConst(parsedVariables);
+	context->variableSpec = (Expr *) MakeBsonConst(parsedVariables);
 
 	List *aggregationStages = ExtractAggregationStages(&pipelineValue,
-													   &context);
+													   context);
+
+	/*
+	 * Look up the collection (non-agnostic only) so we can detect the
+	 * remote-unsharded case before generating the query. The looked-up
+	 * collection is reused by the apply phase via preFetchedCollection.
+	 */
+	MongoCollection *collection = NULL;
+	if (!isCollectionAgnosticQuery)
+	{
+		Datum collectionNameDatum = PointerGetDatum(
+			cstring_to_text_with_len(collectionName.string, collectionName.length));
+		collection = GetMongoCollectionOrViewByNameDatum(
+			PointerGetDatum(context->databaseNameDatum), collectionNameDatum,
+			AccessShareLock);
+
+		/*
+		 * Set the namespace name now so the remote-dispatch path (which skips the
+		 * apply phase) still has it for the cursor response preamble. For the
+		 * local path this is harmlessly recomputed inside the apply phase.
+		 */
+		queryData->namespaceName = CreateNamespaceName(context->databaseNameDatum,
+													   &collectionName);
+	}
+
+	/*
+	 * Validate the cursor option after the collection lookup (which acquires the
+	 * table lock), so both the remote-dispatch path (which skips the apply phase)
+	 * and the local path enforce it once. Validating after the lookup preserves
+	 * the legacy ordering where a lock-contended command blocks (and can hit its
+	 * statement timeout) before this parse-level check fires.
+	 */
+	if (!hasCursor && !explain && cursorParamKind != CursorParamKind_Persistent)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+						errmsg(
+							"The 'cursor' option is required, except for aggregate with explain")));
+	}
+
+	if (outCollection != NULL)
+	{
+		*outCollection = collection;
+	}
+
+	plan->collection = collection;
+	plan->queryData = queryData;
+	plan->collectionName = collectionName;
+	plan->aggregationStages = aggregationStages;
+	plan->collectionUuid = collectionUuid;
+	plan->indexHint = indexHint;
+	plan->isCollectionAgnosticQuery = isCollectionAgnosticQuery;
+	plan->hasCursor = hasCursor;
+	plan->explain = explain;
+	plan->cursorParamKind = cursorParamKind;
+
+	return plan;
+}
+
+
+/*
+ * Generates the local SQL query from a previously parsed aggregation plan. This is
+ * the mutation phase (base table + dynamic cursor + pipeline + cursor functions)
+ * and mirrors what the single-shot GenerateAggregationQuery does after parsing.
+ */
+Query *
+ApplyParsedAggregationQuery(AggregationQueryPlan *plan)
+{
+	AggregationPipelineBuildContext *context = &plan->context;
+	QueryData *queryData = plan->queryData;
+	CursorParamKind cursorParamKind = plan->cursorParamKind;
+	List *aggregationStages = plan->aggregationStages;
 
 	Query *query;
-	if (isCollectionAgnosticQuery)
+	if (plan->isCollectionAgnosticQuery)
 	{
-		query = GenerateBaseAgnosticQuery(context.databaseNameDatum, &context);
+		query = GenerateBaseAgnosticQuery(context->databaseNameDatum, context);
 	}
 	else
 	{
-		query = GenerateBaseTableQuery(context.databaseNameDatum, &collectionName,
-									   collectionUuid, &indexHint,
-									   &context);
+		context->mongoCollection = plan->collection;
+		query = GenerateBaseTableQuery(context->databaseNameDatum,
+									   &plan->collectionName,
+									   plan->collectionUuid, &plan->indexHint,
+									   context);
 	}
 
 	/* Remember the base query - this will be needed since we need to update the cursor function on the base RTE */
 	Query *baseQuery = query;
 
 	if (cursorParamKind == CursorParamKind_Dynamic &&
-		!TryAddDynamicCursorQuery(cursorParamKind, queryData, query, &context))
+		!TryAddDynamicCursorQuery(cursorParamKind, queryData, query, context))
 	{
 		/* Fall back to streaming cursor if dynamic cursor cannot be added */
 		cursorParamKind = CursorParamKind_Streaming;
 	}
 
-	query = MutateQueryWithPipeline(query, aggregationStages, &context);
+	query = MutateQueryWithPipeline(query, aggregationStages, context);
 
-	if (context.requiresTailableCursor)
+	if (context->requiresTailableCursor)
 	{
 		/*
 		 * change stream is the only stage that requires a tailable cursor.
@@ -1563,49 +1752,61 @@ GenerateAggregationQuery(text *database, pgbson *aggregationSpec, QueryData *que
 	else if (queryData->cursorKind == QueryCursorType_Unspecified)
 	{
 		queryData->cursorKind =
-			context.requiresPersistentCursor || isCollectionAgnosticQuery ?
+			context->requiresPersistentCursor || plan->isCollectionAgnosticQuery ?
 			QueryCursorType_Persistent : QueryCursorType_Streamable;
 	}
 
 	if ((queryData->cursorKind == QueryCursorType_Streamable ||
 		 queryData->cursorKind == QueryCursorType_Dynamic) &&
-		context.isSingleRowResult &&
+		context->isSingleRowResult &&
 		queryData->batchSize >= 1)
 	{
 		queryData->cursorKind = QueryCursorType_SingleBatch;
 	}
 
-	queryData->namespaceName = context.namespaceName;
-	SetCursorTopology(queryData, &context);
-
-	/* This is validated *after* the pipeline parsing happens */
-	if (!hasCursor && !explain && cursorParamKind != CursorParamKind_Persistent)
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
-						errmsg(
-							"The 'cursor' option is required, except for aggregate with explain")));
-	}
+	queryData->namespaceName = context->namespaceName;
+	SetCursorTopology(queryData, context);
 
 	if (cursorParamKind == CursorParamKind_Streaming &&
 		queryData->cursorKind == QueryCursorType_Streamable)
 	{
 		bool addCursorAsConst = false;
-		AddCursorFunctionsToQuery(query, baseQuery, queryData, &context,
+		AddCursorFunctionsToQuery(query, baseQuery, queryData, context,
 								  addCursorAsConst);
 	}
 	else if (queryData->cursorKind == QueryCursorType_Tailable)
 	{
 		AddQualifierForTailableQuery(query, baseQuery, queryData,
-									 &context);
+									 context);
 	}
 	else if (EnableCursorsOnAggregationQueryRewrite)
 	{
 		bool addCursorAsConst = true;
-		AddCursorFunctionsToQuery(query, baseQuery, queryData, &context,
+		AddCursorFunctionsToQuery(query, baseQuery, queryData, context,
 								  addCursorAsConst);
 	}
 
 	return query;
+}
+
+
+/*
+ * Given a query and an aggregation pipeline mutates the query
+ * to match the contents of the provided aggregation pipeline.
+ *
+ * Thin composition of the parse and apply phases. Callers that need to branch on
+ * the collection topology before generating the query (e.g. aggregate first-page
+ * to dispatch remote-unsharded queries to a worker) call the two phases directly.
+ */
+Query *
+GenerateAggregationQuery(text *database, pgbson *aggregationSpec, QueryData *queryData,
+						 CursorParamKind cursorParamKind, bool setStatementTimeout)
+{
+	AggregationQueryPlan *plan = ParseAggregationQueryAndLookupCollection(
+		database, aggregationSpec, queryData, cursorParamKind, setStatementTimeout,
+		NULL);
+
+	return ApplyParsedAggregationQuery(plan);
 }
 
 
@@ -1630,18 +1831,14 @@ IsNaturalSortHint(const bson_value_t *hintValue)
 
 
 /*
- * Applies a find spec against a query and expands it into the underlying SQL AST.
+ * Parses a find command spec into a FindSpec struct.
+ * Owns the entire bson_iter parsing switch, post-parse validation,
+ * limit normalisation, variable parsing, and index-hint sanity check.
  */
-Query *
-GenerateFindQuery(text *databaseDatum, pgbson *findSpec, QueryData *queryData,
-				  CursorParamKind cursorParamKind, bool setStatementTimeout)
+static FindSpec
+ParseFindQuery(pgbson *findSpec, QueryData *queryData,
+			   bool setStatementTimeout, AggregationPipelineBuildContext *context)
 {
-	AggregationPipelineBuildContext context = { 0 };
-	context.databaseNameDatum = databaseDatum;
-
-	/* Queries start out as persistent cursor */
-	queryData->cursorKind = QueryCursorType_Unspecified;
-
 	bson_iter_t findIterator;
 	PgbsonInitIterator(findSpec, &findIterator);
 
@@ -1659,8 +1856,6 @@ GenerateFindQuery(text *databaseDatum, pgbson *findSpec, QueryData *queryData,
 	bson_value_t indexHint = { 0 };
 	pg_uuid_t *collectionUuid = NULL;
 
-	/* For finds, we can generally query the shard directly if available. */
-	context.allowShardBaseTable = true;
 	while (bson_iter_next(&findIterator))
 	{
 		StringView keyView = bson_iter_key_string_view(&findIterator);
@@ -1677,14 +1872,14 @@ GenerateFindQuery(text *databaseDatum, pgbson *findSpec, QueryData *queryData,
 			{
 				if (StringViewEqualsCString(&keyView, "$db"))
 				{
-					text *prevDb = context.databaseNameDatum;
+					/*
+					 * Extracts and validates the database name from the spec into
+					 * context->databaseNameDatum (the authoritative value used to
+					 * build the FindSpec). The databaseDatum parameter is only the
+					 * initial default and is not updated here.
+					 */
 					ValidateOrExtractDatabaseNameTextFromSpec(&findIterator,
-															  &context.databaseNameDatum);
-					if (prevDb == NULL)
-					{
-						databaseDatum = context.databaseNameDatum;
-					}
-
+															  &context->databaseNameDatum);
 					continue;
 				}
 
@@ -1731,7 +1926,7 @@ GenerateFindQuery(text *databaseDatum, pgbson *findSpec, QueryData *queryData,
 					{
 						EnsureTopLevelFieldType("collation", &findIterator,
 												BSON_TYPE_DOCUMENT);
-						ParseAndGetCollationString(value, context.collationString);
+						ParseAndGetCollationString(value, context->collationString);
 					}
 					else if (!SkipFailOnCollation)
 					{
@@ -1950,7 +2145,7 @@ default_find_case:
 		}
 	}
 
-	if (context.databaseNameDatum == NULL)
+	if (context->databaseNameDatum == NULL)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
 							"Required field database must be valid")));
@@ -1993,24 +2188,6 @@ default_find_case:
 															  &queryData->
 															  timeSystemVariables);
 
-	context.variableSpec = (Expr *) MakeBsonConst(parsedVariables);
-
-	context.isSingleRowResult = false;
-	if (sort.value_type != BSON_TYPE_EOD)
-	{
-		context.requiresPersistentCursor = true;
-	}
-
-	if (RequiresPersistentCursorSkip(&skip, &context.isSingleRowResult))
-	{
-		context.requiresPersistentCursor = true;
-	}
-
-	if (RequiresPersistentCursorLimit(&limit, &context.isSingleRowResult))
-	{
-		context.requiresPersistentCursor = true;
-	}
-
 	if (indexHint.value_type != BSON_TYPE_EOD)
 	{
 		/* Validate hint */
@@ -2023,84 +2200,140 @@ default_find_case:
 		}
 	}
 
-	Query *query = GenerateBaseTableQuery(context.databaseNameDatum, &collectionName,
-										  collectionUuid, &indexHint,
-										  &context);
+	FindSpec spec = { 0 };
+	spec.databaseDatum = context->databaseNameDatum;
+	spec.collectionName = collectionName;
+	spec.collectionUuid = collectionUuid;
+	spec.filter = filter;
+	spec.limit = limit;
+	spec.projection = projection;
+	spec.sort = sort;
+	spec.skip = skip;
+	spec.let = let;
+	spec.indexHint = indexHint;
+	spec.parsedVariables = parsedVariables;
+	return spec;
+}
+
+
+/*
+ * Looks up the collection, sets context fields, and calls ApplyFindSpecCore.
+ */
+static Query *
+ApplyFindSpec(const FindSpec *spec, MongoCollection *collection,
+			  QueryData *queryData, CursorParamKind cursorParamKind,
+			  AggregationPipelineBuildContext *context)
+{
+	context->variableSpec = (Expr *) MakeBsonConst(spec->parsedVariables);
+
+	context->isSingleRowResult = false;
+	if (spec->sort.value_type != BSON_TYPE_EOD)
+	{
+		context->requiresPersistentCursor = true;
+	}
+
+	if (RequiresPersistentCursorSkip(&spec->skip, &context->isSingleRowResult))
+	{
+		context->requiresPersistentCursor = true;
+	}
+
+	if (RequiresPersistentCursorLimit(&spec->limit, &context->isSingleRowResult))
+	{
+		context->requiresPersistentCursor = true;
+	}
+
+	context->mongoCollection = collection;
+	Query *query = GenerateBaseTableQuery(spec->databaseDatum, &spec->collectionName,
+										  spec->collectionUuid, &spec->indexHint,
+										  context);
 	Query *baseQuery = query;
 
+	return ApplyFindSpecCore(spec, query, baseQuery, queryData, cursorParamKind, context);
+}
+
+
+/*
+ * Mutates *query* with the find-spec stages (match / sort / skip / limit /
+ * project) and attaches cursor functions.
+ */
+static Query *
+ApplyFindSpecCore(const FindSpec *spec, Query *query, Query *baseQuery,
+				  QueryData *queryData, CursorParamKind cursorParamKind,
+				  AggregationPipelineBuildContext *context)
+{
 	if (cursorParamKind == CursorParamKind_Dynamic &&
-		!TryAddDynamicCursorQuery(cursorParamKind, queryData, query, &context))
+		!TryAddDynamicCursorQuery(cursorParamKind, queryData, query, context))
 	{
 		/* Fall back to streaming cursor if dynamic cursor cannot be added */
 		cursorParamKind = CursorParamKind_Streaming;
 	}
 
 	/* First apply match */
-	if (filter.value_type != BSON_TYPE_EOD)
+	if (spec->filter.value_type != BSON_TYPE_EOD)
 	{
-		query = HandleMatch(&filter, query, &context);
-		context.stageNum++;
+		query = HandleMatch(&spec->filter, query, context);
+		context->stageNum++;
 	}
 
 	/* Then apply sort */
-	if (sort.value_type != BSON_TYPE_EOD)
+	if (spec->sort.value_type != BSON_TYPE_EOD)
 	{
-		query = HandleSort(&sort, query, &context);
-		context.stageNum++;
+		query = HandleSort(&spec->sort, query, context);
+		context->stageNum++;
 	}
 
 	/* Then do skip and then limit */
-	if (skip.value_type != BSON_TYPE_EOD)
+	if (spec->skip.value_type != BSON_TYPE_EOD)
 	{
-		query = HandleSkip(&skip, query, &context);
-		context.stageNum++;
+		query = HandleSkip(&spec->skip, query, context);
+		context->stageNum++;
 	}
 
-	if (limit.value_type != BSON_TYPE_EOD)
+	if (spec->limit.value_type != BSON_TYPE_EOD)
 	{
-		query = HandleLimit(&limit, query, &context);
-		context.stageNum++;
+		query = HandleLimit(&spec->limit, query, context);
+		context->stageNum++;
 	}
 
 	/* $near and $nearSphere add sort clause to query, for them we need persistent cursor. */
 	if (query->sortClause)
 	{
-		context.requiresPersistentCursor = true;
+		context->requiresPersistentCursor = true;
 	}
 
 	/* finally update projection */
-	if (projection.value_type != BSON_TYPE_EOD)
+	if (spec->projection.value_type != BSON_TYPE_EOD)
 	{
 		/* Before applying projection - check if we need to
 		 * push to a subquery. We do this only if we have
 		 * skip to avoid projecting on documents we won't need.
 		 */
-		if (context.requiresSubQuery &&
-			context.requiresPersistentCursor &&
+		if (context->requiresSubQuery &&
+			context->requiresPersistentCursor &&
 			query->limitOffset != NULL)
 		{
-			query = MigrateQueryToSubQuery(query, &context);
+			query = MigrateQueryToSubQuery(query, context);
 		}
 
-		query = HandleProjectFind(&projection, &filter, query, &context);
+		query = HandleProjectFind(&spec->projection, &spec->filter, query, context);
 	}
 
 	if (rt_fetch(1, query->rtable)->rtekind != RTE_RELATION)
 	{
 		/* Any attempts to push to a subquery should invalidate point read plans */
-		context.isPointReadQuery = false;
+		context->isPointReadQuery = false;
 	}
 
 	if (queryData->cursorKind == QueryCursorType_Unspecified)
 	{
-		queryData->cursorKind = context.requiresPersistentCursor ?
+		queryData->cursorKind = context->requiresPersistentCursor ?
 								QueryCursorType_Persistent : QueryCursorType_Streamable;
 	}
 
-	queryData->namespaceName = context.namespaceName;
-	SetCursorTopology(queryData, &context);
-	if (context.isPointReadQuery &&
-		context.allowShardBaseTable && queryData->batchSize >= 1)
+	queryData->namespaceName = context->namespaceName;
+	SetCursorTopology(queryData, context);
+	if (context->isPointReadQuery &&
+		context->allowShardBaseTable && queryData->batchSize >= 1)
 	{
 		/* If we're still targeting the local shard && we have a point read
 		 * Mark the query for a point read plan.
@@ -2110,7 +2343,7 @@ default_find_case:
 
 	if ((queryData->cursorKind == QueryCursorType_Streamable ||
 		 queryData->cursorKind == QueryCursorType_Dynamic) &&
-		context.isSingleRowResult &&
+		context->isSingleRowResult &&
 		queryData->batchSize >= 1)
 	{
 		queryData->cursorKind = QueryCursorType_SingleBatch;
@@ -2119,17 +2352,102 @@ default_find_case:
 	if (cursorParamKind == CursorParamKind_Streaming)
 	{
 		bool addCursorAsConst = false;
-		AddCursorFunctionsToQuery(query, baseQuery, queryData, &context,
+		AddCursorFunctionsToQuery(query, baseQuery, queryData, context,
 								  addCursorAsConst);
 	}
 	else if (EnableCursorsOnAggregationQueryRewrite)
 	{
 		bool addCursorAsConst = true;
-		AddCursorFunctionsToQuery(query, baseQuery, queryData, &context,
+		AddCursorFunctionsToQuery(query, baseQuery, queryData, context,
 								  addCursorAsConst);
 	}
 
 	return query;
+}
+
+
+/*
+ * Parses a find command spec and looks up the target collection, WITHOUT
+ * generating the underlying SQL query. Determines whether the collection is
+ * remote-unsharded (so callers may dispatch to a worker instead of generating
+ * and discarding a local query).
+ *
+ * On return:
+ *   *outIsRemoteUnsharded  - true iff the collection's single shard lives on a
+ *                            remote worker (no usable local shard table).
+ *   *outDistributedTableOid - the OID of the distributed table for the
+ *                            collection (used for remote dispatch routing);
+ *                            InvalidOid when the collection does not exist.
+ *
+ * The returned handle is allocated in the current memory context and is passed
+ * to ApplyParsedFindQuery to finish generating the local query.
+ */
+FindQueryPlan *
+ParseFindQueryAndLookupCollection(text *database, pgbson *findSpec,
+								  QueryData *queryData, bool setStatementTimeout,
+								  MongoCollection **outCollection)
+{
+	FindQueryPlan *plan = palloc0(sizeof(FindQueryPlan));
+	plan->queryData = queryData;
+	plan->context.databaseNameDatum = database;
+
+	/* Queries start out as persistent cursor */
+	queryData->cursorKind = QueryCursorType_Unspecified;
+
+	/* For finds, we can generally query the shard directly if available. */
+	plan->context.allowShardBaseTable = true;
+	plan->context.databaseNameDatum = database;
+	plan->spec = ParseFindQuery(findSpec, queryData,
+								setStatementTimeout, &plan->context);
+
+	plan->collection = GetMongoCollectionOrViewByNameDatum(
+		PointerGetDatum(plan->spec.databaseDatum),
+		PointerGetDatum(cstring_to_text_with_len(plan->spec.collectionName.string,
+												 plan->spec.collectionName.length)),
+		AccessShareLock);
+
+	/*
+	 * Set the namespace name now so the remote-dispatch path (which skips
+	 * ApplyFindSpec / GenerateBaseTableQuery) still has it for the cursor
+	 * response preamble. For the local path this is harmlessly recomputed to the
+	 * same value inside ApplyFindSpecCore.
+	 */
+	queryData->namespaceName = CreateNamespaceName(plan->spec.databaseDatum,
+												   &plan->spec.collectionName);
+
+	if (outCollection != NULL)
+	{
+		*outCollection = plan->collection;
+	}
+
+	return plan;
+}
+
+
+/*
+ * Generates the local SQL query from a previously parsed find plan. This is the
+ * mutation phase (base table + stages + cursor functions) and mirrors what the
+ * single-shot GenerateFindQuery does after parsing.
+ */
+Query *
+ApplyParsedFindQuery(FindQueryPlan *plan, CursorParamKind cursorParamKind)
+{
+	return ApplyFindSpec(&plan->spec, plan->collection, plan->queryData,
+						 cursorParamKind, &plan->context);
+}
+
+
+/*
+ * Applies a find spec against a query and expands it into the underlying SQL AST.
+ */
+Query *
+GenerateFindQuery(text *databaseDatum, pgbson *findSpec, QueryData *queryData,
+				  CursorParamKind cursorParamKind, bool setStatementTimeout)
+{
+	FindQueryPlan *plan = ParseFindQueryAndLookupCollection(
+		databaseDatum, findSpec, queryData, setStatementTimeout, NULL);
+
+	return ApplyParsedFindQuery(plan, cursorParamKind);
 }
 
 
@@ -8210,10 +8528,17 @@ GenerateBaseTableQuery(text *databaseDatum, const StringView *collectionNameView
 	Datum collectionNameDatum = PointerGetDatum(
 		cstring_to_text_with_len(collectionNameView->string, collectionNameView->length));
 
-	MongoCollection *collection = GetMongoCollectionOrViewByNameDatum(PointerGetDatum(
-																		  databaseDatum),
-																	  collectionNameDatum,
-																	  AccessShareLock);
+	MongoCollection *collection;
+	if (context->mongoCollection == NULL)
+	{
+		collection = GetMongoCollectionOrViewByNameDatum(PointerGetDatum(databaseDatum),
+														 collectionNameDatum,
+														 AccessShareLock);
+	}
+	else
+	{
+		collection = context->mongoCollection;
+	}
 
 	/* CollectionUUID mismatch when collection doesn't exist */
 	if (collectionUuid != NULL)
