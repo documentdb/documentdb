@@ -467,6 +467,11 @@ bool EnableOnlyCollectionCacheInvalidateOnCollectionChanges =
 bool EnableNewNamespaceValidation =
 	DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION;
 
+/* Added in v114, enabled in v114, remove after v116 */
+#define DEFAULT_ENABLE_INSERT_DUPLICATE_INLINE_HANDLING true
+bool EnableInsertDuplicateInlineHandling =
+	DEFAULT_ENABLE_INSERT_DUPLICATE_INLINE_HANDLING;
+
 /* Improves updateMany performance but can lead to deadlocks when concurrent writes update the same document */
 /* To enable this default we need to handle deadlock scenarios gracefully */
 /* Added in v114, Pending stabilization, enable in v120 */
@@ -1254,6 +1259,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable new namespace validation."),
 		NULL, &EnableNewNamespaceValidation,
 		DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableInsertDuplicateInlineHandling", newGucPrefix),
+		gettext_noop(
+			"Whether to enable inline handling of duplicate inserts."),
+		NULL, &EnableInsertDuplicateInlineHandling,
+		DEFAULT_ENABLE_INSERT_DUPLICATE_INLINE_HANDLING,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
