@@ -43,8 +43,8 @@ jobs:
       matrix:
         ${{ fromJson(
           (github.event_name == 'pull_request' && !inputs.use_full_matrix) &&
-          '{"include":[{"os":"deb12","arch":"amd64","runner":"ubuntu-24.04","pg_version":"17"},{"os":"ubuntu22.04","arch":"arm64","runner":"ubuntu-24.04-arm","pg_version":"18"}]}' ||
-          '{"os":["deb11","deb12","deb13","ubuntu22.04","ubuntu24.04"],"arch":["amd64","arm64"],"include":[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}],"pg_version":["16","17","18"]}'
+          '{"include":[{"os":"deb12","arch":"amd64","runner":"ubuntu-24.04","pg_version":"17"},{"os":"ubuntu22.04","arch":"arm64","runner":"ubuntu-24.04-arm","pg_version":"19"}]}' ||
+          '{"os":["deb11","deb12","deb13","ubuntu22.04","ubuntu24.04"],"arch":["amd64","arm64"],"include":[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}],"pg_version":["16","17","18","19"]}'
         ) }}
 
     steps:

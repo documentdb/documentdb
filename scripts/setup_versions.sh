@@ -8,6 +8,10 @@ set -e
 # declare all the versions of dependencies
 LIBBSON_VERSION=1.28.0
 
+# PostgreSQL 19 is not GA yet; track the latest pre-release tag.
+# TODO: bump to REL_19_0 once PostgreSQL 19 is released.
+POSTGRES_19_REF="REL_19_BETA1"
+
 # This maps to REL_18_0:3d6a828938a5fa0444275d3d2f67b64ec3199eb7
 POSTGRES_18_REF="REL_18_0"
 
@@ -39,7 +43,9 @@ UNCRUSTIFY_VERSION=uncrustify-0.68.1
 function GetPostgresSourceRef()
 {
   local pgVersion=$1
-  if [ "$pgVersion" == "18" ]; then
+  if [ "$pgVersion" == "19" ]; then
+    echo $POSTGRES_19_REF
+  elif [ "$pgVersion" == "18" ]; then
     echo $POSTGRES_18_REF
   elif [ "$pgVersion" == "17" ]; then
     echo $POSTGRES_17_REF
@@ -56,7 +62,9 @@ function GetPostgresSourceRef()
 function GetCitusVersion()
 {
   local citusVersion=$1
-  if [ "$PGVERSION" == "18" ]; then
+  if [ "$PGVERSION" == "19" ]; then
+    echo $CITUS_14_VERSION
+  elif [ "$PGVERSION" == "18" ]; then
     echo $CITUS_14_VERSION
   elif [ "$PGVERSION" == "17" ]; then
     echo $CITUS_14_VERSION

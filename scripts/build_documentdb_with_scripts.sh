@@ -6,7 +6,7 @@ set -e
 
 usage() {
     echo "Usage: $0 --pg-version <version> [--citus-version <version>]"
-    echo "  --pg-version: PostgreSQL version (required, e.g., 15, 16, 17, 18)"
+    echo "  --pg-version: PostgreSQL version (required, e.g., 15, 16, 17, 18, 19)"
     echo "  --citus-version: Citus version (optional, defaults to 12)"
     exit 1
 }

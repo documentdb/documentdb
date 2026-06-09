@@ -38,6 +38,9 @@ jobs:
           - pg_version: 18
             arch: arm64
             runner: ubuntu-22.04-arm
+          - pg_version: 19
+            arch: amd64
+            runner: ubuntu-22.04
     steps:
     - name: Checkout repository
       uses: actions/checkout@v5
@@ -58,7 +61,7 @@ jobs:
         export LANGUAGE=en_US
         export LC_COLLATE=en_US.UTF-8
         export LC_CTYPE=en_US.UTF-8
-        if [ "${{ matrix.pg_version }}" -eq 18 ]; then
+        if [ "${{ matrix.pg_version }}" -ge 18 ]; then
           make check-no-distributed
         else
           make check

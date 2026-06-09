@@ -37,6 +37,9 @@ jobs:
           - pg_version: 18
             arch: arm64
             runner: ubuntu-22.04-arm
+          - pg_version: 19
+            arch: amd64
+            runner: ubuntu-22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5

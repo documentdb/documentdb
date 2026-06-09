@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       # Use reduced matrix for PRs, full matrix for pushes/releases
-      matrix: ${{ fromJson((github.event_name == 'pull_request' && !inputs.use_full_matrix) && '{"include":[{"os":"rhel9","arch":"amd64","runner":"ubuntu-24.04","pg_version":"17"},{"os":"rhel9","arch":"arm64","runner":"ubuntu-24.04-arm","pg_version":"18"}]}' || '{"os":["rhel8","rhel9"],"arch":["amd64","arm64"],"include":[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}],"pg_version":["16","17","18"]}') }}
+      matrix: ${{ fromJson((github.event_name == 'pull_request' && !inputs.use_full_matrix) && '{"include":[{"os":"rhel9","arch":"amd64","runner":"ubuntu-24.04","pg_version":"17"},{"os":"rhel9","arch":"arm64","runner":"ubuntu-24.04-arm","pg_version":"19"}]}' || '{"os":["rhel8","rhel9"],"arch":["amd64","arm64"],"include":[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}],"pg_version":["16","17","18","19"]}') }}
 
     steps:
       - name: Checkout repository
