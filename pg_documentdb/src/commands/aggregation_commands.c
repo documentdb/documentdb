@@ -1969,7 +1969,16 @@ DrainRemoteCursorPage(text *database, QueryKind queryKind,
 		Int32GetDatum((int32) queryKind),
 		PointerGetDatum(extraBson)
 	};
-	char argNulls[6] = { ' ', ' ', ' ', ' ', ' ', ' ' };
+
+	/*
+	 * The database name is NULL when the caller supplied it only via "$db" in
+	 * the command spec (the worker recovers it from the spec). Mark that
+	 * argument as a SQL NULL rather than a non-null 0 Datum; otherwise the
+	 * remote dispatch dereferences the 0 pointer while serializing the param.
+	 */
+	char argNulls[6] = {
+		database != NULL ? ' ' : 'n', ' ', ' ', ' ', ' ', ' '
+	};
 
 	bool isNull = false;
 	Datum resultDatum = ExtensionExecuteQueryWithArgsViaSPI(

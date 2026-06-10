@@ -344,6 +344,83 @@ SELECT remote_drain_and_report(
 );
 
 -- ---------------------------------------------------------------------------
+-- Test R-NULLDB: the database name is supplied only via "$db" in the command
+-- spec, so the function-level database argument is NULL (this is how documentdb's
+-- internal command dispatch invokes the cursor entry points). The
+-- remote-unsharded dynamic drain forwards the database name to the worker UDF;
+-- a NULL database must be marshalled as a SQL NULL argument rather than a
+-- non-null 0 pointer, otherwise the backend crashes while serializing the
+-- remote-dispatch parameter. Drains first page + getMore with a NULL database.
+--
+-- Covers BOTH worker read sub-paths with a NULL database:
+--   * sort {a:1} + idx_a  -> DynamicStreamingRemote (streaming worker drain)
+--   * sort {b:1}          -> DynamicFileCursorRemote (file-based worker drain)
+-- so the worker correctly recovers the database from "$db" in the spec on the
+-- streaming path and ignores it on the file path.
+--
+-- The public *_cursor_first_page / cursor_get_more functions are STRICT, so a
+-- NULL database short-circuits to a NULL result before reaching the C code. To
+-- exercise the C path (as the internal dispatch does) we bind a non-strict
+-- wrapper over the same underlying C symbols.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION nulldb_find_first_page(
+    database text, commandSpec documentdb_core.bson, cursorId int8 DEFAULT 0,
+    OUT cursorPage documentdb_core.bson, OUT continuation documentdb_core.bson,
+    OUT persistConnection bool, OUT cursorId int8)
+RETURNS record LANGUAGE C VOLATILE
+AS 'pg_documentdb', 'command_find_cursor_first_page';
+
+CREATE OR REPLACE FUNCTION nulldb_cursor_get_more(
+    database text, getMoreSpec documentdb_core.bson, continuationSpec documentdb_core.bson,
+    OUT cursorPage documentdb_core.bson, OUT continuation documentdb_core.bson)
+RETURNS record LANGUAGE C VOLATILE
+AS 'pg_documentdb', 'command_cursor_get_more';
+
+DO $$
+DECLARE
+    v_page      documentdb_core.bson;
+    v_cont      documentdb_core.bson;
+    v_pages     int;
+    v_total     bigint;
+    v_batch     bigint;
+    v_case      record;
+BEGIN
+    FOR v_case IN
+        SELECT 'streaming' AS label,
+               '{ "find": "remote_e2e_coll", "filter": { }, "sort": { "a": 1 }, "projection": { "_id": 1, "a": 1 }, "batchSize": 10, "hint": "idx_a", "$db": "dyncur_sp_db" }' AS find_spec
+        UNION ALL
+        SELECT 'file' AS label,
+               '{ "find": "remote_e2e_coll", "filter": { }, "sort": { "b": 1 }, "projection": { "_id": 1, "a": 1 }, "batchSize": 10, "hint": "idx_a", "$db": "dyncur_sp_db" }' AS find_spec
+        ORDER BY label DESC
+    LOOP
+        SELECT fp.cursorPage, fp.continuation INTO v_page, v_cont
+        FROM nulldb_find_first_page(
+            NULL::text, v_case.find_spec::documentdb_core.bson, 538) fp;
+        v_pages := 1;
+        SELECT (bson_dollar_project(v_page,
+            '{ "c": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }') ->> 'c')::bigint
+        INTO v_batch;
+        v_total := v_batch;
+
+        WHILE v_cont IS NOT NULL LOOP
+            SELECT gm.cursorPage, gm.continuation INTO v_page, v_cont
+            FROM nulldb_cursor_get_more(
+                NULL::text,
+                '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10, "$db": "dyncur_sp_db" }'::documentdb_core.bson,
+                v_cont) gm;
+            v_pages := v_pages + 1;
+            SELECT (bson_dollar_project(v_page,
+                '{ "c": { "$size": { "$ifNull": ["$cursor.nextBatch", []] } } }') ->> 'c')::bigint
+            INTO v_batch;
+            v_total := v_total + v_batch;
+        END LOOP;
+
+        RAISE NOTICE 'NULL-database remote drain (%): pages=%, total_docs=%',
+            v_case.label, v_pages, v_total;
+    END LOOP;
+END $$;
+
+-- ---------------------------------------------------------------------------
 -- Test R2: find({ "a": { "$gt": 35 } }), batchSize=10 — drain all 10 pages
 -- ---------------------------------------------------------------------------
 SELECT remote_drain_and_report(
