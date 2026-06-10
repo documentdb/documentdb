@@ -238,27 +238,27 @@ $cmd$);
    Index Cond: (document @= '{ "b.c" : "hello world" }'::bson)
 (2 rows)
 
+-- Re-enable index scans for the ordered-index hint-pushdown queries below.
+-- Keep bitmap scans disabled so the hinted plan is deterministically an Index Scan.
+set enable_indexscan to on;
+set enable_bitmapscan to off;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests_ordered", "filter": { "a": "hello world" }, "hint": "a_1" }');
 $cmd$);
-                       run_explain_and_trim                        
--------------------------------------------------------------------
- Bitmap Heap Scan on documents_102 collection
-   Recheck Cond: (document @= '{ "a" : "hello world" }'::bson)
-   ->  Bitmap Index Scan on a_1
-         Index Cond: (document @= '{ "a" : "hello world" }'::bson)
-(4 rows)
+                    run_explain_and_trim                     
+-------------------------------------------------------------
+ Index Scan using a_1 on documents_102 collection
+   Index Cond: (document @= '{ "a" : "hello world" }'::bson)
+(2 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests_ordered", "filter": { "c": "hello world" }, "hint": "c_1" }');
 $cmd$);
-                       run_explain_and_trim                        
--------------------------------------------------------------------
- Bitmap Heap Scan on documents_102 collection
-   Recheck Cond: (document @= '{ "c" : "hello world" }'::bson)
-   ->  Bitmap Index Scan on c_1
-         Index Cond: (document @= '{ "c" : "hello world" }'::bson)
-(4 rows)
+                    run_explain_and_trim                     
+-------------------------------------------------------------
+ Index Scan using c_1 on documents_102 collection
+   Index Cond: (document @= '{ "c" : "hello world" }'::bson)
+(2 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests_ordered", "filter": { "a": "hello world", "b": "myfoo" }, "hint": "a_1_b_-1" }');
@@ -272,22 +272,18 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests_ordered", "filter": { "e": "hello world" }, "hint": "e_hashed" }');
 $cmd$);
-                       run_explain_and_trim                        
--------------------------------------------------------------------
- Bitmap Heap Scan on documents_102 collection
-   Recheck Cond: (document @= '{ "e" : "hello world" }'::bson)
-   ->  Bitmap Index Scan on e_hashed
-         Index Cond: (document @= '{ "e" : "hello world" }'::bson)
-(4 rows)
+                    run_explain_and_trim                     
+-------------------------------------------------------------
+ Index Scan using e_hashed on documents_102 collection
+   Index Cond: (document @= '{ "e" : "hello world" }'::bson)
+(2 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exrumdb', '{ "find": "index_creation_tests_ordered", "filter": { "b.c": "hello world" }, "hint": "b_wildcard" }');
 $cmd$);
-                        run_explain_and_trim                         
----------------------------------------------------------------------
- Bitmap Heap Scan on documents_102 collection
-   Recheck Cond: (document @= '{ "b.c" : "hello world" }'::bson)
-   ->  Bitmap Index Scan on b_wildcard
-         Index Cond: (document @= '{ "b.c" : "hello world" }'::bson)
-(4 rows)
+                     run_explain_and_trim                      
+---------------------------------------------------------------
+ Index Scan using b_wildcard on documents_102 collection
+   Index Cond: (document @= '{ "b.c" : "hello world" }'::bson)
+(2 rows)
 
