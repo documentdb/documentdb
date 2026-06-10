@@ -81,12 +81,14 @@ fn gateway_config() -> DocumentDBSetupConfiguration {
 /// Calls `clients::test_client_options`, then applies two settings this test:
 /// - `max_pool_size = 1`: each client opens a predictable number of TCP
 ///   connections, so the test can reason about the exact connection count.
-/// - `server_selection_timeout = 5s`: when the gateway refuses a connection, the
-///   driver reports the error quickly instead of waiting the default 30 seconds.
+/// - `server_selection_timeout = 500ms`: when the gateway refuses a connection,
+///   the driver reports the error quickly instead of waiting the default 30
+///   seconds. Kept short so the rejected-connection checks don't dominate
+///   runtime.
 fn create_client() -> Result<Client, Error> {
     let mut options = clients::test_client_options(TEST_USERNAME, TEST_PASSWORD)?;
     options.max_pool_size = Some(1);
-    options.server_selection_timeout = Some(Duration::from_secs(5));
+    options.server_selection_timeout = Some(Duration::from_millis(500));
 
     Client::with_options(options)
 }
