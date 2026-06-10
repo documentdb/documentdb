@@ -39,10 +39,12 @@ use bson::doc;
 use documentdb_gateway_core::configuration::{
     CertInputType, CertificateOptions, DocumentDBSetupConfiguration,
 };
-use documentdb_tests::test_setup::initialize;
+use documentdb_tests::test_setup::{
+    clients::{self, TEST_PASSWORD, TEST_USERNAME},
+    initialize,
+};
 use mongodb::{
     error::{Error, ErrorKind},
-    options::{AuthMechanism, ClientOptions, Credential, ServerAddress, Tls, TlsOptions},
     Client,
 };
 
@@ -74,25 +76,17 @@ fn gateway_config() -> DocumentDBSetupConfiguration {
     }
 }
 
-/// Helper: creates a single-connection `MongoDB` client for testing against the gateway.
+/// Builds an authenticated, TLS-enabled `MongoDB` client pointed at the test gateway.
+///
+/// Calls `clients::test_client_options`, then applies two settings this test:
+/// - `max_pool_size = 1`: each client opens a predictable number of TCP
+///   connections, so the test can reason about the exact connection count.
+/// - `server_selection_timeout = 5s`: when the gateway refuses a connection, the
+///   driver reports the error quickly instead of waiting the default 30 seconds.
 fn create_client() -> Result<Client, Error> {
-    let credential = Credential::builder()
-        .username("test".to_owned())
-        .password("test".to_owned())
-        .mechanism(AuthMechanism::ScramSha256)
-        .build();
-
-    let options = ClientOptions::builder()
-        .credential(credential)
-        .tls(Tls::Enabled(
-            TlsOptions::builder()
-                .allow_invalid_certificates(true)
-                .build(),
-        ))
-        .hosts(vec![ServerAddress::parse(format!("127.0.0.1:{PORT}"))?])
-        .max_pool_size(1)
-        .server_selection_timeout(Duration::from_secs(5))
-        .build();
+    let mut options = clients::test_client_options(TEST_USERNAME, TEST_PASSWORD)?;
+    options.max_pool_size = Some(1);
+    options.server_selection_timeout = Some(Duration::from_secs(5));
 
     Client::with_options(options)
 }
