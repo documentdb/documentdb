@@ -14,7 +14,12 @@
     clippy::unwrap_used,
     reason = "Main binary uses unwrap for failures that should crash the process"
 )]
-use std::{env, path::PathBuf, sync::Arc};
+
+mod bootstrap;
+mod check;
+mod cli;
+
+use std::sync::Arc;
 
 use documentdb_gateway_core::{
     configuration::{DocumentDBSetupConfiguration, PgConfiguration, SetupConfiguration},
@@ -26,25 +31,25 @@ use documentdb_gateway_core::{
     telemetry::{TelemetryConfig, TelemetryManager},
 };
 use tokio::signal;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 fn main() {
-    // Takes the configuration file as an argument
-    let cfg_file = if let Some(arg1) = env::args().nth(1) {
-        PathBuf::from(arg1)
-    } else {
-        // Defaults to the source directory for local runs
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../SetupConfiguration.json")
-    };
+    // Dispatch documentdb-gateway --help/--version/check subcommands; exits
+    // if any matched. For `run [--config <path>]` returns Some(path) (path is
+    // guaranteed to exist — cli validated). For the legacy invocation form
+    // `documentdb-gateway <path>` also returns Some(path) with the same
+    // must-exist guarantee. For the no-args form, returns None.
+    let explicit_config = cli::dispatch_or_passthrough();
 
-    // Load configuration
-    let setup_configuration =
-        DocumentDBSetupConfiguration::new(&cfg_file).expect("Failed to load configuration.");
+    // Initialize tracing BEFORE config load so the operability/security
+    // warnings emitted during apply_env_overlays (file-permission warnings,
+    // PemFile→auto-gen fallback, etc.) actually reach journalctl.
+    bootstrap::init_tracing();
 
-    tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    // Load configuration via the shared helper so the `run` daemon path uses
+    // the same 3-tier resolution (explicit → packaged → dev → env-only) as
+    // the `check` subcommand. When explicit_config is Some(path), the path
+    // is guaranteed to exist; when None, the helper does the 3-tier fallback.
+    let setup_configuration = bootstrap::load_configuration(explicit_config);
 
     tracing::info!("Starting server with configuration: {setup_configuration:?}");
 

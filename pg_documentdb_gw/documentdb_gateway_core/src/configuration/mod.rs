@@ -15,7 +15,7 @@ mod version;
 pub use certs::{CertInputType, CertificateOptions};
 pub use dynamic::DynamicConfiguration;
 pub use pg_configuration::PgConfiguration;
-pub use setup::DocumentDBSetupConfiguration;
+pub use setup::{env_keys, DocumentDBSetupConfiguration};
 pub use version::Version;
 
 use dyn_clone::{clone_trait_object, DynClone};
