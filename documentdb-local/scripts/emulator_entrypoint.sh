@@ -116,6 +116,7 @@ Optional arguments:
   --tlsMode [MODE]      Set the TLS mode for client connections.
                         Supported modes: disabled, allowTLS, requireTLS.
                         By default, the gateway accepts both plain and TLS connections (allowTLS).
+                        disabled behaves the same as allowTLS; the gateway has no plain-only mode.
                         When set to requireTLS, plain (non-TLS) connections are rejected.
                         Overrides TLS_MODE environment variable.
 EOF
@@ -484,6 +485,27 @@ fi
 
 echo "Setting TLS mode to '$TLS_MODE'..."
 jq --arg tlsMode "$TLS_MODE" '.TlsMode = $tlsMode' "$configFile" > "$configFile.tmp" && \
+mv "$configFile.tmp" "$configFile"
+
+# Translate the requested TLS mode into the EnforceTls flag the gateway actually
+# reads. requireTLS enforces TLS for every connection; allowTLS and disabled let
+# the gateway accept both plain (non-TLS) and TLS clients on the same port.
+if [ "$TLS_MODE" = "requireTLS" ]; then
+    enforceTls=true
+else
+    enforceTls=false
+    if [ "$TLS_MODE" = "disabled" ]; then
+        echo "Warning: tlsMode 'disabled' does not turn TLS off. The gateway has no plain-only mode, so it behaves like 'allowTLS' and still accepts TLS connections (plain connections are accepted as well)." >&2
+    fi
+fi
+
+# Fail fast if the EnforceTls write does not succeed: a stale config would leave
+# EnforceTls unset, which the gateway treats as "enforce TLS", silently rejecting
+# the plain connections this setting is meant to allow.
+if ! jq --argjson enforceTls "$enforceTls" '.EnforceTls = $enforceTls' "$configFile" > "$configFile.tmp"; then
+    echo "Error: failed to write EnforceTls to the gateway configuration file." >&2
+    exit 1
+fi
 mv "$configFile.tmp" "$configFile"
 
 echo "Starting gateway in the background..."

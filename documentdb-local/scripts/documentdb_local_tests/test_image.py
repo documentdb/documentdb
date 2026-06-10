@@ -381,6 +381,23 @@ class DefaultContainerTests(_ContainerTestBase):
             f"full stdout:\n{result.stdout}",
         )
 
+    def test_mongosh_ping_succeeds_without_tls(self):
+        """Default mode is allowTLS, so a plain (non-TLS) client must be
+        able to connect. This is the documented 'connect without TLS'
+        behavior and the regression guard for the TLS_MODE wiring."""
+        result = self._mongosh("db.runCommand({ping: 1}).ok", use_tls=False)
+        self.assertEqual(
+            result.returncode, 0,
+            f"plain (non-TLS) mongosh failed against the allowTLS default "
+            f"container; the gateway appears to still enforce TLS.\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+        )
+        self.assertEqual(
+            _last_nonempty_line(result.stdout), "1",
+            f"expected ping ok=1 over a plain (non-TLS) connection\n"
+            f"full stdout:\n{result.stdout}",
+        )
+
     def test_mongosh_ping_rejected_with_wrong_password(self):
         """Authentication must be enforced - a wrong password must fail."""
         result = self._mongosh(
@@ -514,14 +531,13 @@ class CustomDocumentDBPortTests(_ContainerTestBase):
 
 
 # ---------------------------------------------------------------------------
-# 4. TLS modes - exercise the documented requireTLS path. The
-#    `--tlsMode disabled` setting is NOT exercised here: the current
-#    gateway always wraps incoming sockets in TLS at the acceptor layer
-#    regardless of TlsMode config, so a smoke test of disabled mode
-#    would assert intent the gateway does not currently implement. This
-#    gap is tracked separately; it is not in scope for an image-level
-#    smoke test PR. The image's allowTLS default and explicit
-#    requireTLS path are both exercised below and elsewhere.
+# 4. TLS modes. allowTLS (the default) accepts both plain (non-TLS) and TLS
+#    client connections; that default is exercised by DefaultContainerTests
+#    above, which pings over both TLS and a plain connection. The requireTLS
+#    path (plain rejected, TLS accepted) is exercised below. `--tlsMode
+#    disabled` is not separately smoke-tested: it maps to the same
+#    accept-both behavior as allowTLS (the gateway has no plain-only mode),
+#    so it would assert nothing new here.
 # ---------------------------------------------------------------------------
 
 @_SKIP_UNLESS_IMAGE

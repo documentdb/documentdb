@@ -63,9 +63,9 @@ import json
 import sys
 args = sys.argv[1:]
 vars = {}
-while args and args[0] == '--arg':
-    _, name, value, *args = args
-    vars[name] = value
+while args and args[0] in ('--arg', '--argjson'):
+    flag, name, value, *args = args
+    vars[name] = json.loads(value) if flag == '--argjson' else value
 expr, file_path = args
 with open(file_path, 'r', encoding='utf-8') as f:
     data = json.load(f)
@@ -76,6 +76,8 @@ elif expr.startswith('.PostgresPort = '):
     data['PostgresPort'] = int(expr.split('=', 1)[1].strip())
 elif expr.startswith('.TlsMode = '):
     data['TlsMode'] = vars.get('tlsMode', expr.split('=', 1)[1].strip().strip('"'))
+elif expr.startswith('.EnforceTls = '):
+    data['EnforceTls'] = vars['enforceTls']
 elif expr.startswith('.CertificateOptions = '):
     data['CertificateOptions'] = {
         'CertType': 'PemFile',
@@ -147,8 +149,10 @@ json.dump(data, sys.stdout)
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         config = self._read_config()
         self.assertEqual(config["TlsMode"], "allowTLS")
+        self.assertEqual(config["EnforceTls"], False)
         self.assertEqual(config["GatewayListenPort"], 10260)
         self.assertEqual(config["PostgresPort"], 9712)
+        self.assertNotIn("does not turn TLS off", result.stdout + result.stderr)
 
     def test_tlsMode_requireTLS_flag_sets_requireTLS_in_config(self):
         result = self._run_entrypoint(
@@ -157,6 +161,7 @@ json.dump(data, sys.stdout)
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         config = self._read_config()
         self.assertEqual(config["TlsMode"], "requireTLS")
+        self.assertEqual(config["EnforceTls"], True)
 
     def test_tlsMode_disabled_flag_sets_disabled_in_config(self):
         result = self._run_entrypoint(
@@ -165,6 +170,8 @@ json.dump(data, sys.stdout)
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         config = self._read_config()
         self.assertEqual(config["TlsMode"], "disabled")
+        self.assertEqual(config["EnforceTls"], False)
+        self.assertIn("does not turn TLS off", result.stdout + result.stderr)
 
     def test_tlsMode_env_var_sets_mode_in_config(self):
         result = self._run_entrypoint(
@@ -175,6 +182,18 @@ json.dump(data, sys.stdout)
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         config = self._read_config()
         self.assertEqual(config["TlsMode"], "requireTLS")
+        self.assertEqual(config["EnforceTls"], True)
+
+    def test_tlsMode_env_var_allowTLS_does_not_enforce_tls(self):
+        result = self._run_entrypoint(
+            "--password",
+            "mypassword",
+            extra_env={"TLS_MODE": "allowTLS"},
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        config = self._read_config()
+        self.assertEqual(config["TlsMode"], "allowTLS")
+        self.assertEqual(config["EnforceTls"], False)
 
     def test_system_postgres_log_defaults_to_runtime_pg_version(self):
         result = self._run_entrypoint(
@@ -197,6 +216,40 @@ json.dump(data, sys.stdout)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
             "Invalid tlsMode value 'maybe', must be one of: disabled, allowTLS, requireTLS",
+            result.stdout + result.stderr,
+        )
+
+    def test_enforce_tls_write_failure_aborts(self):
+        failing_jq = """#!/usr/bin/env python3
+import json
+import sys
+args = sys.argv[1:]
+vars = {}
+while args and args[0] in ('--arg', '--argjson'):
+    flag, name, value, *args = args
+    vars[name] = json.loads(value) if flag == '--argjson' else value
+expr, file_path = args
+expr = expr.strip()
+if expr.startswith('.EnforceTls = '):
+    sys.stderr.write('jq: simulated failure\\n')
+    sys.exit(1)
+with open(file_path, 'r', encoding='utf-8') as f:
+    data = json.load(f)
+if expr.startswith('.GatewayListenPort = '):
+    data['GatewayListenPort'] = int(expr.split('=', 1)[1].strip())
+elif expr.startswith('.PostgresPort = '):
+    data['PostgresPort'] = int(expr.split('=', 1)[1].strip())
+elif expr.startswith('.TlsMode = '):
+    data['TlsMode'] = vars.get('tlsMode', expr.split('=', 1)[1].strip().strip('"'))
+else:
+    raise SystemExit(f'Unsupported jq expression: {expr}')
+json.dump(data, sys.stdout)
+"""
+        self._write_exec(self.bin_dir / "jq", failing_jq)
+        result = self._run_entrypoint("--password", "mypassword")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "failed to write EnforceTls to the gateway configuration file",
             result.stdout + result.stderr,
         )
 
