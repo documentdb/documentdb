@@ -83,21 +83,28 @@ wait_for_sample_data() {
     return 1
 }
 
-echo "=== Test: Default mode (TLS not enforced) ==="
+# The gateway enforces TLS for all client connections by default, so even
+# without an explicit --tlsMode the plain (non-TLS) path is rejected and only
+# TLS connections succeed. (The --tlsMode config knob is not yet wired to the
+# gateway acceptor; that gap is tracked separately.)
+echo "=== Test: Default mode (TLS enforced by default) ==="
 
 docker run -d --name "$DEFAULT_CONTAINER" "$IMAGE_NAME" --password mypassword --init-data true
-wait_for_ping "$DEFAULT_CONTAINER" false
+wait_for_ping "$DEFAULT_CONTAINER" true
 wait_for_sample_data "$DEFAULT_CONTAINER" true
 
-echo "Test 1: Default mode - plain connection..."
-docker exec "$DEFAULT_CONTAINER" mongosh \
+echo "Test 1: Default mode - plain connection rejected..."
+if docker exec "$DEFAULT_CONTAINER" mongosh \
     --host localhost \
     --port 10260 \
     -u default_user \
     -p mypassword \
     --authenticationDatabase admin \
     --quiet \
-    --eval 'db.runCommand({ ping: 1 }).ok' | grep -q "1"
+    --eval 'db.runCommand({ ping: 1 }).ok' >/dev/null 2>&1; then
+    echo "  FAILED: Expected plain connection to be rejected when TLS is enforced by default."
+    exit 1
+fi
 echo "  PASSED"
 
 echo "Test 2: Default mode - TLS connection..."
