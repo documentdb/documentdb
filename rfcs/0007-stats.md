@@ -29,7 +29,7 @@ As DocumentDB grows, contributors will need to add new statistics — query perf
 - Reviewers lack a baseline to evaluate whether a new statistic follows a safe and discoverable pattern.
 - Over time, inconsistencies accumulate and make the statistics surface harder to discover, document, and maintain.
 
-PostgreSQL's own `pg_stat_*` family and extensions like `pg_stat_statements` demonstrate that a small, consistent set of conventions — standard naming, a GUC to gate collection, public `SELECT` on views, restricted `EXECUTE` on reset functions — makes statistics predictable and maintainable at scale.
+PostgreSQL's own `pg_stat_*` family and extensions like `pg_stat_statements` demonstrate that a small, consistent set of conventions — standard naming, a GUC (Grand Unified Configuration) parameter to gate collection, public `SELECT` on views, restricted `EXECUTE` on reset functions — makes statistics predictable and maintainable at scale.
 
 ### What this RFC does
 
@@ -90,6 +90,12 @@ The goal is to provide a predictable and maintainable pattern that aligns with f
 This RFC defines conventions only; no new code paths or data structures are introduced. Each statistic implemented under these conventions will have its own technical design.
 
 ### API Changes
+
+The naming patterns below use build-system macros that expand to real PostgreSQL schema and role names at install time:
+
+- `__API_CATALOG_SCHEMA__` — the public-facing schema where views and reset functions are created.
+- `__API_SCHEMA_INTERNAL__` — the internal schema for implementation-detail functions (not part of the public API).
+- `__API_ADMIN_ROLE__` — the extension's admin role, used to restrict destructive operations like counter resets.
 
 #### Views
 Statistics will be exposed through views.
@@ -210,7 +216,7 @@ Non-superuser operators who need reset capability must be granted membership in 
 
 ### Configuration Changes
 
-Each category of statistical data should be gated behind a GUC (Grand Unified Configuration) flag to control collection overhead.
+Each category of statistical data should be gated behind a GUC flag to control collection overhead.
 
 **Naming pattern**
 ```
