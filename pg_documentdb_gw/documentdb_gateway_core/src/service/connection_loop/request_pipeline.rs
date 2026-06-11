@@ -8,7 +8,7 @@
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use crate::{
@@ -33,6 +33,7 @@ pub(super) async fn handle_message<'a, T, R, W>(
     reader: &'a mut R,
     writer: &mut W,
     activity_id: &str,
+    idle_timeout: Duration,
 ) -> PendingHeaderRead<'a>
 where
     T: PgDataClient,
@@ -43,9 +44,20 @@ where
 
     let read_request_start = Instant::now();
     let authenticated = connection_context.auth_state.is_authenticated();
-    let message = match protocol::reader::read_request(authenticated, header, reader).await {
+    let message = match protocol::reader::read_request_with_timeout(
+        authenticated,
+        header,
+        reader,
+        idle_timeout,
+    )
+    .await
+    {
         Ok(message) => message,
         Err(error) => {
+            if protocol::reader::is_idle_timeout_error(&error) {
+                return read_ahead::closed_header_read();
+            }
+
             error_reply::reply_with_request_error::<W>(
                 connection_context,
                 header,
@@ -58,14 +70,14 @@ where
                 None,
             )
             .await;
-            return read_ahead::start_next_header_read(reader).await;
+            return read_ahead::start_next_header_read(reader, idle_timeout).await;
         }
     };
     request_tracker.record_duration(RequestIntervalKind::ReadRequest, read_request_start);
 
     // Start receiving the next request as soon as the current request bytes are fully consumed,
     // mirroring the managed gateway's read-ahead overlap before deeper parsing/handling work.
-    let next_header = read_ahead::start_next_header_read(reader).await;
+    let next_header = read_ahead::start_next_header_read(reader, idle_timeout).await;
 
     // HandleMessage captures the overall duration needed by the server to handle/process
     // a user operation message/request. Client-to-Gateway networking latency should be
@@ -205,6 +217,8 @@ mod tests {
         },
     };
 
+    const NON_EXPIRING_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
     async fn execute_handle_message<T>(
         connection_context: &mut ConnectionContext,
         header: Header,
@@ -231,6 +245,7 @@ mod tests {
             &mut request_reader,
             &mut response_writer,
             activity_id,
+            NON_EXPIRING_IDLE_TIMEOUT,
         )
         .await;
         drop(response_writer);
@@ -278,6 +293,54 @@ mod tests {
                 .expect("next header future should resolve cleanly after truncated request")
                 .is_none(),
             "connection should be at EOF after the truncated request body"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_message_closes_when_request_body_idle_times_out() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        let logout_document = logout_document();
+        let (_, full_body) = build_op_msg_parts(&logout_document, 71);
+        let length = i32::try_from(Header::LENGTH + full_body.len())
+            .expect("message size should fit into i32");
+        let header = Header::new(length, 71, 0, OpCode::Msg).expect("test header should be valid");
+        let (mut request_reader, mut request_writer) = tokio::io::duplex(4096);
+        request_writer
+            .write_all(&full_body[..1])
+            .await
+            .expect("partial request bytes should be written");
+
+        let (mut response_writer, mut response_reader) = tokio::io::duplex(4096);
+        let next_header = handle_message::<DocumentDBDataClient, _, _>(
+            &mut connection_context,
+            &header,
+            &mut request_reader,
+            &mut response_writer,
+            "activity-read-request-timeout",
+            Duration::ZERO,
+        )
+        .await;
+        drop(response_writer);
+        drop(request_writer);
+
+        let mut response_bytes = Vec::new();
+        response_reader
+            .read_to_end(&mut response_bytes)
+            .await
+            .expect("response reader should drain bytes");
+
+        assert!(
+            response_bytes.is_empty(),
+            "idle request body timeout should close without a response"
+        );
+        assert!(
+            next_header
+                .await
+                .expect("idle request body timeout should resolve cleanly")
+                .is_none(),
+            "idle request body timeout should stop the connection loop"
         );
     }
 

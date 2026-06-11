@@ -10,7 +10,12 @@ use std::fmt::Debug;
 
 use bson::RawBson;
 
-use crate::{configuration::Version, postgres::conn_mgmt};
+use crate::{
+    configuration::{
+        Version, SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS, SOCKET_CONNECTION_IDLE_TIMEOUT_KEY,
+    },
+    postgres::conn_mgmt,
+};
 
 pub const POSTGRES_RECOVERY_KEY: &str = "IsPostgresInRecovery";
 
@@ -77,6 +82,13 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
 
     fn send_shutdown_responses(&self) -> bool {
         self.get_bool("SendShutdownResponses", false)
+    }
+
+    fn socket_connection_idle_timeout_sec(&self) -> u64 {
+        self.get_u64(
+            SOCKET_CONNECTION_IDLE_TIMEOUT_KEY,
+            SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS,
+        )
     }
 
     fn server_version(&self) -> Version {

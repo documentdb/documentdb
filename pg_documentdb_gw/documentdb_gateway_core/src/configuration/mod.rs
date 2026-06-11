@@ -23,6 +23,9 @@ use std::fmt::Debug;
 
 use crate::telemetry::config::TelemetryOptions;
 
+pub(crate) const SOCKET_CONNECTION_IDLE_TIMEOUT_KEY: &str = "SocketConnectionIdleTimeout";
+pub(crate) const SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS: u64 = 18_000;
+
 /// These are the required configuration fields.
 ///
 /// A trait that defines the configuration setup for the application.

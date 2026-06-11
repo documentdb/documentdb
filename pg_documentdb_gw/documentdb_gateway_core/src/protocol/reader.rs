@@ -10,12 +10,15 @@
  */
 
 use std::{
-    io::{Cursor, ErrorKind},
+    io::{self, Cursor, ErrorKind},
     str::FromStr,
 };
 
 use bson::{RawDocument, RawDocumentBuf};
-use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt},
+    time::{timeout, Duration},
+};
 
 use crate::{
     error::{DocumentDBError, Result},
@@ -29,24 +32,39 @@ use crate::{
     requests::{Request, RequestMessage, RequestType},
 };
 
-/// Read a standard message header from the client stream
-///
-/// # Errors
-///
-/// Returns an error if the operation fails.
-pub async fn read_header<S>(stream: &mut S) -> Result<Option<Header>>
-where
-    S: AsyncRead + Unpin,
-{
-    match Header::read_from(stream).await {
+const fn is_connection_closed_error_kind(kind: ErrorKind) -> bool {
+    matches!(
+        kind,
+        ErrorKind::UnexpectedEof
+            | ErrorKind::BrokenPipe
+            | ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::NotConnected
+            | ErrorKind::TimedOut
+    )
+}
+
+pub(crate) fn is_connection_closed_error(error: &DocumentDBError) -> bool {
+    error
+        .as_io_error()
+        .is_some_and(|io_error| is_connection_closed_error_kind(io_error.kind()))
+}
+
+pub(crate) fn is_idle_timeout_error(error: &DocumentDBError) -> bool {
+    error
+        .as_io_error()
+        .is_some_and(|io_error| io_error.kind() == ErrorKind::TimedOut)
+}
+
+fn idle_timeout_error() -> DocumentDBError {
+    io::Error::new(ErrorKind::TimedOut, "client socket idle timeout").into()
+}
+
+fn map_header_read_result(result: Result<Header>) -> Result<Option<Header>> {
+    match result {
         Ok(header) => Ok(Some(header)),
         Err(error) => {
-            if error.as_io_error().is_some_and(|io_error| {
-                matches!(
-                    io_error.kind(),
-                    ErrorKind::UnexpectedEof | ErrorKind::BrokenPipe | ErrorKind::ConnectionReset
-                )
-            }) {
+            if is_connection_closed_error(&error) {
                 Ok(None)
             } else {
                 Err(error)
@@ -55,19 +73,25 @@ where
     }
 }
 
-/// Given an already read header, read the remaining message bytes into a `RequestMessage`
+/// Read a standard message header from the client stream with an idle timeout.
 ///
 /// # Errors
 ///
 /// Returns an error if the operation fails.
-pub async fn read_request<S>(
-    authenticated: bool,
-    header: &Header,
+pub async fn read_header_with_timeout<S>(
     stream: &mut S,
-) -> Result<RequestMessage>
+    idle_timeout: Duration,
+) -> Result<Option<Header>>
 where
     S: AsyncRead + Unpin,
 {
+    match timeout(idle_timeout, Header::read_from(stream)).await {
+        Ok(result) => map_header_read_result(result),
+        Err(_) => Ok(None),
+    }
+}
+
+fn request_message_size(authenticated: bool, header: &Header) -> Result<usize> {
     #[expect(
         clippy::cast_sign_loss,
         reason = "Header length is guaranteed to fit in usize"
@@ -81,17 +105,41 @@ where
         ));
     }
 
-    // 16 bytes of the message were already used by the headers
-    let mut message: Vec<u8> = vec![0; message_size];
+    Ok(message_size)
+}
 
-    stream.read_exact(&mut message).await?;
-
-    Ok(RequestMessage {
+const fn request_message_from_body(header: &Header, message: Vec<u8>) -> RequestMessage {
+    RequestMessage {
         request: message,
         op_code: header.op_code(),
         request_id: header.request_id(),
         response_to: header.response_to(),
-    })
+    }
+}
+
+/// Given an already read header, read the remaining message bytes into a
+/// `RequestMessage` with an idle timeout.
+///
+/// # Errors
+///
+/// Returns an error if the operation fails or times out.
+pub async fn read_request_with_timeout<S>(
+    authenticated: bool,
+    header: &Header,
+    stream: &mut S,
+    idle_timeout: Duration,
+) -> Result<RequestMessage>
+where
+    S: AsyncRead + Unpin,
+{
+    let mut message = vec![0; request_message_size(authenticated, header)?];
+
+    match timeout(idle_timeout, stream.read_exact(&mut message)).await {
+        Ok(result) => result?,
+        Err(_) => return Err(idle_timeout_error()),
+    };
+
+    Ok(request_message_from_body(header, message))
 }
 
 /// Parse a request message into a typed Request
@@ -223,5 +271,103 @@ pub fn parse_cmd_buf(command: RawDocumentBuf) -> Result<Request<'static>> {
         Err(DocumentDBError::bad_value(
             "Admin command received without a command.".to_owned(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    use tokio::{
+        io::{AsyncRead, ReadBuf},
+        time::Duration,
+    };
+
+    use crate::protocol::reader::read_header_with_timeout;
+
+    const NON_EXPIRING_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+    struct ErrorReader {
+        kind: io::ErrorKind,
+    }
+
+    impl AsyncRead for ErrorReader {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Ready(Err(io::Error::from(self.kind)))
+        }
+    }
+
+    struct PendingReader;
+
+    impl AsyncRead for PendingReader {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Pending
+        }
+    }
+
+    #[tokio::test]
+    async fn read_header_treats_closed_connection_errors_as_eof() {
+        for kind in [
+            io::ErrorKind::UnexpectedEof,
+            io::ErrorKind::BrokenPipe,
+            io::ErrorKind::ConnectionReset,
+            io::ErrorKind::ConnectionAborted,
+            io::ErrorKind::NotConnected,
+            io::ErrorKind::TimedOut,
+        ] {
+            let mut reader = ErrorReader { kind };
+
+            assert!(
+                read_header_with_timeout(&mut reader, NON_EXPIRING_IDLE_TIMEOUT)
+                    .await
+                    .expect("closed connection errors should not be surfaced")
+                    .is_none(),
+                "{kind:?} should be treated as connection closure"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn read_header_with_timeout_returns_none_when_idle() {
+        let mut reader = PendingReader;
+
+        assert!(
+            read_header_with_timeout(&mut reader, Duration::ZERO)
+                .await
+                .expect("idle header timeout should not be surfaced")
+                .is_none(),
+            "idle header timeout should close the connection"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_header_preserves_non_connection_errors() {
+        let mut reader = ErrorReader {
+            kind: io::ErrorKind::PermissionDenied,
+        };
+
+        let error = read_header_with_timeout(&mut reader, NON_EXPIRING_IDLE_TIMEOUT)
+            .await
+            .expect_err("non-connection errors should be surfaced");
+
+        assert_eq!(
+            error
+                .as_io_error()
+                .expect("error should preserve its io source")
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
     }
 }
