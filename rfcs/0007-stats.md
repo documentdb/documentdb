@@ -178,10 +178,10 @@ By default, helper functions are **not** granted to `PUBLIC`. The view is the po
 2. Any row filtering or redaction performed by the view (for example, hiding query text from non-privileged roles, mirroring `pg_stat_activity`) is bypassable if callers can reach the helper directly.
 
 ```sql
-CREATE FUNCTION __API_SCHEMA_INTERNAL__.documentdb_stat_get_<scope>(...)
+CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL__.documentdb_stat_get_<scope>(...)
 RETURNS SETOF ...
-LANGUAGE c
-AS '$libdir/pg_documentdb', 'documentdb_stat_get_<scope>';
+LANGUAGE c VOLATILE PARALLEL UNSAFE
+AS 'MODULE_PATHNAME', $$documentdb_stat_get_<scope>$$;
 ```
 
 #### Reset Functions
@@ -327,8 +327,8 @@ RETURNS TABLE (
     write_bytes    bigint,
     stats_reset    timestamptz
 )
-LANGUAGE c
-AS 'MODULE_PATHNAME', 'documentdb_stat_get_io';
+LANGUAGE c VOLATILE PARALLEL UNSAFE
+AS 'MODULE_PATHNAME', $$documentdb_stat_get_io$$;
 
 -- Helper is NOT granted to PUBLIC.
 -- The view owner has the privileges needed to call it.
@@ -345,7 +345,7 @@ SELECT database,
        write_bytes,       -- value (with _bytes suffix)
        stats_reset        -- timestamp of last reset (exempt from suffix rule)
 FROM   __API_SCHEMA_INTERNAL__.documentdb_stat_get_io()
-WHERE  current_setting('documentdb.track_io')::bool;
+WHERE  current_setting(__SINGLE_QUOTED_STRING__(__API_GUC_PREFIX__) || '.track_io')::bool;
 -- Returns empty result set when tracking is off.
 ```
 
@@ -354,8 +354,8 @@ WHERE  current_setting('documentdb.track_io')::bool;
 ```sql
 CREATE OR REPLACE FUNCTION __API_CATALOG_SCHEMA__.documentdb_stat_reset_io()
 RETURNS void
-LANGUAGE c
-AS 'MODULE_PATHNAME', 'documentdb_stat_reset_io';
+LANGUAGE c VOLATILE PARALLEL UNSAFE
+AS 'MODULE_PATHNAME', $$documentdb_stat_reset_io$$;
 ```
 
 #### 4. Apply the canonical grants
