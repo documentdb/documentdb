@@ -12,7 +12,7 @@ issue: "https://github.com/documentdb/documentdb/issues/TBD"
 
 ### What exists today
 
-DocumentDB exposes diagnostic commands such as `coll_stats`, `db_stats`, `index_stats`, and `current_op`. These exist to provide **MongoDB API compatibility** — they return BSON documents and mirror the behavior of their MongoDB counterparts. They are not designed as a general-purpose statistics framework for the PostgreSQL layer.
+DocumentDB exposes diagnostic commands such as `coll_stats`, `db_stats`, `index_stats`, and `current_op`. These exist to provide **MongoDB API compatibility** — they return BSON documents and mirror the behavior of their MongoDB counterparts. They are not designed as a reusable pattern for exposing new PostgreSQL-native statistics.
 
 Outside of these MongoDB-compatible commands, DocumentDB has **no mechanism** for exposing internal runtime, performance, or usage statistics as PostgreSQL-native objects. There are currently:
 
@@ -27,7 +27,7 @@ As DocumentDB grows, contributors will need to add new statistics — query perf
 
 - Contributors must guess patterns or invent their own, leading to inconsistent APIs.
 - Reviewers lack a baseline to evaluate whether a new statistic follows a safe and discoverable pattern.
-- Downstream consumers (dashboards, alerting, documentation) must handle each statistic as a special case.
+- Over time, inconsistencies accumulate and make the statistics surface harder to discover, document, and maintain.
 
 PostgreSQL's own `pg_stat_*` family and extensions like `pg_stat_statements` demonstrate that a small, consistent set of conventions — standard naming, a GUC to gate collection, public `SELECT` on views, restricted `EXECUTE` on reset functions — makes statistics predictable and maintainable at scale.
 
@@ -161,21 +161,15 @@ Helper functions live in `__API_SCHEMA_INTERNAL__` because they are implementati
 
 By default, helper functions are **not** granted to `PUBLIC`. The view is the policy boundary, and the view's owner has the privileges needed to call the helper. Two reasons to keep helpers private:
 
-1. The helper signature is not part of the public stats API; granting EXECUTE to PUBLIC would freeze it as ABI.
+1. The helper signature is not part of the public stats API; granting EXECUTE to PUBLIC would freeze it as a public API contract.
 2. Any row filtering or redaction performed by the view (for example, hiding query text from non-privileged roles, mirroring `pg_stat_activity`) is bypassable if callers can reach the helper directly.
-
-Where a helper must read state the caller cannot reach (for example, a shared-memory hash table holding per-query timings), declare it as `SECURITY DEFINER` so it executes with the function owner's privileges, and **always pin the search path** to defeat search-path attacks:
 
 ```sql
 CREATE FUNCTION __API_SCHEMA_INTERNAL__.documentdb_stat_get_<scope>(...)
 RETURNS SETOF ...
 LANGUAGE c
-SECURITY DEFINER
-SET search_path = pg_catalog, pg_temp
 AS '$libdir/pg_documentdb', 'documentdb_stat_get_<scope>';
 ```
-
-`SECURITY DEFINER` functions must not interpolate user-controlled strings into SQL.
 
 ##### Reset functions (for cumulative counters)
 
@@ -198,19 +192,21 @@ __API_CATALOG_SCHEMA__.documentdb_stat_reset_<scope>
 
 **Permissions for reset functions**
 
-EXECUTE is revoked from `PUBLIC` and granted to the existing extension admin role, mirroring the pattern in `pg_documentdb/sql/rbac/extension_admin_setup--0.10-0.sql`:
+EXECUTE is revoked from `PUBLIC` and granted to the existing extension admin role (`__API_ADMIN_ROLE__`). These grants should be placed in the stats SQL file alongside the function definition:
 
 ```sql
 REVOKE EXECUTE ON FUNCTION __API_CATALOG_SCHEMA__.documentdb_stat_reset_<scope>() FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION __API_CATALOG_SCHEMA__.documentdb_stat_reset_<scope>() TO __API_ADMIN_ROLE__;
 ```
 
-Superusers always bypass ACLs and can call any reset function. Non-superuser operators who need reset capability must be granted membership in `__API_ADMIN_ROLE__` (or be granted EXECUTE explicitly on a per-function basis if more granular control is desired).
+Non-superuser operators who need reset capability must be granted membership in `__API_ADMIN_ROLE__` (or be granted EXECUTE explicitly on a per-function basis if more granular control is desired).
 
-This model — public SELECT on the view, no PUBLIC EXECUTE on helpers, named-role EXECUTE on reset — matches how `pg_stat_statements` and Citus's `citus_stat_*` family expose statistics. Any deviation (for example, a stat that genuinely needs PUBLIC EXECUTE on its helper) must be explicitly justified in the contributing PR.
+#### Permission Model Summary
+
+This model — public SELECT on the view, no PUBLIC EXECUTE on helpers, named-role EXECUTE on reset — matches how `pg_stat_statements` exposes statistics. Any deviation (for example, a stat that genuinely needs PUBLIC EXECUTE on its helper) must be explicitly justified in the contributing PR.
 
 
-#### Configuration Changes
+#### Configuration Flags (GUC)
 
 Since collecting statistics introduces overhead, each category of statistical data should be gated behind a configuration flag.
 
@@ -355,8 +351,6 @@ RETURNS TABLE (
     stats_reset    timestamptz
 )
 LANGUAGE c
-SECURITY DEFINER
-SET search_path = pg_catalog, pg_temp
 AS 'MODULE_PATHNAME', 'documentdb_stat_get_io';
 
 -- Helper is NOT granted to PUBLIC.
