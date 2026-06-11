@@ -197,6 +197,7 @@ static Path * OptimizeBitmapQualsForBitmapAnd(BitmapAndPath *path,
 static IndexPath * OptimizeIndexPathForFilters(IndexPath *indexPath,
 											   ReplaceExtensionFunctionContext *context);
 static Expr * OpExprForAggregationStageSupportFunction(Node *supportRequest);
+static const char * GetJoinFilterArgCollation(Node *matchArg);
 static Path * FindIndexPathForQueryOperator(RelOptInfo *rel, List *pathList,
 											ReplaceExtensionFunctionContext *context,
 											MatchIndexPath matchIndexPath,
@@ -696,6 +697,20 @@ OpExprForAggregationStageSupportFunction(Node *supportRequest)
 		return NULL;
 	}
 
+	/*
+	 * TODO_COLLATION: never push a collated join filter to an index, nor any join
+	 * filter to a collated index. $lookup embeds collation in its filter spec; $merge
+	 * carries none today (HandleMerge rejects it) but its extract filter is inspected
+	 * defensively in case that changes.
+	 */
+	const char *joinFilterCollation =
+		GetJoinFilterArgCollation(lsecond(funcExpr->args));
+	if (IsCollationPresentOnQueryOrIndex(joinFilterCollation,
+										 req->index->opclassoptions[req->indexcol]))
+	{
+		return NULL;
+	}
+
 	Node *thirdNode = lthird(funcExpr->args);
 	if (!IsA(thirdNode, Const))
 	{
@@ -729,6 +744,55 @@ OpExprForAggregationStageSupportFunction(Node *supportRequest)
 															   lsecond(funcExpr->args),
 															   options);
 	return (Expr *) finalExpression;
+}
+
+
+/*
+ * Returns the query collation embedded in a join-filter match argument -- the
+ * inlined $lookup (bson_dollar_lookup_extract_filter_expression) or $merge
+ * (bson_dollar_extract_merge_filter) extract-filter spec -- or NULL when the
+ * argument is not a recognized filter expression or carries no collation. ($merge
+ * carries no collation today since HandleMerge rejects it; recognized defensively.)
+ */
+static const char *
+GetJoinFilterArgCollation(Node *matchArg)
+{
+	if (matchArg == NULL || !IsA(matchArg, FuncExpr))
+	{
+		return NULL;
+	}
+
+	FuncExpr *matchFunc = (FuncExpr *) matchArg;
+	if (matchFunc->funcid !=
+		DocumentDBApiInternalBsonLookupExtractFilterExpressionFunctionOid() &&
+		matchFunc->funcid != BsonLookupExtractFilterArrayFunctionOid() &&
+		matchFunc->funcid != BsonDollarMergeExtractFilterFunctionOid())
+	{
+		return NULL;
+	}
+
+	if (list_length(matchFunc->args) < 2)
+	{
+		return NULL;
+	}
+
+	Node *specNode = lsecond(matchFunc->args);
+	if (!IsA(specNode, Const))
+	{
+		return NULL;
+	}
+
+	Const *specConst = (Const *) specNode;
+	if (specConst->constisnull ||
+		(specConst->consttype != BsonTypeId() &&
+		 specConst->consttype != DocumentDBCoreBsonTypeId()))
+	{
+		return NULL;
+	}
+
+	pgbsonelement element = { 0 };
+	return PgbsonToSinglePgbsonElementWithCollation(
+		DatumGetPgBson(specConst->constvalue), &element);
 }
 
 
@@ -3170,6 +3234,35 @@ IsQueryCollationCompatibleWithIndex(const char *queryCollation, bytea *indexOpti
 	}
 
 	return strcmp(queryCollation, indexCollation) == 0;
+}
+
+
+/*
+ * Returns true when either the query (queryCollation) or the candidate index
+ * (indexOptions) carries a collation. Callers use it to skip $expr/$lookup index
+ * pushdown, which is not yet collation-aware.
+ */
+bool
+IsCollationPresentOnQueryOrIndex(const char *queryCollation, bytea *indexOptions)
+{
+	if (IsCollationApplicable(queryCollation))
+	{
+		return true;
+	}
+
+	if (indexOptions != NULL)
+	{
+		const char *indexCollation = NULL;
+		uint32_t indexCollationLength = 0;
+		Get_Index_Collation_Option((BsonGinIndexOptionsBase *) indexOptions, collation,
+								   indexCollation, indexCollationLength);
+		if (IsCollationValid(indexCollation))
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 

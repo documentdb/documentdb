@@ -405,9 +405,18 @@ PushExprToIndex(SupportRequestIndexCondition *supportRequest)
 
 	pgbsonelement exprElement = { 0 };
 	bson_iter_t exprIter;
-	PgbsonToSinglePgbsonElement(exprBson, &exprElement);
-	BsonValueInitIterator(&exprElement.bsonValue, &exprIter);
+	const char *collationString = PgbsonToSinglePgbsonElementWithCollation(exprBson,
+																		   &exprElement);
+
 	bytea *indexOptions = supportRequest->index->opclassoptions[supportRequest->indexcol];
+
+	/* TODO_COLLATION: skip pushdown when the query or candidate index is collated. */
+	if (IsCollationPresentOnQueryOrIndex(collationString, indexOptions))
+	{
+		return NULL;
+	}
+
+	BsonValueInitIterator(&exprElement.bsonValue, &exprIter);
 
 	List *supportedQuals = NIL;
 	return WalkExprIterForSupportedQuals(&exprIter, indexOptions, documentExpr,

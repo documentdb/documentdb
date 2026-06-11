@@ -1005,3 +1005,44 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 }')
 $cmd$);
 
+-- ======================================================================
+-- TODO_COLLATION: $expr / $lookup must not use a collation-aware secondary index,
+-- and a collated $expr / $lookup must not use any secondary index. single_field
+-- carries a collation index on `a` (idx_a_en_s1), so each query falls back to _id_.
+-- ======================================================================
+
+-- Collated $expr on `a`: query-side gate -> _id_.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field", "filter": { "$expr": {"$eq": ["$a", "APPLE"]} }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- Non-collated $expr (numeric) on `a`: index-side gate -> _id_ (the collation index
+-- could otherwise serve a numeric qual).
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field", "filter": { "$expr": {"$eq": ["$a", 42]} }, "sort": { "_id": 1 } }')
+$cmd$);
+
+-- Collated $lookup self-join on `a`: query-side gate -> _id_.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field", "pipeline": [ { "$lookup": { "from": "single_field", "as": "m", "localField": "a", "foreignField": "a" } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- Non-collated $lookup self-join on `a`: index-side gate -> _id_.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field", "pipeline": [ { "$lookup": { "from": "single_field", "as": "m", "localField": "a", "foreignField": "a" } } ], "cursor": {} }')
+$cmd$);
+
+-- $merge (non-collated) onto a non-_id key carrying both the required unique index
+-- and a collation-aware index: the merge join filter must use the unique key, never
+-- the collated idx_merge_k_en. Rows are inserted so the planner picks the index path
+-- (an empty target falls back to a join filter); collation+unique is disallowed so
+-- the unique index always co-exists.
+SELECT documentdb_api.insert_one('coll_q_db','coll_merge_src', '{"_id": 1, "k": "a"}', NULL);
+SELECT documentdb_api.insert_one('coll_q_db','coll_merge_dst', '{"_id": 1, "k": "a"}', NULL);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_merge_dst", "indexes": [ { "key": {"k": 1}, "name": "uq_merge_k", "unique": true }, { "key": {"k": 1}, "name": "idx_merge_k_en", "collation": {"locale":"en","strength":1} } ] }', TRUE);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_merge_src", "pipeline": [{"$merge" : { "into": "coll_merge_dst", "on": "k", "whenMatched" : "replace", "whenNotMatched": "insert" }} ], "cursor": {} }')
+$cmd$);
+SELECT documentdb_api.drop_collection('coll_q_db','coll_merge_src');
+SELECT documentdb_api.drop_collection('coll_q_db','coll_merge_dst');

@@ -3854,3 +3854,159 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
 ERROR:  collation is not supported in the $sortByCount stage yet.
 CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement
+-- ======================================================================
+-- TODO_COLLATION: $expr / $lookup must not use a collation-aware secondary index,
+-- and a collated $expr / $lookup must not use any secondary index. single_field
+-- carries a collation index on `a` (idx_a_en_s1), so each query falls back to _id_.
+-- ======================================================================
+-- Collated $expr on `a`: query-side gate -> _id_.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field", "filter": { "$expr": {"$eq": ["$a", "APPLE"]} }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                                            run_explain_and_trim                                                                                                            
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         namespaceName: coll_q_db.single_field
+         indexName: _id_
+         ->  Index Scan using _id_ on documentdb_data.documents_8806 collection
+               Output: document
+               Index Cond: (collection.shard_key_value = '8806'::bigint)
+               Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", "APPLE" ] }, "collation" : "en-u-ks-level1" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+(11 rows)
+
+-- Non-collated $expr (numeric) on `a`: index-side gate -> _id_ (the collation index
+-- could otherwise serve a numeric qual).
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field", "filter": { "$expr": {"$eq": ["$a", 42]} }, "sort": { "_id": 1 } }')
+$cmd$);
+                                                                                                 run_explain_and_trim                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   Output: document, bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+   namespaceName: coll_q_db.single_field
+   indexName: _id_
+   ->  Index Scan using _id_ on documentdb_data.documents_8806 collection
+         Output: document
+         Index Cond: (collection.shard_key_value = '8806'::bigint)
+         Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$eq" : [ "$a", { "$numberInt" : "42" } ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+(8 rows)
+
+-- Collated $lookup self-join on `a`: query-side gate -> _id_.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field", "pipeline": [ { "$lookup": { "from": "single_field", "as": "m", "localField": "a", "foreignField": "a" } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                                                           run_explain_and_trim                                                                                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'm'::text), '{ "m" : [  ] }'::bson)), true)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         Output: collection.document
+         namespaceName: coll_q_db.single_field
+         indexName: _id_
+         ->  Index Scan using _id_ on documentdb_data.documents_8806 collection
+               Output: collection.document
+               Index Cond: (collection.shard_key_value = '8806'::bigint)
+   ->  Aggregate
+         Output: COALESCE(bson_array_agg(collection_0_1.document, 'm'::text), '{ "m" : [  ] }'::bson)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan)
+               Output: collection_0_1.document
+               namespaceName: coll_q_db.single_field
+               indexName: _id_
+               ->  Index Scan using _id_ on documentdb_data.documents_8806 collection_0_1
+                     Output: collection_0_1.document
+                     Index Cond: (collection_0_1.shard_key_value = '8806'::bigint)
+                     Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "a" : "a", "collation" : "en-u-ks-level1" }'::bson), 'a'::text)
+(19 rows)
+
+-- Non-collated $lookup self-join on `a`: index-side gate -> _id_.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field", "pipeline": [ { "$lookup": { "from": "single_field", "as": "m", "localField": "a", "foreignField": "a" } } ], "cursor": {} }')
+$cmd$);
+                                                                                                           run_explain_and_trim                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'm'::text), '{ "m" : [  ] }'::bson)), true)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         Output: collection.document
+         namespaceName: coll_q_db.single_field
+         indexName: _id_
+         ->  Index Scan using _id_ on documentdb_data.documents_8806 collection
+               Output: collection.document
+               Index Cond: (collection.shard_key_value = '8806'::bigint)
+   ->  Aggregate
+         Output: COALESCE(bson_array_agg(collection_0_1.document, 'm'::text), '{ "m" : [  ] }'::bson)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan)
+               Output: collection_0_1.document
+               namespaceName: coll_q_db.single_field
+               indexName: _id_
+               ->  Index Scan using _id_ on documentdb_data.documents_8806 collection_0_1
+                     Output: collection_0_1.document
+                     Index Cond: (collection_0_1.shard_key_value = '8806'::bigint)
+                     Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "a" : "a" }'::bson), 'a'::text)
+(19 rows)
+
+-- $merge (non-collated) onto a non-_id key carrying both the required unique index
+-- and a collation-aware index: the merge join filter must use the unique key, never
+-- the collated idx_merge_k_en. Rows are inserted so the planner picks the index path
+-- (an empty target falls back to a join filter); collation+unique is disallowed so
+-- the unique index always co-exists.
+SELECT documentdb_api.insert_one('coll_q_db','coll_merge_src', '{"_id": 1, "k": "a"}', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db','coll_merge_dst', '{"_id": 1, "k": "a"}', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_merge_dst", "indexes": [ { "key": {"k": 1}, "name": "uq_merge_k", "unique": true }, { "key": {"k": 1}, "name": "idx_merge_k_en", "collation": {"locale":"en","strength":1} } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_merge_src", "pipeline": [{"$merge" : { "into": "coll_merge_dst", "on": "k", "whenMatched" : "replace", "whenNotMatched": "insert" }} ], "cursor": {} }')
+$cmd$);
+                                                                                                                              run_explain_and_trim                                                                                                                               
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Merge on documentdb_data.documents_8815
+   ->  Nested Loop Left Join
+         Output: documents_8815.ctid, collection.document, collection.ctid
+         ->  Custom Scan (DocumentDBApiExplainQueryScan)
+               Output: collection.document, collection.ctid
+               namespaceName: coll_q_db.coll_merge_src
+               indexName: _id_
+               ->  Bitmap Heap Scan on documentdb_data.documents_8814 collection
+                     Output: collection.document, collection.ctid
+                     Recheck Cond: (collection.shard_key_value = '8814'::bigint)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection.shard_key_value = '8814'::bigint)
+         ->  Index Scan using uq_merge_k on documentdb_data.documents_8815
+               Output: documents_8815.ctid, documents_8815.document
+               Index Cond: (documents_8815.document @= documentdb_api_internal.bson_dollar_extract_merge_filter(collection.document, 'k'::text))
+               Filter: ((documents_8815.shard_key_value OPERATOR(pg_catalog.=) '8815'::bigint) AND documentdb_api_internal.bson_dollar_merge_join(documents_8815.document, documentdb_api_internal.bson_dollar_extract_merge_filter(collection.document, 'k'::text), 'k'::text))
+(16 rows)
+
+SELECT documentdb_api.drop_collection('coll_q_db','coll_merge_src');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_db','coll_merge_dst');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
