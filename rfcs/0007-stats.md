@@ -58,7 +58,7 @@ This RFC establishes that baseline for DocumentDB. It defines **how** statistics
 
 ## Approach
 
-The approach is inspired by established conventions in PostgreSQL (e.g., `pg_stat_*` views) and widely-used extensions (e.g., Citus).
+The approach is inspired by established conventions in PostgreSQL (e.g., `pg_stat_*` views) and widely-used extensions (e.g., `pg_stat_statements`).
 
 In DocumentDB, statistics should be exposed through **views** — literal PostgreSQL `CREATE VIEW` objects that users can `SELECT` from, not an abstract concept. Each view provides a stable, tabular interface to a category of statistics.
 
@@ -212,14 +212,14 @@ Since collecting statistics introduces overhead, each category of statistical da
 
 **Naming pattern**
 ```
-documentdb_track_<scope>
+documentdb.track_<scope>
 ```
 
 Examples:
 
-- `documentdb_track_queries`
-- `documentdb_track_connections`
-- `documentdb_track_collections`
+- `documentdb.track_queries`
+- `documentdb.track_connections`
+- `documentdb.track_collections`
 
 Default value: chosen by the contributor based on the cost/value of the statistic. As a rule of thumb, default to `true` for low-overhead, broadly useful statistics (so they are discoverable out of the box) and to `false` for statistics whose collection is expensive or whose results are only meaningful in targeted investigations (matching the precedent set by `pg_stat_statements`).
 
@@ -268,7 +268,7 @@ Each new statistic is delivered following the extension's existing versioned-SQL
 Each new statistic added under this RFC should include:
 
 - Unit/regression tests that verify the view's columns, types, and naming conventions.
-- A test that exercises the `documentdb_track_<scope>` flag in both states and asserts the view returns an empty set when the flag is `false`.
+- A test that exercises the `documentdb.track_<scope>` flag in both states and asserts the view returns an empty set when the flag is `false`.
 - For views with cumulative counters: a test that exercises the reset function and asserts `stats_reset` advances.
 - A permissions test that asserts `SELECT` on the view succeeds for an unprivileged role and `EXECUTE` on the reset function fails for an unprivileged role.
 
@@ -281,13 +281,13 @@ This RFC is purely additive and applies only to **new** statistics. Pre-existing
 When adding a new statistic under this RFC, a contributor should:
 
 1. **Pick a scope name.** Lowercase, singular-or-plural noun matching the category (e.g., `queries`, `connections`). Confirm it does not collide with an existing `documentdb_stat_*` view or with PostgreSQL's `pg_stat_*` namespace.
-2. **Register the GUC.** Add `documentdb.track_<scope>` (default chosen per the rule of thumb in "Configuration Changes") in the C code that registers extension GUCs, and reference it from the collection path so disabling the flag halts collection.
+2. **Register the GUC.** Add `documentdb.track_<scope>` (default chosen per the rule of thumb in "Configuration Flags (GUC)") in the C code that registers extension GUCs, and reference it from the collection path so disabling the flag halts collection.
 3. **Add the SQL definitions** under `pg_documentdb/sql/udfs/stats/`:
    - Update `stats--latest.sql` with the view, optional helper(s), and optional reset function.
    - Add a `stats--<from>-<to>.sql` upgrade script for the version bump.
 4. **Apply the canonical grants** (see "Permissions for helpers" and "Permissions for reset functions"):
    - `GRANT SELECT ON ... TO PUBLIC;` for the view.
-   - No grant to `PUBLIC` on helper functions; use `SECURITY DEFINER` with `SET search_path = pg_catalog, pg_temp` if the helper needs privileged state.
+   - No grant to `PUBLIC` on helper functions.
    - `REVOKE EXECUTE ... FROM PUBLIC;` and `GRANT EXECUTE ... TO __API_ADMIN_ROLE__;` for any reset function.
 5. **Add tests** as listed in the Testing Strategy section above (column shape, flag-off behavior, reset behavior, permissions).
 6. **Update documentation.** Open a companion PR against `https://github.com/documentdb/documentdb.github.io` adding an entry to `/articles/postgresql/stats.md` with description, column definitions and units, an example query and output, related configuration parameters, and reset functions (if applicable).
