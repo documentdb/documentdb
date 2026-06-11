@@ -8,7 +8,7 @@ issue: "https://github.com/documentdb/documentdb/issues/TBD"
 
 # RFC-0007: Guidance for Onboarding Statistics
 
-## Background & Motivation
+## Problem
 
 ### What exists today
 
@@ -69,6 +69,9 @@ The **permission model** is straightforward:
 
 - **Read**: any connected role can query statistics — views are granted `SELECT … TO PUBLIC`.
 - **Reset**: only the extension admin role (`__API_ADMIN_ROLE__`) can clear cumulative counters via reset functions. `EXECUTE` is revoked from `PUBLIC`.
+- **Helpers**: not granted to `PUBLIC` — the view is the API boundary.
+
+This model matches how `pg_stat_statements` exposes statistics. Any deviation (for example, a stat that genuinely needs PUBLIC EXECUTE on its helper) must be explicitly justified in the contributing PR.
 
 This RFC defines:
 - Naming conventions for views and functions
@@ -81,6 +84,10 @@ The goal is to provide a predictable and maintainable pattern that aligns with f
 ---
 
 ## Detailed Design
+
+### Technical Details
+
+This RFC defines conventions only; no new code paths or data structures are introduced. Each statistic implemented under these conventions will have its own technical design.
 
 ### API Changes
 
@@ -171,7 +178,7 @@ LANGUAGE c
 AS '$libdir/pg_documentdb', 'documentdb_stat_get_<scope>';
 ```
 
-##### Reset functions (for cumulative counters)
+#### Reset Functions
 
 If a view contains cumulative counters that may need to be reset, a reset function must be provided.
 
@@ -201,14 +208,9 @@ GRANT  EXECUTE ON FUNCTION __API_CATALOG_SCHEMA__.documentdb_stat_reset_<scope>(
 
 Non-superuser operators who need reset capability must be granted membership in `__API_ADMIN_ROLE__` (or be granted EXECUTE explicitly on a per-function basis if more granular control is desired).
 
-#### Permission Model Summary
+### Configuration Changes
 
-This model — public SELECT on the view, no PUBLIC EXECUTE on helpers, named-role EXECUTE on reset — matches how `pg_stat_statements` exposes statistics. Any deviation (for example, a stat that genuinely needs PUBLIC EXECUTE on its helper) must be explicitly justified in the contributing PR.
-
-
-#### Configuration Flags (GUC)
-
-Since collecting statistics introduces overhead, each category of statistical data should be gated behind a configuration flag.
+Each category of statistical data should be gated behind a GUC (Grand Unified Configuration) flag to control collection overhead.
 
 **Naming pattern**
 ```
@@ -230,7 +232,7 @@ When the flag is set to `false`:
 - The corresponding view should return an **empty result set** (not fail, and not return zeroed rows). An empty set is unambiguous in dashboards and alerting; zeroed rows can be misread as "the system is healthy."
 
 
-#### Documentation Updates
+### Documentation Updates
 
 The following documentation must be updated when new statistics are added:
 
@@ -278,48 +280,15 @@ This RFC is purely additive and applies only to **new** statistics. Pre-existing
 
 ### Contributor Checklist: How to add a new statistic
 
-When adding a new statistic under this RFC, a contributor should:
+This section walks through every step a contributor must complete when adding a new statistic. Code examples use a hypothetical `io` scope for illustration.
 
-1. **Pick a scope name.** Lowercase, singular-or-plural noun matching the category (e.g., `queries`, `connections`). Confirm it does not collide with an existing `documentdb_stat_*` view or with PostgreSQL's `pg_stat_*` namespace.
-2. **Register the GUC.** Add `documentdb.track_<scope>` (default chosen per the rule of thumb in "Configuration Flags (GUC)") in the C code that registers extension GUCs, and reference it from the collection path so disabling the flag halts collection.
-3. **Add the SQL definitions** under `pg_documentdb/sql/udfs/stats/`:
-   - Update `stats--latest.sql` with the view, optional helper(s), and optional reset function.
-   - Add a `stats--<from>-<to>.sql` upgrade script for the version bump.
-4. **Apply the canonical grants** (see "Permissions for helpers" and "Permissions for reset functions"):
-   - `GRANT SELECT ON ... TO PUBLIC;` for the view.
-   - No grant to `PUBLIC` on helper functions.
-   - `REVOKE EXECUTE ... FROM PUBLIC;` and `GRANT EXECUTE ... TO __API_ADMIN_ROLE__;` for any reset function.
-5. **Add tests** as listed in the Testing Strategy section above (column shape, flag-off behavior, reset behavior, permissions).
-6. **Update documentation.** Open a companion PR against `https://github.com/documentdb/documentdb.github.io` adding an entry to `/articles/postgresql/stats.md` with description, column definitions and units, an example query and output, related configuration parameters, and reset functions (if applicable).
-7. **Justify any deviation from the canonical permission/path conventions** in the PR description so reviewers can evaluate it explicitly.
+#### 1. Pick a scope name
 
----
+Choose a lowercase, singular-or-plural noun matching the category (e.g., `queries`, `connections`, `io`). Confirm it does not collide with an existing `documentdb_stat_*` view or with PostgreSQL's `pg_stat_*` namespace.
 
-## Implementation Tracking
+#### 2. Register the GUC
 
-NA
-
-### Status Updates
-
-NA
-
-### Open Questions
-
-NA
-
-### Implementation Notes
-
-NA
-
----
-
-## Appendix A: Worked Example — `documentdb_stat_io`
-
-This appendix shows the complete set of artifacts a contributor would produce when adding a hypothetical I/O statistics scope. The example is **illustrative only** — it does not propose a real statistic. Its purpose is to demonstrate the full pattern end-to-end so that contributors can follow it as a template.
-
-### A.1 — Register the GUC
-
-In `pg_documentdb/src/configs/system_configs.c`, add a boolean GUC to gate collection:
+In `pg_documentdb/src/configs/system_configs.c`, add a boolean GUC to gate collection. Choose the default per the rule of thumb in "Configuration Changes."
 
 ```c
 /* Whether to collect I/O statistics. */
@@ -336,9 +305,11 @@ DefineCustomBoolVariable(
     NULL, NULL, NULL);
 ```
 
-### A.2 — Helper function
+#### 3. Add the SQL definitions
 
-In `pg_documentdb/sql/udfs/stats/stats--latest.sql`, define the internal helper:
+Add the view, optional helper(s), and optional reset function under `pg_documentdb/sql/udfs/stats/`:
+
+**Helper function** (in `stats--latest.sql`):
 
 ```sql
 CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL__.documentdb_stat_get_io()
@@ -357,7 +328,7 @@ AS 'MODULE_PATHNAME', 'documentdb_stat_get_io';
 -- The view owner has the privileges needed to call it.
 ```
 
-### A.3 — View
+**View:**
 
 ```sql
 CREATE OR REPLACE VIEW __API_CATALOG_SCHEMA__.documentdb_stat_io AS
@@ -370,29 +341,37 @@ SELECT database,
 FROM   __API_SCHEMA_INTERNAL__.documentdb_stat_get_io()
 WHERE  current_setting('documentdb.track_io')::bool;
 -- Returns empty result set when tracking is off.
-
-GRANT SELECT ON __API_CATALOG_SCHEMA__.documentdb_stat_io TO PUBLIC;
 ```
 
-### A.4 — Reset function
+**Reset function** (if the view has cumulative counters):
 
 ```sql
 CREATE OR REPLACE FUNCTION __API_CATALOG_SCHEMA__.documentdb_stat_reset_io()
 RETURNS void
 LANGUAGE c
 AS 'MODULE_PATHNAME', 'documentdb_stat_reset_io';
+```
 
+#### 4. Apply the canonical grants
+
+Place these alongside the definitions in the same stats SQL file:
+
+```sql
+-- View: readable by all
+GRANT SELECT ON __API_CATALOG_SCHEMA__.documentdb_stat_io TO PUBLIC;
+
+-- Reset: restricted to admin role
 REVOKE EXECUTE ON FUNCTION
     __API_CATALOG_SCHEMA__.documentdb_stat_reset_io() FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION
     __API_CATALOG_SCHEMA__.documentdb_stat_reset_io() TO __API_ADMIN_ROLE__;
 ```
 
-### A.5 — Upgrade script
+#### 5. Add the upgrade script
 
-Add `pg_documentdb/sql/udfs/stats/stats--0.111-0--0.112-0.sql` containing the same definitions as above (view, helper, reset, grants) for the version bump.
+Add `pg_documentdb/sql/udfs/stats/stats--<from>-<to>.sql` (e.g., `stats--0.111-0--0.112-0.sql`) containing the same definitions for the version bump.
 
-### A.6 — Tests (sketch)
+#### 6. Add tests
 
 ```sql
 -- 1. Column shape
@@ -420,6 +399,28 @@ SELECT * FROM __API_CATALOG_SCHEMA__.documentdb_stat_io;   -- OK
 SELECT __API_CATALOG_SCHEMA__.documentdb_stat_reset_io();  -- ERROR: permission denied
 ```
 
-### A.7 — Documentation
+#### 7. Update documentation
 
 Open a companion PR against `https://github.com/documentdb/documentdb.github.io` adding an entry to `/articles/postgresql/stats.md` covering: description, column definitions with units, example query and output, related GUC (`documentdb.track_io`), and the reset function.
+
+#### 8. Justify any deviations
+
+If your statistic deviates from the canonical permission or path conventions, explain why in the PR description so reviewers can evaluate it explicitly.
+
+---
+
+## Implementation Tracking
+
+NA
+
+### Status Updates
+
+NA
+
+### Open Questions
+
+NA
+
+### Implementation Notes
+
+NA
