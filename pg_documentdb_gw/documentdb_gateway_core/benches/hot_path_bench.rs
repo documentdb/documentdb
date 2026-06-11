@@ -23,9 +23,12 @@ use tokio::{
 };
 
 use documentdb_gateway_core::{
-    protocol::{header::Header, opcode::OpCode},
+    protocol::{header::Header, opcode::OpCode, reader},
+    requests::RequestMessage,
     responses::writer as response_writer,
 };
+
+const MORE_TO_COME_FLAG: u32 = 0b10;
 
 #[derive(Default)]
 struct CountingWriter {
@@ -239,6 +242,141 @@ fn response_wire_len(header: &Header, response: &RawDocument) -> usize {
     }
 }
 
+fn document_section(document: &RawDocumentBuf) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(1 + document.as_bytes().len());
+    bytes.push(0);
+    bytes.extend_from_slice(document.as_bytes());
+    bytes
+}
+
+fn document_sequence_section(identifier: &str, documents: &[RawDocumentBuf]) -> Vec<u8> {
+    let document_bytes_len = documents
+        .iter()
+        .map(|document| document.as_bytes().len())
+        .sum::<usize>();
+    let section_size =
+        i32::try_from(std::mem::size_of::<i32>() + identifier.len() + 1 + document_bytes_len)
+            .unwrap();
+    let mut bytes = Vec::with_capacity(1 + usize::try_from(section_size).unwrap());
+    bytes.push(1);
+    bytes.extend_from_slice(&section_size.to_le_bytes());
+    bytes.extend_from_slice(identifier.as_bytes());
+    bytes.push(0);
+    for document in documents {
+        bytes.extend_from_slice(document.as_bytes());
+    }
+    bytes
+}
+
+fn op_msg_message(request_id: i32, flags: u32, sections: &[Vec<u8>]) -> RequestMessage {
+    let sections_len = sections.iter().map(Vec::len).sum::<usize>();
+    let mut body = Vec::with_capacity(std::mem::size_of::<u32>() + sections_len);
+    body.extend_from_slice(&flags.to_le_bytes());
+    for section in sections {
+        body.extend_from_slice(section);
+    }
+
+    RequestMessage {
+        request: body,
+        op_code: OpCode::Msg,
+        request_id,
+        response_to: 0,
+    }
+}
+
+#[expect(
+    deprecated,
+    reason = "OP_QUERY is still supported for legacy clients and testing"
+)]
+fn op_query_message(request_id: i32, namespace: &str, command: &RawDocumentBuf) -> RequestMessage {
+    let mut body = Vec::with_capacity(
+        std::mem::size_of::<u32>()
+            + namespace.len()
+            + 1
+            + (2 * std::mem::size_of::<u32>())
+            + command.as_bytes().len(),
+    );
+    body.extend_from_slice(&0_u32.to_le_bytes());
+    body.extend_from_slice(namespace.as_bytes());
+    body.push(0);
+    body.extend_from_slice(&0_u32.to_le_bytes());
+    body.extend_from_slice(&1_u32.to_le_bytes());
+    body.extend_from_slice(command.as_bytes());
+
+    RequestMessage {
+        request: body,
+        op_code: OpCode::Query,
+        request_id,
+        response_to: 0,
+    }
+}
+
+fn bench_request_parse(c: &mut Criterion) {
+    let find_command = rawdoc! {
+        "find": "users",
+        "$db": "myapp",
+        "filter": { "age": { "$gt": 21 } },
+    };
+    let extra_document = rawdoc! {
+        "cursor": { "batchSize": 10_i32 },
+    };
+    let insert_command = rawdoc! {
+        "insert": "users",
+        "$db": "myapp",
+    };
+    let insert_documents = [
+        rawdoc! { "_id": 1_i32, "name": "one" },
+        rawdoc! { "_id": 2_i32, "name": "two" },
+    ];
+
+    let find_section = document_section(&find_command);
+    let extra_section = document_section(&extra_document);
+    let insert_section = document_section(&insert_command);
+    let sequence_section = document_sequence_section("documents", &insert_documents);
+
+    let op_msg_find = op_msg_message(100, 0, std::slice::from_ref(&find_section));
+    let op_msg_find_with_extra = op_msg_message(101, 0, &[find_section.clone(), extra_section]);
+    let op_msg_insert_sequence =
+        op_msg_message(102, 0, &[insert_section.clone(), sequence_section.clone()]);
+    let op_msg_sequence_before_command =
+        op_msg_message(103, 0, &[sequence_section, insert_section]);
+    let op_msg_more_to_come = op_msg_message(104, MORE_TO_COME_FLAG, &[find_section]);
+    let op_query_existing_db = op_query_message(
+        200,
+        "wiredb.$cmd",
+        &rawdoc! { "find": "users", "$db": "bodydb" },
+    );
+    let op_query_missing_db = op_query_message(201, "wiredb.$cmd", &rawdoc! { "find": "users" });
+
+    let mut group = c.benchmark_group("request_parse");
+    group.throughput(Throughput::Elements(1));
+
+    for (name, message) in [
+        ("op_msg_find_strict", &op_msg_find),
+        ("op_msg_find_with_extra", &op_msg_find_with_extra),
+        ("op_msg_insert_sequence", &op_msg_insert_sequence),
+        (
+            "op_msg_sequence_before_command",
+            &op_msg_sequence_before_command,
+        ),
+        ("op_msg_more_to_come", &op_msg_more_to_come),
+        ("op_query_existing_db", &op_query_existing_db),
+        ("op_query_missing_db", &op_query_missing_db),
+    ] {
+        group.bench_with_input(BenchmarkId::new("strict", name), message, |b, message| {
+            b.iter(|| {
+                let mut requires_response = true;
+                let request =
+                    reader::parse_request(black_box(message), &mut requires_response).unwrap();
+                black_box(request.request_type());
+                black_box(requires_response);
+            });
+        });
+    }
+
+    group.finish();
+}
+
 fn bench_response_writer(c: &mut Criterion) {
     let rt = bench_runtime();
     let op_msg_header = op_msg_header();
@@ -302,5 +440,5 @@ fn bench_response_writer(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_response_writer);
+criterion_group!(benches, bench_request_parse, bench_response_writer);
 criterion_main!(benches);

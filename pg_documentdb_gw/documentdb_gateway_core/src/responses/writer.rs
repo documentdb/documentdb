@@ -174,12 +174,53 @@ where
 mod tests {
     use super::*;
 
+    fn max_response_len_for(overhead_len: usize) -> usize {
+        usize::try_from(MAX_MESSAGE_SIZE_BYTES).expect("maximum message size should fit into usize")
+            - overhead_len
+    }
+
     #[test]
     fn response_message_length_rejects_oversized_message() {
         let response_len = usize::try_from(MAX_MESSAGE_SIZE_BYTES)
             .expect("maximum message size should fit into usize");
 
         response_message_length(response_len, 1).unwrap_err();
+    }
+
+    #[test]
+    fn response_message_length_allows_exact_op_msg_limit() {
+        let response_len = max_response_len_for(OP_MSG_PREFIX_LENGTH);
+
+        let message_length = response_message_length(response_len, OP_MSG_PREFIX_LENGTH)
+            .expect("exact OP_MSG limit should be accepted");
+
+        assert_eq!(message_length, MAX_MESSAGE_SIZE_BYTES);
+    }
+
+    #[test]
+    fn response_message_length_rejects_op_msg_over_limit() {
+        let response_len = max_response_len_for(OP_MSG_PREFIX_LENGTH) + 1;
+
+        response_message_length(response_len, OP_MSG_PREFIX_LENGTH)
+            .expect_err("OP_MSG one byte over the limit should be rejected");
+    }
+
+    #[test]
+    fn response_message_length_allows_exact_op_reply_limit() {
+        let response_len = max_response_len_for(OP_REPLY_PREFIX_LENGTH);
+
+        let message_length = response_message_length(response_len, OP_REPLY_PREFIX_LENGTH)
+            .expect("exact OP_REPLY limit should be accepted");
+
+        assert_eq!(message_length, MAX_MESSAGE_SIZE_BYTES);
+    }
+
+    #[test]
+    fn response_message_length_rejects_op_reply_over_limit() {
+        let response_len = max_response_len_for(OP_REPLY_PREFIX_LENGTH) + 1;
+
+        response_message_length(response_len, OP_REPLY_PREFIX_LENGTH)
+            .expect_err("OP_REPLY one byte over the limit should be rejected");
     }
 
     #[test]
