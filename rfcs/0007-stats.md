@@ -8,22 +8,32 @@ issue: "https://github.com/documentdb/documentdb/issues/TBD"
 
 # RFC-0007: Guidance for Onboarding Statistics
 
-## Problem
+## Background & Motivation
 
-DocumentDB currently lacks a standardized, well-defined process for contributors to onboard new statistics. While contributors may want to expose various runtime, performance, or usage insights, there is no consistent guidance for:
+### What exists today
 
-- How statistics should be exposed
-- How statistics collection should be enabled or disabled safely
+DocumentDB exposes diagnostic commands such as `coll_stats`, `db_stats`, `index_stats`, and `current_op`. These exist to provide **MongoDB API compatibility** — they return BSON documents and mirror the behavior of their MongoDB counterparts. They are not designed as a general-purpose statistics framework for the PostgreSQL layer.
 
-This creates friction for both contributors and reviewers:
+Outside of these MongoDB-compatible commands, DocumentDB has **no mechanism** for exposing internal runtime, performance, or usage statistics as PostgreSQL-native objects. There are currently:
 
-- Contributors must guess conventions or invent their own patterns.
-- Reviewers lack a consistent set of rules to evaluate submissions.
-- Inconsistencies across statistics make them harder to discover, document, and maintain.
+- **No `SELECT`-able views** — no tabular interface comparable to PostgreSQL's `pg_stat_*` views.
+- **No configuration flags** to gate statistics collection — no way to control overhead.
+- **No reset functions** for cumulative counters.
+- **No consistent permission policy** for who can read statistics versus who can reset them.
 
-Without this guidance, statistics may become fragmented, inconsistent, or unsafe (for example: unexpected overhead, unclear reset behavior, or overly broad permissions).
+### Why conventions matter now
 
-This RFC proposes a set of conventions and rules that define **how** statistics should be added, not **which** specific statistics must exist.
+As DocumentDB grows, contributors will need to add new statistics — query performance counters, connection usage, cache hit rates, and similar observability data. Without a shared convention:
+
+- Contributors must guess patterns or invent their own, leading to inconsistent APIs.
+- Reviewers lack a baseline to evaluate whether a new statistic follows a safe and discoverable pattern.
+- Downstream consumers (dashboards, alerting, documentation) must handle each statistic as a special case.
+
+PostgreSQL's own `pg_stat_*` family and extensions like `pg_stat_statements` demonstrate that a small, consistent set of conventions — standard naming, a GUC to gate collection, public `SELECT` on views, restricted `EXECUTE` on reset functions — makes statistics predictable and maintainable at scale.
+
+### What this RFC does
+
+This RFC establishes that baseline for DocumentDB. It defines **how** statistics should be added — not **which** specific statistics must exist. The goal is a set of rules that make new statistics **predictable, discoverable, and safe by default**, so that a contributor (or even an AI code-generation tool) can follow the pattern end-to-end without tribal knowledge.
 
 ### Who is impacted
 
@@ -50,15 +60,19 @@ This RFC proposes a set of conventions and rules that define **how** statistics 
 
 The approach is inspired by established conventions in PostgreSQL (e.g., `pg_stat_*` views) and widely-used extensions (e.g., Citus).
 
-In DocumentDB, statistics should be exposed through **views**.
+In DocumentDB, statistics should be exposed through **views** — literal PostgreSQL `CREATE VIEW` objects that users can `SELECT` from, not an abstract concept. Each view provides a stable, tabular interface to a category of statistics.
 
 - Views may be backed directly by SQL statements.
-- Views may also be backed by one or more underlying helper functions when the logic is complex or requires internal state.
+- Views may also be backed by one or more underlying helper functions when the logic is complex or requires internal state (e.g., reading from shared memory).
 
+The **permission model** is straightforward:
+
+- **Read**: any connected role can query statistics — views are granted `SELECT … TO PUBLIC`.
+- **Reset**: only the extension admin role (`__API_ADMIN_ROLE__`) can clear cumulative counters via reset functions. `EXECUTE` is revoked from `PUBLIC`.
 
 This RFC defines:
 - Naming conventions for views and functions
-- Standard patterns for permissions
+- Standard patterns for permissions (as summarized above)
 - Configuration switches to enable/disable collection
 - Documentation requirements for each statistic
 
@@ -300,3 +314,118 @@ NA
 ### Implementation Notes
 
 NA
+
+---
+
+## Appendix A: Worked Example — `documentdb_stat_io`
+
+This appendix shows the complete set of artifacts a contributor would produce when adding a hypothetical I/O statistics scope. The example is **illustrative only** — it does not propose a real statistic. Its purpose is to demonstrate the full pattern end-to-end so that contributors can follow it as a template.
+
+### A.1 — Register the GUC
+
+In `pg_documentdb/src/configs/system_configs.c`, add a boolean GUC to gate collection:
+
+```c
+/* Whether to collect I/O statistics. */
+bool DocumentDBTrackIO = true;
+
+DefineCustomBoolVariable(
+    psprintf("%s.track_io", prefix),
+    gettext_noop("Enables collection of I/O statistics."),
+    NULL,
+    &DocumentDBTrackIO,
+    true,                       /* default on — low overhead */
+    PGC_SUSET,
+    0,
+    NULL, NULL, NULL);
+```
+
+### A.2 — Helper function
+
+In `pg_documentdb/sql/udfs/stats/stats--latest.sql`, define the internal helper:
+
+```sql
+CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL__.documentdb_stat_get_io()
+RETURNS TABLE (
+    database       text,
+    read_count     bigint,
+    write_count    bigint,
+    read_bytes     bigint,
+    write_bytes    bigint,
+    stats_reset    timestamptz
+)
+LANGUAGE c
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS 'MODULE_PATHNAME', 'documentdb_stat_get_io';
+
+-- Helper is NOT granted to PUBLIC.
+-- The view owner has the privileges needed to call it.
+```
+
+### A.3 — View
+
+```sql
+CREATE OR REPLACE VIEW __API_CATALOG_SCHEMA__.documentdb_stat_io AS
+SELECT database,
+       read_count,        -- value (with _count suffix)
+       write_count,       -- value (with _count suffix)
+       read_bytes,        -- value (with _bytes suffix)
+       write_bytes,       -- value (with _bytes suffix)
+       stats_reset        -- timestamp of last reset (exempt from suffix rule)
+FROM   __API_SCHEMA_INTERNAL__.documentdb_stat_get_io()
+WHERE  current_setting('documentdb.track_io')::bool;
+-- Returns empty result set when tracking is off.
+
+GRANT SELECT ON __API_CATALOG_SCHEMA__.documentdb_stat_io TO PUBLIC;
+```
+
+### A.4 — Reset function
+
+```sql
+CREATE OR REPLACE FUNCTION __API_CATALOG_SCHEMA__.documentdb_stat_reset_io()
+RETURNS void
+LANGUAGE c
+AS 'MODULE_PATHNAME', 'documentdb_stat_reset_io';
+
+REVOKE EXECUTE ON FUNCTION
+    __API_CATALOG_SCHEMA__.documentdb_stat_reset_io() FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION
+    __API_CATALOG_SCHEMA__.documentdb_stat_reset_io() TO __API_ADMIN_ROLE__;
+```
+
+### A.5 — Upgrade script
+
+Add `pg_documentdb/sql/udfs/stats/stats--0.111-0--0.112-0.sql` containing the same definitions as above (view, helper, reset, grants) for the version bump.
+
+### A.6 — Tests (sketch)
+
+```sql
+-- 1. Column shape
+SELECT column_name, data_type
+FROM   information_schema.columns
+WHERE  table_name = 'documentdb_stat_io'
+ORDER  BY ordinal_position;
+-- Expect: database (text), read_count (bigint), write_count (bigint),
+--         read_bytes (bigint), write_bytes (bigint), stats_reset (timestamptz)
+
+-- 2. Flag off → empty result set
+SET documentdb.track_io = false;
+SELECT count(*) FROM __API_CATALOG_SCHEMA__.documentdb_stat_io;
+-- Expect: 0
+
+-- 3. Reset advances stats_reset
+SELECT stats_reset AS before FROM __API_CATALOG_SCHEMA__.documentdb_stat_io LIMIT 1;
+SELECT __API_CATALOG_SCHEMA__.documentdb_stat_reset_io();
+SELECT stats_reset AS after FROM __API_CATALOG_SCHEMA__.documentdb_stat_io LIMIT 1;
+-- Expect: after > before
+
+-- 4. Permission: unprivileged role can SELECT but cannot reset
+SET ROLE unprivileged_user;
+SELECT * FROM __API_CATALOG_SCHEMA__.documentdb_stat_io;   -- OK
+SELECT __API_CATALOG_SCHEMA__.documentdb_stat_reset_io();  -- ERROR: permission denied
+```
+
+### A.7 — Documentation
+
+Open a companion PR against `https://github.com/documentdb/documentdb.github.io` adding an entry to `/articles/postgresql/stats.md` covering: description, column definitions with units, example query and output, related GUC (`documentdb.track_io`), and the reset function.
