@@ -15,6 +15,7 @@
 * Push suffix sort keys into accumulator in `$sortGroup` when group-by keys form a non-dotted prefix of the sort keys. Guarded by `enableSortPushToAccumulatorWithPrefix` feature flag, disabled by default while pending stabilization. *[Perf]*
 * Support collation with non-unique ordered indexes with `$in` and `$nin` but not with ordered scans. Requires `documentdb.EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
 * Support for pruning dead index entry on ordered TTL indexes. Requires `EnableDeadIndexEntryMarkingByTTLTask` to be on. *[Perf]*
+* Support `$elemMatch`, `$slice`, and `$` positional projection operators in `findAndModify` by routing through the find-specific projection path *[Feature]*
 * Enable index-only scan for `$group` accumulators when all referenced fields are covered by the composite index *[Perf]*
 
 ### documentdb v0.112-0 (Unreleased) ###

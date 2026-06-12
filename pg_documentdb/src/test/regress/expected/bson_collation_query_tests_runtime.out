@@ -3386,15 +3386,18 @@ psql:sql/bson_collation_query_tests_core.sql:1037: ERROR:  collation is not supp
 -- findAndModify with collation.
 SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "coll_multi_collation", "query": {"a": 1}, "update": {"_id": 1, "b": 1}, "collation" : {"locale" : "en", "strength": 1} }');
 psql:sql/bson_collation_query_tests_core.sql:1040: ERROR:  findAndModify.collation is not implemented yet
+-- findAndModify $elemMatch projection with collation (documents current unimplemented state).
+SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "coll_multi_collation", "query": {"a": "Cat"}, "update": {"$set": {"b": 99}}, "fields": {"a": 1}, "collation": {"locale": "en", "strength": 1}}');
+psql:sql/bson_collation_query_tests_core.sql:1043: ERROR:  findAndModify.collation is not implemented yet
 -- update with collation + arrayFilters.
 SELECT documentdb_api.update('update', '{"update":"coll_multi_collation", "updates":[{"q":{"_id": 134111, "b": [ 5, 2, 4 ] },"u":{"$set" : {"b.$[a]":3} },"upsert":true, "collation" : {"locale" : "en", "strength": 1}, "arrayFilters": [ { "a": 2 } ]}]}');
-psql:sql/bson_collation_query_tests_core.sql:1043: ERROR:  BSON field 'update.updates.collation' is not yet supported
+psql:sql/bson_collation_query_tests_core.sql:1046: ERROR:  BSON field 'update.updates.collation' is not yet supported
 -- count with collation: unsupported
 SELECT documentdb_api.count_query('coll_q_db', '{"count":"coll_strings", "query":{"a":"cat"}, "collation":{"locale":"en","strength":1}}');
-psql:sql/bson_collation_query_tests_core.sql:1046: ERROR:  collation is not supported in the count command yet.
+psql:sql/bson_collation_query_tests_core.sql:1049: ERROR:  collation is not supported in the count command yet.
 -- distinct with collation: unsupported
 SELECT documentdb_api.distinct_query('coll_q_db', '{"distinct":"coll_strings", "key":"a", "query":{}, "collation":{"locale":"en","strength":1}}');
-psql:sql/bson_collation_query_tests_core.sql:1049: ERROR:  collation is not supported in the distinct command yet.
+psql:sql/bson_collation_query_tests_core.sql:1052: ERROR:  collation is not supported in the distinct command yet.
 -- ======================================================================
 -- CLEANUP
 -- ======================================================================

@@ -143,6 +143,16 @@ const BsonProjectionQueryState * GetProjectionStateForBsonProject(
 	const pgbson *
 	variableSpec);
 
+const BsonProjectionQueryState * GetProjectionStateForBsonProjectFind(
+	bson_iter_t *projectionSpecIter, bool forceProjectId,
+	bool
+	allowInclusionExclusion,
+	const pgbson *
+	variableSpec,
+	pgbson *querySpec,
+	const char *
+	collationString);
+
 const BsonProjectionQueryState * GetProjectionStateForBsonAddFields(
 	bson_iter_t *projectionSpecIter, const bson_value_t *variableSpec);
 const BsonProjectionQueryState * GetProjectionStateForBsonUnset(const bson_value_t *

@@ -232,3 +232,85 @@ select  documentdb_api.coll_mod('fam', 'collection', '{"collMod": "collection", 
 select documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "query": {"_id": 3}, "update": {"$set": {"a": "zero"}}, "new": true, "upsert": true, "fields": {"foo": {"$pow": [1, 2]}}}');
 select documentdb_api.find_and_modify('fam', '{"findAndModify": "collection", "query": {"_id": 3}, "update": {"$set": {"a": "zero"}}, "new": true, "upsert": true, "bypassDocumentValidation": true, "fields": {"foo": {"$pow": [1, 2]}}}');
 SELECT documentdb_api_catalog.bson_dollar_project(document,'{"_id":0,"a":1,"b":1}') FROM documentdb_api.collection('fam', 'collection') ORDER BY document;
+set documentdb.enableSchemaValidation = off;
+set documentdb.enableBypassDocumentValidation = off;
+
+-- ============================================================================
+-- $elemMatch, $slice, and $ positional projection in findAndModify
+-- ============================================================================
+
+-- setup: insert documents with arrays for projection operator tests
+SELECT 1 FROM documentdb_api.insert_one('fam', 'proj_ops', '{"_id": 1, "arr": [{"x": 1, "y": "a"}, {"x": 2, "y": "b"}, {"x": 3, "y": "c"}], "scalar": 100}');
+SELECT 1 FROM documentdb_api.insert_one('fam', 'proj_ops', '{"_id": 2, "arr": [{"x": 10, "y": "p"}, {"x": 20, "y": "q"}], "scalar": 200}');
+
+-- test 1: $elemMatch projection in findAndModify update (return new document)
+BEGIN;
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "proj_ops", "query": {"_id": 1}, "update": {"$set": {"scalar": 999}}, "fields": {"arr": {"$elemMatch": {"x": 2}}}, "new": true}');
+ROLLBACK;
+
+-- test 2: $elemMatch projection in findAndModify update (return old document)
+BEGIN;
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "proj_ops", "query": {"_id": 1}, "update": {"$set": {"scalar": 999}}, "fields": {"arr": {"$elemMatch": {"x": 2}}}, "new": false}');
+ROLLBACK;
+
+-- test 3: $elemMatch projection with no matching element (should return empty array)
+BEGIN;
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "proj_ops", "query": {"_id": 1}, "update": {"$set": {"scalar": 999}}, "fields": {"arr": {"$elemMatch": {"x": 999}}}, "new": true}');
+ROLLBACK;
+
+-- test 4: $elemMatch projection with comparison operators
+BEGIN;
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "proj_ops", "query": {"_id": 1}, "update": {"$set": {"scalar": 999}}, "fields": {"arr": {"$elemMatch": {"x": {"$gt": 1, "$lt": 3}}}}, "new": true}');
+ROLLBACK;
+
+-- test 5: $elemMatch projection combined with inclusion
+BEGIN;
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "proj_ops", "query": {"_id": 1}, "update": {"$set": {"scalar": 999}}, "fields": {"arr": {"$elemMatch": {"x": 2}}, "scalar": 1}, "new": true}');
+ROLLBACK;
+
+-- test 6: $elemMatch projection combined with exclusion of _id
+BEGIN;
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "proj_ops", "query": {"_id": 1}, "update": {"$set": {"scalar": 999}}, "fields": {"_id": 0, "arr": {"$elemMatch": {"x": 3}}}, "new": true}');
+ROLLBACK;
+
+-- test 7: $elemMatch projection in findAndModify remove
+BEGIN;
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "proj_ops", "query": {"_id": 2}, "remove": true, "fields": {"arr": {"$elemMatch": {"x": 10}}}}');
+ROLLBACK;
+
+-- test 8: $elemMatch in both query filter and projection (combined filter and projection)
+SELECT 1 FROM documentdb_api.insert_one('fam', 'proj_ops_chat', '{"_id": 1, "name": "Room1", "users": [{"authId": "user-abc", "name": "Tom", "lastRead": null}, {"authId": "user-def", "name": "Jane", "lastRead": null}]}');
+
+BEGIN;
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "proj_ops_chat", "query": {"_id": 1, "users": {"$elemMatch": {"authId": "user-abc"}}}, "update": {"$set": {"users.$.lastRead": "msg-100"}}, "fields": {"users": {"$elemMatch": {"authId": "user-abc"}}}, "new": true}');
+ROLLBACK;
+
+-- test 9: $slice projection in findAndModify (first 2 elements)
+BEGIN;
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "proj_ops", "query": {"_id": 1}, "update": {"$set": {"scalar": 999}}, "fields": {"arr": {"$slice": 2}, "_id": 1}, "new": true}');
+ROLLBACK;
+
+-- test 10: $slice projection with negative value (last 1 element)
+BEGIN;
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "proj_ops", "query": {"_id": 1}, "update": {"$set": {"scalar": 999}}, "fields": {"arr": {"$slice": -1}, "_id": 1}, "new": true}');
+ROLLBACK;
+
+-- test 11: $ positional projection in findAndModify
+BEGIN;
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "proj_ops", "query": {"_id": 1, "arr.x": 2}, "update": {"$set": {"scalar": 999}}, "fields": {"arr.$": 1, "_id": 0}, "new": true}');
+ROLLBACK;
+
+-- test 12 (negative): $ positional projection without matching array query condition
+BEGIN;
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "proj_ops", "query": {"_id": 1}, "update": {"$set": {"scalar": 999}}, "fields": {"arr.$": 1}, "new": true}');
+ROLLBACK;
+
+-- test 13 (negative): $meta projection in findAndModify (aggregation-only expression)
+BEGIN;
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "proj_ops", "query": {"_id": 1}, "update": {"$set": {"scalar": 999}}, "fields": {"score": {"$meta": "textScore"}}, "new": true}');
+ROLLBACK;
+
+-- test 14: let/variables pass-through with $elemMatch projection
+BEGIN;
+  SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "proj_ops", "let": {"ignored": 1}, "query": {"_id": 1}, "update": {"$set": {"scalar": 999}}, "fields": {"arr": {"$elemMatch": {"x": 2}}}, "new": true}');
+ROLLBACK;

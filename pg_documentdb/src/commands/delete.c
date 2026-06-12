@@ -1290,15 +1290,15 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 	argCount++;
 
 	const bson_value_t *variableSpec = deleteOneParams->variableSpec;
-	pgbson *variableSpecBson = NULL;
-	if (queryHasNonIdFilters)
-	{
-		variableSpecBson = variableSpec != NULL &&
-						   variableSpec->value_type == BSON_TYPE_DOCUMENT ?
-						   PgbsonInitFromDocumentBsonValue(variableSpec) : NULL;
-	}
+	pgbson *variableSpecBson = variableSpec != NULL &&
+							   variableSpec->value_type == BSON_TYPE_DOCUMENT ?
+							   PgbsonInitFromDocumentBsonValue(variableSpec) : NULL;
+	pgbson *querySpecBson = deleteOneParams->query != NULL &&
+							deleteOneParams->query->value_type == BSON_TYPE_DOCUMENT ?
+							PgbsonInitFromDocumentBsonValue(
+		deleteOneParams->query) : NULL;
 
-	bool applyVariableSpec = variableSpecBson != NULL;
+	bool applyVariableSpec = queryHasNonIdFilters && variableSpecBson != NULL;
 	if (applyVariableSpec || applyCollation)
 	{
 		planId = QUERY_DELETE_ONE_LET_AND_COLLATION;
@@ -1562,13 +1562,14 @@ DeleteOneInternal(MongoCollection *collection, DeleteOneParams *deleteOneParams,
 				bson_iter_t projectIter;
 				BsonValueInitIterator(deleteOneParams->returnFields, &projectIter);
 
-				/* no need for a variableSpec in this projection */
-				pgbson *variableSpec = NULL;
 				const BsonProjectionQueryState *projectionState =
-					GetProjectionStateForBsonProject(&projectIter,
-													 forceProjectId,
-													 allowInclusionExclusion,
-													 variableSpec);
+					GetProjectionStateForBsonProjectFind(&projectIter,
+														 forceProjectId,
+														 allowInclusionExclusion,
+														 variableSpecBson,
+														 querySpecBson,
+														 deleteOneParams->
+														 collationString);
 				resultDeletedDocument = ProjectDocumentWithState(resultDeletedDocument,
 																 projectionState);
 			}

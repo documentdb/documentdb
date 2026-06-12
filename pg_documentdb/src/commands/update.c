@@ -3403,10 +3403,23 @@ UpdateOneInternal(MongoCollection *collection, UpdateOneParams *updateOneParams,
 								   variableSpec->value_type == BSON_TYPE_DOCUMENT ?
 								   PgbsonInitFromDocumentBsonValue(variableSpec) : NULL;
 
+		pgbson *querySpecBson = updateOneParams->query != NULL &&
+								updateOneParams->query->value_type == BSON_TYPE_DOCUMENT ?
+								PgbsonInitFromDocumentBsonValue(
+			updateOneParams->query) : NULL;
+
+		/* UpdateOneParams does not support collation yet (update.updates.collation
+		 * raises ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED).
+		 * When collation is added, thread it through here. */
+		const char *collationString = NULL;
+
 		const BsonProjectionQueryState *projectionState =
-			GetProjectionStateForBsonProject(&projectIter,
-											 forceProjectId, allowInclusionExclusion,
-											 variableSpecBson);
+			GetProjectionStateForBsonProjectFind(&projectIter,
+												 forceProjectId,
+												 allowInclusionExclusion,
+												 variableSpecBson,
+												 querySpecBson,
+												 collationString);
 		result->resultDocument = ProjectDocumentWithState(result->resultDocument,
 														  projectionState);
 	}

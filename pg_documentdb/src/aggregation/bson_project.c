@@ -542,6 +542,35 @@ GetProjectionStateForBsonProject(bson_iter_t *projectionSpecIter,
 
 
 /*
+ * Given a projection spec for a find-style operation (find, findAndModify),
+ * builds a BsonProjectionQueryState that supports find projection operators
+ * such as $elemMatch, $slice, and $ (positional).
+ */
+const BsonProjectionQueryState *
+GetProjectionStateForBsonProjectFind(bson_iter_t *projectionSpecIter,
+									 bool forceProjectId,
+									 bool allowInclusionExclusion,
+									 const pgbson *variableSpec,
+									 pgbson *querySpec,
+									 const char *collationString)
+{
+	BsonProjectionQueryState *projectionState = palloc0(sizeof(BsonProjectionQueryState));
+
+	BsonProjectionContext context = {
+		.pathSpecIter = projectionSpecIter,
+		.forceProjectId = forceProjectId,
+		.allowInclusionExclusion = allowInclusionExclusion,
+		.querySpec = querySpec,
+		.variableSpec = variableSpec,
+		.collationString = collationString,
+	};
+
+	BuildBsonPathTreeForDollarProjectFind(projectionState, &context);
+	return projectionState;
+}
+
+
+/*
  * bson_dollar_add_fields performs
  *      (1) a projection of all the fields in a binary serialized bson,
  *      (2) evaluates and add new fields (driven by the addFields specs) to the projection.
