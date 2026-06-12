@@ -418,6 +418,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the $eq function for bson query */
 	Oid BsonEqualMatchRuntimeFunctionId;
 
+	/* OID of the $eq function for object_id queries */
+	Oid BsonEqualMatchObjectIdRuntimeFunctionId;
+
 	/* Oid of the $eq runtime operator #= */
 	Oid BsonEqualMatchRuntimeOperatorId;
 
@@ -426,6 +429,9 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OID of the $gt function for bson query */
 	Oid BsonGreaterThanMatchRuntimeFunctionId;
+
+	/* OID of the $gt function for object_id queries */
+	Oid BsonGreaterThanMatchObjectIdRuntimeFunctionId;
 
 	/* Oid of the $gt runtime operator #> */
 	Oid BsonGreaterThanMatchRuntimeOperatorId;
@@ -436,6 +442,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the $gte function for bson query */
 	Oid BsonGreaterThanEqualMatchRuntimeFunctionId;
 
+	/* OID of the $gte function for object_id queries */
+	Oid BsonGreaterThanEqualMatchObjectIdRuntimeFunctionId;
+
 	/* Oid of the $gte runtime operator #>= */
 	Oid BsonGreaterThanEqualMatchRuntimeOperatorId;
 
@@ -445,6 +454,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the $lt function for bson query */
 	Oid BsonLessThanMatchRuntimeFunctionId;
 
+	/* OID of the $lt function for object_id queries */
+	Oid BsonLessThanMatchObjectIdRuntimeFunctionId;
+
 	/* Oid of the $lt runtime operator #< */
 	Oid BsonLessThanMatchRuntimeOperatorId;
 
@@ -453,6 +465,9 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OID of the $lte function for bson query */
 	Oid BsonLessThanEqualMatchRuntimeFunctionId;
+
+	/* OID of the $lte function for object_id queries */
+	Oid BsonLessThanEqualMatchObjectIdRuntimeFunctionId;
 
 	/* Oid of the $lte runtime operator #<= */
 	Oid BsonLessThanEqualMatchRuntimeOperatorId;
@@ -486,6 +501,9 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OID of the $in function for bson */
 	Oid BsonInMatchFunctionId;
+
+	/* OID of the $in function for object_id queries */
+	Oid BsonInObjectIdMatchFunctionId;
 
 	/* OID of the $nin function for bson */
 	Oid BsonNinMatchFunctionId;
@@ -1823,6 +1841,20 @@ BsonEqualMatchRuntimeFunctionId(void)
 
 
 /*
+ * Returns the OID of ApiCatalogSchemaName.bson_dollar_eq function for object_id query.
+ */
+Oid
+BsonEqualMatchObjectIdRuntimeFunctionId(void)
+{
+	return GetOperatorFunctionIdThreeArgs(&Cache.BsonEqualMatchObjectIdRuntimeFunctionId,
+										  ApiCatalogSchemaName,
+										  "bson_dollar_eq", BsonTypeId(),
+										  BsonTypeId(),
+										  GetClusterBsonQueryTypeId());
+}
+
+
+/*
  * Returns the OID of ApiCatalogSchemaName.bson_dollar_eq Runtime operator #=.
  */
 Oid
@@ -1854,6 +1886,21 @@ BsonGreaterThanMatchRuntimeFunctionId(void)
 	return GetBinaryOperatorFunctionId(&Cache.BsonGreaterThanMatchRuntimeFunctionId,
 									   "bson_dollar_gt", BsonTypeId(),
 									   GetClusterBsonQueryTypeId());
+}
+
+
+/*
+ * Returns the OID of ApiCatalogSchemaName.bson_dollar_gt function for object_id query.
+ */
+Oid
+BsonGreaterThanMatchObjectIdRuntimeFunctionId(void)
+{
+	return GetOperatorFunctionIdThreeArgs(
+		&Cache.BsonGreaterThanMatchObjectIdRuntimeFunctionId,
+		ApiCatalogSchemaName,
+		"bson_dollar_gt", BsonTypeId(),
+		BsonTypeId(),
+		GetClusterBsonQueryTypeId());
 }
 
 
@@ -1893,6 +1940,21 @@ BsonGreaterThanEqualMatchRuntimeFunctionId(void)
 
 
 /*
+ * Returns the OID of ApiCatalogSchemaName.bson_dollar_gte function for object_id query.
+ */
+Oid
+BsonGreaterThanEqualMatchObjectIdRuntimeFunctionId(void)
+{
+	return GetOperatorFunctionIdThreeArgs(
+		&Cache.BsonGreaterThanEqualMatchObjectIdRuntimeFunctionId,
+		ApiCatalogSchemaName,
+		"bson_dollar_gte", BsonTypeId(),
+		BsonTypeId(),
+		GetClusterBsonQueryTypeId());
+}
+
+
+/*
  * Returns the OID of ApiCatalogSchemaName.bson_dollar_gte Runtime operator #>=.
  */
 Oid
@@ -1928,6 +1990,21 @@ BsonLessThanMatchRuntimeFunctionId(void)
 
 
 /*
+ * Returns the OID of ApiCatalogSchemaName.bson_dollar_lt function for object_id query.
+ */
+Oid
+BsonLessThanMatchObjectIdRuntimeFunctionId(void)
+{
+	return GetOperatorFunctionIdThreeArgs(
+		&Cache.BsonLessThanMatchObjectIdRuntimeFunctionId,
+		ApiCatalogSchemaName,
+		"bson_dollar_lt", BsonTypeId(),
+		BsonTypeId(),
+		GetClusterBsonQueryTypeId());
+}
+
+
+/*
  * Returns the OID of ApiCatalogSchemaName.bson_dollar_lt Runtime operator #<.
  */
 Oid
@@ -1959,6 +2036,21 @@ BsonLessThanEqualMatchRuntimeFunctionId(void)
 	return GetBinaryOperatorFunctionId(&Cache.BsonLessThanEqualMatchRuntimeFunctionId,
 									   "bson_dollar_lte", BsonTypeId(),
 									   GetClusterBsonQueryTypeId());
+}
+
+
+/*
+ * Returns the OID of ApiCatalogSchemaName.bson_dollar_lte function for object_id query.
+ */
+Oid
+BsonLessThanEqualMatchObjectIdRuntimeFunctionId(void)
+{
+	return GetOperatorFunctionIdThreeArgs(
+		&Cache.BsonLessThanEqualMatchObjectIdRuntimeFunctionId,
+		ApiCatalogSchemaName,
+		"bson_dollar_lte", BsonTypeId(),
+		BsonTypeId(),
+		GetClusterBsonQueryTypeId());
 }
 
 
@@ -2163,6 +2255,20 @@ BsonInMatchFunctionId(void)
 {
 	return GetBinaryOperatorFunctionId(&Cache.BsonInMatchFunctionId,
 									   "bson_dollar_in", BsonTypeId(), BsonTypeId());
+}
+
+
+/*
+ * Returns the OID of ApiCatalogSchemaName.bson_dollar_in function for object_id queries.
+ */
+Oid
+BsonInObjectIdMatchFunctionId(void)
+{
+	return GetOperatorFunctionIdThreeArgs(&Cache.BsonInObjectIdMatchFunctionId,
+										  ApiCatalogSchemaName,
+										  "bson_dollar_in", BsonTypeId(),
+										  BsonTypeId(),
+										  GetClusterBsonQueryTypeId());
 }
 
 

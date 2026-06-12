@@ -1,7 +1,6 @@
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
-SET citus.next_shard_id TO 198440000;
-SET documentdb.next_collection_id TO 1984400;
-SET documentdb.next_collection_index_id TO 1984400;
+SET documentdb.next_collection_id TO 1984500;
+SET documentdb.next_collection_index_id TO 1984500;
 
 -- Insert test data
 SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('objid_support_db', 'test_support_func', FORMAT('{ "_id": %s, "a": %s }', g, g)::bson) FROM generate_series(1, 100) g) i;
@@ -68,7 +67,6 @@ EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('obj
   WHERE bson_dollar_in(document, object_id, '{ "_id": [10, 20, 30] }');
 
 -- Test 2c: Bitmap scan pushdown to the _id_ btree index.
-SET citus.propagate_set_commands TO 'local';
 BEGIN;
 SET LOCAL enable_indexscan TO off;
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
@@ -84,7 +82,6 @@ EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('obj
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
   WHERE bson_dollar_in(document, object_id, '{ "_id": [10, 20, 30] }');
 COMMIT;
-RESET citus.propagate_set_commands;
 
 -- Test 3: Compound RUM ordered index on (a, _id).
 SELECT documentdb_api_internal.create_indexes_non_concurrently('objid_support_db', '{ "createIndexes": "test_support_func", "indexes": [ { "key": { "a": 1, "_id": 1 }, "name": "idx_a_id", "storageEngine": { "enableOrderedIndex": true } } ]}', true);
@@ -100,7 +97,6 @@ SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support
 -- Test 3b: _id-only predicate must skip the (a, _id) compound index (leading column unspecified) and fall back to _id_ btree.
 BEGIN;
 SET LOCAL enable_seqscan TO off;
-SET LOCAL citus.propagate_set_commands TO 'local';
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
   WHERE bson_dollar_eq(document, object_id, '{ "_id": 15 }');
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
@@ -113,7 +109,6 @@ COMMIT;
 ANALYZE;
 BEGIN;
 SET LOCAL enable_seqscan TO off;
-SET LOCAL citus.propagate_set_commands TO 'local';
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
   WHERE bson_dollar_eq(document, '{ "a": 15 }') AND bson_dollar_eq(document, object_id, '{ "_id": 15 }');
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
@@ -135,7 +130,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_indexscan TO off;
 SET LOCAL enable_indexonlyscan TO off;
-SET LOCAL citus.propagate_set_commands TO 'local';
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
   WHERE bson_dollar_eq(document, '{ "a": 15 }') AND bson_dollar_eq(document, object_id, '{ "_id": 15 }');
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
@@ -156,7 +150,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_indexscan TO off;
 SET LOCAL enable_indexonlyscan TO off;
-SET LOCAL citus.propagate_set_commands TO 'local';
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
   WHERE bson_dollar_eq(document, object_id, '{ "_id": 15 }');
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
@@ -168,7 +161,6 @@ COMMIT;
 -- survives as a per-row Filter (executed against object_id, not document).
 BEGIN;
 SET LOCAL enable_seqscan TO off;
-SET LOCAL citus.propagate_set_commands TO 'local';
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
   WHERE bson_dollar_eq(document, '{ "a": 15 }') AND NOT bson_dollar_eq(document, object_id, '{ "_id": 15 }');
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
@@ -210,7 +202,6 @@ BEGIN;
 SET LOCAL enable_indexscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_indexonlyscan TO off;
-SET LOCAL citus.propagate_set_commands TO 'local';
 
 -- Plan check: Seq Scan with bson_dollar_eq in the Filter.
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document->>'kind' AS kind FROM documentdb_api.collection('objid_support_db', 'test_runtime_eval')
@@ -287,7 +278,6 @@ BEGIN;
 SET LOCAL enable_indexscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_indexonlyscan TO off;
-SET LOCAL citus.propagate_set_commands TO 'local';
 SELECT document->>'kind' AS kind FROM documentdb_api.collection('objid_support_db', 'test_runtime_eval')
   WHERE bson_dollar_regex(document, object_id, '{ "_id": { "$regex": "^hel", "$options": "" } }');
 SELECT document->>'kind' AS kind FROM documentdb_api.collection('objid_support_db', 'test_runtime_eval')

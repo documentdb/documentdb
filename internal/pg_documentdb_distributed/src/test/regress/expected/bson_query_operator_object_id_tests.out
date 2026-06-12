@@ -90,7 +90,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (V
 (9 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('db', 'test_object_id_index') WHERE document @@ '{ "$and": [ {"_id": { "$in": [ 15, 16, 17] }}, { "_id": { "$in": [ 16, 17, 18 ] } } ] }' $cmd$);
-                                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                                               
+                                                                                                                                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                  
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Task Count: 1
@@ -100,9 +100,8 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (V
          Tuple data received from node: 84 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Index Scan using _id_ on documents_2510_251007 collection (actual rows=2 loops=1)
-               Index Cond: ((shard_key_value = '2510'::bigint) AND (object_id OPERATOR(documentdb_core.=) ANY ('{"{ \"\" : { \"$numberInt\" : \"15\" } }","{ \"\" : { \"$numberInt\" : \"16\" } }","{ \"\" : { \"$numberInt\" : \"17\" } }"}'::documentdb_core.bson[])) AND (object_id OPERATOR(documentdb_core.=) ANY ('{"{ \"\" : { \"$numberInt\" : \"16\" } }","{ \"\" : { \"$numberInt\" : \"17\" } }","{ \"\" : { \"$numberInt\" : \"18\" } }"}'::documentdb_core.bson[])))
-               Filter: (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "16" }, { "$numberInt" : "17" }, { "$numberInt" : "18" } ] }'::documentdb_core.bson)
-(10 rows)
+               Index Cond: ((shard_key_value = '2510'::bigint) AND (object_id OPERATOR(documentdb_core.=) ANY ('{"{ \"\" : { \"$numberInt\" : \"15\" } }","{ \"\" : { \"$numberInt\" : \"16\" } }","{ \"\" : { \"$numberInt\" : \"17\" } }"}'::documentdb_core.bson[])) AND (object_id OPERATOR(documentdb_core.=) ANY ('{"{ \"\" : { \"$numberInt\" : \"16\" } }","{ \"\" : { \"$numberInt\" : \"17\" } }","{ \"\" : { \"$numberInt\" : \"18\" } }"}'::documentdb_core.bson[])) AND (object_id OPERATOR(documentdb_core.=) ANY (ARRAY['{ "" : { "$numberInt" : "16" } }'::documentdb_core.bson, '{ "" : { "$numberInt" : "17" } }'::documentdb_core.bson, '{ "" : { "$numberInt" : "18" } }'::documentdb_core.bson])))
+(9 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('db', 'test_object_id_index') WHERE document @@ '{ "$and": [ {"_id": { "$gt": 50 } }, { "_id": { "$lt": 60 } } ] }' $cmd$);
                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                           
@@ -326,7 +325,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (V
 (9 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('objectIdTestDB', 'test_object_id_index') WHERE document @@ '{ "$and": [ {"_id": { "$in": [ 15, 16, 17] }}, { "_id": { "$in": [ 16, 17, 18 ] } } ] }' $cmd$);
-                                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                                               
+                                                                                                                                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                  
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
    Task Count: 1
@@ -336,9 +335,8 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (V
          Tuple data received from node: 84 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Index Scan using _id_ on documents_2512_251026 collection (actual rows=2 loops=1)
-               Index Cond: ((shard_key_value = '2512'::bigint) AND (object_id OPERATOR(documentdb_core.=) ANY ('{"{ \"\" : { \"$numberInt\" : \"15\" } }","{ \"\" : { \"$numberInt\" : \"16\" } }","{ \"\" : { \"$numberInt\" : \"17\" } }"}'::documentdb_core.bson[])) AND (object_id OPERATOR(documentdb_core.=) ANY ('{"{ \"\" : { \"$numberInt\" : \"16\" } }","{ \"\" : { \"$numberInt\" : \"17\" } }","{ \"\" : { \"$numberInt\" : \"18\" } }"}'::documentdb_core.bson[])))
-               Filter: (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "16" }, { "$numberInt" : "17" }, { "$numberInt" : "18" } ] }'::documentdb_core.bson)
-(10 rows)
+               Index Cond: ((shard_key_value = '2512'::bigint) AND (object_id OPERATOR(documentdb_core.=) ANY ('{"{ \"\" : { \"$numberInt\" : \"15\" } }","{ \"\" : { \"$numberInt\" : \"16\" } }","{ \"\" : { \"$numberInt\" : \"17\" } }"}'::documentdb_core.bson[])) AND (object_id OPERATOR(documentdb_core.=) ANY ('{"{ \"\" : { \"$numberInt\" : \"16\" } }","{ \"\" : { \"$numberInt\" : \"17\" } }","{ \"\" : { \"$numberInt\" : \"18\" } }"}'::documentdb_core.bson[])) AND (object_id OPERATOR(documentdb_core.=) ANY (ARRAY['{ "" : { "$numberInt" : "16" } }'::documentdb_core.bson, '{ "" : { "$numberInt" : "17" } }'::documentdb_core.bson, '{ "" : { "$numberInt" : "18" } }'::documentdb_core.bson])))
+(9 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM documentdb_api.collection('objectIdTestDB', 'test_object_id_index') WHERE document @@ '{ "$and": [ {"_id": { "$gt": 50 } }, { "_id": { "$lt": 60 } } ] }' $cmd$);
                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                           
@@ -401,12 +399,12 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (V
 (3 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('objectIdTestDB', '{ "find": "test_object_id_index",  "filter": { "$and": [ { "$or": [ { "_id": { "$in": [15, 16, 17] } } ] } ], "otherField": {"$ne": "bbb"}, "$or": [ { "_id": 15 }, { "_id": 16 } ] }, "limit": 1 }') $cmd$);
-                                                                                                                                                             run_explain_and_trim                                                                                                                                                              
+                                                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                                                       
 ---------------------------------------------------------------------
  Limit (actual rows=1 loops=1)
    ->  Index Scan using _id_ on documents_2512_251026 collection (actual rows=1 loops=1)
-         Index Cond: ((shard_key_value = '2512'::bigint) AND (object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"15\" } }","{ \"\" : { \"$numberInt\" : \"16\" } }","{ \"\" : { \"$numberInt\" : \"17\" } }"}'::bson[])) AND (object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"15\" } }","{ \"\" : { \"$numberInt\" : \"16\" } }"}'::bson[])))
-         Filter: ((document @!= '{ "otherField" : "bbb" }'::bson) AND (document @*= '{ "_id" : [ { "$numberInt" : "15" }, { "$numberInt" : "16" } ] }'::bson))
+         Index Cond: ((shard_key_value = '2512'::bigint) AND (object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"15\" } }","{ \"\" : { \"$numberInt\" : \"16\" } }","{ \"\" : { \"$numberInt\" : \"17\" } }"}'::bson[])) AND (object_id = ANY ('{"{ \"\" : { \"$numberInt\" : \"15\" } }","{ \"\" : { \"$numberInt\" : \"16\" } }"}'::bson[])) AND (object_id = ANY (ARRAY['{ "" : { "$numberInt" : "15" } }'::bson, '{ "" : { "$numberInt" : "16" } }'::bson])))
+         Filter: (document @!= '{ "otherField" : "bbb" }'::bson)
 (4 rows)
 
 -- now shard the collection

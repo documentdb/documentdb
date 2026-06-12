@@ -1308,7 +1308,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
 (12 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2, "$in": [ 1, 2 ] }}' ORDER BY object_id$cmd$ );
-                                                                                                                                                          run_explain_and_trim                                                                                                                                                          
+                                                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -1320,9 +1320,8 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
                indexName: _id_
                ->  Index Scan using _id_ on documents_1200_1200005 collection (actual rows=1 loops=1)
-                     Index Cond: ((shard_key_value = '1200'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) ANY ('{"{ \"\" : { \"$numberInt\" : \"1\" } }","{ \"\" : { \"$numberInt\" : \"2\" } }"}'::documentdb_core.bson[])))
-                     Filter: (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::documentdb_core.bson)
-(12 rows)
+                     Index Cond: ((shard_key_value = '1200'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) ANY ('{"{ \"\" : { \"$numberInt\" : \"1\" } }","{ \"\" : { \"$numberInt\" : \"2\" } }"}'::documentdb_core.bson[])) AND (object_id OPERATOR(documentdb_core.=) ANY (ARRAY['{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson])))
+(11 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$eq" : 2, "$gt": 20, "$lt": 40 }}' ORDER BY object_id$cmd$ );
                                                                                                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                                                                                                
@@ -1341,7 +1340,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
 (11 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$all": [ 2 ], "$in": [ 1, 2 ] } }' ORDER BY object_id$cmd$ );
-                                                                                                                                                          run_explain_and_trim                                                                                                                                                          
+                                                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
    Task Count: 1
@@ -1353,9 +1352,8 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
                indexName: _id_
                ->  Index Scan using _id_ on documents_1200_1200005 collection (actual rows=1 loops=1)
-                     Index Cond: ((shard_key_value = '1200'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) ANY ('{"{ \"\" : { \"$numberInt\" : \"1\" } }","{ \"\" : { \"$numberInt\" : \"2\" } }"}'::documentdb_core.bson[])))
-                     Filter: (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }'::documentdb_core.bson)
-(12 rows)
+                     Index Cond: ((shard_key_value = '1200'::bigint) AND (object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.=) ANY ('{"{ \"\" : { \"$numberInt\" : \"1\" } }","{ \"\" : { \"$numberInt\" : \"2\" } }"}'::documentdb_core.bson[])) AND (object_id OPERATOR(documentdb_core.=) ANY (ARRAY['{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "" : { "$numberInt" : "2" } }'::documentdb_core.bson])))
+(11 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "_id"  : { "$all": [ 2 ], "$ne": 40 }}' ORDER BY object_id$cmd$ );
                                                                            run_explain_and_trim                                                                           

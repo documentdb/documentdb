@@ -355,6 +355,9 @@ static bool CompareBsonAgainstQuery(const pgbson *element,
 									const pgbson *filter,
 									CompareMatchValueFunc compareFunc,
 									IsQueryFilterNullFunc isQueryFilterNull);
+static bool CompareBsonAgainstObjectIdQuery(const pgbson *element,
+											const pgbson *filter,
+											CompareMatchValueFunc compareFunc);
 static bool IsExistPositiveMatch(pgbson *filter);
 static pgbsonelement PopulateRegexState(PG_FUNCTION_ARGS,
 										TraverseRegexValidateState *state,
@@ -1112,11 +1115,10 @@ bson_dollar_eq(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_eq_object_id(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	/* Use the object_id instead to avoid detoasting the entire document. */
+	pgbson *document = PG_GETARG_PGBSON(1);
 	pgbson *filter = PG_GETARG_PGBSON(2);
-	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForValue;
-	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareEqualMatch,
-										   isNullFilterEquality));
+	PG_RETURN_BOOL(CompareBsonAgainstObjectIdQuery(document, filter, CompareEqualMatch));
 }
 
 
@@ -1169,12 +1171,12 @@ bson_dollar_gt(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_gt_object_id(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	/* Use the object_id instead to avoid detoasting the entire document. */
+	pgbson *document = PG_GETARG_PGBSON(1);
 	pgbson *filter = PG_GETARG_PGBSON(2);
 
-	IsQueryFilterNullFunc isNullFilterEquality = NULL;
-	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareGreaterMatch,
-										   isNullFilterEquality));
+	PG_RETURN_BOOL(CompareBsonAgainstObjectIdQuery(document, filter,
+												   CompareGreaterMatch));
 }
 
 
@@ -1241,11 +1243,11 @@ bson_dollar_gte(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_gte_object_id(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	/* Use the object_id instead to avoid detoasting the entire document. */
+	pgbson *document = PG_GETARG_PGBSON(1);
 	pgbson *filter = PG_GETARG_PGBSON(2);
-	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForValue;
-	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareGreaterEqualMatch,
-										   isNullFilterEquality));
+	PG_RETURN_BOOL(CompareBsonAgainstObjectIdQuery(document, filter,
+												   CompareGreaterEqualMatch));
 }
 
 
@@ -1449,12 +1451,11 @@ bson_dollar_lt(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_lt_object_id(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	/* Use the object_id instead to avoid detoasting the entire document. */
+	pgbson *document = PG_GETARG_PGBSON(1);
 	pgbson *filter = PG_GETARG_PGBSON(2);
 
-	IsQueryFilterNullFunc isNullFilterEquality = NULL;
-	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareLessMatch,
-										   isNullFilterEquality));
+	PG_RETURN_BOOL(CompareBsonAgainstObjectIdQuery(document, filter, CompareLessMatch));
 }
 
 
@@ -1504,12 +1505,12 @@ bson_dollar_lte(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_lte_object_id(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	/* Use the object_id instead to avoid detoasting the entire document. */
+	pgbson *document = PG_GETARG_PGBSON(1);
 	pgbson *filter = PG_GETARG_PGBSON(2);
 
-	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForValue;
-	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareLessEqualMatch,
-										   isNullFilterEquality));
+	PG_RETURN_BOOL(CompareBsonAgainstObjectIdQuery(document, filter,
+												   CompareLessEqualMatch));
 }
 
 
@@ -3002,6 +3003,31 @@ CompareBsonValueAgainstQueryCore(const pgbsonelement *element,
 }
 
 
+static bool
+CompareBsonAgainstObjectIdQuery(const pgbson *element,
+								const pgbson *filter,
+								CompareMatchValueFunc compareFunc)
+{
+	pgbsonelement objectIdElement;
+	PgbsonToSinglePgbsonElement(element, &objectIdElement);
+
+	pgbsonelement filterElement;
+	TraverseElementValidateState state = { 0 };
+	state.collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
+																	 &filterElement);
+
+	if (filterElement.pathLength != 3 || strncmp(filterElement.path, "_id", 3) != 0)
+	{
+		ereport(ERROR, (errmsg(
+							"Invalid filter path for ObjectId comparison, should be _id")));
+	}
+
+	bool isInnerArrayTerm = false;
+	state.filter = &filterElement;
+	return compareFunc(&objectIdElement, &state.traverseState, isInnerArrayTerm);
+}
+
+
 /*
  * Helper function that abstracts setting up common state
  * and traversing a bson document to the appropriate value,
@@ -3895,17 +3921,30 @@ PopulateExprStateFromQuery(BsonDollarExprQueryState *state,
 static Datum
 BsonDollarInCore(PG_FUNCTION_ARGS, bool hasObjectIdArg)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
 	bson_iter_t documentIterator;
 	TraverseInValidateState state = { 0 };
 
 	pgbsonelement filterElement = { 0 };
 	PopulateDollarInValidationState(fcinfo, &state, &filterElement, hasObjectIdArg);
 
-	PgbsonInitIterator(document, &documentIterator);
+	if (hasObjectIdArg)
+	{
+		pgbson *objectId = PG_GETARG_PGBSON(1);
+		pgbsonelement objectIdElement = { 0 };
+		PgbsonToSinglePgbsonElement(objectId, &objectIdElement);
 
+		bool isFirstArrayElem = false;
+		bool result = state.traverseState.matchFunc(&objectIdElement,
+													&state.traverseState,
+													isFirstArrayElem);
+		PG_RETURN_BOOL(result);
+	}
+
+	pgbson *document = PG_GETARG_PGBSON(0);
+	PgbsonInitIterator(document, &documentIterator);
 	TraverseBson(&documentIterator, filterElement.path, &state.traverseState,
 				 &CompareExecutionFuncs);
+
 	if (state.hasNull)
 	{
 		/* If any element in the input is null and the target path cannot be found in the document, we'll choose that document. */
@@ -3964,6 +4003,14 @@ PopulateDollarInValidationState(PG_FUNCTION_ARGS,
 		/* Need to repopulate it for the query: Existing state is unsafe */
 		PopulateDollarInStateFromQuery(&localState, filter);
 		dollarInState = &localState;
+	}
+
+	if (isObjectIdOverload &&
+		(dollarInState->filterElement.pathLength != 3 ||
+		 strcmp(dollarInState->filterElement.path, "_id") != 0))
+	{
+		ereport(ERROR, (errmsg(
+							"Invalid filter path for ObjectId comparison, should be _id")));
 	}
 
 	*filterElement = dollarInState->filterElement;

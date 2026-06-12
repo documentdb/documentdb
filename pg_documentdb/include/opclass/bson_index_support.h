@@ -129,6 +129,8 @@ OpExpr * GetOpExprClauseFromIndexOperator(const
 bool IsCollationPresentOnQueryOrIndex(const char *queryCollation, bytea *indexOptions);
 
 void ConsiderBtreeOrderByPushdown(PlannerInfo *root, IndexPath *indexPath);
+bool GetBtreeIndexBoundQuals(BsonIndexStrategy strategy, const bson_value_t *queryValue,
+							 Index varno, Expr **firstBound, Expr **secondBound);
 void documentdb_btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 							   Cost *indexStartupCost, Cost *indexTotalCost,
 							   Selectivity *indexSelectivity, double *indexCorrelation,
