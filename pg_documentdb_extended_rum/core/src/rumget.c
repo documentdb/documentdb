@@ -4102,6 +4102,10 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 			so->killedItemsSkipped++;
 			continue;
 		}
+		else if (RumIndexEntryIsDead(itemId))
+		{
+			so->eligibleDeadItems++;
+		}
 
 		/* Check if the current tuple matches */
 		idatum = rumtuple_get_key(&so->rumstate, itup, &icategory);
@@ -4669,20 +4673,27 @@ RumGetTupleDoSimpleScan(IndexScanDesc scan, RumScanOpaque so)
 {
 	bool recheck = false;
 	bool recheckOrderby = false;
-	if (scan->kill_prior_tuple && RumEnableSupportDeadIndexItems)
+	if (scan->kill_prior_tuple)
 	{
-		/* Remember it for later. (We'll deal with all such
-		 * tuples at once right before leaving the index page.)
-		 */
-		if (so->killedItems == NULL)
+		if (RumEnableSupportDeadIndexItems)
 		{
-			so->killedItems = (ItemPointerData *) palloc(MaxTIDsPerRumPage *
-														 sizeof(ItemPointerData));
-		}
+			/* Remember it for later. (We'll deal with all such
+			 * tuples at once right before leaving the index page.)
+			 */
+			if (so->killedItems == NULL)
+			{
+				so->killedItems = (ItemPointerData *) palloc(MaxTIDsPerRumPage *
+															 sizeof(ItemPointerData));
+			}
 
-		if (so->numKilled < MaxTIDsPerRumPage)
+			if (so->numKilled < MaxTIDsPerRumPage)
+			{
+				so->killedItems[so->numKilled++] = so->item.iptr;
+			}
+		}
+		else
 		{
-			so->killedItems[so->numKilled++] = so->item.iptr;
+			so->eligibleDeadItems++;
 		}
 	}
 

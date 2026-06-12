@@ -96,6 +96,7 @@ rumbeginscan(Relation rel, int nkeys, int norderbys)
 	so->killedItems = NULL;
 	so->numKilled = 0;
 	so->killedItemsSkipped = 0;
+	so->eligibleDeadItems = 0;
 	so->orderByKeyIndex = -1;
 	so->scanNumberOfKeys = nkeys;
 	so->orderScanDirection = ForwardScanDirection;
@@ -1558,6 +1559,12 @@ RMGR_PG_FUNCTION_DEF(try_explain_documentdb_rum_index)
 	{
 		funcs->writeInteger("deadEntriesOrPagesSkipped", "items",
 							so->killedItemsSkipped, state);
+	}
+
+	if (so->eligibleDeadItems > 0)
+	{
+		funcs->writeInteger("eligibleDeadItems", "items",
+							so->eligibleDeadItems, state);
 	}
 
 	if (scan->parallel_scan != NULL)

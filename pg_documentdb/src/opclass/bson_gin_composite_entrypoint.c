@@ -3694,6 +3694,12 @@ SerializeOneBound(StringInfo s, const char *indexPath,
 	{
 		appendStringInfoString(s, "MinKey");
 	}
+	else if (bound->lowerBound.indexTermValue.element.bsonValue.value_type !=
+			 BSON_TYPE_EOD)
+	{
+		appendStringInfo(s, "%s", BsonValueToJsonForLogging(
+							 &bound->lowerBound.indexTermValue.element.bsonValue));
+	}
 	else
 	{
 		appendStringInfo(s, "%s", BsonValueToJsonForLogging(
@@ -3713,6 +3719,12 @@ SerializeOneBound(StringInfo s, const char *indexPath,
 		bound->upperBound.bound.value_type == BSON_TYPE_MAXKEY)
 	{
 		appendStringInfoString(s, "MaxKey");
+	}
+	else if (bound->upperBound.indexTermValue.element.bsonValue.value_type !=
+			 BSON_TYPE_EOD)
+	{
+		appendStringInfo(s, "%s", BsonValueToJsonForLogging(
+							 &bound->upperBound.indexTermValue.element.bsonValue));
 	}
 	else
 	{

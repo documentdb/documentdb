@@ -21,6 +21,17 @@ static BSON_SUM_OF_ONE_OUTPUT_REGEX: std::sync::LazyLock<Regex> = std::sync::Laz
     Regex::new("^bsonsum\\(bson_expression_get\\(.+, 'BSONHEX13000000012473756d00000000000000f03f00'::bson, true\\)\\)?$").expect("Static input")
 });
 
+/// Matches a `$lookup` function wrapper around a BSON literal and tags the
+/// operator so it maps to `$lookup_in`. Non-lookup wrappers are left untouched
+/// and will naturally produce `$unknown`.
+static LOOKUP_FUNCTION_BSON_REGEX: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    #[expect(clippy::expect_used, reason = "static regex pattern")]
+    Regex::new(
+        r"(OPERATOR\(\S*@\*=)(\)\s+)\S*bson_dollar_lookup\S*\([^')]*('BSONHEX[^']+'::\S+\.?bson)\)",
+    )
+    .expect("Static input")
+});
+
 #[expect(clippy::expect_used, reason = "static regex pattern")]
 pub fn get_projection_type_output(
     output: &str,
@@ -92,7 +103,7 @@ pub fn is_output_count(output: &str, query_catalog: &QueryCatalog) -> bool {
 fn get_expressions(
     captures: CaptureMatches,
     query_catalog: &QueryCatalog,
-) -> Vec<(&'static str, RawDocumentBuf)> {
+) -> Vec<(&'static str, Option<String>, RawDocumentBuf)> {
     let mut expressions = vec![];
     for captures in captures {
         if let Some(capture) = captures.name("expr") {
@@ -100,27 +111,40 @@ fn get_expressions(
                 .expect("static input")
                 .captures(capture.as_str())
             {
+                let field = index_condition.name("field").map_or("", |m| m.as_str());
                 let operator =
                     get_operator(index_condition.name("operator").map_or("", |m| m.as_str()));
                 let query_bson = index_condition.name("queryBson").map_or("", |m| m.as_str());
                 let query = hex::decode(query_bson).unwrap_or(vec![]);
                 let query_bson = RawDocumentBuf::from_bytes(query).unwrap_or_default();
-                expressions.push((operator, query_bson));
+
+                if field.contains("object_id") {
+                    expressions.push((operator, Some("_id".to_owned()), query_bson));
+                } else {
+                    expressions.push((operator, None, query_bson));
+                }
             }
         }
     }
     expressions
 }
 
+/// Tags `$lookup` function wrappers so the operator maps to `$lookup_in`.
+/// Non-lookup function wrappers are left untouched and produce `$unknown`.
+fn preprocess_conditions(input: &str) -> std::borrow::Cow<'_, str> {
+    LOOKUP_FUNCTION_BSON_REGEX.replace_all(input, "${1}_lookup${2}${3}")
+}
+
 #[expect(clippy::expect_used, reason = "static regex pattern")]
 pub fn get_runtime_conditions(
     input: &str,
     query_catalog: &QueryCatalog,
-) -> Vec<(&'static str, RawDocumentBuf)> {
+) -> Vec<(&'static str, Option<String>, RawDocumentBuf)> {
+    let processed = preprocess_conditions(input);
     get_expressions(
         Regex::new(query_catalog.runtime_condition_split_regex())
             .expect("static input")
-            .captures_iter(input),
+            .captures_iter(&processed),
         query_catalog,
     )
 }
@@ -129,18 +153,19 @@ pub fn get_runtime_conditions(
 pub fn get_index_conditions(
     input: &str,
     query_catalog: &QueryCatalog,
-) -> Vec<(&'static str, RawDocumentBuf)> {
+) -> Vec<(&'static str, Option<String>, RawDocumentBuf)> {
+    let processed = preprocess_conditions(input);
     get_expressions(
         Regex::new(query_catalog.index_condition_split_regex())
             .expect("static input")
-            .captures_iter(input),
+            .captures_iter(&processed),
         query_catalog,
     )
 }
 
 #[expect(clippy::expect_used, reason = "static regex pattern")]
 pub fn get_sort_conditions(input: &str, query_catalog: &QueryCatalog) -> Option<RawDocumentBuf> {
-    Regex::new(query_catalog.single_index_condition_regex())
+    Regex::new(query_catalog.sort_condition_split_regex())
         .expect("static input")
         .captures(input)
         .and_then(|capture| capture.get(3))
@@ -153,15 +178,16 @@ pub fn get_sort_conditions(input: &str, query_catalog: &QueryCatalog) -> Option<
 
 fn get_operator(input: &str) -> &'static str {
     match input {
-        "@=" => "$eq",
-        "@>" => "$gt",
-        "@>=" => "$gte",
-        "@<" => "$lt",
-        "@<=" => "$lte",
+        "@=" | "=" | "#=" => "$eq",
+        "@>" | ">" | "#>" => "$gt",
+        "@>=" | ">=" | "#>=" => "$gte",
+        "@<" | "<" | "#<" => "$lt",
+        "@<=" | "<=" | "#<=" => "$lte",
         "@*=" => "$in",
+        "@*=_lookup" => "$lookup_in",
         "@!=" => "$ne",
         "@!*=" => "$nin",
-        "@~" => "$regex",
+        "@~" => "$regExp",
         "@?" => "$exists",
         "@@#" => "$size",
         "@#" => "$type",

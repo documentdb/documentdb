@@ -977,6 +977,7 @@ typedef struct RumScanOpaqueData
 	int numKilled;
 	bool ignoreKilledTuples;
 	uint32_t killedItemsSkipped;
+	uint32_t eligibleDeadItems;
 
 	/* stateContext to hold state from rumstate (documentdb: This is new ) */
 	MemoryContext rumStateCtx;

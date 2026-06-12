@@ -1347,10 +1347,6 @@ fn get_total_examined(plan: &ExplainPlan) -> (i64, i64) {
     clippy::too_many_lines,
     reason = "query planner output construction requires many conditional fields"
 )]
-#[expect(
-    clippy::unwrap_used,
-    reason = "values are checked for Some before unwrapping"
-)]
 #[expect(clippy::expect_used, reason = "values are checked before access")]
 fn query_planner(
     plan: ExplainPlan,
@@ -1397,60 +1393,25 @@ fn query_planner(
                     doc.append("isIndexOnlyScan", true);
                 }
 
-                if plan.index_details.is_some() {
-                    let mut arr = RawArrayBuf::new();
-                    for detail in plan.index_details.as_ref().unwrap() {
-                        if detail.index_name.as_deref() != plan.index_name.as_deref() {
-                            continue;
-                        }
+                if let Some(details) = plan.index_details.as_ref() {
+                    let matching: Vec<&IndexDetails> = details
+                        .iter()
+                        .filter(|d| d.index_name.as_deref() == plan.index_name.as_deref())
+                        .collect();
 
+                    if matching.len() == 1 {
                         let mut index_doc = rawdoc! {};
-                        if let Some(index_name) = detail.index_name.as_deref() {
-                            index_doc.append("indexName", index_name);
+                        write_query_planner_index_usage(matching[0], &mut index_doc);
+                        doc.append("indexUsage", index_doc);
+                    } else if matching.len() > 1 {
+                        let mut arr = RawArrayBuf::new();
+                        for detail in &matching {
+                            let mut index_doc = rawdoc! {};
+                            write_query_planner_index_usage(detail, &mut index_doc);
+                            arr.push(index_doc);
                         }
-
-                        if let Some(multi_key_val) = detail.is_multi_key {
-                            index_doc.append("isMultiKey", multi_key_val);
-                        }
-
-                        if let Some(has_truncation_val) = detail.has_truncation {
-                            index_doc.append("hasTruncation", has_truncation_val);
-                        }
-
-                        if let Some(index_bounds) = detail.index_bounds.as_ref() {
-                            if !index_bounds.is_empty() {
-                                let mut bounds_arr = RawArrayBuf::new();
-                                for key in index_bounds {
-                                    bounds_arr.push(key.as_str());
-                                }
-                                index_doc.append("bounds", bounds_arr);
-                            }
-                        }
-
-                        if let Some(start_bounds) = detail.start_bounds.as_ref() {
-                            if !start_bounds.is_empty() {
-                                let mut bounds_arr = RawArrayBuf::new();
-                                for key in start_bounds {
-                                    bounds_arr.push(key.as_str());
-                                }
-                                index_doc.append("startBounds", bounds_arr);
-                            }
-                        }
-
-                        if let Some(raw_bounds) = detail.raw_bounds.as_ref() {
-                            if !raw_bounds.is_empty() {
-                                let mut bounds_arr = RawArrayBuf::new();
-                                for key in raw_bounds {
-                                    bounds_arr.push(key.as_str());
-                                }
-                                index_doc.append("rawBounds", bounds_arr);
-                            }
-                        }
-
-                        arr.push(index_doc);
+                        doc.append("indexUsages", arr);
                     }
-
-                    doc.append("indexUsage", arr);
                 }
             }
 
@@ -1466,6 +1427,24 @@ fn query_planner(
 
             if let Some(total_cost) = plan.total_cost {
                 doc.append("totalCost", total_cost);
+            }
+
+            if let Some(workers_planned) = plan.workers_planned {
+                if workers_planned > 0 {
+                    doc.append("workersPlanned", smallest_from_i64(workers_planned));
+                }
+            }
+
+            if let Some(strategy) = plan.strategy.as_deref() {
+                if !strategy.eq_ignore_ascii_case("Plain") {
+                    doc.append("aggStrategy", strategy);
+                }
+            }
+
+            if let Some(join_type) = plan.join_type.as_deref() {
+                if plan.node_type == "Nested Loop" {
+                    doc.append("joinType", join_type);
+                }
             }
 
             if let Some(vector_search_params) = plan.vector_search_custom_params.as_deref() {
@@ -1582,13 +1561,135 @@ fn query_planner(
     writer
 }
 
-fn limited_array_from_contents(contents: Vec<(&'static str, RawDocumentBuf)>) -> RawArrayBuf {
+/// Writes the index usage fields for a single `IndexDetails` entry in the
+/// query planner stage output (bounds, truncation, multi-key).
+fn write_query_planner_index_usage(detail: &IndexDetails, index_doc: &mut RawDocumentBuf) {
+    if let Some(index_key) = detail.index_key.as_deref() {
+        index_doc.append("indexKeyString", index_key);
+    }
+
+    if let Some(multi_key_val) = detail.is_multi_key {
+        index_doc.append("isMultiKey", multi_key_val);
+    }
+
+    if let Some(has_truncation_val) = detail.has_truncation {
+        index_doc.append("hasTruncation", has_truncation_val);
+    }
+
+    if let Some(index_bounds) = detail.index_bounds.as_ref() {
+        if !index_bounds.is_empty() {
+            index_doc.append("bounds", truncated_string_array(index_bounds));
+        }
+    }
+
+    if let Some(start_bounds) = detail.start_bounds.as_ref() {
+        if !start_bounds.is_empty() {
+            index_doc.append("startBounds", truncated_string_array(start_bounds));
+        }
+    }
+
+    if let Some(raw_bounds) = detail.raw_bounds.as_ref() {
+        if !raw_bounds.is_empty() {
+            index_doc.append("rawBounds", truncated_string_array(raw_bounds));
+        }
+    }
+}
+
+/// Writes the index usage fields for a single `IndexDetails` entry in the
+/// execution stats stage output (scan loops, scan type, duplicates, etc.).
+fn write_execution_stats_index_usage(detail: &IndexDetails, index_doc: &mut RawDocumentBuf) {
+    if let Some(inner_scan_loops) = detail.inner_scan_loops {
+        if inner_scan_loops > 0 {
+            index_doc.append("scanLoops", smallest_from_i64(inner_scan_loops));
+        }
+    }
+
+    if let Some(scan_type) = detail.scan_type.as_deref() {
+        if !scan_type.is_empty() {
+            index_doc.append("scanType", scan_type);
+        }
+    }
+
+    if let Some(num_duplicates) = detail.num_duplicates {
+        if num_duplicates > 0 {
+            index_doc.append("numDuplicates", smallest_from_i64(num_duplicates));
+        }
+    }
+
+    if let Some(num_dead_entries_or_pages_skipped) = detail.dead_entries_or_pages_skipped {
+        index_doc.append(
+            "deadEntriesOrPagesSkipped",
+            smallest_from_i64(num_dead_entries_or_pages_skipped),
+        );
+    }
+
+    if let Some(num_eligible_dead_items) = detail.eligible_dead_items {
+        index_doc.append(
+            "eligibleDeadItems",
+            smallest_from_i64(num_eligible_dead_items),
+        );
+    }
+
+    if let Some(parallel_scan_capable) = detail.parallel_scan_capable {
+        index_doc.append("parallelScanCapable", parallel_scan_capable);
+    }
+
+    if let Some(is_backward_scan) = detail.is_backward_scan {
+        index_doc.append("isBackwardScan", is_backward_scan);
+    }
+
+    if let Some(has_correlated_terms) = detail.has_correlated_terms {
+        index_doc.append("hasCorrelatedTerms", has_correlated_terms);
+    }
+
+    if let Some(scan_key_details) = detail.scan_key_details.as_ref() {
+        if !scan_key_details.is_empty() {
+            let mut scan_key_arr = RawArrayBuf::new();
+            for key in scan_key_details {
+                scan_key_arr.push(key.as_str());
+            }
+            index_doc.append("scanKeys", scan_key_arr);
+        }
+    }
+}
+
+/// Builds a `RawArrayBuf` from string values, truncating individual entries
+/// and stopping early when the accumulated length exceeds
+/// `MAX_EXPLAIN_BSON_COMMAND_LENGTH`. This prevents extremely large index
+/// bounds from producing oversized explain responses.
+fn truncated_string_array(values: &[String]) -> RawArrayBuf {
+    let mut arr = RawArrayBuf::new();
+    let mut accumulated_length: usize = 0;
+    for value in values {
+        if accumulated_length >= MAX_EXPLAIN_BSON_COMMAND_LENGTH {
+            arr.push("...");
+            break;
+        }
+
+        let remaining = MAX_EXPLAIN_BSON_COMMAND_LENGTH - accumulated_length;
+        if value.len() > remaining {
+            let truncate_at = value.floor_char_boundary(remaining);
+            arr.push(&value[..truncate_at]);
+            break;
+        }
+
+        arr.push(value.as_str());
+        accumulated_length += value.len();
+    }
+    arr
+}
+
+fn limited_array_from_contents(
+    contents: Vec<(&'static str, Option<String>, RawDocumentBuf)>,
+) -> RawArrayBuf {
     let mut accumulated_length = 0;
     let mut arr = RawArrayBuf::new();
-    for (expr, value) in contents {
+    for (expr, field, value) in contents {
+        let mut field_override = None;
+        let value_len = value.as_bytes().len();
         let expr_value = if accumulated_length > MAX_EXPLAIN_BSON_COMMAND_LENGTH {
             RawBson::from("...")
-        } else if value.as_bytes().len() > MAX_EXPLAIN_BSON_COMMAND_LENGTH {
+        } else if value_len > MAX_EXPLAIN_BSON_COMMAND_LENGTH {
             accumulated_length += MAX_EXPLAIN_BSON_COMMAND_LENGTH;
             RawBson::from(format!(
                 "{}...",
@@ -1596,14 +1697,41 @@ fn limited_array_from_contents(contents: Vec<(&'static str, RawDocumentBuf)>) ->
                     [0..MAX_EXPLAIN_BSON_COMMAND_LENGTH]
             ))
         } else {
-            accumulated_length += value.as_bytes().len();
-            RawBson::from(value)
+            accumulated_length += value_len;
+            let mut value_iter = value.as_ref().iter();
+            if let Some(Ok(element_ref)) = value_iter.next() {
+                if value_iter.next().is_none() {
+                    field_override = if element_ref.0.is_empty() {
+                        None
+                    } else {
+                        Some(element_ref.0.to_owned())
+                    };
+                    element_ref.1.to_raw_bson()
+                } else {
+                    RawBson::from(value)
+                }
+            } else {
+                RawBson::from(value)
+            }
         };
 
-        let doc = rawdoc! {
+        let inner_doc = rawdoc! {
             expr: expr_value
         };
-        arr.push(doc);
+
+        if let Some(field) = field {
+            let doc = rawdoc! {
+                field: inner_doc
+            };
+            arr.push(doc);
+        } else if let Some(local_field) = field_override {
+            let doc = rawdoc! {
+                local_field: inner_doc
+            };
+            arr.push(doc);
+        } else {
+            arr.push(inner_doc);
+        }
     }
     arr
 }
@@ -1611,10 +1739,6 @@ fn limited_array_from_contents(contents: Vec<(&'static str, RawDocumentBuf)>) ->
 #[expect(
     clippy::too_many_lines,
     reason = "execution stats output requires many conditional fields"
-)]
-#[expect(
-    clippy::unwrap_used,
-    reason = "values are checked for Some before unwrapping"
 )]
 fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocumentBuf {
     let plan = skip_stage(plan, query_catalog);
@@ -1657,70 +1781,25 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
                 doc.append("totalDocsAnalyzed", smallest_from_i64(heap_fetches));
             }
 
-            if plan.index_details.is_some() {
-                let mut arr = RawArrayBuf::new();
-                for detail in plan.index_details.as_ref().unwrap() {
-                    if detail.index_name.as_deref() != plan.index_name.as_deref() {
-                        continue;
-                    }
+            if let Some(details) = plan.index_details.as_ref() {
+                let matching: Vec<&IndexDetails> = details
+                    .iter()
+                    .filter(|d| d.index_name.as_deref() == plan.index_name.as_deref())
+                    .collect();
+
+                if matching.len() == 1 {
                     let mut index_doc = rawdoc! {};
-                    if let Some(index_key) = detail.index_key.as_deref() {
-                        index_doc.append("indexKeyString", index_key);
+                    write_execution_stats_index_usage(matching[0], &mut index_doc);
+                    doc.append("indexUsage", index_doc);
+                } else if matching.len() > 1 {
+                    let mut arr = RawArrayBuf::new();
+                    for detail in &matching {
+                        let mut index_doc = rawdoc! {};
+                        write_execution_stats_index_usage(detail, &mut index_doc);
+                        arr.push(index_doc);
                     }
-
-                    if let Some(inner_scan_loops) = detail.inner_scan_loops {
-                        if inner_scan_loops > 0 {
-                            index_doc.append("scanLoops", smallest_from_i64(inner_scan_loops));
-                        }
-                    }
-
-                    if let Some(scan_type) = detail.scan_type.as_deref() {
-                        if !scan_type.is_empty() {
-                            index_doc.append("scanType", scan_type);
-                        }
-                    }
-
-                    if let Some(num_duplicates) = detail.num_duplicates {
-                        if num_duplicates > 0 {
-                            index_doc.append("numDuplicates", smallest_from_i64(num_duplicates));
-                        }
-                    }
-
-                    if let Some(num_dead_entries_or_pages_skipped) =
-                        detail.dead_entries_or_pages_skipped
-                    {
-                        index_doc.append(
-                            "deadEntriesOrPagesSkipped",
-                            smallest_from_i64(num_dead_entries_or_pages_skipped),
-                        );
-                    }
-
-                    if let Some(parallel_scan_capable) = detail.parallel_scan_capable {
-                        index_doc.append("parallelScanCapable", parallel_scan_capable);
-                    }
-
-                    if let Some(is_backward_scan) = detail.is_backward_scan {
-                        index_doc.append("isBackwardScan", is_backward_scan);
-                    }
-
-                    if let Some(has_correlated_terms) = detail.has_correlated_terms {
-                        index_doc.append("hasCorrelatedTerms", has_correlated_terms);
-                    }
-
-                    if let Some(scan_key_details) = detail.scan_key_details.as_ref() {
-                        if !scan_key_details.is_empty() {
-                            let mut scan_key_arr = RawArrayBuf::new();
-                            for key in scan_key_details {
-                                scan_key_arr.push(key.as_str());
-                            }
-                            index_doc.append("scanKeys", scan_key_arr);
-                        }
-                    }
-
-                    arr.push(index_doc);
+                    doc.append("indexUsages", arr);
                 }
-
-                doc.append("indexUsage", arr);
             }
         }
 

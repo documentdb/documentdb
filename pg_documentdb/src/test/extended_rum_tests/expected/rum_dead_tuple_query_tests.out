@@ -172,11 +172,12 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
    isMultiKey: false
    indexBounds: ["a": [MinKey, MaxKey]]
    innerScanLoops: 1000 loops
+   eligibleDeadItems: 1982 items
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1000)]
    ->  Index Scan using a_1 on documents_601 collection (actual rows=9 loops=1)
          Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(11 rows)
+(12 rows)
 
 -- now insert a document - should resurrect the tuple.
 -- first read the tuples & metadata.
@@ -403,11 +404,12 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
    indexBounds: ["a": [MinKey, MaxKey]]
    numDuplicates: 20000 entries
    innerScanLoops: 20000 loops
+   eligibleDeadItems: 24363 items
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 30000)]
    ->  Index Scan using a_1 on documents_601 collection (actual rows=9 loops=1)
          Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(12 rows)
+(13 rows)
 
 -- now resurrect multiple terms (should resurrect even when flag is off)
 set documentdb_rum.enable_support_dead_index_items to off;
@@ -584,11 +586,12 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
    isMultiKey: false
    indexBounds: ["a": [MinKey, MaxKey]]
    innerScanLoops: 1 loops
+   eligibleDeadItems: 9991 items
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 9198)]
    ->  Index Scan using a_1 on documents_601 collection (actual rows=9 loops=1)
          Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(11 rows)
+(12 rows)
 
 -- now set the GUC and query twice
 set documentdb_rum.enable_support_dead_index_items to on;

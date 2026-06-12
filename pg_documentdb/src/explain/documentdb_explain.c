@@ -490,6 +490,11 @@ WriterSingleQual(pgbson_writer *writer, Expr *qual)
 	}
 
 	const char *operatorName = operator->mongoOperatorName;
+	if (operator->operatorType == QUERY_OPERATOR_REGEX)
+	{
+		operatorName = "$regExp";
+	}
+
 	Expr *secondArg = lsecond(args);
 	if (!IsA(secondArg, Const))
 	{
