@@ -182,7 +182,6 @@ const StringView PrimaryKeyShardKey =
 
 extern bool EnablePrimaryKeyCursorScan;
 extern bool EnableContinuationFastBitmapLookup;
-extern bool EnableCursorPlanBeforeRestrictionPathUpdate;
 
 #define InputContinuationNodeName "ExtensionScanInputContinuation"
 
@@ -875,7 +874,6 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 	/* first look for a continuation function in the base quals */
 	pgbson *continuation = NULL;
 	bool hasContinuation = false;
-	RestrictInfo *unshardedShardKeyRestrictInfo = NULL;
 	bool hasShardKeyEqualityFilter = false;
 	ListCell *cell;
 
@@ -893,7 +891,6 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 														context->inputData.collectionId))
 			{
 				hasShardKeyEqualityFilter = true;
-				unshardedShardKeyRestrictInfo = rinfo;
 			}
 			else if (IsOpExprShardKeyEquality(rinfo->clause, &shardKeyValueIgnore))
 			{
@@ -1033,38 +1030,36 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 
 		IndexPath *inputPath = NULL;
 		bool rowCompareInclusive = false;
-		if (EnableCursorPlanBeforeRestrictionPathUpdate)
+
+		/*
+		 * Check if there's already a PK btree IndexPath in rel->pathlist.
+		 * If so, reuse it and add the RowCompareExpr continuation clause,
+		 * preserving any existing index conditions on the path.
+		 * Otherwise, build a fresh PK path from scratch.
+		 */
+		IndexPath *existingPkPath = NULL;
+		foreach(cell, rel->pathlist)
 		{
-			/*
-			 * Check if there's already a PK btree IndexPath in rel->pathlist.
-			 * If so, reuse it and add the RowCompareExpr continuation clause,
-			 * preserving any existing index conditions on the path.
-			 * Otherwise, build a fresh PK path from scratch.
-			 */
-			IndexPath *existingPkPath = NULL;
-			foreach(cell, rel->pathlist)
+			Path *currentPath = lfirst(cell);
+			if (currentPath->pathtype == T_IndexScan)
 			{
-				Path *currentPath = lfirst(cell);
-				if (currentPath->pathtype == T_IndexScan)
+				IndexPath *indexPath = (IndexPath *) currentPath;
+				if (IsBtreePrimaryKeyIndex(indexPath->indexinfo))
 				{
-					IndexPath *indexPath = (IndexPath *) currentPath;
-					if (IsBtreePrimaryKeyIndex(indexPath->indexinfo))
-					{
-						existingPkPath = indexPath;
-						break;
-					}
+					existingPkPath = indexPath;
+					break;
 				}
 			}
+		}
 
 
-			if (existingPkPath != NULL)
-			{
-				inputPath = AddRowCompareToExistingPrimaryKeyPath(root, rel,
-																  existingPkPath,
-																  scanState.
-																  primaryKeyDatums,
-																  rowCompareInclusive);
-			}
+		if (existingPkPath != NULL)
+		{
+			inputPath = AddRowCompareToExistingPrimaryKeyPath(root, rel,
+															  existingPkPath,
+															  scanState.
+															  primaryKeyDatums,
+															  rowCompareInclusive);
 		}
 
 		if (inputPath == NULL)
@@ -1241,21 +1236,6 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 	 * tuples and we can't allow parallel scan to reorder tuples.
 	 */
 	rel->partial_pathlist = NIL;
-
-	/* We're responsible for trimming the shard_key_value expr here. */
-	if (EnablePrimaryKeyCursorScan && !EnableCursorPlanBeforeRestrictionPathUpdate &&
-		unshardedShardKeyRestrictInfo != NULL)
-	{
-		if (list_length(rel->baserestrictinfo) == 1)
-		{
-			rel->baserestrictinfo = NIL;
-		}
-		else
-		{
-			rel->baserestrictinfo = list_delete(rel->baserestrictinfo,
-												unshardedShardKeyRestrictInfo);
-		}
-	}
 
 	return true;
 }

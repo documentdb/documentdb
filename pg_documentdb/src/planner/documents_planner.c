@@ -135,7 +135,6 @@ extern bool EnableIndexOnlyScan;
 extern bool EnableCursorsOnAggregationQueryRewrite;
 extern bool EnableCompositeParallelIndexScan;
 extern bool ForceParallelScanIfAvailable;
-extern bool EnableCursorPlanBeforeRestrictionPathUpdate;
 extern bool EnableExtendedIndexes;
 extern bool EnableDynamicCursors;
 extern bool EnableDistinctCustomScan;
@@ -485,8 +484,7 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		updatedPaths = UpdatePathsWithDynamicStreamingCursorPlans(root, rel, rte,
 																  &indexContext);
 	}
-	else if (EnableCursorPlanBeforeRestrictionPathUpdate &&
-			 indexContext.hasStreamingContinuationScan)
+	else if (indexContext.hasStreamingContinuationScan)
 	{
 		updatedPaths = UpdatePathsWithExtensionStreamingCursorPlans(root, rel, rte,
 																	&indexContext);
@@ -514,12 +512,6 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	 * Update any paths with custom scans as appropriate.
 	 * Skip if already done in the early path above.
 	 */
-	if (!EnableCursorPlanBeforeRestrictionPathUpdate &&
-		indexContext.hasStreamingContinuationScan)
-	{
-		updatedPaths = UpdatePathsWithExtensionStreamingCursorPlans(root, rel, rte,
-																	&indexContext);
-	}
 
 	/* Not a streaming cursor scenario.
 	 * Streaming cursors auto convert into Bitmap Paths.

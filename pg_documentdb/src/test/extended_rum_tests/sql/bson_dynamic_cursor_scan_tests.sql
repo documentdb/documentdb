@@ -5,7 +5,6 @@ SET documentdb.next_collection_index_id TO 9200;
 
 -- Enable PK cursor scan for dynamic streaming cursors
 SET documentdb.enablePrimaryKeyCursorScan TO on;
-SET documentdb.enableCursorPlanBeforeRestrictionPathUpdate TO off;
 set documentdb.enableDynamicCursors TO on;
 
 -- Insert 10 documents with _id in reverse insertion order so TID order differs from _id order
@@ -452,4 +451,3 @@ SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
 
 -- Restore defaults
 SET documentdb.enablePrimaryKeyCursorScan TO off;
-SET documentdb.enableCursorPlanBeforeRestrictionPathUpdate TO off;

@@ -4,7 +4,6 @@ SET documentdb.next_collection_index_id TO 400;
 SET citus.next_shard_id TO 40000;
 
 set documentdb.enablePrimaryKeyCursorScan to on;
-set documentdb.enableCursorPlanBeforeRestrictionPathUpdate to off;
 
 -- insert 10 documents - but insert the _id as reverse order of insertion order (so that TID and insert order do not match)
 DO $$
@@ -380,55 +379,9 @@ SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id
 SELECT * FROM firstPageResponse;
 SELECT continuation AS r1_continuation FROM firstPageResponse \gset
 
--- enablePrimaryKeyCursorScan = off, enableCursorPlanBeforeRestrictionPathUpdate = off
--- The explain below should show bitmap index scan
-set documentdb.enablePrimaryKeyCursorScan to off;
-set documentdb.enableCursorPlanBeforeRestrictionPathUpdate to off;
-
-SELECT pm_temp_in.make_in_find(10, 5) AS in_spec \gset
-EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('pkcursordb', :'in_spec');
-
-EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('pkcursordb',
-    '{ "getMore": { "$numberLong": "4294967294" }, "collection": "aggregation_cursor_pk_in", "batchSize": 5 }', :'r1_continuation');
-
--- enablePrimaryKeyCursorScan = on, enableCursorPlanBeforeRestrictionPathUpdate = off
--- The explain below should show primary key scan, but $in is not pushed to the index so it will still filter a lot of rows
-set documentdb.enablePrimaryKeyCursorScan to on;
-
-SELECT pm_temp_in.make_in_find(10, 5) AS in_spec \gset
-
-EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('pkcursordb', :'in_spec');
-
--- On PG16 the SAOP (object_id = ANY) stays in Filter; on PG17 it moves to Index Cond.
--- Use check_explain_index_and_filter to verify version-invariant properties.
-DO $check$
-DECLARE
-    lines text[];
-    line text;
-    cont text;
-    result boolean;
-BEGIN
-    SELECT continuation::text INTO cont FROM firstPageResponse;
-    FOR line IN EXECUTE format(
-        'EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore(%L, %L, %L::bson)',
-        'pkcursordb',
-        '{ "getMore": { "$numberLong": "4294967294" }, "collection": "aggregation_cursor_pk_in", "batchSize": 5 }',
-        cont
-    ) LOOP
-        lines := array_append(lines, line);
-    END LOOP;
-    SELECT check_explain_index_and_filter(
-        lines,
-        ARRAY['collection.shard_key_value = ''403''::bigint', 'object_id >'],
-        ARRAY['documentdb_api_internal.cursor_state(collection.document, ''{ "']
-    ) INTO result;
-    RAISE NOTICE 'check_explain_index_and_filter: %', result;
-END;
-$check$;
-
--- enablePrimaryKeyCursorScan = on, enableCursorPlanBeforeRestrictionPathUpdate = on
+-- enablePrimaryKeyCursorScan = on
 -- The explain below should show primary key scan and the $in should be pushed down to the index
-set documentdb.enableCursorPlanBeforeRestrictionPathUpdate to on;
+set documentdb.enablePrimaryKeyCursorScan to on;
 
 SELECT pm_temp_in.make_in_find(10, 5) AS in_spec \gset
 

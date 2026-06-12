@@ -349,7 +349,6 @@ extern bool EnableIndexOnlyScan;
 extern bool EnableIndexOnlyScanOnCostFunction;
 extern bool EnableOrderByIdOnCostFunction;
 extern bool EnablePrimaryKeyCursorScan;
-extern bool EnableCursorPlanBeforeRestrictionPathUpdate;
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -1524,13 +1523,6 @@ ReplaceExtensionFunctionOperatorsInRestrictionPaths(List *restrictInfo,
 			IsOpExprShardKeyForUnshardedCollections(rinfo->clause,
 													context->inputData.collectionId))
 		{
-			if (EnablePrimaryKeyCursorScan && context->hasStreamingContinuationScan &&
-				!EnableCursorPlanBeforeRestrictionPathUpdate)
-			{
-				/* Don't trim the shard key qual here - wait until the continuation is formed */
-				continue;
-			}
-
 			/* Simplify expression:
 			 * On unsharded collections, we need the shard_key_value
 			 * filter to route to the appropriate shard. However
@@ -4779,8 +4771,7 @@ ReplaceFunctionOperatorsInPlanPath(PlannerInfo *root, RelOptInfo *rel, Path *pat
 																  context);
 	}
 	else if (IsA(path, CustomPath) &&
-			 ((EnablePrimaryKeyCursorScan &&
-			   EnableCursorPlanBeforeRestrictionPathUpdate) ||
+			 (EnablePrimaryKeyCursorScan ||
 			  EnableDynamicCursors))
 	{
 		CustomPath *customPath = (CustomPath *) path;

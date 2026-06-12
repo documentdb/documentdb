@@ -252,11 +252,6 @@ bool EnableNewMinMaxAccumulators = DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS;
 #define DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS false
 bool EnableNewWithExprAccumulators = DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS;
 
-/* Added in v111, enabled in v111, remove after v112 */
-#define DEFAULT_ENABLE_CURSOR_PLAN_BEFORE_RESTRICTION_PATH_UPDATE true
-bool EnableCursorPlanBeforeRestrictionPathUpdate =
-	DEFAULT_ENABLE_CURSOR_PLAN_BEFORE_RESTRICTION_PATH_UPDATE;
-
 /* Added in v114, enabled on v114, remove after v116 */
 #define DEFAULT_ENABLE_DELETE_ONE_PLAN_CACHE_OPTIMIZATION true
 bool EnableDeleteOnePlanCacheOptimization =
@@ -660,14 +655,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL, &EnablePullNestedArrayEqFix,
 		DEFAULT_ENABLE_PULL_NESTED_ARRAY_EQ_FIX,
 		PGC_USERSET, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableCursorPlanBeforeRestrictionPathUpdate", newGucPrefix),
-		gettext_noop(
-			"Whether to enable running the streaming cursor plan rewrite before path replacement."),
-		NULL, &EnableCursorPlanBeforeRestrictionPathUpdate,
-		DEFAULT_ENABLE_CURSOR_PLAN_BEFORE_RESTRICTION_PATH_UPDATE,
-		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableDeleteOnePlanCacheOptimization", newGucPrefix),

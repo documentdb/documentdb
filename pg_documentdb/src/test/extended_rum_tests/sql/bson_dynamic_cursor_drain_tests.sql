@@ -5,7 +5,6 @@ SET documentdb.next_collection_index_id TO 9400;
 
 -- Enable dynamic cursors with PK cursor scan
 SET documentdb.enablePrimaryKeyCursorScan TO on;
-SET documentdb.enableCursorPlanBeforeRestrictionPathUpdate TO off;
 SET documentdb.enableDynamicCursors TO on;
 SET documentdb.enableIndexOnlyScanForFindProject TO on;
 
@@ -1078,4 +1077,3 @@ DROP FUNCTION validate_continuation_and_drain(int);
 
 -- Restore defaults
 SET documentdb.enablePrimaryKeyCursorScan TO off;
-SET documentdb.enableCursorPlanBeforeRestrictionPathUpdate TO off;
