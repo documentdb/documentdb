@@ -694,15 +694,15 @@ btree, for table "documentdb_api_catalog.documentdb_index_queue"
                Table "documentdb_api_catalog.roles"
   Column   |         Type         | Collation | Nullable | Default 
 -----------+----------------------+-----------+----------+---------
+ role_oid  | oid                  |           | not null | 
  role_bson | documentdb_core.bson |           | not null | 
- role_name | text                 |           | not null | 
 Indexes:
-    "roles_pkey" PRIMARY KEY, btree (role_name)
+    "roles_pkey" PRIMARY KEY, btree (role_oid)
 
 Index "documentdb_api_catalog.roles_pkey"
-  Column   | Type | Key? | Definition 
------------+------+------+------------
- role_name | text | yes  | role_name
+  Column  | Type | Key? | Definition 
+----------+------+------+------------
+ role_oid | oid  | yes  | role_oid
 primary key, btree, for table "documentdb_api_catalog.roles"
 
      Composite type "documentdb_api_catalog.shard_key_and_document"
