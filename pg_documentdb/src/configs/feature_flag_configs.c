@@ -471,7 +471,7 @@ bool EnableDropInvalidIndexesOnReadOnly = DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ON
 bool EnableOnlyCollectionCacheInvalidateOnCollectionChanges =
 	DEFAULT_ENABLE_ONLY_COLLECTION_CACHE_INVALIDATE_ON_COLLECTION_CHANGES;
 
-/* Added in v112, Pending stabilization, enable in v113 */
+/* Added in v112, Pending stabilization, enable in v114 */
 #define DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION false
 bool EnableNewNamespaceValidation =
 	DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION;
