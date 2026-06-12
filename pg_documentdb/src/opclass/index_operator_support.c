@@ -49,8 +49,6 @@
 #include "aggregation/bson_query_common.h"
 #include "operators/bson_expression.h"
 
-extern bool EnableExprLookupIndexPushdown;
-
 /* --------------------------------------------------------- */
 /* Top level exports */
 /* --------------------------------------------------------- */
@@ -97,11 +95,6 @@ dollar_expr_support(PG_FUNCTION_ARGS)
 static bool
 ExprCanBePushedToIndex(SupportRequestIndexCondition *supportRequest)
 {
-	if (!EnableExprLookupIndexPushdown)
-	{
-		return false;
-	}
-
 	/* A $expr can be pushed to the index iff the index is non-multikey */
 	PGFunction getMultiKeyStatusFunc = GetMultiKeyStatusByRelAm(
 		supportRequest->index->relam);

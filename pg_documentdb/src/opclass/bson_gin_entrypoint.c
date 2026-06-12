@@ -37,7 +37,6 @@
 #include "metadata/metadata_cache.h"
 #include "collation/collation.h"
 
-extern bool EnableExprLookupIndexPushdown;
 extern bool EnableValueOnlyIndexTerms;
 
 /* --------------------------------------------------------- */
@@ -1145,12 +1144,6 @@ ValidateIndexForQualifierPathForEquality(bytea *indexOptions, const StringView *
 
 		case IndexOptionsType_Composite:
 		{
-			if (!EnableExprLookupIndexPushdown)
-			{
-				traverse = IndexTraverse_Invalid;
-				break;
-			}
-
 			int32_t compositeColumnIgnore;
 			bson_value_t unspecifiedValue = { 0 };
 			traverse = GetCompositePathIndexTraverseOption(

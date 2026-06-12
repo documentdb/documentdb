@@ -343,7 +343,6 @@ static const ForceIndexSupportFuncs ForceIndexOperatorSupport[] =
 
 extern bool EnableVectorForceIndexPushdown;
 extern bool EnableGeonearForceIndexPushdown;
-extern bool EnableExprLookupIndexPushdown;
 extern bool ForceIndexOnlyScanIfAvailable;
 extern bool EnableIndexOnlyScan;
 extern bool EnableIndexOnlyScanOnCostFunction;
@@ -3616,7 +3615,7 @@ PopulateQueryPathAndValueFromOpExpr(OpExpr *opExpr, const char **queryPathString
 		*queryValue = queryElement.bsonValue;
 		return true;
 	}
-	else if (IsA(queryVal, FuncExpr) && EnableExprLookupIndexPushdown)
+	else if (IsA(queryVal, FuncExpr))
 	{
 		FuncExpr *funcExpr = (FuncExpr *) queryVal;
 		if (funcExpr->funcid ==

@@ -239,11 +239,6 @@ bool EnableDistinctIndexPushdown = DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN;
  * SECTION: Planner feature flags
  */
 
-/* Added in v109, enabled in v109, remove after v112 */
-#define DEFAULT_ENABLE_EXPR_LOOKUP_INDEX_PUSHDOWN true
-bool EnableExprLookupIndexPushdown = DEFAULT_ENABLE_EXPR_LOOKUP_INDEX_PUSHDOWN;
-
-
 /* Added in v110, Pending stabilization. Superseded by EnableNewWithExprAccumulators in v111, enable in v114 */
 #define DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS false
 bool EnableNewMinMaxAccumulators = DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS;
@@ -852,13 +847,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL, &EnableDollarInToScalarArrayOpExprConversion,
 		DEFAULT_ENABLE_DOLLAR_IN_TO_SCALAR_ARRAY_OP_EXPR_CONVERSION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
-	DefineCustomBoolVariable(
-		psprintf("%s.enableExprLookupIndexPushdown", newGucPrefix),
-		gettext_noop(
-			"Whether to expr and lookup pushdown to the index."),
-		NULL, &EnableExprLookupIndexPushdown, DEFAULT_ENABLE_EXPR_LOOKUP_INDEX_PUSHDOWN,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
 	DefineCustomBoolVariable(
 		psprintf("%s.enableUsersAdminDBCheck", newGucPrefix),
 		gettext_noop(
