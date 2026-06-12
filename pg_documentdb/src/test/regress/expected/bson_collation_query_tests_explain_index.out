@@ -356,19 +356,19 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_agg_proj", "filter": { "$expr": {"$gte": ["$a", "CAT"]} }, "sort": { "_id": 1 }, "skip": 0, "collation": { "locale": "es@collation=search", "strength" : 3 } }')
 $cmd$);
-                                                                                                                     run_explain_and_trim                                                                                                                      
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                run_explain_and_trim                                                                                                                 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'es@collation-u-co-search-ks-level3'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'es@collation-u-co-search-ks-level3'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'es-u-co-search-ks-level3'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'es-u-co-search-ks-level3'::text)) USING <<< NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'es@collation-u-co-search-ks-level3'::text)
+         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'es-u-co-search-ks-level3'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
                Output: document
                Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-               Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$gte" : [ "$a", "CAT" ] }, "collation" : "es@collation-u-co-search-ks-level3" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Filter: documentdb_api_internal.bson_dollar_expr(collection.document, '{ "" : { "$gte" : [ "$a", "CAT" ] }, "collation" : "es-u-co-search-ks-level3" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '8801'::bigint)
 (13 rows)

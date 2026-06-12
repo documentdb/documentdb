@@ -274,8 +274,8 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 	bool numericOrdering = false;   /* optional, default = false */
 	bool backwards = false;         /* optional, default = false */
 	bool normalization = false;     /* optional, default = false */
-	const char *alternate = NULL;   /* optional, default = non-ignorable */
-	const char *maxVariable = NULL; /* optional, default not specified. ICU default punct. */
+	const char *alternate = NULL;   /* optional, default non-ignorable */
+	const char *maxVariable = NULL; /* optional, ICU default punct */
 
 	char *inputLocale = NULL;    /* required */
 	while (bson_iter_next(&docIter))
@@ -383,13 +383,13 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 
 			if (strcmp(alternate, "non-ignorable") == 0)
 			{
-				/* No op, as default for ICU is false. We could have also added "-ka-noignore" */
+				/* ICU default; no -ka- needed. */
 				alternate = NULL;
 			}
 			else if (strcmp(alternate, "shifted") != 0)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-									"unable to parse collation :: caused by :: Enumeration value '%s' for field 'collation.alternate' is not a valid value.",
+									"Collation field 'alternate' must be one of 'non-ignorable' or 'shifted', got '%s'.",
 									alternate)));
 			}
 		}
@@ -400,13 +400,13 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 
 			if (strcmp(maxVariable, "punct") == 0)
 			{
-				/* No op, as default for ICU is false. We could have also added "-kv-punct" */
+				/* ICU default when alternate is shifted; no -kv- needed. */
 				maxVariable = NULL;
 			}
 			else if (strcmp(maxVariable, "space") != 0)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-									"unable to parse collation :: caused by :: Enumeration value '%s' for field 'collation.maxVariable' is not a valid value.",
+									"Collation field 'maxVariable' must be one of 'punct' or 'space', got '%s'.",
 									maxVariable)));
 			}
 		}
@@ -416,6 +416,13 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 								"unable to parse collation :: caused by :: BSON field 'collation.%s' is an unknown field.",
 								key)));
 		}
+	}
+
+	/* locale is required; without it ICU silently falls back to "und". */
+	if (inputLocale == NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40414), errmsg(
+							"Collation specification is missing the required 'locale' field.")));
 	}
 
 	/* ICU ignores unsupported locales and picks default, and so do we. This string is not used in SQL query so safe from SQL injection */
@@ -464,24 +471,25 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 		appendStringInfo(&icuCollation, "-kn-true");
 	}
 
-	if (backwards)
-	{
-		appendStringInfo(&icuCollation, "-kb-true");
-	}
-
 	if (normalization)
 	{
 		appendStringInfo(&icuCollation, "-kk-true");
 	}
 
+	if (backwards)
+	{
+		appendStringInfo(&icuCollation, "-kb-true");
+	}
+
+	/* ICU kv only has meaning when ka-shifted is in effect. */
 	if (alternate != NULL)
 	{
 		appendStringInfo(&icuCollation, "-ka-%s", alternate);
-	}
 
-	if (maxVariable != NULL && strcmp(alternate, "shifted") != 0)
-	{
-		appendStringInfo(&icuCollation, "-kv-%s", maxVariable);
+		if (maxVariable != NULL)
+		{
+			appendStringInfo(&icuCollation, "-kv-%s", maxVariable);
+		}
 	}
 }
 
@@ -691,7 +699,7 @@ CheckIfValidLocale(const char *locale)
 			if (strcmp(localeSuffix, "k") == 0 ||
 				strcmp(localeSuffix, "@collation=search") == 0 ||
 				strcmp(localeSuffix, "@collation=searchjl") == 0 ||
-				strcmp(localeSuffix, "ko@collation=unihan") == 0)
+				strcmp(localeSuffix, "@collation=unihan") == 0)
 			{
 				return true;
 			}
@@ -700,7 +708,7 @@ CheckIfValidLocale(const char *locale)
 
 		case 'L':
 		{
-			if (strcmp(localeSuffix, "_Latin,") == 0 ||
+			if (strcmp(localeSuffix, "_Latn") == 0 ||
 				strcmp(localeSuffix, "_Latn@collation=search") == 0)
 			{
 				return true;
@@ -806,7 +814,7 @@ CheckIfValidLocale(const char *locale)
 				strcmp(localeSuffix, "@collation=big5han") == 0 ||
 				strcmp(localeSuffix, "@collation=gb2312han") == 0 ||
 				strcmp(localeSuffix, "@collation=unihan") == 0 ||
-				strcmp(localeSuffix, "ko@collation=zhuyin") == 0)
+				strcmp(localeSuffix, "@collation=zhuyin") == 0)
 			{
 				return true;
 			}
@@ -949,18 +957,24 @@ GenerateICULocaleAndExtractCollationOption(char *inputLocale, char **locale,
 		return;
 	}
 
-	/* conversion type 1: if locale contains the collation option */
-	/* Example: for inputLocale = "en@collation=search", */
-	/* locale = "es" and collationOptionString = "search" */
-	char *variant = strstr(inputLocale, "=");
-	if (variant != NULL)
-	{
-		/* Get the actual locale */
-		int localeLen = variant - inputLocale;
-		*locale = pnstrdup(inputLocale, localeLen);
+	/* Split on '@': locale is before '@', option value after '='. */
+	char *atSign = strchr(inputLocale, '@');
+	char *equalSign = strchr(inputLocale, '=');
 
-		/* Get the option */
-		*collationOptionString = variant + 1;
+	if (equalSign != NULL)
+	{
+		*collationOptionString = equalSign + 1;
+	}
+
+	if (atSign != NULL)
+	{
+		int localeLen = atSign - inputLocale;
+		*locale = pnstrdup(inputLocale, localeLen);
+	}
+	else if (equalSign != NULL)
+	{
+		int localeLen = equalSign - inputLocale;
+		*locale = pnstrdup(inputLocale, localeLen);
 	}
 	else
 	{

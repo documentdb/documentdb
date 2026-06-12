@@ -3147,7 +3147,7 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'coll_delete_sort');
 -- ==============================================================================
 -- Each query exercises a different invalid combination (alternate, locale, caseFirst, strength).
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1, "caseLevel": true, "caseFirst": "upper", "numericOrdering": true, "alternate": "none"} }');
-psql:sql/bson_collation_query_tests_core.sql:868: ERROR:  unable to parse collation :: caused by :: Enumeration value 'none' for field 'collation.alternate' is not a valid value.
+psql:sql/bson_collation_query_tests_core.sql:868: ERROR:  Collation field 'alternate' must be one of 'non-ignorable' or 'shifted', got 'none'.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en_DB", "strength" : 1, "caseLevel": true, "caseFirst": "upper", "numericOrdering": true, "alternate": "shifted"} }');
 psql:sql/bson_collation_query_tests_core.sql:869: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "en_DB", strength: 1 }.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1, "caseLevel": true, "caseFirst": "bad", "numericOrdering": true} }');
@@ -3174,6 +3174,90 @@ SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_c
 
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 0.9 } }');
 psql:sql/bson_collation_query_tests_core.sql:879: ERROR:  unable to parse collation :: caused by :: Enumeration value '0' for field 'collation.strength' is not a valid value
+-- ==============================================================================
+-- SECTION 15: collation parsing
+-- ==============================================================================
+-- Missing locale: must be rejected.
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": {}, "sort": { "_id": 1 }, "limit": 1, "collation": { "strength": 1 } }');
+psql:sql/bson_collation_query_tests_core.sql:886: ERROR:  Collation specification is missing the required 'locale' field.
+-- alternate / maxVariable / backwards: parse, validate, and apply.
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "en", "alternate": "shifted" } }');
+                    document                     
+-------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "cat" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "en", "alternate": "shifted", "maxVariable": "space" } }');
+                    document                     
+-------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "cat" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "fr", "strength": 2, "backwards": true } }');
+                    document                     
+-------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "Cat" }
+(1 row)
+
+-- maxVariable without alternate parses; -kv- is suppressed (only meaningful with shifted).
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "en", "maxVariable": "space" } }');
+                    document                     
+-------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "cat" }
+(1 row)
+
+-- Invalid enums and wrong types: rejected at parse time.
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": {}, "collation": { "locale": "en", "alternate": "bogus" } }');
+psql:sql/bson_collation_query_tests_core.sql:897: ERROR:  Collation field 'alternate' must be one of 'non-ignorable' or 'shifted', got 'bogus'.
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": {}, "collation": { "locale": "en", "alternate": "shifted", "maxVariable": "bogus" } }');
+psql:sql/bson_collation_query_tests_core.sql:898: ERROR:  Collation field 'maxVariable' must be one of 'punct' or 'space', got 'bogus'.
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": {}, "collation": { "locale": "en", "backwards": "true" } }');
+psql:sql/bson_collation_query_tests_core.sql:899: ERROR:  unable to parse collation :: caused by :: BSON field 'collation.backwards' is the wrong type 'string', expected type 'bool'
+-- Locale lookup table entries.
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "sr_Latn", "strength": 1 } }');
+                    document                     
+-------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "Cat" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "ko@collation=unihan", "strength": 1 } }');
+                    document                     
+-------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "Cat" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "zh@collation=zhuyin", "strength": 1 } }');
+                    document                     
+-------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "Cat" }
+(1 row)
+
+-- @collation= suffix is stripped from the ICU language tag (see explain output).
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_phonebook', '{ "_id": 1, "name": "Mueller" }');
+psql:sql/bson_collation_query_tests_core.sql:907: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_phonebook', '{ "_id": 2, "name": "Müller" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_phonebook', '{ "_id": 3, "name": "Schmidt" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_phonebook", "filter": { "name": "Mueller" }, "sort": { "_id": 1 }, "collation": { "locale": "de@collation=phonebook", "strength": 1 } }');
+                        document                        
+--------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "name" : "Mueller" }
+(1 row)
+
 -- ==============================================================================
 -- SECTION 19: unsupported — aggregation stages
 -- ==============================================================================
@@ -3203,7 +3287,7 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
     ],
     "collation": { "locale": "en", "strength": 1 }
 }');
-psql:sql/bson_collation_query_tests_core.sql:910: ERROR:  Collation is currently unsupported in the $bucket stage.
+psql:sql/bson_collation_query_tests_core.sql:941: ERROR:  Collation is currently unsupported in the $bucket stage.
 -- $geoNear
 SELECT document FROM bson_aggregation_pipeline('coll_q_db',
 '{ "aggregate": "coll_strings",
@@ -3219,7 +3303,7 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
    ],
    "collation": { "locale": "en", "strength": 1 }
 }');
-psql:sql/bson_collation_query_tests_core.sql:926: ERROR:  collation is not supported in the $geoNear stage yet.
+psql:sql/bson_collation_query_tests_core.sql:957: ERROR:  collation is not supported in the $geoNear stage yet.
 -- $fill
 SELECT document FROM bson_aggregation_pipeline('coll_q_db', 
 '{
@@ -3241,7 +3325,7 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
     ],
     "collation": { "locale": "en", "strength": 1 }
 }');
-psql:sql/bson_collation_query_tests_core.sql:948: ERROR:  collation is not supported in the $fill stage yet.
+psql:sql/bson_collation_query_tests_core.sql:979: ERROR:  collation is not supported in the $fill stage yet.
 -- $group
 SELECT document FROM bson_aggregation_pipeline('coll_q_db',
 '{ "aggregate": "coll_strings",
@@ -3253,7 +3337,7 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
    ],
    "collation": { "locale": "en", "strength": 1 }
 }');
-psql:sql/bson_collation_query_tests_core.sql:960: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_collation_query_tests_core.sql:991: ERROR:  collation is not supported in $group stage yet.
 -- $setWindowFields
 SELECT document FROM bson_aggregation_pipeline('coll_q_db',
 '{ "aggregate": "coll_strings",
@@ -3267,7 +3351,7 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
    ],
    "collation": { "locale": "en", "strength": 1 }
 }');
-psql:sql/bson_collation_query_tests_core.sql:974: ERROR:  collation is not supported in the $setWindowFields stage yet.
+psql:sql/bson_collation_query_tests_core.sql:1005: ERROR:  collation is not supported in the $setWindowFields stage yet.
 -- $sortByCount
 SELECT document FROM bson_aggregation_pipeline('coll_q_db',
 '{ "aggregate": "coll_strings",
@@ -3283,13 +3367,13 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
    ],
    "collation": { "locale": "en", "strength": 1 }
 }');
-psql:sql/bson_collation_query_tests_core.sql:990: ERROR:  collation is not supported in the $sortByCount stage yet.
+psql:sql/bson_collation_query_tests_core.sql:1021: ERROR:  collation is not supported in the $sortByCount stage yet.
 -- ==============================================================================
 -- SECTION 20: unsupported — $merge and write commands with collation
 -- ==============================================================================
 -- $merge: collation propagation through writes is not supported.
 SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_lookup_src", "pipeline": [{"$merge" : { "into": "coll_merge_target", "whenMatched" : "replace" }} ], "collation": { "locale": "en", "strength" : 1} }');
-psql:sql/bson_collation_query_tests_core.sql:997: ERROR:  collation is not supported with $merge yet
+psql:sql/bson_collation_query_tests_core.sql:1028: ERROR:  collation is not supported with $merge yet
 -- $bucketAuto
 SELECT document FROM bson_aggregation_pipeline('coll_q_db',
 '{ "aggregate": "coll_strings",
@@ -3298,19 +3382,19 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
    ],
    "collation": { "locale": "en", "strength": 1 }
 }');
-psql:sql/bson_collation_query_tests_core.sql:1006: ERROR:  collation is not supported in the $bucketAuto stage yet.
+psql:sql/bson_collation_query_tests_core.sql:1037: ERROR:  collation is not supported in the $bucketAuto stage yet.
 -- findAndModify with collation.
 SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "coll_multi_collation", "query": {"a": 1}, "update": {"_id": 1, "b": 1}, "collation" : {"locale" : "en", "strength": 1} }');
-psql:sql/bson_collation_query_tests_core.sql:1009: ERROR:  findAndModify.collation is not implemented yet
+psql:sql/bson_collation_query_tests_core.sql:1040: ERROR:  findAndModify.collation is not implemented yet
 -- update with collation + arrayFilters.
 SELECT documentdb_api.update('update', '{"update":"coll_multi_collation", "updates":[{"q":{"_id": 134111, "b": [ 5, 2, 4 ] },"u":{"$set" : {"b.$[a]":3} },"upsert":true, "collation" : {"locale" : "en", "strength": 1}, "arrayFilters": [ { "a": 2 } ]}]}');
-psql:sql/bson_collation_query_tests_core.sql:1012: ERROR:  BSON field 'update.updates.collation' is not yet supported
+psql:sql/bson_collation_query_tests_core.sql:1043: ERROR:  BSON field 'update.updates.collation' is not yet supported
 -- count with collation: unsupported
 SELECT documentdb_api.count_query('coll_q_db', '{"count":"coll_strings", "query":{"a":"cat"}, "collation":{"locale":"en","strength":1}}');
-psql:sql/bson_collation_query_tests_core.sql:1015: ERROR:  collation is not supported in the count command yet.
+psql:sql/bson_collation_query_tests_core.sql:1046: ERROR:  collation is not supported in the count command yet.
 -- distinct with collation: unsupported
 SELECT documentdb_api.distinct_query('coll_q_db', '{"distinct":"coll_strings", "key":"a", "query":{}, "collation":{"locale":"en","strength":1}}');
-psql:sql/bson_collation_query_tests_core.sql:1018: ERROR:  collation is not supported in the distinct command yet.
+psql:sql/bson_collation_query_tests_core.sql:1049: ERROR:  collation is not supported in the distinct command yet.
 -- ======================================================================
 -- CLEANUP
 -- ======================================================================
@@ -3375,6 +3459,12 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'coll_order_tests0');
 (1 row)
 
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_order_tests1');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_phonebook');
  drop_collection 
 -----------------
  t

@@ -879,6 +879,37 @@ SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_c
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 0.9 } }');
 
 -- ==============================================================================
+-- SECTION 15: collation parsing
+-- ==============================================================================
+
+-- Missing locale: must be rejected.
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": {}, "sort": { "_id": 1 }, "limit": 1, "collation": { "strength": 1 } }');
+
+-- alternate / maxVariable / backwards: parse, validate, and apply.
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "en", "alternate": "shifted" } }');
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "en", "alternate": "shifted", "maxVariable": "space" } }');
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "fr", "strength": 2, "backwards": true } }');
+
+-- maxVariable without alternate parses; -kv- is suppressed (only meaningful with shifted).
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "en", "maxVariable": "space" } }');
+
+-- Invalid enums and wrong types: rejected at parse time.
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": {}, "collation": { "locale": "en", "alternate": "bogus" } }');
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": {}, "collation": { "locale": "en", "alternate": "shifted", "maxVariable": "bogus" } }');
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": {}, "collation": { "locale": "en", "backwards": "true" } }');
+
+-- Locale lookup table entries.
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "sr_Latn", "strength": 1 } }');
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "ko@collation=unihan", "strength": 1 } }');
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "zh@collation=zhuyin", "strength": 1 } }');
+
+-- @collation= suffix is stripped from the ICU language tag (see explain output).
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_phonebook', '{ "_id": 1, "name": "Mueller" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_phonebook', '{ "_id": 2, "name": "Müller" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_phonebook', '{ "_id": 3, "name": "Schmidt" }');
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_phonebook", "filter": { "name": "Mueller" }, "sort": { "_id": 1 }, "collation": { "locale": "de@collation=phonebook", "strength": 1 } }');
+
+-- ==============================================================================
 -- SECTION 19: unsupported — aggregation stages
 -- ==============================================================================
 
@@ -1031,6 +1062,7 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'coll_lookup_src');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_multi_collation');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_order_tests0');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_order_tests1');
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_phonebook');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_redact');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_string_ids');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_strings');
