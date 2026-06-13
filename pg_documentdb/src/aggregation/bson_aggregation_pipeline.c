@@ -1432,7 +1432,8 @@ TryAddDynamicCursorQuery(CursorParamKind cursorParamKind, QueryData *queryData,
 		/* Before processing anything add the cursor params to the base table
 		 * if able. Dynamic cursors only work on base shard table RTEs currently.
 		 */
-		if (list_length(query->rtable) == 1)
+		if (list_length(query->rtable) == 1 &&
+			context->mongoCollection != NULL)
 		{
 			RangeTblEntry *rte = linitial(query->rtable);
 			if (rte->rtekind == RTE_RELATION)

@@ -610,6 +610,65 @@ SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('admin', '{ "aggregate": 1, "pipeline": [{ "$currentOp": {} }], "cursor": {} }');
 
 -- ============================================================================
+-- Section 10: Config virtual database queries with dynamic cursors enabled
+-- ============================================================================
+--
+-- Regression test: when dynamic cursors are enabled, the planner must NOT
+-- inject the cursor_tracker(document, ...) qual on the base RTE of queries
+-- that target the "config" virtual database. Those queries produce a Query
+-- whose first RTE is RTE_RELATION pointing at documentdb_api_catalog.collections
+-- (or a VALUES / empty rtable for some pseudo-collections), not a real
+-- documents_<id> table.
+------------------------------------------------------------
+
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+
+-- Ensure there is at least one user database/collection so config.collections
+-- and config.chunks produce rows.
+SELECT documentdb_api.shard_collection('dyncurdb', 'dyncoll', '{ "_id": "hashed" }', false);
+
+-- config.collections via find — the exact shape that originally failed.
+-- Filter to our database so the row set is deterministic regardless of any
+-- other databases/collections created by sibling tests in the same regress run.
+SELECT document FROM bson_aggregation_find('config', '{ "find": "collections", "filter": { "_id": "dyncurdb.dyncoll" } }');
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('config', '{ "find": "collections", "filter": { "_id": "dyncurdb.dyncoll" } }');
+
+-- Same shape against find_cursor_first_page (the user-facing entrypoint).
+-- Use a filter that produces a deterministic, bounded result set so the
+-- continuation/cursorPage payload is stable across runs.
+SELECT cursorPage IS NOT NULL AS has_page, continuation IS NOT NULL AS has_continuation
+    FROM documentdb_api.find_cursor_first_page(
+        'config',
+        '{ "find": "collections", "filter": { "_id": "dyncurdb.dyncoll" } }');
+
+-- config.databases via find — filter to our database for deterministic output.
+SELECT document FROM bson_aggregation_find('config', '{ "find": "databases", "filter": { "_id": "dyncurdb" } }');
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('config', '{ "find": "databases", "filter": { "_id": "dyncurdb" } }');
+
+-- config.chunks via find.
+SELECT document FROM bson_aggregation_find('config', '{ "find": "chunks", "filter": { "ns": "dyncurdb.dyncoll" } }');
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('config', '{ "find": "chunks", "filter": { "ns": "dyncurdb.dyncoll" } }');
+
+-- config.settings (RTE_VALUES base) — was not broken, included to lock in coverage.
+SELECT document FROM bson_aggregation_find('config', '{ "find": "settings", "sort": { "_id": 1 } }');
+
+-- config.version (NIL rtable) — was not broken, included to lock in coverage.
+SELECT document FROM bson_aggregation_find('config', '{ "find": "version" }');
+
+-- Same set of pseudo-collections exercised through the aggregation code path
+-- (the second TryAddDynamicCursorQuery call site).
+SELECT document FROM bson_aggregation_pipeline('config', '{ "aggregate": "collections", "pipeline": [{ "$match": { "_id": "dyncurdb.dyncoll" } }], "cursor": {} }');
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('config', '{ "aggregate": "collections", "pipeline": [{ "$match": { "_id": "dyncurdb.dyncoll" } }], "cursor": {} }');
+
+SELECT document FROM bson_aggregation_pipeline('config', '{ "aggregate": "databases", "pipeline": [{ "$match": { "_id": "dyncurdb" } }], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('config', '{ "aggregate": "chunks", "pipeline": [{ "$match": { "ns": "dyncurdb.dyncoll" } }], "cursor": {} }');
+
+-- Reset for any tests that may run after this section.
+SET documentdb.enableDynamicCursors TO off;
+RESET documentdb.enableCursorsOnAggregationQueryRewrite;
+
+-- ============================================================================
 -- Aggregation stages pending testing:
 --   $changeStream      — requires change stream infrastructure
 --   $inverseMatch      — internal stage with special path parameter
