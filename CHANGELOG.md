@@ -1,3 +1,5 @@
+### documentdb v0.115-0 (Unreleased) ###
+
 ### documentdb v0.114-0 (Unreleased) ###
 * Emit a btree `REUSE_PAGE` WAL marker before a RUM page is reused from the FSM, so streaming standbys resolve recovery conflicts before the page contents are overwritten. Mirrors nbtree's `_bt_allocbuf` behavior. Guarded by `documentdb_rum.enable_emit_reuse_page_on_recycle` feature flag, disabled by default while pending stabilization. *[Perf]*
 * Support configuring the gateway via `DOCUMENTDB_*` environment variables for systemd-managed installs, and add a `documentdb-gateway check` connectivity-probe subcommand. *[Feature]*
