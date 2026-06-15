@@ -5849,7 +5849,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 	}
 
 	char *enableDottedTermsOption = "";
-	if (EnableDottedValueTextIndexTerms && IsClusterVersionAtleast(DocDB_V0, 114, 0))
+	if (EnableDottedValueTextIndexTerms && IsClusterVersionAtleast(DocDB_V0, 113, 0))
 	{
 		enableDottedTermsOption = ",enabledottedterms=true";
 	}
