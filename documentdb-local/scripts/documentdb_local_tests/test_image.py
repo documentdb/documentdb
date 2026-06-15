@@ -872,5 +872,257 @@ print(r.acknowledged ? 'ack' : 'noack');""",
             _cleanup_container(second_container)
 
 
+# ---------------------------------------------------------------------------
+# 9. Sample-data restart idempotency (regression test for #612) - re-running
+#    the container with --init-data true on a persistent volume must NOT
+#    re-seed and crash with a duplicate-key error. The entrypoint writes a
+#    one-shot marker under DATA_PATH and skips initialization on later boots.
+# ---------------------------------------------------------------------------
+
+
+@_SKIP_UNLESS_IMAGE
+class SampleDataRestartIdempotencyTests(unittest.TestCase):
+    """Regression guard for #612: a documentdb-local container with a
+    persistent --data-path and --init-data true entered a restart loop on
+    its second boot because the bundled sample-data seed re-ran and failed
+    with a duplicate _id. The container must instead start cleanly and skip
+    the already-loaded sample data."""
+
+    image: str
+    volume: str | None
+    password: str
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.image = os.environ["DOCUMENTDB_LOCAL_IMAGE"]
+        cls.password = _random_password()
+        cls.volume = None
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if cls.volume:
+            _docker("volume", "rm", "-f", cls.volume, check=False)
+            cls.volume = None
+
+    def _start(self, name: str) -> str:
+        return _start_container(
+            self.image,
+            extra_run_args=["-v", f"{self.volume}:/data"],
+            entrypoint_flags=[
+                "--username", DEFAULT_USERNAME,
+                "--password", self.password,
+                "--data-path", "/data",
+                "--init-data", "true",
+            ],
+            name=name,
+        )
+
+    def _user_count(self, container: str) -> str:
+        result = _mongosh_exec(
+            container,
+            "db.getSiblingDB('sampledb').users.countDocuments({})",
+            username=DEFAULT_USERNAME,
+            password=self.password,
+        )
+        self.assertEqual(
+            result.returncode, 0,
+            f"countDocuments failed\nstdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}",
+        )
+        return _last_nonempty_line(result.stdout)
+
+    def test_second_boot_skips_seed_and_does_not_crash(self):
+        self.volume = f"docdb-image-test-vol-{uuid.uuid4().hex[:8]}"
+        first: str | None = None
+        second: str | None = None
+        try:
+            # First boot: seeds sampledb and writes the one-shot marker.
+            first = self._start(
+                f"{CONTAINER_PREFIX}-restart-a-{uuid.uuid4().hex[:6]}"
+            )
+            _wait_for_ready(first)
+            self.assertEqual(
+                self._user_count(first), "5",
+                "sampledb.users should have 5 docs after first-boot seeding",
+            )
+            _cleanup_container(first)
+            first = None
+
+            # Second boot on the SAME volume. Before the #612 fix this
+            # re-ran the seed, hit a duplicate _id, exited non-zero, and
+            # never emitted the readiness marker -> _wait_for_ready raises.
+            second = self._start(
+                f"{CONTAINER_PREFIX}-restart-b-{uuid.uuid4().hex[:6]}"
+            )
+            _wait_for_ready(second)
+
+            logs = _docker("logs", second, check=False)
+            combined = logs.stdout + logs.stderr
+            self.assertIn(
+                "already initialized", combined,
+                "second boot should log that sample data was already "
+                "initialized and skip re-seeding",
+            )
+            self.assertNotIn(
+                "Sample data initialization failed", combined,
+                "second boot must not fail re-running the seed",
+            )
+            self.assertEqual(
+                self._user_count(second), "5",
+                "sampledb.users must still have exactly 5 docs (no "
+                "duplicate-key crash, no data loss) on second boot",
+            )
+        finally:
+            _cleanup_container(first)
+            _cleanup_container(second)
+
+
+# ---------------------------------------------------------------------------
+# 10. Custom init-data restart idempotency (regression test for #612, custom
+#     path) - re-running the container on a persistent volume with a
+#     NON-IDEMPOTENT custom script must NOT re-run that script and crash. The
+#     init script writes a one-shot attempt marker under DATA_PATH immediately
+#     before the first user script runs, so later boots skip custom init.
+# ---------------------------------------------------------------------------
+
+CUSTOM_RESTART_DB_NAME = "image_custom_restart_db"
+CUSTOM_RESTART_COLLECTION = "restart_marker"
+
+
+@_SKIP_UNLESS_IMAGE
+class CustomInitDataRestartIdempotencyTests(unittest.TestCase):
+    """Regression guard for #612 on the custom init-data path: a container
+    with a persistent --data-path and a user-mounted --init-data-path whose
+    script is NOT idempotent (a fixed-_id insertOne that fails on replay)
+    must start cleanly on its second boot and skip the already-applied custom
+    init, instead of re-running the script, hitting a duplicate _id, exiting
+    non-zero, and looping under a restart policy. The single-boot
+    CustomInitDataTests proves the script runs; this proves it is one-shot."""
+
+    image: str
+    volume: str | None
+    init_dir: str | None
+    password: str
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.image = os.environ["DOCUMENTDB_LOCAL_IMAGE"]
+        cls.password = _random_password()
+        cls.volume = None
+        cls.init_dir = None
+
+        init_dir = tempfile.mkdtemp(prefix="docdb-image-custom-restart-")
+        # Deliberately NON-idempotent: a fixed _id with no countDocuments
+        # guard. Replaying this script against the already-seeded volume
+        # raises a duplicate-key error -- the exact failure that drove the
+        # #612 restart loop. The one-shot attempt marker must prevent replay.
+        script_path = pathlib.Path(init_dir) / "00-restart-marker.js"
+        script_path.write_text(
+            f"""use('{CUSTOM_RESTART_DB_NAME}');
+db.{CUSTOM_RESTART_COLLECTION}.insertOne({{
+    _id: 'custom-restart-marker',
+    placed_by: 'documentdb_local_tests',
+    via: 'init-data-path'
+}});
+print('custom restart marker placed');
+""",
+            encoding="utf-8",
+        )
+        os.chmod(init_dir, 0o755)
+        os.chmod(script_path, 0o644)
+        cls.init_dir = init_dir
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if cls.volume:
+            _docker("volume", "rm", "-f", cls.volume, check=False)
+            cls.volume = None
+        if cls.init_dir:
+            shutil.rmtree(cls.init_dir, ignore_errors=True)
+            cls.init_dir = None
+
+    def _start(self, name: str) -> str:
+        # --skip-init-data disables only the bundled sample data; the custom
+        # --init-data-path still runs (it is gated solely on the presence of
+        # *.js files), which keeps this test focused on the custom path.
+        return _start_container(
+            self.image,
+            extra_run_args=[
+                "-v", f"{self.volume}:/data",
+                "-v", f"{self.init_dir}:/init_doc_db.d:ro",
+            ],
+            entrypoint_flags=[
+                "--username", DEFAULT_USERNAME,
+                "--password", self.password,
+                "--data-path", "/data",
+                "--init-data-path", "/init_doc_db.d",
+                "--skip-init-data",
+            ],
+            name=name,
+        )
+
+    def _marker_count(self, container: str) -> str:
+        result = _mongosh_exec(
+            container,
+            f"db.getSiblingDB('{CUSTOM_RESTART_DB_NAME}')"
+            f".{CUSTOM_RESTART_COLLECTION}.countDocuments({{}})",
+            username=DEFAULT_USERNAME,
+            password=self.password,
+        )
+        self.assertEqual(
+            result.returncode, 0,
+            f"countDocuments failed\nstdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}",
+        )
+        return _last_nonempty_line(result.stdout)
+
+    def test_second_boot_skips_custom_init_and_does_not_crash(self):
+        self.volume = f"docdb-image-test-vol-{uuid.uuid4().hex[:8]}"
+        first: str | None = None
+        second: str | None = None
+        try:
+            # First boot: runs the custom script and writes the one-shot
+            # attempt + success markers under /data.
+            first = self._start(
+                f"{CONTAINER_PREFIX}-custom-restart-a-{uuid.uuid4().hex[:6]}"
+            )
+            _wait_for_ready(first)
+            self.assertEqual(
+                self._marker_count(first), "1",
+                "custom collection should have 1 doc after first-boot init",
+            )
+            _cleanup_container(first)
+            first = None
+
+            # Second boot on the SAME volume with the SAME non-idempotent
+            # script still mounted. Before the #612 custom-path fix this
+            # re-ran the script, hit a duplicate _id, exited non-zero, and
+            # never emitted the readiness marker -> _wait_for_ready raises.
+            second = self._start(
+                f"{CONTAINER_PREFIX}-custom-restart-b-{uuid.uuid4().hex[:6]}"
+            )
+            _wait_for_ready(second)
+
+            logs = _docker("logs", second, check=False)
+            combined = logs.stdout + logs.stderr
+            self.assertIn(
+                "already initialized", combined,
+                "second boot should log that custom data was already "
+                "initialized and skip re-running the script",
+            )
+            self.assertNotIn(
+                "Custom data initialization failed", combined,
+                "second boot must not fail re-running the custom script",
+            )
+            self.assertEqual(
+                self._marker_count(second), "1",
+                "custom collection must still have exactly 1 doc (no "
+                "duplicate-key crash, no data loss) on second boot",
+            )
+        finally:
+            _cleanup_container(first)
+            _cleanup_container(second)
+
+
 if __name__ == "__main__":
     unittest.main()

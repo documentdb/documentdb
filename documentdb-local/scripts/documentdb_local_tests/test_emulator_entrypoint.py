@@ -314,6 +314,375 @@ json.dump(data, sys.stdout)
         )
         self.assertNotIn("CERT_SECRET", result.stdout)
 
+    def _write_counting_init_stub(self, fail_on_second=False, fail_always=False):
+        """Replace the init-data stub with one that records each invocation.
+
+        The counter persists under the data dir so it survives across the two
+        entrypoint runs in a single test, simulating a container restart on a
+        persistent volume. The stub also emulates the real script's
+        --attempt-marker contract: it creates the marker before doing any work,
+        so the entrypoint's one-shot skip behaves as in production (#612).
+        """
+        counter = self.data_dir / "init_invocations"
+        # The two failure modes generate conflicting stub logic, so disallow combining them.
+        assert not (
+            fail_on_second and fail_always
+        ), "fail_on_second and fail_always are mutually exclusive"
+        fail_block = ""
+        if fail_on_second:
+            fail_block = (
+                'if [ "$count" -ge 2 ]; then\n'
+                '  echo "init-stub: refusing repeat invocation"\n'
+                "  exit 1\n"
+                "fi\n"
+            )
+        if fail_always:
+            fail_block += 'echo "init-stub: simulated failure"\nexit 1\n'
+        self._write_exec(
+            self.gateway_scripts / "init_documentdb_data.sh",
+            f"#!/bin/sh\n"
+            f'attempt_marker=""\n'
+            f"while [ $# -gt 0 ]; do\n"
+            f'  case "$1" in\n'
+            f'    --attempt-marker) attempt_marker="$2"; shift 2 ;;\n'
+            f"    *) shift ;;\n"
+            f"  esac\n"
+            f"done\n"
+            f'if [ -n "$attempt_marker" ]; then\n'
+            f'  mkdir -p "$(dirname "$attempt_marker")" && touch "$attempt_marker"\n'
+            f"fi\n"
+            f"count=0\n"
+            f'if [ -f "{counter}" ]; then count=$(cat "{counter}"); fi\n'
+            f"count=$((count + 1))\n"
+            f'echo "$count" > "{counter}"\n'
+            f'echo "init-stub invocation $count"\n'
+            f"{fail_block}"
+            f"exit 0\n",
+        )
+        return counter
+
+    def test_sample_data_is_seeded_once_and_skipped_on_restart(self):
+        # Make the sample-data dir resemble the real layout.
+        (self.sample_data_dir / "01-sample.js").write_text(
+            "// sample\n", encoding="utf-8"
+        )
+        # The stub fails if invoked a second time, so this test fails unless the
+        # marker prevents a re-seed on the simulated restart (#612).
+        counter = self._write_counting_init_stub(fail_on_second=True)
+        env = {"INIT_DATA": "true", "SKIP_INIT_DATA": ""}
+
+        first = self._run_entrypoint(extra_env=env)
+        self.assertEqual(first.returncode, 0, msg=first.stdout + first.stderr)
+        self.assertEqual(counter.read_text().strip(), "1")
+        marker = self.data_dir / ".documentdb-local" / "sample_data_initialized"
+        self.assertTrue(marker.exists(), "marker should be written after first seed")
+
+        # Second boot against the same persistent data dir must skip the seed.
+        second = self._run_entrypoint(extra_env=env)
+        self.assertEqual(second.returncode, 0, msg=second.stdout + second.stderr)
+        self.assertEqual(
+            counter.read_text().strip(), "1", "seed must not run again on restart"
+        )
+        self.assertIn("already initialized", second.stdout)
+        self.assertIn("fresh data volume", second.stdout)
+
+    def test_custom_data_is_one_shot_on_restart(self):
+        init_dir = self.root / "custom_init"
+        init_dir.mkdir()
+        (init_dir / "00-custom.js").write_text("// custom\n", encoding="utf-8")
+        # Fails if invoked a second time, so this test fails unless the marker
+        # prevents the custom init from re-running on a simulated restart (#612).
+        counter = self._write_counting_init_stub(fail_on_second=True)
+        env = {
+            "INIT_DATA": "false",
+            "SKIP_INIT_DATA": "",
+            "INIT_DATA_PATH": str(init_dir),
+        }
+
+        first = self._run_entrypoint(extra_env=env)
+        self.assertEqual(first.returncode, 0, msg=first.stdout + first.stderr)
+        self.assertEqual(counter.read_text().strip(), "1")
+        attempt_marker = self.data_dir / ".documentdb-local" / "custom_data_attempted"
+        success_marker = self.data_dir / ".documentdb-local" / "custom_data_succeeded"
+        self.assertTrue(attempt_marker.exists(), "attempt marker should be written")
+        self.assertTrue(
+            success_marker.exists(), "success marker should be written after a successful run"
+        )
+
+        second = self._run_entrypoint(extra_env=env)
+        self.assertEqual(second.returncode, 0, msg=second.stdout + second.stderr)
+        self.assertEqual(
+            counter.read_text().strip(), "1", "custom init must not run again on restart"
+        )
+        self.assertIn("already initialized", second.stdout)
+
+    def test_custom_data_failure_is_not_retried_on_restart(self):
+        # A failing custom init (e.g. a non-idempotent user script that errors partway)
+        # must not loop: the attempt marker is written before the script runs, so the
+        # failed init is not re-run on restart (#612). Matches the official-image contract.
+        init_dir = self.root / "custom_init"
+        init_dir.mkdir()
+        (init_dir / "00-custom.js").write_text("// custom\n", encoding="utf-8")
+        counter = self._write_counting_init_stub(fail_always=True)
+        env = {
+            "INIT_DATA": "false",
+            "SKIP_INIT_DATA": "",
+            "INIT_DATA_PATH": str(init_dir),
+        }
+
+        first = self._run_entrypoint(extra_env=env)
+        self.assertNotEqual(
+            first.returncode, 0, msg="first boot should surface the init failure"
+        )
+        self.assertEqual(counter.read_text().strip(), "1")
+        attempt_marker = self.data_dir / ".documentdb-local" / "custom_data_attempted"
+        success_marker = self.data_dir / ".documentdb-local" / "custom_data_succeeded"
+        self.assertTrue(
+            attempt_marker.exists(),
+            "attempt marker must be written before running so a failed init is not retried",
+        )
+        self.assertFalse(
+            success_marker.exists(), "success marker must not exist after a failed init"
+        )
+
+        second = self._run_entrypoint(extra_env=env)
+        self.assertEqual(second.returncode, 0, msg=second.stdout + second.stderr)
+        self.assertEqual(
+            counter.read_text().strip(),
+            "1",
+            "failed custom init must not be retried on restart",
+        )
+        self.assertIn("attempted but its success was not recorded", second.stdout)
+        self.assertIn("fresh data volume", second.stdout)
+        self.assertNotIn("already initialized", second.stdout)
+
+    def test_custom_failure_then_sample_runs_on_next_boot(self):
+        # Custom init runs before sample. If custom fails on the first boot the container
+        # exits; on restart custom is skipped (one-shot) and sample then seeds (#612).
+        init_dir = self.root / "custom_init"
+        init_dir.mkdir()
+        (init_dir / "00-custom.js").write_text("// custom\n", encoding="utf-8")
+        (self.sample_data_dir / "01-sample.js").write_text("// sample\n", encoding="utf-8")
+        # Stub fails (after marking) when invoked for custom (--attempt-marker present)
+        # and succeeds for sample (no --attempt-marker).
+        self._write_exec(
+            self.gateway_scripts / "init_documentdb_data.sh",
+            "#!/bin/sh\n"
+            'attempt_marker=""\n'
+            "while [ $# -gt 0 ]; do\n"
+            '  case "$1" in\n'
+            '    --attempt-marker) attempt_marker="$2"; shift 2 ;;\n'
+            "    *) shift ;;\n"
+            "  esac\n"
+            "done\n"
+            'if [ -n "$attempt_marker" ]; then\n'
+            '  mkdir -p "$(dirname "$attempt_marker")" && touch "$attempt_marker"\n'
+            '  echo "custom init failing"\n'
+            "  exit 1\n"
+            "fi\n"
+            'echo "sample init ok"\n'
+            "exit 0\n",
+        )
+        env = {
+            "INIT_DATA": "true",
+            "SKIP_INIT_DATA": "",
+            "INIT_DATA_PATH": str(init_dir),
+        }
+
+        first = self._run_entrypoint(extra_env=env)
+        self.assertNotEqual(
+            first.returncode, 0, msg="custom failure should fail the first boot"
+        )
+        attempt_marker = self.data_dir / ".documentdb-local" / "custom_data_attempted"
+        sample_marker = self.data_dir / ".documentdb-local" / "sample_data_initialized"
+        self.assertTrue(attempt_marker.exists())
+        self.assertFalse(
+            sample_marker.exists(), "sample must not seed when custom fails first"
+        )
+
+        second = self._run_entrypoint(extra_env=env)
+        self.assertEqual(second.returncode, 0, msg=second.stdout + second.stderr)
+        self.assertTrue(
+            sample_marker.exists(),
+            "sample should seed on the next boot after custom is skipped",
+        )
+        self.assertIn("attempted but its success was not recorded", second.stdout)
+
+    def test_help_does_not_advertise_force_init_data(self):
+        # Re-initialization is intentionally done by starting with a fresh data
+        # volume (common container-image parity), not a force flag (#612).
+        result = self._run_entrypoint("--help")
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn("--force-init-data", result.stdout)
+
+    def test_sample_data_scripts_are_idempotent(self):
+        sample_dir = REPO_ROOT / "documentdb-local" / "sample-data"
+        scripts = sorted(sample_dir.glob("*.js"))
+        self.assertTrue(scripts, "expected bundled sample-data scripts to exist")
+        for js in scripts:
+            text = js.read_text(encoding="utf-8")
+            self.assertNotIn(
+                ".insertMany(",
+                text,
+                msg=f"{js.name} uses insertMany, which is not idempotent on restart (#612)",
+            )
+            self.assertIn(
+                "countDocuments(",
+                text,
+                msg=f"{js.name} should guard inserts with an existence check (#612)",
+            )
+
+
+class InitDataAttemptMarkerTests(unittest.TestCase):
+    """Exercises the real init_documentdb_data.sh --attempt-marker contract (#612).
+
+    The marker is written immediately before the first user script runs. If it cannot
+    be persisted, initialization must abort before touching any data so a retry stays
+    safe (no partially-applied, non-idempotent scripts that could loop on restart).
+    """
+
+    INIT_SCRIPT = (
+        REPO_ROOT / "documentdb-local" / "scripts" / "init_documentdb_data.sh"
+    )
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.bin_dir = self.root / "bin"
+        self.init_dir = self.root / "init"
+        self.bin_dir.mkdir()
+        self.init_dir.mkdir()
+        (self.init_dir / "00-data.js").write_text("// data\n", encoding="utf-8")
+        # Records each `mongosh --file` execution so a test can assert whether any user
+        # script actually ran. The readiness ping (`--eval`) is treated as a no-op.
+        self.file_runs = self.root / "mongosh_file_runs"
+        # Records whether the attempt marker already existed at the moment the first user
+        # script was invoked, so a test can prove the marker is written BEFORE (not after)
+        # any data is mutated -- the core ordering invariant of the #612 fix.
+        self.marker_state = self.root / "marker_state_at_file_run"
+        mongosh = self.bin_dir / "mongosh"
+        mongosh.write_text(
+            "#!/bin/sh\n"
+            'for a in "$@"; do\n'
+            '  if [ "$a" = "--file" ]; then\n'
+            '    if [ -f "$ATTEMPT_MARKER_PATH" ]; then\n'
+            f'      echo present >> "{self.marker_state}"\n'
+            "    else\n"
+            f'      echo missing >> "{self.marker_state}"\n'
+            "    fi\n"
+            f'    echo ran >> "{self.file_runs}"\n'
+            "    exit 0\n"
+            "  fi\n"
+            "done\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        mongosh.chmod(0o755)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _run(self, attempt_marker, init_dir=None):
+        env = os.environ.copy()
+        env["PATH"] = f"{self.bin_dir}{os.pathsep}{env['PATH']}"
+        env["ENTRYPOINT_LOG"] = str(self.root / "entrypoint.log")
+        env["ATTEMPT_MARKER_PATH"] = str(attempt_marker)
+        return subprocess.run(
+            [
+                "bash",
+                str(self.INIT_SCRIPT),
+                "-H", "localhost",
+                "-P", "10260",
+                "-u", "u",
+                "-p", "p",
+                "-d", str(init_dir or self.init_dir),
+                "--attempt-marker", str(attempt_marker),
+                "-v",
+            ],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+
+    def test_marker_write_failure_aborts_before_running_scripts(self):
+        # A parent path component is a regular file, so `mkdir -p` can never succeed
+        # (ENOTDIR) -- this holds even for root, unlike a chmod-based read-only dir.
+        blocker = self.root / "not_a_dir"
+        blocker.write_text("x", encoding="utf-8")
+        bad_marker = blocker / "sub" / "custom_data_attempted"
+
+        result = self._run(bad_marker)
+        self.assertNotEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertFalse(
+            self.file_runs.exists(),
+            "no user script may run if the attempt marker cannot be written",
+        )
+        self.assertIn(
+            "could not write initialization marker", result.stdout + result.stderr
+        )
+
+    def test_marker_written_before_first_script_runs(self):
+        marker = self.root / "data" / ".documentdb-local" / "custom_data_attempted"
+        result = self._run(marker)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertTrue(marker.exists(), "attempt marker should be written")
+        self.assertTrue(
+            self.file_runs.exists(), "user script should run after the marker is written"
+        )
+        # The marker must already exist at the moment the first user script is invoked --
+        # writing it afterward would re-open the #612 loop on a partial failure.
+        self.assertEqual(
+            self.marker_state.read_text(encoding="utf-8").strip(),
+            "present",
+            "attempt marker must be written BEFORE the first user script runs",
+        )
+
+    def test_partial_failure_still_records_attempt_marker(self):
+        # Real #612 shape: the first script succeeds, a later one fails. The marker must
+        # already be present (it is written before the first script), so the entrypoint
+        # skips the whole set on restart rather than re-running the non-idempotent first one.
+        (self.init_dir / "01-more.js").write_text("// more\n", encoding="utf-8")
+        mongosh = self.bin_dir / "mongosh"
+        mongosh.write_text(
+            "#!/bin/sh\n"
+            'for a in "$@"; do\n'
+            '  if [ "$a" = "--file" ]; then\n'
+            f'    echo ran >> "{self.file_runs}"\n'
+            f'    n=$(wc -l < "{self.file_runs}")\n'
+            '    if [ "$n" -ge 2 ]; then exit 1; fi\n'
+            "    exit 0\n"
+            "  fi\n"
+            "done\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        mongosh.chmod(0o755)
+
+        marker = self.root / "data" / ".documentdb-local" / "custom_data_attempted"
+        result = self._run(marker)
+        self.assertNotEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertTrue(
+            marker.exists(),
+            "attempt marker must persist even when a later script fails",
+        )
+        self.assertEqual(
+            len(self.file_runs.read_text(encoding="utf-8").splitlines()),
+            2,
+            "both scripts should be attempted before the failure",
+        )
+
+    def test_no_js_files_does_not_write_marker(self):
+        # No user scripts means no data is mutated, so no marker should be written -- the
+        # volume stays eligible for a real initialization later (no spurious one-shot lock).
+        empty_dir = self.root / "empty_init"
+        empty_dir.mkdir()
+        marker = self.root / "data" / ".documentdb-local" / "custom_data_attempted"
+        result = self._run(marker, init_dir=empty_dir)
+        self.assertNotEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertFalse(marker.exists(), "no marker may be written when no scripts run")
+        self.assertFalse(self.file_runs.exists(), "no user script should run")
+
 
 if __name__ == "__main__":
     unittest.main()

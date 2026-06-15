@@ -5,7 +5,7 @@ print("Initializing orders collection...");
 use('sampledb');
 
 // Create orders collection and insert sample orders
-db.orders.insertMany([
+const sampleOrders = [
     {
         _id: "order1",
         orderNumber: "ORD-2024-001",
@@ -163,7 +163,16 @@ db.orders.insertMany([
         },
         orderDate: new Date("2024-06-20T14:30:00Z")
     }
-]);
+];
+
+// Idempotent seed: insert each document only if its _id is not already present, so re-running
+// this script against a persistent volume is a no-op instead of crashing with a duplicate-key
+// error (#612). A partial first run is also repaired (only the missing documents are inserted).
+sampleOrders.forEach(function (doc) {
+    if (db.orders.countDocuments({ _id: doc._id }) === 0) {
+        db.orders.insertOne(doc);
+    }
+});
 
 // Create indexes for better query performance
 db.runCommand({

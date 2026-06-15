@@ -99,15 +99,22 @@ Optional arguments:
                         Overrides ALLOW_EXTERNAL_CONNECTIONS environment variable.
   --init-data [true|false]
                         Enable initialization with built-in sample data.
+                        Seeded once per data volume (on a fresh volume); re-create the
+                        volume to seed again.
                         Defaults to false.
                         Overrides INIT_DATA environment variable.
   --init-data-path [PATH]
                         Specify a directory containing JavaScript files for database initialization.
                         Files will be executed in alphabetical order using mongosh.
+                        Runs once per data volume (on a fresh volume), so scripts should be
+                        idempotent; a failed run is not retried on restart. To re-run, start
+                        with a fresh data volume.
                         Defaults to /init_doc_db.d
                         Overrides INIT_DATA_PATH environment variable.
   --skip-init-data      Skip initialization with built-in sample data.
                         Legacy alias for --init-data false.
+                        Does not affect --init-data-path; custom data is
+                        still loaded once per fresh data volume.
                         Overrides SKIP_INIT_DATA environment variable.
   --disable-extended-rum
                         Disable the use of extended_rum for indexes.
@@ -537,20 +544,58 @@ if [ $attempt -eq $max_attempts ]; then
     exit 1
 fi
 
-# Initialize database with custom data if directory exists and contains JS files
+# First-boot data-initialization markers (#612).
+# Markers live inside the persistent data dir ($DATA_PATH) so they survive container
+# restarts, `docker compose down && up`, host reboots, and volume backups. They make data
+# initialization one-shot and prevent the restart loop caused by re-running non-idempotent
+# seed scripts against already-seeded data. Like common database container images,
+# initialization runs only on a fresh data directory; to re-initialize, start the container
+# with an empty/new data volume.
+INIT_MARKER_DIR="$DATA_PATH/.documentdb-local"
+
+# init_marker_present <marker-file>: succeeds when initialization already ran on this volume.
+init_marker_present() {
+    [ -f "$1" ]
+}
+
+# write_init_marker <marker-file>: record a successful initialization. A failure to write is
+# only a warning; it would cause a redundant re-init attempt on the next boot, not data loss.
+write_init_marker() {
+    if ! mkdir -p "$INIT_MARKER_DIR" 2>/dev/null || ! touch "$1" 2>/dev/null; then
+        echo "Warning: could not write init marker $1; initialization may run again on restart."
+    fi
+}
+
+# Initialize database with custom (user-provided) data if the directory has JS files.
+# One-shot per data volume: init_documentdb_data.sh records $custom_attempt_marker right
+# before the first user script runs, so a non-idempotent custom init that fails partway is
+# not re-run on restart and cannot loop (#612). User scripts should still be idempotent.
+# To re-run after fixing scripts, start with a fresh data volume.
 custom_data_initialized=false
-if [ -d "$INIT_DATA_PATH" ] && [ "$(ls -A "$INIT_DATA_PATH"/*.js 2>/dev/null)" ]; then
+custom_attempt_marker="$INIT_MARKER_DIR/custom_data_attempted"
+custom_success_marker="$INIT_MARKER_DIR/custom_data_succeeded"
+if [ -d "$INIT_DATA_PATH" ] && [ "$(ls -A "$INIT_DATA_PATH"/*.js 2>/dev/null)" ] && init_marker_present "$custom_attempt_marker"; then
+    if init_marker_present "$custom_success_marker"; then
+        echo "Custom data already initialized (found $custom_success_marker); skipping. To re-run, start with a fresh data volume."
+    else
+        echo "Warning: a previous custom data initialization was attempted but its success was not recorded; it may have failed or only partially applied."
+        echo "Skipping to avoid re-running non-idempotent scripts. To retry from clean, start with a fresh data volume."
+    fi
+    custom_data_initialized=true
+elif [ -d "$INIT_DATA_PATH" ] && [ "$(ls -A "$INIT_DATA_PATH"/*.js 2>/dev/null)" ]; then
     echo "Initializing database with custom data from: $INIT_DATA_PATH"
     
     # Use the dedicated initialization script
     init_script="$GATEWAY_HOME/scripts/init_documentdb_data.sh"
     if [ -f "$init_script" ]; then
         echo "Using custom initialization data from: $INIT_DATA_PATH"
-        if "$init_script" -H localhost -P "$DOCUMENTDB_PORT" -u "$USERNAME" -p "$PASSWORD" -d "$INIT_DATA_PATH" -v; then
+        if "$init_script" -H localhost -P "$DOCUMENTDB_PORT" -u "$USERNAME" -p "$PASSWORD" -d "$INIT_DATA_PATH" --attempt-marker "$custom_attempt_marker" -v; then
             echo "Custom data initialization completed."
+            write_init_marker "$custom_success_marker"
             custom_data_initialized=true
         else
-            echo "Error: Custom data initialization failed"
+            echo "Error: Custom data initialization failed; it will not be retried on restart if it had begun applying data."
+            echo "Fix your initialization scripts and start with a fresh data volume to re-run."
             exit 1
         fi
     else
@@ -558,8 +603,13 @@ if [ -d "$INIT_DATA_PATH" ] && [ "$(ls -A "$INIT_DATA_PATH"/*.js 2>/dev/null)" ]
     fi
 fi
 
-# Initialize database with sample data if explicitly enabled
-if [ "$INIT_DATA" = "true" ]; then
+# Initialize database with built-in sample data if explicitly enabled.
+# Guarded by a one-shot marker (in $DATA_PATH) so a restart with a persistent volume does
+# not re-run the seed and crash with a duplicate-key error (#612).
+sample_init_marker="$INIT_MARKER_DIR/sample_data_initialized"
+if [ "$INIT_DATA" = "true" ] && init_marker_present "$sample_init_marker"; then
+    echo "Sample data already initialized (found $sample_init_marker); skipping. To re-run, start with a fresh data volume."
+elif [ "$INIT_DATA" = "true" ]; then
     echo "Initializing database with built-in sample data..."
     
     # Use the sample data directory
@@ -570,6 +620,7 @@ if [ "$INIT_DATA" = "true" ]; then
         echo "Loading sample data from: $sample_data_path"
         if "$init_script" -H localhost -P "$DOCUMENTDB_PORT" -u "$USERNAME" -p "$PASSWORD" -d "$sample_data_path" -v; then
             echo "Sample data initialization completed."
+            write_init_marker "$sample_init_marker"
         else
             echo "Error: Sample data initialization failed"
             exit 1

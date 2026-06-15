@@ -5,7 +5,7 @@ print("Initializing analytics collection...");
 use('sampledb');
 
 // Create analytics collection and insert sample analytics data
-db.analytics.insertMany([
+const sampleAnalytics = [
     {
         _id: "analytics_2024_06",
         period: "2024-06",
@@ -55,7 +55,16 @@ db.analytics.insertMany([
             }
         ]
     }
-]);
+];
+
+// Idempotent seed: insert each document only if its _id is not already present, so re-running
+// this script against a persistent volume is a no-op instead of crashing with a duplicate-key
+// error (#612). A partial first run is also repaired (only the missing documents are inserted).
+sampleAnalytics.forEach(function (doc) {
+    if (db.analytics.countDocuments({ _id: doc._id }) === 0) {
+        db.analytics.insertOne(doc);
+    }
+});
 
 // Create indexes for analytics queries
 db.runCommand({
