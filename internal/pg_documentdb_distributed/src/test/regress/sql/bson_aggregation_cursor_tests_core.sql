@@ -12,6 +12,33 @@ $$;
 
 CREATE TYPE aggregation_cursor_test.drain_result AS (filteredDoc bson, docSize int, continuationFiltered bson, persistConnection bool);
 
+-- A remote dynamic cursor continuation embeds per-run volatile worker state: the
+-- worker cursor id ("wc.qi"), its uniquely named cursor ("wc.qn") and the
+-- serialized file state ("wc.qf"), plus the routed shard table oid ("dr"). These
+-- differ on every run / environment. Replace them with a constant so the
+-- continuation is deterministic, while echoing the surrounding worker fields so
+-- the structure is still validated. The "$type" guards make this a no-op for
+-- streaming / non-remote continuations that have none of these fields.
+CREATE FUNCTION aggregation_cursor_test.mask_continuation(cont bson)
+    RETURNS bson
+    LANGUAGE sql
+AS $fn$
+    SELECT documentdb_api_catalog.bson_dollar_add_fields(cont,
+        '{ "wc": { "$cond": [ { "$eq": [ { "$type": "$wc" }, "missing" ] }, "$$REMOVE", { "qi": "XXX", "qp": "$wc.qp", "qk": "$wc.qk", "qn": "XXX", "qf": "XXX", "numIters": "$wc.numIters", "sn": "$wc.sn" } ] },'
+        '  "dr": { "$cond": [ { "$eq": [ { "$type": "$dr" }, "missing" ] }, "$$REMOVE", "XXX" ] },'
+        '  "qf": { "$cond": [ { "$eq": [ { "$type": "$qf" }, "missing" ] }, "$$REMOVE", "XXX" ] } }'::documentdb_core.bson);
+$fn$;
+
+-- Drain-output variant: additionally drops the volatile per-shard streaming
+-- resume token ("continuation.value") that the drain assertions don't compare.
+CREATE FUNCTION aggregation_cursor_test.mask_drain_continuation(cont bson)
+    RETURNS bson
+    LANGUAGE sql
+AS $fn$
+    SELECT aggregation_cursor_test.mask_continuation(
+        documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson));
+$fn$;
+
 
 CREATE FUNCTION aggregation_cursor_test.drain_find_query(
     loopCount int, pageSize int, project bson DEFAULT NULL, skipVal int4 DEFAULT NULL, limitVal int4 DEFAULT NULL,
@@ -45,7 +72,7 @@ $$
         SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
     END IF;
     
-    SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+    SELECT aggregation_cursor_test.mask_drain_continuation(cont) INTO STRICT contProcessed;
     RETURN NEXT ROW(doc, docSize, contProcessed, persistConn)::aggregation_cursor_test.drain_result;
 
     FOR i IN 1..loopCount LOOP
@@ -59,7 +86,7 @@ $$
             SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
         END IF;
 
-        SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+        SELECT aggregation_cursor_test.mask_drain_continuation(cont) INTO STRICT contProcessed;
         RETURN NEXT ROW(doc, docSize, contProcessed, FALSE)::aggregation_cursor_test.drain_result;
     END LOOP;
 END;
@@ -100,7 +127,7 @@ $$
         SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
     END IF;
     
-    SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+    SELECT aggregation_cursor_test.mask_drain_continuation(cont) INTO STRICT contProcessed;
     RETURN NEXT ROW(doc, docSize, contProcessed, persistConn)::aggregation_cursor_test.drain_result;
 
     FOR i IN 1..loopCount LOOP
@@ -114,7 +141,7 @@ $$
             SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
         END IF;
 
-        SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+        SELECT aggregation_cursor_test.mask_drain_continuation(cont) INTO STRICT contProcessed;
         RETURN NEXT ROW(doc, docSize, contProcessed, FALSE)::aggregation_cursor_test.drain_result;
     END LOOP;
 END;
@@ -398,7 +425,10 @@ CREATE TEMP TABLE firstPageResponse AS
 SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid FROM
     find_cursor_first_page(database => 'db', commandSpec => '{ "find": "bitmap_cursor_continuation",  "projection": { "_id": 1 }, "filter": { "a": { "$gte": "aval-" } }, "batchSize": 2 }', cursorId => 4294967294);
 
-SELECT continuation AS r1_continuation FROM firstPageResponse \gset
+-- Mask the volatile worker continuation fields before EXPLAIN so the embedded
+-- continuation literal in the (non-executed) plan is deterministic. The plan
+-- shape does not depend on the continuation contents.
+SELECT aggregation_cursor_test.mask_continuation(continuation) AS r1_continuation FROM firstPageResponse \gset
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('db',
     '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation", "batchSize": 1 }', :'r1_continuation');

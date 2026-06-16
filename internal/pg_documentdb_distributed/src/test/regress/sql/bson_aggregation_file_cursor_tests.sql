@@ -20,6 +20,19 @@ $$;
 
 CREATE TYPE aggregation_cursor_test_file.drain_result AS (filteredDoc bson, docSize int, continuationFiltered bson, persistConnection bool);
 
+-- A file-based persisted cursor continuation embeds per-run volatile serialized
+-- file state ("qf") that differs on every run. Replace it with a constant so the
+-- continuation is deterministic, while leaving every other field intact. The
+-- "$type" guard makes this a no-op for continuations that have no "qf".
+CREATE FUNCTION aggregation_cursor_test_file.mask_continuation(cont bson)
+    RETURNS bson
+    LANGUAGE sql
+AS $fn$
+    SELECT documentdb_api_catalog.bson_dollar_add_fields(
+        documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson),
+        '{ "qf": { "$cond": [ { "$eq": [ { "$type": "$qf" }, "missing" ] }, "$$REMOVE", "XXX" ] } }'::documentdb_core.bson);
+$fn$;
+
 
 CREATE FUNCTION aggregation_cursor_test_file.drain_find_query(
     loopCount int, pageSize int, project bson DEFAULT NULL, skipVal int4 DEFAULT NULL, limitVal int4 DEFAULT NULL,
@@ -53,7 +66,7 @@ $$
         SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
     END IF;
     
-    SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+    SELECT aggregation_cursor_test_file.mask_continuation(cont) INTO STRICT contProcessed;
     RETURN NEXT ROW(doc, docSize, contProcessed, persistConn)::aggregation_cursor_test_file.drain_result;
 
     FOR i IN 1..loopCount LOOP
@@ -67,7 +80,7 @@ $$
             SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
         END IF;
 
-        SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+        SELECT aggregation_cursor_test_file.mask_continuation(cont) INTO STRICT contProcessed;
         RETURN NEXT ROW(doc, docSize, contProcessed, FALSE)::aggregation_cursor_test_file.drain_result;
     END LOOP;
 END;
@@ -108,7 +121,7 @@ $$
         SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
     END IF;
     
-    SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+    SELECT aggregation_cursor_test_file.mask_continuation(cont) INTO STRICT contProcessed;
     RETURN NEXT ROW(doc, docSize, contProcessed, persistConn)::aggregation_cursor_test_file.drain_result;
 
     FOR i IN 1..loopCount LOOP
@@ -122,7 +135,7 @@ $$
             SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
         END IF;
 
-        SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+        SELECT aggregation_cursor_test_file.mask_continuation(cont) INTO STRICT contProcessed;
         RETURN NEXT ROW(doc, docSize, contProcessed, FALSE)::aggregation_cursor_test_file.drain_result;
     END LOOP;
 END;

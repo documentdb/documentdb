@@ -978,7 +978,16 @@ GenerateICULocaleAndExtractCollationOption(char *inputLocale, char **locale,
 	}
 	else
 	{
-		*locale = inputLocale;
+		/*
+		 * Copy rather than alias inputLocale: the '_' -> '-' conversion below
+		 * rewrites the locale in place, and inputLocale points directly into the
+		 * caller's BSON buffer (the collation spec's "locale" value). Mutating it
+		 * would corrupt the original spec, which breaks any path that re-parses
+		 * the spec later (e.g. the remote dynamic cursor worker re-parsing a spec
+		 * the coordinator already parsed, turning "en_US" into an invalid
+		 * "en-US").
+		 */
+		*locale = pstrdup(inputLocale);
 	}
 
 	/* conversion type 2: replace '_' with '-' in locale string */

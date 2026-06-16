@@ -1161,7 +1161,18 @@ HandleRemoteUnshardedFirstPage(text *database, pgbson *querySpec, int64_t cursor
 		queryData->batchSize, collection);
 
 	pgbson *continuationDoc = NULL;
-	if (page.cursorType != 0 && page.continuation != NULL)
+
+	/*
+	 * A singleBatch request (find "singleBatch": true / aggregate
+	 * cursor.singleBatch) returns only the first batch and closes the cursor, so
+	 * never expose a non-zero cursor id or a continuation even when the worker
+	 * still has buffered rows. This mirrors the local first-page path's
+	 * QueryCursorType_SingleBatch handling, which the remote-unsharded dispatch
+	 * bypasses.
+	 */
+	bool isSingleBatch = queryData->cursorKind == QueryCursorType_SingleBatch;
+
+	if (page.cursorType != 0 && page.continuation != NULL && !isSingleBatch)
 	{
 		ReportFeatureUsage(FEATURE_CURSOR_TYPE_DYNAMIC_REMOTE_FIRSTPAGE);
 		cursorId = GenerateCursorId(cursorId);
@@ -1173,7 +1184,7 @@ HandleRemoteUnshardedFirstPage(text *database, pgbson *querySpec, int64_t cursor
 	}
 	else
 	{
-		/* Fully drained on the first page. */
+		/* Fully drained on the first page (or a singleBatch request). */
 		cursorId = 0;
 	}
 

@@ -17,6 +17,31 @@ END;
 $$;
 psql:sql/bson_aggregation_cursor_tests_core.sql:11: NOTICE:  creating collection
 CREATE TYPE aggregation_cursor_test.drain_result AS (filteredDoc bson, docSize int, continuationFiltered bson, persistConnection bool);
+-- A remote dynamic cursor continuation embeds per-run volatile worker state: the
+-- worker cursor id ("wc.qi"), its uniquely named cursor ("wc.qn") and the
+-- serialized file state ("wc.qf"), plus the routed shard table oid ("dr"). These
+-- differ on every run / environment. Replace them with a constant so the
+-- continuation is deterministic, while echoing the surrounding worker fields so
+-- the structure is still validated. The "$type" guards make this a no-op for
+-- streaming / non-remote continuations that have none of these fields.
+CREATE FUNCTION aggregation_cursor_test.mask_continuation(cont bson)
+    RETURNS bson
+    LANGUAGE sql
+AS $fn$
+    SELECT documentdb_api_catalog.bson_dollar_add_fields(cont,
+        '{ "wc": { "$cond": [ { "$eq": [ { "$type": "$wc" }, "missing" ] }, "$$REMOVE", { "qi": "XXX", "qp": "$wc.qp", "qk": "$wc.qk", "qn": "XXX", "qf": "XXX", "numIters": "$wc.numIters", "sn": "$wc.sn" } ] },'
+        '  "dr": { "$cond": [ { "$eq": [ { "$type": "$dr" }, "missing" ] }, "$$REMOVE", "XXX" ] },'
+        '  "qf": { "$cond": [ { "$eq": [ { "$type": "$qf" }, "missing" ] }, "$$REMOVE", "XXX" ] } }'::documentdb_core.bson);
+$fn$;
+-- Drain-output variant: additionally drops the volatile per-shard streaming
+-- resume token ("continuation.value") that the drain assertions don't compare.
+CREATE FUNCTION aggregation_cursor_test.mask_drain_continuation(cont bson)
+    RETURNS bson
+    LANGUAGE sql
+AS $fn$
+    SELECT aggregation_cursor_test.mask_continuation(
+        documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson));
+$fn$;
 CREATE FUNCTION aggregation_cursor_test.drain_find_query(
     loopCount int, pageSize int, project bson DEFAULT NULL, skipVal int4 DEFAULT NULL, limitVal int4 DEFAULT NULL,
     sort bson DEFAULT NULL, filter bson default null,
@@ -49,7 +74,7 @@ $$
         SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
     END IF;
     
-    SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+    SELECT aggregation_cursor_test.mask_drain_continuation(cont) INTO STRICT contProcessed;
     RETURN NEXT ROW(doc, docSize, contProcessed, persistConn)::aggregation_cursor_test.drain_result;
 
     FOR i IN 1..loopCount LOOP
@@ -63,7 +88,7 @@ $$
             SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
         END IF;
 
-        SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+        SELECT aggregation_cursor_test.mask_drain_continuation(cont) INTO STRICT contProcessed;
         RETURN NEXT ROW(doc, docSize, contProcessed, FALSE)::aggregation_cursor_test.drain_result;
     END LOOP;
 END;
@@ -103,7 +128,7 @@ $$
         SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
     END IF;
     
-    SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+    SELECT aggregation_cursor_test.mask_drain_continuation(cont) INTO STRICT contProcessed;
     RETURN NEXT ROW(doc, docSize, contProcessed, persistConn)::aggregation_cursor_test.drain_result;
 
     FOR i IN 1..loopCount LOOP
@@ -117,7 +142,7 @@ $$
             SELECT documentdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::documentdb_core.bson) INTO STRICT doc;
         END IF;
 
-        SELECT documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson) INTO STRICT contProcessed;
+        SELECT aggregation_cursor_test.mask_drain_continuation(cont) INTO STRICT contProcessed;
         RETURN NEXT ROW(doc, docSize, contProcessed, FALSE)::aggregation_cursor_test.drain_result;
     END LOOP;
 END;
@@ -1433,7 +1458,7 @@ SET documentdb.enableNewWithExprAccumulators TO off;
 ROLLBACK;
 -- test for errors when returnKey is set to true
 SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies", "filter" : { "title" : "a" }, "limit" : 1, "singleBatch" : true, "batchSize" : 1, "returnKey" : true, "lsid" : { "id" : { "$binary" : { "base64": "apfUje6LTzKH9YfO3smIGA==", "subType" : "04" } } }, "$db" : "db" }');
-psql:sql/bson_aggregation_cursor_tests_core.sql:325: ERROR:  The key returnKey is currently not supported
+psql:sql/bson_aggregation_cursor_tests_core.sql:352: ERROR:  The key returnKey is currently not supported
 -- test for no errors when returnKey is set to false
 SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies", "filter" : { "title" : "a" }, "limit" : 1, "singleBatch" : true, "batchSize" : 1, "returnKey" : false, "lsid" : { "id" : { "$binary" : { "base64": "apfUje6LTzKH9YfO3smIGA==", "subType" : "04" } } }, "$db" : "db" }');
                                                            cursorpage                                                           
@@ -1443,10 +1468,10 @@ SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "
 
 -- test for errors when returnKey and showRecordId are set to true
 SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies", "filter" : { "title" : "a" }, "limit" : 1, "singleBatch" : true, "batchSize" : 1, "showRecordId": true, "returnKey" : true, "lsid" : { "id" : { "$binary" : { "base64": "apfUje6LTzKH9YfO3smIGA==", "subType" : "04" } } }, "$db" : "db" }');
-psql:sql/bson_aggregation_cursor_tests_core.sql:331: ERROR:  The key showRecordId is currently not supported
+psql:sql/bson_aggregation_cursor_tests_core.sql:358: ERROR:  The key showRecordId is currently not supported
 -- test for ntoreturn in find command with unset documentdb.version
 SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies",  "limit" : 1,  "batchSize" : 1, "ntoreturn":1 ,"$db" : "db" }');
-psql:sql/bson_aggregation_cursor_tests_core.sql:334: ERROR:  'limit' or 'batchSize' fields can not be set with 'ntoreturn' field
+psql:sql/bson_aggregation_cursor_tests_core.sql:361: ERROR:  'limit' or 'batchSize' fields can not be set with 'ntoreturn' field
 SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies", "ntoreturn":1 ,"$db" : "db" }');
                                                            cursorpage                                                           
 ---------------------------------------------------------------------
@@ -1481,7 +1506,7 @@ PERFORM documentdb_api.insert_one('db', 'get_aggregation_cursor_test', FORMAT('{
 END LOOP;
 END;
 $$;
-psql:sql/bson_aggregation_cursor_tests_core.sql:349: NOTICE:  creating collection
+psql:sql/bson_aggregation_cursor_tests_core.sql:376: NOTICE:  creating collection
 SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 10, limitVal => 5);
                                                                                                     filtereddoc                                                                                                     | docsize  |                                                                                                continuationfiltered                                                                                                | persistconnection 
 ---------------------------------------------------------------------
@@ -1502,7 +1527,7 @@ PERFORM documentdb_api.insert_one('db', 'bitmap_cursor_continuation', FORMAT('{ 
 END LOOP;
 END;
 $$;
-psql:sql/bson_aggregation_cursor_tests_core.sql:361: NOTICE:  creating collection
+psql:sql/bson_aggregation_cursor_tests_core.sql:388: NOTICE:  creating collection
 -- create an index on field 'a'
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "bitmap_cursor_continuation", "indexes": [{"key": {"a": 1}, "name": "a_1" }]}', TRUE);
                                                                                                    create_indexes_non_concurrently                                                                                                    
@@ -1584,7 +1609,10 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('db',
 CREATE TEMP TABLE firstPageResponse AS
 SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid FROM
     find_cursor_first_page(database => 'db', commandSpec => '{ "find": "bitmap_cursor_continuation",  "projection": { "_id": 1 }, "filter": { "a": { "$gte": "aval-" } }, "batchSize": 2 }', cursorId => 4294967294);
-SELECT continuation AS r1_continuation FROM firstPageResponse \gset
+-- Mask the volatile worker continuation fields before EXPLAIN so the embedded
+-- continuation literal in the (non-executed) plan is deterministic. The plan
+-- shape does not depend on the continuation contents.
+SELECT aggregation_cursor_test.mask_continuation(continuation) AS r1_continuation FROM firstPageResponse \gset
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('db',
     '{ "getMore": { "$numberLong": "4294967294" }, "collection": "bitmap_cursor_continuation", "batchSize": 1 }', :'r1_continuation');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
@@ -1806,7 +1834,7 @@ PERFORM documentdb_api.insert_one('db', 'partial_final_batch_coll', FORMAT('{ "_
 END LOOP;
 END;
 $$;
-psql:sql/bson_aggregation_cursor_tests_core.sql:527: NOTICE:  creating collection
+psql:sql/bson_aggregation_cursor_tests_core.sql:557: NOTICE:  creating collection
 -- Streaming aggregate: 7 docs with batchSize=3 → batches of [3, 3, 1] then empty
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 3, collection_name => 'partial_final_batch_coll');
                                                                                                                            filtereddoc                                                                                                                           | docsize |                                                                                                                                                                                  continuationfiltered                                                                                                                                                                                  | persistconnection 
@@ -1914,7 +1942,318 @@ SELECT documentdb_api.drop_collection('db', 'bitmap_cursor_continuation');
 (1 row)
 
 DROP SCHEMA aggregation_cursor_test CASCADE;
-psql:sql/bson_aggregation_cursor_tests_core.sql:559: NOTICE:  drop cascades to 3 other objects
+psql:sql/bson_aggregation_cursor_tests_core.sql:589: NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to type aggregation_cursor_test.drain_result
+drop cascades to function aggregation_cursor_test.mask_continuation(bson)
+drop cascades to function aggregation_cursor_test.mask_drain_continuation(bson)
 drop cascades to function aggregation_cursor_test.drain_find_query(integer,integer,bson,integer,integer,bson,bson,boolean)
 drop cascades to function aggregation_cursor_test.drain_aggregation_query(integer,integer,bson,boolean,boolean,text)
+\i sql/bson_aggregation_cursor_integration_tests_core.sql
+-- Integration coverage for the end-to-end cursor path: a first-page call
+-- followed by getMore continuations, for both find and aggregate, with and
+-- without an explicit database argument. All first-page / getMore calls go
+-- through the run_first_page / run_get_more wrappers defined below, which call
+-- the cursor functions directly.
+CREATE SCHEMA cursor_integration_test;
+DO $$
+DECLARE i int;
+BEGIN
+    FOR i IN 1..10 LOOP
+        PERFORM documentdb_api.insert_one('intgdb', 'cursor_integration',
+            FORMAT('{ "_id": %s, "a": %s, "b": "val-%s" }', i, i % 3, i)::documentdb_core.bson);
+    END LOOP;
+END;
+$$;
+psql:sql/bson_aggregation_cursor_integration_tests_core.sql:16: NOTICE:  creating collection
+-- Deterministic masking of the continuation. The server / gateway assigns the
+-- cursor id, so the top level cursor id ("qi") and the streaming cursor name
+-- ("qn") are per-run volatile and are replaced with a constant. The same is done
+-- for the remote worker fields ("wc.qi"/"wc.qn"/"wc.qf" and the routed shard oid
+-- "dr"), and the per-shard streaming resume token ("continuation.value") is
+-- dropped. The "$type" guards make each replacement a no-op when the field is
+-- absent, so the function works for streaming, file and remote continuations.
+CREATE FUNCTION cursor_integration_test.mask_continuation(cont documentdb_core.bson)
+    RETURNS documentdb_core.bson
+    LANGUAGE sql
+AS $fn$
+    SELECT documentdb_api_catalog.bson_dollar_add_fields(
+        documentdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::documentdb_core.bson),
+        '{ "qi": { "$cond": [ { "$eq": [ { "$type": "$qi" }, "missing" ] }, "$$REMOVE", "XXX" ] },'
+        '  "qn": { "$cond": [ { "$eq": [ { "$type": "$qn" }, "missing" ] }, "$$REMOVE", "XXX" ] },'
+        '  "wc": { "$cond": [ { "$eq": [ { "$type": "$wc" }, "missing" ] }, "$$REMOVE", { "qi": "XXX", "qp": "$wc.qp", "qk": "$wc.qk", "qn": "XXX", "qf": "XXX", "numIters": "$wc.numIters", "sn": "$wc.sn" } ] },'
+        '  "dr": { "$cond": [ { "$eq": [ { "$type": "$dr" }, "missing" ] }, "$$REMOVE", "XXX" ] },'
+        '  "qf": { "$cond": [ { "$eq": [ { "$type": "$qf" }, "missing" ] }, "$$REMOVE", "XXX" ] } }'::documentdb_core.bson);
+$fn$;
+-- Compact, cursor-id-independent projection of a cursor page. The cursor id is
+-- assigned by the server / gateway and is intentionally omitted so the output is
+-- deterministic across runs.
+CREATE FUNCTION cursor_integration_test.mask_page(page documentdb_core.bson)
+    RETURNS documentdb_core.bson
+    LANGUAGE sql
+AS $fn$
+    SELECT documentdb_api_catalog.bson_dollar_project(page,
+        '{ "ok": 1, "cursor.ns": 1, "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } }, "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }'::documentdb_core.bson);
+$fn$;
+-- First-page / getMore wrappers. These call the cursor functions directly and
+-- are STRICT, so a NULL database short-circuits to a NULL row.
+CREATE FUNCTION cursor_integration_test.run_first_page(p_key int, p_db text, p_spec documentdb_core.bson)
+    RETURNS TABLE (cursorPage documentdb_core.bson, continuation documentdb_core.bson, persistConnection bool, cursorId int8)
+    LANGUAGE plpgsql
+AS $fn$
+BEGIN
+    IF p_key = 1 THEN
+        RETURN QUERY SELECT t.cursorPage, t.continuation, t.persistConnection, t.cursorId
+            FROM documentdb_api.find_cursor_first_page(p_db, p_spec, 0) t;
+    ELSE
+        RETURN QUERY SELECT t.cursorPage, t.continuation, t.persistConnection, t.cursorId
+            FROM documentdb_api.aggregate_cursor_first_page(p_db, p_spec, 0) t;
+    END IF;
+END;
+$fn$;
+CREATE FUNCTION cursor_integration_test.run_get_more(p_db text, p_spec documentdb_core.bson, p_continuation documentdb_core.bson)
+    RETURNS TABLE (cursorPage documentdb_core.bson, continuation documentdb_core.bson)
+    LANGUAGE plpgsql
+AS $fn$
+BEGIN
+    RETURN QUERY SELECT t.cursorPage, t.continuation
+        FROM documentdb_api.cursor_get_more(p_db, p_spec, p_continuation) t;
+END;
+$fn$;
+-- Drives a first-page call followed by up to p_loops getMore calls, returning a
+-- masked, deterministic view of every page and continuation along the way.
+-- When p_pass_db is true the database is passed as an explicit argument; when it
+-- is false the database is resolved from the "$db" field of the spec (which the
+-- caller must include), and "$db" is likewise injected into the getMore spec.
+CREATE FUNCTION cursor_integration_test.drain(
+    p_key int, p_db text, p_pass_db bool, p_spec documentdb_core.bson, p_collection text, p_getmore_batch int, p_loops int)
+    RETURNS TABLE (stage text, page documentdb_core.bson, continuation documentdb_core.bson, persistConnection bool)
+    LANGUAGE plpgsql
+AS $fn$
+DECLARE
+    v_page documentdb_core.bson;
+    v_cont documentdb_core.bson;
+    v_persist bool;
+    v_cid int8;
+    v_getmore documentdb_core.bson;
+    v_db text;
+    i int;
+BEGIN
+    v_db := CASE WHEN p_pass_db THEN p_db ELSE NULL END;
+
+    SELECT t.cursorPage, t.continuation, t.persistConnection, t.cursorId
+        INTO v_page, v_cont, v_persist, v_cid
+        FROM cursor_integration_test.run_first_page(p_key, v_db, p_spec) t;
+
+    stage := 'firstPage';
+    page := cursor_integration_test.mask_page(v_page);
+    continuation := cursor_integration_test.mask_continuation(v_cont);
+    persistConnection := v_persist;
+    RETURN NEXT;
+
+    FOR i IN 1..p_loops LOOP
+        EXIT WHEN v_cont IS NULL OR v_cid IS NULL OR v_cid = 0;
+
+        IF p_pass_db THEN
+            v_getmore := FORMAT('{ "getMore": { "$numberLong": "%s" }, "collection": "%s", "batchSize": %s }',
+                v_cid, p_collection, p_getmore_batch)::documentdb_core.bson;
+        ELSE
+            v_getmore := FORMAT('{ "getMore": { "$numberLong": "%s" }, "collection": "%s", "batchSize": %s, "$db": "%s" }',
+                v_cid, p_collection, p_getmore_batch, p_db)::documentdb_core.bson;
+        END IF;
+
+        SELECT t.cursorPage, t.continuation INTO v_page, v_cont
+            FROM cursor_integration_test.run_get_more(v_db, v_getmore, v_cont) t;
+
+        stage := 'getMore';
+        page := cursor_integration_test.mask_page(v_page);
+        continuation := cursor_integration_test.mask_continuation(v_cont);
+        persistConnection := NULL;
+        RETURN NEXT;
+    END LOOP;
+END;
+$fn$;
+-- ===========================================================================
+-- find: explicit database vs database resolved from "$db"
+-- ===========================================================================
+SELECT * FROM cursor_integration_test.drain(1, 'intgdb', true,
+    '{ "find": "cursor_integration", "batchSize": 3 }', 'cursor_integration', 3, 6);
+   stage   |                                                                                                         page                                                                                                         |                                                                                                                                                  continuation                                                                                                                                                  | persistconnection 
+---------------------------------------------------------------------
+ firstPage | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "3" }, "ids" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] } | { "qi" : "XXX", "qp" : false, "qk" : { "$numberInt" : "1" }, "qc" : { "find" : "cursor_integration", "batchSize" : { "$numberInt" : "3" } }, "continuation" : [ { "table_name" : "documents_3125_3120082" } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | f
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "3" }, "ids" : [ { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" } ] } | { "qi" : "XXX", "qp" : false, "qk" : { "$numberInt" : "1" }, "qc" : { "find" : "cursor_integration", "batchSize" : { "$numberInt" : "3" } }, "continuation" : [ { "table_name" : "documents_3125_3120082" } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | 
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "3" }, "ids" : [ { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" } ] } | { "qi" : "XXX", "qp" : false, "qk" : { "$numberInt" : "1" }, "qc" : { "find" : "cursor_integration", "batchSize" : { "$numberInt" : "3" } }, "continuation" : [ { "table_name" : "documents_3125_3120082" } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | 
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "10" } ] }                                                |                                                                                                                                                                                                                                                                                                                | 
+(4 rows)
+
+SELECT * FROM cursor_integration_test.drain(1, 'intgdb', false,
+    '{ "find": "cursor_integration", "batchSize": 3, "$db": "intgdb" }', 'cursor_integration', 3, 6);
+   stage   | page | continuation | persistconnection 
+---------------------------------------------------------------------
+ firstPage |      |              | 
+(1 row)
+
+-- find: filter / sort / limit and combinations
+SELECT * FROM cursor_integration_test.drain(1, 'intgdb', true,
+    '{ "find": "cursor_integration", "filter": { "a": 1 }, "batchSize": 2 }', 'cursor_integration', 2, 6);
+   stage   |                                                                                             page                                                                                              |                                                                                                                                                                        continuation                                                                                                                                                                         | persistconnection 
+---------------------------------------------------------------------
+ firstPage | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "1" }, { "$numberInt" : "4" } ] }  | { "qi" : "XXX", "qp" : false, "qk" : { "$numberInt" : "1" }, "qc" : { "find" : "cursor_integration", "filter" : { "a" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "continuation" : [ { "table_name" : "documents_3125_3120082" } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | f
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "7" }, { "$numberInt" : "10" } ] } |                                                                                                                                                                                                                                                                                                                                                             | 
+(2 rows)
+
+SELECT * FROM cursor_integration_test.drain(1, 'intgdb', true,
+    '{ "find": "cursor_integration", "sort": { "_id": -1 }, "batchSize": 4 }', 'cursor_integration', 4, 6);
+   stage   |                                                                                                                     page                                                                                                                      |                                                                               continuation                                                                                | persistconnection 
+---------------------------------------------------------------------
+ firstPage | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "4" }, "ids" : [ { "$numberInt" : "10" }, { "$numberInt" : "9" }, { "$numberInt" : "8" }, { "$numberInt" : "7" } ] } | { "qi" : "XXX", "qp" : true, "qk" : { "$numberInt" : "1" }, "qn" : "XXX", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | t
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "4" }, "ids" : [ { "$numberInt" : "6" }, { "$numberInt" : "5" }, { "$numberInt" : "4" }, { "$numberInt" : "3" } ] }  | { "qi" : "XXX", "qp" : true, "qk" : { "$numberInt" : "1" }, "qn" : "XXX", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | 
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "2" }, { "$numberInt" : "1" } ] }                                                  |                                                                                                                                                                           | 
+(3 rows)
+
+SELECT * FROM cursor_integration_test.drain(1, 'intgdb', true,
+    '{ "find": "cursor_integration", "limit": 5, "batchSize": 2 }', 'cursor_integration', 2, 6);
+   stage   |                                                                                             page                                                                                             |                                                                               continuation                                                                                | persistconnection 
+---------------------------------------------------------------------
+ firstPage | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] } | { "qi" : "XXX", "qp" : true, "qk" : { "$numberInt" : "1" }, "qn" : "XXX", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | t
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } | { "qi" : "XXX", "qp" : true, "qk" : { "$numberInt" : "1" }, "qn" : "XXX", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | 
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "5" } ] }                         |                                                                                                                                                                           | 
+(3 rows)
+
+SELECT * FROM cursor_integration_test.drain(1, 'intgdb', true,
+    '{ "find": "cursor_integration", "filter": { "a": { "$gte": 1 } }, "sort": { "_id": -1 }, "limit": 4, "batchSize": 2 }',
+    'cursor_integration', 2, 6);
+   stage   |                                                                                             page                                                                                              |                                                                               continuation                                                                                | persistconnection 
+---------------------------------------------------------------------
+ firstPage | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "10" }, { "$numberInt" : "8" } ] } | { "qi" : "XXX", "qp" : true, "qk" : { "$numberInt" : "1" }, "qn" : "XXX", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | t
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "7" }, { "$numberInt" : "5" } ] }  |                                                                                                                                                                           | 
+(2 rows)
+
+-- ===========================================================================
+-- aggregate: explicit database vs database resolved from "$db"
+-- ===========================================================================
+SELECT * FROM cursor_integration_test.drain(2, 'intgdb', true,
+    '{ "aggregate": "cursor_integration", "pipeline": [ ], "cursor": { "batchSize": 3 } }', 'cursor_integration', 3, 6);
+   stage   |                                                                                                         page                                                                                                         |                                                                                                                                                                     continuation                                                                                                                                                                      | persistconnection 
+---------------------------------------------------------------------
+ firstPage | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "3" }, "ids" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] } | { "qi" : "XXX", "qp" : false, "qk" : { "$numberInt" : "2" }, "qc" : { "aggregate" : "cursor_integration", "pipeline" : [  ], "cursor" : { "batchSize" : { "$numberInt" : "3" } } }, "continuation" : [ { "table_name" : "documents_3125_3120082" } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | f
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "3" }, "ids" : [ { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" } ] } | { "qi" : "XXX", "qp" : false, "qk" : { "$numberInt" : "2" }, "qc" : { "aggregate" : "cursor_integration", "pipeline" : [  ], "cursor" : { "batchSize" : { "$numberInt" : "3" } } }, "continuation" : [ { "table_name" : "documents_3125_3120082" } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | 
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "3" }, "ids" : [ { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" } ] } | { "qi" : "XXX", "qp" : false, "qk" : { "$numberInt" : "2" }, "qc" : { "aggregate" : "cursor_integration", "pipeline" : [  ], "cursor" : { "batchSize" : { "$numberInt" : "3" } } }, "continuation" : [ { "table_name" : "documents_3125_3120082" } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | 
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "10" } ] }                                                |                                                                                                                                                                                                                                                                                                                                                       | 
+(4 rows)
+
+SELECT * FROM cursor_integration_test.drain(2, 'intgdb', false,
+    '{ "aggregate": "cursor_integration", "pipeline": [ ], "cursor": { "batchSize": 3 }, "$db": "intgdb" }', 'cursor_integration', 3, 6);
+   stage   | page | continuation | persistconnection 
+---------------------------------------------------------------------
+ firstPage |      |              | 
+(1 row)
+
+-- aggregate: $match / $sort / $limit and combinations
+SELECT * FROM cursor_integration_test.drain(2, 'intgdb', true,
+    '{ "aggregate": "cursor_integration", "pipeline": [ { "$match": { "a": 1 } } ], "cursor": { "batchSize": 2 } }', 'cursor_integration', 2, 6);
+   stage   |                                                                                             page                                                                                              |                                                                                                                                                                                             continuation                                                                                                                                                                                             | persistconnection 
+---------------------------------------------------------------------
+ firstPage | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "1" }, { "$numberInt" : "4" } ] }  | { "qi" : "XXX", "qp" : false, "qk" : { "$numberInt" : "2" }, "qc" : { "aggregate" : "cursor_integration", "pipeline" : [ { "$match" : { "a" : { "$numberInt" : "1" } } } ], "cursor" : { "batchSize" : { "$numberInt" : "2" } } }, "continuation" : [ { "table_name" : "documents_3125_3120082" } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | f
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "7" }, { "$numberInt" : "10" } ] } |                                                                                                                                                                                                                                                                                                                                                                                                      | 
+(2 rows)
+
+SELECT * FROM cursor_integration_test.drain(2, 'intgdb', true,
+    '{ "aggregate": "cursor_integration", "pipeline": [ { "$sort": { "_id": -1 } } ], "cursor": { "batchSize": 4 } }', 'cursor_integration', 4, 6);
+   stage   |                                                                                                                     page                                                                                                                      |                                                                               continuation                                                                                | persistconnection 
+---------------------------------------------------------------------
+ firstPage | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "4" }, "ids" : [ { "$numberInt" : "10" }, { "$numberInt" : "9" }, { "$numberInt" : "8" }, { "$numberInt" : "7" } ] } | { "qi" : "XXX", "qp" : true, "qk" : { "$numberInt" : "2" }, "qn" : "XXX", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | t
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "4" }, "ids" : [ { "$numberInt" : "6" }, { "$numberInt" : "5" }, { "$numberInt" : "4" }, { "$numberInt" : "3" } ] }  | { "qi" : "XXX", "qp" : true, "qk" : { "$numberInt" : "2" }, "qn" : "XXX", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | 
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "2" }, { "$numberInt" : "1" } ] }                                                  |                                                                                                                                                                           | 
+(3 rows)
+
+SELECT * FROM cursor_integration_test.drain(2, 'intgdb', true,
+    '{ "aggregate": "cursor_integration", "pipeline": [ { "$limit": 5 } ], "cursor": { "batchSize": 2 } }', 'cursor_integration', 2, 6);
+   stage   |                                                                                             page                                                                                             |                                                                               continuation                                                                                | persistconnection 
+---------------------------------------------------------------------
+ firstPage | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] } | { "qi" : "XXX", "qp" : true, "qk" : { "$numberInt" : "2" }, "qn" : "XXX", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | t
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } | { "qi" : "XXX", "qp" : true, "qk" : { "$numberInt" : "2" }, "qn" : "XXX", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | 
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "5" } ] }                         |                                                                                                                                                                           | 
+(3 rows)
+
+SELECT * FROM cursor_integration_test.drain(2, 'intgdb', true,
+    '{ "aggregate": "cursor_integration", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sort": { "_id": -1 } }, { "$limit": 4 } ], "cursor": { "batchSize": 2 } }',
+    'cursor_integration', 2, 6);
+   stage   |                                                                                             page                                                                                              |                                                                               continuation                                                                                | persistconnection 
+---------------------------------------------------------------------
+ firstPage | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "10" }, { "$numberInt" : "8" } ] } | { "qi" : "XXX", "qp" : true, "qk" : { "$numberInt" : "2" }, "qn" : "XXX", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | t
+ getMore   | { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "7" }, { "$numberInt" : "5" } ] }  |                                                                                                                                                                           | 
+(2 rows)
+
+-- ===========================================================================
+-- batch size variations on the first page: -1 (invalid), 0 (cursor only), 10
+-- ===========================================================================
+SELECT cursor_integration_test.mask_page(cursorPage) FROM cursor_integration_test.run_first_page(1, 'intgdb',
+    '{ "find": "cursor_integration", "batchSize": -1 }');
+psql:sql/bson_aggregation_cursor_integration_tests_core.sql:172: ERROR:  BatchSize value must be non-negative, but received: -1
+CONTEXT:  SQL statement "SELECT t.cursorPage, t.continuation, t.persistConnection, t.cursorId
+            FROM documentdb_api.find_cursor_first_page(p_db, p_spec, 0) t"
+PL/pgSQL function cursor_integration_test.run_first_page(integer,text,bson) line 4 at RETURN QUERY
+SELECT cursor_integration_test.mask_page(cursorPage), cursor_integration_test.mask_continuation(continuation), persistConnection
+    FROM cursor_integration_test.run_first_page(1, 'intgdb', '{ "find": "cursor_integration", "batchSize": 0 }');
+                                                                   mask_page                                                                    |                                                                                                                          mask_continuation                                                                                                                          | persistconnection 
+---------------------------------------------------------------------
+ { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "0" }, "ids" : [  ] } | { "qi" : "XXX", "qp" : false, "qk" : { "$numberInt" : "1" }, "qc" : { "find" : "cursor_integration", "batchSize" : { "$numberInt" : "0" } }, "continuation" : [  ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | f
+(1 row)
+
+SELECT cursor_integration_test.mask_page(cursorPage) FROM cursor_integration_test.run_first_page(1, 'intgdb',
+    '{ "find": "cursor_integration", "batchSize": 10 }');
+                                                                                                                                                                                           mask_page                                                                                                                                                                                            
+---------------------------------------------------------------------
+ { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "10" }, "ids" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" }, { "$numberInt" : "10" } ] }
+(1 row)
+
+SELECT cursor_integration_test.mask_page(cursorPage) FROM cursor_integration_test.run_first_page(2, 'intgdb',
+    '{ "aggregate": "cursor_integration", "pipeline": [ ], "cursor": { "batchSize": -1 } }');
+psql:sql/bson_aggregation_cursor_integration_tests_core.sql:179: ERROR:  BatchSize value must be non-negative, but received: -1
+CONTEXT:  SQL statement "SELECT t.cursorPage, t.continuation, t.persistConnection, t.cursorId
+            FROM documentdb_api.aggregate_cursor_first_page(p_db, p_spec, 0) t"
+PL/pgSQL function cursor_integration_test.run_first_page(integer,text,bson) line 7 at RETURN QUERY
+SELECT cursor_integration_test.mask_page(cursorPage), cursor_integration_test.mask_continuation(continuation), persistConnection
+    FROM cursor_integration_test.run_first_page(2, 'intgdb', '{ "aggregate": "cursor_integration", "pipeline": [ ], "cursor": { "batchSize": 0 } }');
+                                                                   mask_page                                                                    |                                                                                                                                             mask_continuation                                                                                                                                              | persistconnection 
+---------------------------------------------------------------------
+ { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "0" }, "ids" : [  ] } | { "qi" : "XXX", "qp" : false, "qk" : { "$numberInt" : "2" }, "qc" : { "aggregate" : "cursor_integration", "pipeline" : [  ], "cursor" : { "batchSize" : { "$numberInt" : "0" } } }, "continuation" : [  ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | f
+(1 row)
+
+SELECT cursor_integration_test.mask_page(cursorPage) FROM cursor_integration_test.run_first_page(2, 'intgdb',
+    '{ "aggregate": "cursor_integration", "pipeline": [ ], "cursor": { "batchSize": 10 } }');
+                                                                                                                                                                                           mask_page                                                                                                                                                                                            
+---------------------------------------------------------------------
+ { "cursor" : { "ns" : "intgdb.cursor_integration" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "10" }, "ids" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" }, { "$numberInt" : "10" } ] }
+(1 row)
+
+-- ===========================================================================
+-- getMore driven by a tampered continuation: a real continuation is captured
+-- and its query-kind marker ("qk") is flipped (find -> aggregate) while the
+-- embedded command still describes a find. The output is masked so the result
+-- is deterministic whether the tampering is rejected (streaming cursors) or
+-- tolerated by re-planning from the embedded request (remote cursors).
+-- ===========================================================================
+SELECT continuation AS tampered_cont, cursorId AS tampered_cid
+    FROM cursor_integration_test.run_first_page(1, 'intgdb', '{ "find": "cursor_integration", "batchSize": 2 }') \gset
+SELECT cursor_integration_test.mask_page(cursorPage), cursor_integration_test.mask_continuation(continuation)
+    FROM cursor_integration_test.run_get_more('intgdb',
+        FORMAT('{ "getMore": { "$numberLong": "%s" }, "collection": "cursor_integration", "batchSize": 2 }', :'tampered_cid')::documentdb_core.bson,
+        documentdb_api_catalog.bson_dollar_add_fields((:'tampered_cont')::documentdb_core.bson, '{ "qk": { "$numberInt": "2" } }'::documentdb_core.bson));
+psql:sql/bson_aggregation_cursor_integration_tests_core.sql:198: ERROR:  find is not a recognized field
+CONTEXT:  SQL statement "SELECT t.cursorPage, t.continuation
+        FROM documentdb_api.cursor_get_more(p_db, p_spec, p_continuation) t"
+PL/pgSQL function cursor_integration_test.run_get_more(text,bson,bson) line 3 at RETURN QUERY
+SELECT documentdb_api.drop_database('intgdb');
+ drop_database 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+DROP SCHEMA cursor_integration_test CASCADE;
+psql:sql/bson_aggregation_cursor_integration_tests_core.sql:201: NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to function cursor_integration_test.mask_continuation(bson)
+drop cascades to function cursor_integration_test.mask_page(bson)
+drop cascades to function cursor_integration_test.run_first_page(integer,text,bson)
+drop cascades to function cursor_integration_test.run_get_more(text,bson,bson)
+drop cascades to function cursor_integration_test.drain(integer,text,boolean,bson,text,integer,integer)

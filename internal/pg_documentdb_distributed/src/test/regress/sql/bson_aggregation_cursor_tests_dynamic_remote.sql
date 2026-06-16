@@ -12,8 +12,10 @@ SET documentdb.enableDynamicCursors TO on;
 SET documentdb.useLocalExecutionShardQueries TO off;
 
 -- The remote dynamic cursor's worker continuation embeds a per-run unique cursor
--- id / file name (masked via normalize.sed). Use unaligned output so psql column
--- widths do not depend on the (pre-masking) length of those volatile values.
+-- id / file name (masked in-test via aggregation_cursor_test.mask_continuation).
+-- Use unaligned output so psql column widths do not depend on the (pre-masking)
+-- length of those volatile values.
 \a
 
 \i sql/bson_aggregation_cursor_tests_core.sql
+\i sql/bson_aggregation_cursor_integration_tests_core.sql

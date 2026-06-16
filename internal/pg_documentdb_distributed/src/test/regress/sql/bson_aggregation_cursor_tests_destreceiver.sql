@@ -8,3 +8,4 @@ SET citus.multi_shard_modify_mode TO 'sequential';
 SET documentdb.enableStreamingCursorDrainViaDestReceiver TO on;
 
 \i sql/bson_aggregation_cursor_tests_core.sql
+\i sql/bson_aggregation_cursor_integration_tests_core.sql

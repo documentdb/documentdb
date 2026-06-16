@@ -23,17 +23,6 @@ s/Type oid not supported \d+/Type oid not supported ddd/g
 # Replace the values of the $$NOW time system variable with a constant
 s/\"now\" : \{ \"\$date\" : \{ \"\$numberLong\" : \"[0-9]*\" \} \}/\"now\" : NOW_SYS_VARIABLE/g
 s/\"sn\" : \{ \"\$date\" : \{ \"\$numberLong\" : \"[0-9]*\" \} \}/\"sn\" : NOW_SYS_VARIABLE/g
-# Mask the non-deterministic worker cursor identifiers embedded in a remote
-# dynamic cursor's inner continuation ("wc"). The worker creates a uniquely
-# named cursor per drain, so its cursor id ("wc.qi"), cursor name ("qn") and
-# serialized file state ("qf") differ on every run.
-s/(\"wc\" : \{ \"qi\" : \{ \"\$numberLong\" : )\"[0-9]+\"/\1\"XXX\"/g
-s/\"qn\" : \"cursor_[0-9]+\"/\"qn\" : \"cursor_XXX\"/g
-s/(\"qf\" : \{ \"\$binary\" : \{ \"base64\" : )\"[^\"]+\"/\1\"XXX\"/g
-# The remote dynamic cursor continuation embeds the routed distributed table
-# OID ("dr"), which shifts whenever catalog objects are added/removed and so
-# differs across environments. Mask it for stable cross-environment diffs.
-s/(\"dr\" : \{ \"\$numberLong\" : )\"[0-9]+\"/\1\"XXX\"/g
 s/documentdb_api_catalog.shard_key_and_document/shard_key_and_document/g
 s/documentdb_api_internal.generate_unique_shard_document/generate_unique_shard_document/g
 s/documentdb_core.bson/bson/g
