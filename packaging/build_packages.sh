@@ -175,7 +175,6 @@ elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
         --build-arg BASE_IMAGE="$DOCKER_IMAGE" \
         --build-arg POSTGRES_VERSION="$PG" \
         --build-arg DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" "$script_dir"
-    # Run the Docker container to build the packages
     docker run --rm --env OS="$OS" --env POSTGRES_VERSION="$PG" --env DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" -v "$abs_output_dir:/output" "$TAG"
 fi
 

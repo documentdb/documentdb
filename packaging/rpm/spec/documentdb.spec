@@ -31,6 +31,7 @@ Requires:       (pgvector_%{pg_version} or percona-pgvector_%{pg_version})
 Requires:       pg_cron_%{pg_version}
 Requires:       postgis36_%{pg_version}
 Requires:       rum_%{pg_version}
+Requires:       jq
 # Libbson is now bundled, so no runtime Requires for it.
 # pcre2 is statically linked.
 # libbid.a is bundled.
@@ -98,6 +99,22 @@ rm -rf %{buildroot}/usr/src/documentdb/build
 %{_libdir}/libbson-1.0.so.0
 %{_libdir}/libbson-1.0.so.0.0.0
 %{_libdir}/pkgconfig/libbson-static-1.0.pc
+# scripts needed for docker container and cli
+%{_datadir}/documentdb/scripts/utils.sh
+%{_datadir}/documentdb/scripts/start_oss_server.sh
+%{_datadir}/documentdb/scripts/build_and_start_gateway.sh
+%{_datadir}/documentdb/scripts/emulator_entrypoint.sh
+%{_datadir}/documentdb/scripts/init_documentdb_data.sh
+%{_datadir}/documentdb/scripts/setup_psqlrc.sh
+# %{_datadir}/documentdb/scripts/documentdb-setup.sh
+# sample data needed for docker container and cli
+%{_datadir}/documentdb/sample-data/01-users.js
+%{_datadir}/documentdb/sample-data/02-products.js
+%{_datadir}/documentdb/sample-data/03-orders.js
+%{_datadir}/documentdb/sample-data/04-analytics.js
+%{_datadir}/documentdb/sample-data/README.md
+
+
 
 %changelog
 * Fri Aug 29 2025 Shuai Tian <shuaitian@microsoft.com> - 0.106-0

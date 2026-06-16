@@ -19,6 +19,9 @@ install-documentdb:
 	$(MAKE) -C pg_documentdb_core install
 	$(MAKE) -C pg_documentdb install
 	$(MAKE) -C pg_documentdb_extended_rum install
+	$(MAKE) -C scripts install
+	$(MAKE) -C documentdb-local/scripts install
+	$(MAKE) -C documentdb-local/sample-data install
 
 .DEFAULT:
 	$(MAKE) -C pg_documentdb_core
@@ -31,3 +34,6 @@ install-documentdb:
 	$(MAKE) -C pg_documentdb $@
 	$(MAKE) -C pg_documentdb_extended_rum $@
 	$(MAKE) -C internal/pg_documentdb_distributed $@
+	$(MAKE) -C scripts $@
+	$(MAKE) -C documentdb-local/scripts $@
+	$(MAKE) -C documentdb-local/sample-data $@
