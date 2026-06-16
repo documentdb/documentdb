@@ -478,6 +478,11 @@ bool EnableInsertDuplicateInlineHandling =
 bool EnableCommutativeUpdateMany =
 	DEFAULT_ENABLE_COMMUTATIVE_UPDATE_MANY;
 
+/* Added in v114, enabled in v114, remove after v116 */
+#define DEFAULT_ENABLE_ARRAY_FILTER_LOGICAL_OPERATORS true
+bool EnableArrayFilterLogicalOperators =
+	DEFAULT_ENABLE_ARRAY_FILTER_LOGICAL_OPERATORS;
+
 /*
  * SECTION: Changestream feature flags
  */
@@ -1328,6 +1333,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableCommutativeUpdateMany,
 		DEFAULT_ENABLE_COMMUTATIVE_UPDATE_MANY,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableArrayFilterLogicalOperators", newGucPrefix),
+		gettext_noop(
+			"Whether to enable $or/$and/$nor logical operators at the top level of arrayFilter elements."),
+		NULL,
+		&EnableArrayFilterLogicalOperators,
+		DEFAULT_ENABLE_ARRAY_FILTER_LOGICAL_OPERATORS,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

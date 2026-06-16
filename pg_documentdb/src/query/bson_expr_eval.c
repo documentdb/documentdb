@@ -364,7 +364,24 @@ GetExpressionEvalStateWithCollation(const bson_value_t *expression, MemoryContex
 									memoryContext, const char *collationString)
 {
 	MemoryContext originalMemoryContext = MemoryContextSwitchTo(memoryContext);
-	Expr *expr = CreateQualForBsonValueExpression(expression, collationString);
+	Expr *expr = CreateQualForBsonValueExpression(expression, collationString, false);
+	ExprEvalState *evalState = CreateEvalStateFromExpr(expr, INTERNALOID);
+	MemoryContextSwitchTo(originalMemoryContext);
+	return evalState;
+}
+
+
+/*
+ * Variant of GetExpressionEvalState for arrayFilter expressions.
+ * Skips the object/array type filter so $or/$and/$nor can match
+ * scalar array elements.
+ */
+ExprEvalState *
+GetExpressionEvalStateForArrayFilter(const bson_value_t *expression,
+									 MemoryContext memoryContext)
+{
+	MemoryContext originalMemoryContext = MemoryContextSwitchTo(memoryContext);
+	Expr *expr = CreateQualForBsonValueExpression(expression, NULL, true);
 	ExprEvalState *evalState = CreateEvalStateFromExpr(expr, INTERNALOID);
 	MemoryContextSwitchTo(originalMemoryContext);
 	return evalState;

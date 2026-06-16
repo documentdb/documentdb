@@ -111,6 +111,13 @@ typedef struct BsonQueryOperatorContext
 	 * $expr with $function expressions / $near / $nearSphere / $text / $where
 	 */
 	bool hasOperatorRestrictions;
+
+	/*
+	 * When true, skip the object/array type filter added for $or/$and/$nor
+	 * expressions in BsonValue context. Used by arrayFilter evaluation where
+	 * logical operators may apply to scalar array elements.
+	 */
+	bool skipObjectArrayFilter;
 } BsonQueryOperatorContext;
 
 Var * MakeSimpleDocumentVar(void);
@@ -128,7 +135,8 @@ Node * EvaluateBoundParameters(Node *expression, ParamListInfo boundParams);
 List * CreateQualsForBsonValueTopLevelQueryIter(bson_iter_t *queryIter,
 												const char *collationString);
 Expr * CreateQualForBsonValueExpression(const bson_value_t *expression, const
-										char *collationString);
+										char *collationString,
+										bool skipObjectArrayFilter);
 Expr * CreateQualForBsonValueArrayExpression(const bson_value_t *expression);
 void BsonQueryOperatorContextCommonBuilder(BsonQueryOperatorContext *context);
 Expr * CreateQualForBsonExpression(const bson_value_t *expression, const char *queryPath,

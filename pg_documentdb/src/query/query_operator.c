@@ -541,7 +541,8 @@ ReplaceBsonQueryOperators(Query *node, ParamListInfo boundParams)
  */
 Expr *
 CreateQualForBsonValueExpression(const bson_value_t *expression, const
-								 char *collationString)
+								 char *collationString,
+								 bool skipObjectArrayFilter)
 {
 	if (expression->value_type != BSON_TYPE_DOCUMENT)
 	{
@@ -558,6 +559,7 @@ CreateQualForBsonValueExpression(const bson_value_t *expression, const
 	context.requiredFilterPathNameHashSet = NULL;
 	context.variableContext = NULL;
 	context.collationString = collationString;
+	context.skipObjectArrayFilter = skipObjectArrayFilter;
 
 	const char *traversedPath = NULL;
 	const char *basePath = "";
@@ -801,7 +803,7 @@ CreateQualForBsonValueExpressionCore(const bson_value_t *expression,
 		}
 	}
 
-	if (addObjectArrayFilter &&
+	if (addObjectArrayFilter && !context->skipObjectArrayFilter &&
 		context->inputType == MongoQueryOperatorInputType_BsonValue)
 	{
 		/*

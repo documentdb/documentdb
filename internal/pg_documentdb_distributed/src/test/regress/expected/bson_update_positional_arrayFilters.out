@@ -44,7 +44,7 @@ SELECT documentdb_api_internal.update_bson_document(
 ERROR:  The top level field name must be alphanumeric string. Found ''
 SELECT documentdb_api_internal.update_bson_document(
     '{"_id": 1 }','{ "": { "$set": { "arrayA.$[itemA]": 70 }}}', '{}', '{ "": [ { "itemA": 4, "itemB.itemC": 5 } ] }', NULL::documentdb_core.bson, NULL::TEXT);
-ERROR:  Error parsing array filter :: caused by :: Expected a single top-level field name, found itemA and itemB
+ERROR:  Expected a single top-level field name in array filter, but found 'itemA' and 'itemB'
 SELECT documentdb_api_internal.update_bson_document(
     '{"_id": 1 }','{ "": { "$set": { "arrayA.$[itemA]": 70 }}}', '{}', '{ "": [ { "itemA": 6 }, { "itemA": 7 } ] }', NULL::documentdb_core.bson, NULL::TEXT);
 ERROR:  Multiple array filters detected using identical top-level field name itemA
@@ -239,5 +239,346 @@ SELECT documentdb_api_internal.update_bson_document(
                                         update_bson_document                                         
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "matrix" : [ { "$numberInt" : "33" }, { "$numberInt" : "33" } ] }
+(1 row)
+
+-- ========================================
+-- Tests for $or/$and/$nor in arrayFilters
+-- ========================================
+-- ---- $or tests ----
+-- $or on scalar array: match elements where value >= 200 OR value == 100
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [100, 150, 200, 250] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$or": [{ "elem": { "$gte": 200 } }, { "elem": 100 }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                    update_bson_document                                                                    
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "numbers" : [ { "$numberInt" : "999" }, { "$numberInt" : "150" }, { "$numberInt" : "999" }, { "$numberInt" : "999" } ] }
+(1 row)
+
+-- $or on scalar array: no elements match
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [100, 150, 200, 250] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$or": [{ "elem": { "$gt": 300 } }, { "elem": 50 }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+ update_bson_document 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- $or on scalar array: all elements match
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [100, 150, 200, 250] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$or": [{ "elem": { "$gte": 100 } }, { "elem": { "$lt": 100 } }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                    update_bson_document                                                                    
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "numbers" : [ { "$numberInt" : "999" }, { "$numberInt" : "999" }, { "$numberInt" : "999" }, { "$numberInt" : "999" } ] }
+(1 row)
+
+-- $or with nested field paths on document array
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "items": [{"type": "A", "status": "active"}, {"type": "B", "status": "inactive"}, {"type": "C", "status": "active"}] }',
+    '{ "": { "$set": { "items.$[item].status": "matched" }}}', '{}',
+    '{ "": [{ "$or": [{ "item.type": "A" }, { "item.type": "C" }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                           update_bson_document                                                                            
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "type" : "A", "status" : "matched" }, { "type" : "B", "status" : "inactive" }, { "type" : "C", "status" : "matched" } ] }
+(1 row)
+
+-- $or with single element (degenerates to just the condition)
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [100, 150, 200] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$or": [{ "elem": 150 }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                       update_bson_document                                                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "numbers" : [ { "$numberInt" : "100" }, { "$numberInt" : "999" }, { "$numberInt" : "200" } ] }
+(1 row)
+
+-- ---- $and tests ----
+-- $and on scalar array: match elements where value >= 150 AND value < 250
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [100, 150, 200, 250] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$and": [{ "elem": { "$gte": 150 } }, { "elem": { "$lt": 250 } }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                    update_bson_document                                                                    
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "numbers" : [ { "$numberInt" : "100" }, { "$numberInt" : "999" }, { "$numberInt" : "999" }, { "$numberInt" : "250" } ] }
+(1 row)
+
+-- $and with nested field paths on document array
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "items": [{"type": "A", "active": true, "count": 5}, {"type": "B", "active": true, "count": 15}, {"type": "C", "active": false, "count": 20}] }',
+    '{ "": { "$set": { "items.$[item].matched": true }}}', '{}',
+    '{ "": [{ "$and": [{ "item.active": true }, { "item.count": { "$gte": 10 } }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                                                                                 update_bson_document                                                                                                                                 
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "type" : "A", "active" : true, "count" : { "$numberInt" : "5" } }, { "type" : "B", "active" : true, "count" : { "$numberInt" : "15" }, "matched" : true }, { "type" : "C", "active" : false, "count" : { "$numberInt" : "20" } } ] }
+(1 row)
+
+-- $and with single element
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [100, 150, 200] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$and": [{ "elem": { "$gte": 150 } }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                       update_bson_document                                                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "numbers" : [ { "$numberInt" : "100" }, { "$numberInt" : "999" }, { "$numberInt" : "999" } ] }
+(1 row)
+
+-- ---- $nor tests ----
+-- $nor on scalar array: match elements NOT (value == 100 OR value == 250)
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [100, 150, 200, 250] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$nor": [{ "elem": 100 }, { "elem": 250 }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                    update_bson_document                                                                    
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "numbers" : [ { "$numberInt" : "100" }, { "$numberInt" : "999" }, { "$numberInt" : "999" }, { "$numberInt" : "250" } ] }
+(1 row)
+
+-- $nor with document array fields
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "items": [{"type": "A", "status": "active"}, {"type": "B", "status": "inactive"}, {"type": "C", "status": "active"}] }',
+    '{ "": { "$set": { "items.$[item].status": "filtered" }}}', '{}',
+    '{ "": [{ "$nor": [{ "item.type": "A" }, { "item.type": "B" }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                           update_bson_document                                                                            
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "type" : "A", "status" : "active" }, { "type" : "B", "status" : "inactive" }, { "type" : "C", "status" : "filtered" } ] }
+(1 row)
+
+-- ---- Nested logical operators ----
+-- $or wrapping $and (complex filter - the original user scenario)
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "games": [{"name": "G1", "themeId": "t1", "storeThemeId": "st1"}, {"name": "G2", "themeId": "t2", "storeThemeId": null}, {"name": "G3", "themeId": "t3", "storeThemeId": null}] }',
+    '{ "": { "$set": { "games.$[g].name": "Updated" }}}', '{}',
+    '{ "": [{ "$or": [{ "$and": [{ "g.storeThemeId": { "$ne": null } }, { "g.storeThemeId": "st1" }] }, { "g.themeId": "t2" }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                                                              update_bson_document                                                                                                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "games" : [ { "name" : "Updated", "themeId" : "t1", "storeThemeId" : "st1" }, { "name" : "Updated", "themeId" : "t2", "storeThemeId" : null }, { "name" : "G3", "themeId" : "t3", "storeThemeId" : null } ] }
+(1 row)
+
+-- $and wrapping $or
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "items": [{"type": "A", "priority": 1, "active": true}, {"type": "B", "priority": 2, "active": false}, {"type": "C", "priority": 3, "active": true}, {"type": "D", "priority": 1, "active": false}] }',
+    '{ "": { "$set": { "items.$[item].matched": true }}}', '{}',
+    '{ "": [{ "$and": [{ "$or": [{ "item.type": "A" }, { "item.type": "C" }, { "item.type": "D" }] }, { "item.active": true }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                                                                                                                                  update_bson_document                                                                                                                                                                                  
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "type" : "A", "priority" : { "$numberInt" : "1" }, "active" : true, "matched" : true }, { "type" : "B", "priority" : { "$numberInt" : "2" }, "active" : false }, { "type" : "C", "priority" : { "$numberInt" : "3" }, "active" : true, "matched" : true }, { "type" : "D", "priority" : { "$numberInt" : "1" }, "active" : false } ] }
+(1 row)
+
+-- deeply nested: $or > $and > conditions
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "data": [{"x": 1, "y": 10}, {"x": 2, "y": 20}, {"x": 3, "y": 30}, {"x": 4, "y": 40}] }',
+    '{ "": { "$set": { "data.$[d].matched": true }}}', '{}',
+    '{ "": [{ "$or": [{ "$and": [{ "d.x": { "$gte": 1 } }, { "d.x": { "$lte": 2 } }] }, { "$and": [{ "d.y": { "$gte": 35 } }, { "d.y": { "$lte": 45 } }] }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                                                                                                                           update_bson_document                                                                                                                                                                            
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "data" : [ { "x" : { "$numberInt" : "1" }, "y" : { "$numberInt" : "10" }, "matched" : true }, { "x" : { "$numberInt" : "2" }, "y" : { "$numberInt" : "20" }, "matched" : true }, { "x" : { "$numberInt" : "3" }, "y" : { "$numberInt" : "30" } }, { "x" : { "$numberInt" : "4" }, "y" : { "$numberInt" : "40" }, "matched" : true } ] }
+(1 row)
+
+-- ---- Mixed logical operators with field paths at same level ----
+-- $or mixed with a direct field condition (implicit AND between them)
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "items": [{"type": "A", "active": true, "count": 5}, {"type": "B", "active": true, "count": 15}, {"type": "C", "active": false, "count": 20}] }',
+    '{ "": { "$set": { "items.$[item].matched": true }}}', '{}',
+    '{ "": [{ "$or": [{ "item.type": "A" }, { "item.type": "B" }], "item.active": true }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                                                                                          update_bson_document                                                                                                                                          
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "type" : "A", "active" : true, "count" : { "$numberInt" : "5" }, "matched" : true }, { "type" : "B", "active" : true, "count" : { "$numberInt" : "15" }, "matched" : true }, { "type" : "C", "active" : false, "count" : { "$numberInt" : "20" } } ] }
+(1 row)
+
+-- ---- Multiple arrayFilters with logical operators ----
+-- Two separate identifiers, one with $or
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "results": [{"type": "quiz", "answers": [20, 18, 15]}, {"type": "quiz", "answers": [18, 19, 16]}, {"type": "hw", "answers": [15, 14, 13]}] }',
+    '{ "": { "$inc": { "results.$[typeElem].answers.$[ansScore]": 100 }}}', '{}',
+    '{ "": [{ "$or": [{ "typeElem.type": "quiz" }, { "typeElem.type": "hw" }] }, { "ansScore": { "$gte": 18 } }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                                                                                                                                         update_bson_document                                                                                                                                                                                         
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "results" : [ { "type" : "quiz", "answers" : [ { "$numberInt" : "120" }, { "$numberInt" : "118" }, { "$numberInt" : "15" } ] }, { "type" : "quiz", "answers" : [ { "$numberInt" : "118" }, { "$numberInt" : "119" }, { "$numberInt" : "16" } ] }, { "type" : "hw", "answers" : [ { "$numberInt" : "15" }, { "$numberInt" : "14" }, { "$numberInt" : "13" } ] } ] }
+(1 row)
+
+-- ---- Update operators combined with logical arrayFilters ----
+-- $inc with $or arrayFilter
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "scores": [10, 20, 30, 40, 50] }',
+    '{ "": { "$inc": { "scores.$[s]": 100 }}}', '{}',
+    '{ "": [{ "$or": [{ "s": 10 }, { "s": 50 }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                               update_bson_document                                                                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "scores" : [ { "$numberInt" : "110" }, { "$numberInt" : "20" }, { "$numberInt" : "30" }, { "$numberInt" : "40" }, { "$numberInt" : "150" } ] }
+(1 row)
+
+-- $unset with $and arrayFilter on document array
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "items": [{"type": "A", "temp": true, "val": 1}, {"type": "B", "temp": false, "val": 2}, {"type": "A", "temp": true, "val": 3}] }',
+    '{ "": { "$unset": { "items.$[item].temp": "" }}}', '{}',
+    '{ "": [{ "$and": [{ "item.type": "A" }, { "item.temp": true }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                                                  update_bson_document                                                                                                  
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "type" : "A", "val" : { "$numberInt" : "1" } }, { "type" : "B", "temp" : false, "val" : { "$numberInt" : "2" } }, { "type" : "A", "val" : { "$numberInt" : "3" } } ] }
+(1 row)
+
+-- $mul with $nor arrayFilter
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "values": [2, 4, 6, 8, 10] }',
+    '{ "": { "$mul": { "values.$[v]": 10 }}}', '{}',
+    '{ "": [{ "$nor": [{ "v": 2 }, { "v": 10 }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                             update_bson_document                                                                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "values" : [ { "$numberInt" : "2" }, { "$numberInt" : "40" }, { "$numberInt" : "60" }, { "$numberInt" : "80" }, { "$numberInt" : "10" } ] }
+(1 row)
+
+-- $push with $or arrayFilter on nested array
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "groups": [{"name": "X", "members": [1]}, {"name": "Y", "members": [2]}, {"name": "Z", "members": [3]}] }',
+    '{ "": { "$push": { "groups.$[grp].members": 99 }}}', '{}',
+    '{ "": [{ "$or": [{ "grp.name": "X" }, { "grp.name": "Z" }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                                                                               update_bson_document                                                                                                                                
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "groups" : [ { "name" : "X", "members" : [ { "$numberInt" : "1" }, { "$numberInt" : "99" } ] }, { "name" : "Y", "members" : [ { "$numberInt" : "2" } ] }, { "name" : "Z", "members" : [ { "$numberInt" : "3" }, { "$numberInt" : "99" } ] } ] }
+(1 row)
+
+-- ---- Edge cases ----
+-- Empty document (no array field) - should return unchanged
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1 }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$or": [{ "elem": 100 }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+ERROR:  The specified path 'numbers' does not exist within the document. Cannot apply array update operations.
+-- Array with single element matching $or
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [42] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$or": [{ "elem": 42 }, { "elem": 99 }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                             update_bson_document                             
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "numbers" : [ { "$numberInt" : "999" } ] }
+(1 row)
+
+-- Empty array - should return unchanged
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$or": [{ "elem": 100 }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+ update_bson_document 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- Null values in array elements - $or with null match
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "items": [{"val": null}, {"val": 1}, {"val": null}, {"val": 2}] }',
+    '{ "": { "$set": { "items.$[item].val": 0 }}}', '{}',
+    '{ "": [{ "$or": [{ "item.val": null }, { "item.val": 2 }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+                                                                                       update_bson_document                                                                                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "val" : { "$numberInt" : "0" } }, { "val" : { "$numberInt" : "1" } }, { "val" : { "$numberInt" : "0" } }, { "val" : { "$numberInt" : "0" } } ] }
+(1 row)
+
+-- ---- Error cases ----
+-- Error: $or with different identifiers across branches
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [100, 200] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$or": [{ "elem": 100 }, { "other": 200 }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+ERROR:  Expected a single top-level field name in array filter, but found 'elem' and 'other'
+-- Error: $or with empty array
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [100, 200] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$or": [] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+ERROR:  $or array must have at least one entry
+-- Error: $and with empty array
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [100, 200] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$and": [] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+ERROR:  $and array must have at least one entry
+-- Error: $nor with empty array
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [100, 200] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$nor": [] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+ERROR:  $nor array must have at least one entry
+-- Error: $or with non-array value
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [100, 200] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$or": "invalid" }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+ERROR:  $or must be an array
+-- Error: $or with non-document entries
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [100, 200] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$or": [42, 43] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+ERROR:  $or entries need to be full objects
+-- Error: unsupported top-level operator ($expr) should still fail
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [100, 200] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$expr": { "$gt": ["$elem", 100] } }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+ERROR:  The top level field name must be alphanumeric string. Found '$expr'
+-- Error: nested $or with mismatched identifiers
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id": 1, "numbers": [100, 200] }',
+    '{ "": { "$set": { "numbers.$[elem]": 999 }}}', '{}',
+    '{ "": [{ "$or": [{ "$and": [{ "elem": 100 }] }, { "$and": [{ "wrong": 200 }] }] }] }',
+    NULL::documentdb_core.bson, NULL::TEXT);
+ERROR:  Expected a single top-level field name in array filter, but found 'elem' and 'wrong'
+-- Existing tests above ran with GUC off (default).
+-- Existing field-path arrayFilters should still work with GUC on (regression check).
+SELECT documentdb_api_internal.update_bson_document(
+    '{"_id": 1, "numbers": [ 100, 200 ] }','{ "": { "$set": { "numbers.$[numElem]": 300 }}}', '{}', '{ "": [{ "numElem": 100 }] }', NULL::documentdb_core.bson, NULL::TEXT);
+                                          update_bson_document                                          
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "numbers" : [ { "$numberInt" : "300" }, { "$numberInt" : "200" } ] }
+(1 row)
+
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id" : 3, "scores" : [ 150, 210, 200, 180, 202 ], "age": 16 }','{ "": { "$set": { "scores.$[scoreElem]": 200 }}}', '{}', '{ "": [{ "scoreElem": { "$gte": 200 } }] }', NULL::documentdb_core.bson, NULL::TEXT);
+                                                                                                 update_bson_document                                                                                                 
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "scores" : [ { "$numberInt" : "150" }, { "$numberInt" : "200" }, { "$numberInt" : "200" }, { "$numberInt" : "180" }, { "$numberInt" : "200" } ], "age" : { "$numberInt" : "16" } }
+(1 row)
+
+SELECT documentdb_api_internal.update_bson_document(
+    '{ "_id" : 3, "metrics" : [ { "value": 58, "max": 136, "avg": 66, "dev": 88}, { "value": 96, "max": 176, "avg": 99, "dev": 75}, { "value": 68, "max":168, "avg": 86, "dev": 83 } ] }',
+    '{ "": { "$set": { "metrics.$[metricElem].avg": 100 }}}', '{}', '{ "": [{ "metricElem.value": { "$gte": 60 } }] }', NULL::documentdb_core.bson, NULL::TEXT);
+                                                                                                                                                                                                                                 update_bson_document                                                                                                                                                                                                                                  
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "metrics" : [ { "value" : { "$numberInt" : "58" }, "max" : { "$numberInt" : "136" }, "avg" : { "$numberInt" : "66" }, "dev" : { "$numberInt" : "88" } }, { "value" : { "$numberInt" : "96" }, "max" : { "$numberInt" : "176" }, "avg" : { "$numberInt" : "100" }, "dev" : { "$numberInt" : "75" } }, { "value" : { "$numberInt" : "68" }, "max" : { "$numberInt" : "168" }, "avg" : { "$numberInt" : "100" }, "dev" : { "$numberInt" : "83" } } ] }
 (1 row)
 
