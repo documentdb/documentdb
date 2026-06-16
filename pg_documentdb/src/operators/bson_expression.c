@@ -1594,28 +1594,13 @@ ExpressionResultSetValueFromWriter(ExpressionResult *expressionResult)
 		expressionResult->isExpressionWriter = false;
 	}
 
-	if (!expressionResult->expressionResultPrivate.variableContext.hasSingleVariable)
+	if (!expressionResult->expressionResultPrivate.variableContext.hasSingleVariable &&
+		expressionResult->expressionResultPrivate.variableContext.context.table != NULL)
 	{
 		hash_destroy(
 			expressionResult->expressionResultPrivate.variableContext.context.table);
 		expressionResult->expressionResultPrivate.variableContext.context.table = NULL;
 	}
-}
-
-
-/*
- * Creates a child expressionResult that is tied to the parent
- * in terms of its lifetime (nested temporary objects created).
- */
-ExpressionResult
-ExpressionResultCreateChild(ExpressionResult *parent)
-{
-	ExpressionResult childExpression = ExpressionResultCreateWithTracker(
-		parent->expressionResultPrivate.tracker);
-	childExpression.expressionResultPrivate.variableContext.parent =
-		&parent->expressionResultPrivate.variableContext;
-
-	return childExpression;
 }
 
 
