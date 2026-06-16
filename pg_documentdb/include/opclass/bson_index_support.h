@@ -135,4 +135,7 @@ void documentdb_btcostestimate(PlannerInfo *root, IndexPath *path, double loop_c
 							   Cost *indexStartupCost, Cost *indexTotalCost,
 							   Selectivity *indexSelectivity, double *indexCorrelation,
 							   double *indexPages);
+
+Path * OptimizeAndTrimBitmapQualsForBitmapAnd(BitmapAndPath *andPath, uint64_t
+											  collectionId);
 #endif

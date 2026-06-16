@@ -402,11 +402,220 @@ GetIndexSupportsGetIndexKey(Oid relam, Oid opfamily)
 }
 
 
+static Path *
+UpdateAndClassifyPath(Path *inputPath, PlannerInfo *root, RelOptInfo *rel,
+					  uint64 collectionId, QueryScanType *scanType)
+{
+	*scanType = QueryScanType_Unknown;
+	switch (inputPath->pathtype)
+	{
+		case T_IndexScan:
+		{
+			IndexPath *indexPath = (IndexPath *) inputPath;
+
+			bool isPrimaryKeyPath = IsBtreePrimaryKeyIndex(
+				indexPath->indexinfo);
+			if (isPrimaryKeyPath)
+			{
+				*scanType = QueryScanType_PrimaryKeyScan;
+			}
+			else if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
+												 indexPath->indexinfo->opfamily[0]))
+			{
+				/* Mark as supported indexscan */
+				*scanType = QueryScanType_SecondaryIndexScan;
+				AddOrderByRequiredClausesIfNecessary(indexPath, root, rel);
+			}
+			else if (indexPath->indexinfo->amhasgetbitmap)
+			{
+				inputPath = (Path *) create_bitmap_heap_path(root, rel,
+															 inputPath,
+															 rel->lateral_relids, 1.0,
+															 0);
+				if (inputPath->total_cost == 0)
+				{
+					/* Force the output path to also be cost 0
+					 * Since the base was cost 0 (see documentdb api's planner.c)
+					 */
+					inputPath->total_cost = 0;
+					inputPath->startup_cost = 0;
+				}
+
+				*scanType = QueryScanType_SecondaryIndexBitmapScan;
+			}
+
+			return inputPath;
+		}
+
+		case T_IndexOnlyScan:
+		{
+			IndexPath *indexPath = (IndexPath *) inputPath;
+			if (IsBtreePrimaryKeyIndex(indexPath->indexinfo))
+			{
+				/* Convert back to index scan to get cursors */
+				inputPath->pathtype = T_IndexScan;
+				*scanType = QueryScanType_PrimaryKeyScan;
+			}
+			else if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
+												 indexPath->indexinfo->opfamily[0]))
+			{
+				/* IndexOnlyScan is always an ordered scan - nothing to do here */
+				*scanType = QueryScanType_SecondaryIndexOnlyScan;
+			}
+			else if (indexPath->indexinfo->amhasgetbitmap)
+			{
+				inputPath = (Path *) create_bitmap_heap_path(root, rel,
+															 inputPath,
+															 rel->lateral_relids, 1.0,
+															 0);
+				if (inputPath->total_cost == 0)
+				{
+					/* Force the output path to also be cost 0
+					 * Since the base was cost 0 (see documentdb api's planner.c)
+					 */
+					inputPath->total_cost = 0;
+					inputPath->startup_cost = 0;
+				}
+
+				*scanType = QueryScanType_SecondaryIndexBitmapScan;
+			}
+
+			return inputPath;
+		}
+
+		case T_BitmapHeapScan:
+		{
+			BitmapHeapPath *bitmapHeapPath = (BitmapHeapPath *) inputPath;
+			Path *bitmapQualPath = bitmapHeapPath->bitmapqual;
+
+			if (bitmapQualPath->pathtype == T_IndexScan ||
+				bitmapQualPath->pathtype == T_IndexOnlyScan)
+			{
+				IndexPath *indexPath = (IndexPath *) bitmapQualPath;
+				if (IsBtreePrimaryKeyIndex(indexPath->indexinfo))
+				{
+					inputPath = (Path *) indexPath;
+					if (inputPath->pathtype == T_IndexOnlyScan)
+					{
+						inputPath->pathtype = T_IndexScan;
+					}
+
+					*scanType = QueryScanType_PrimaryKeyScan;
+				}
+				else if (bitmapQualPath->pathtype == T_IndexOnlyScan)
+				{
+					if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
+													indexPath->indexinfo->opfamily[0]))
+					{
+						/* IndexOnlyScan is always an ordered scan - nothing to do here */
+						*scanType = QueryScanType_SecondaryIndexOnlyScan;
+						inputPath = (Path *) indexPath;
+					}
+					else
+					{
+						*scanType = QueryScanType_SecondaryIndexBitmapScan;
+					}
+				}
+				else
+				{
+					Assert(bitmapQualPath->pathtype == T_IndexScan);
+					if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
+													indexPath->indexinfo->opfamily[0]))
+					{
+						*scanType = QueryScanType_SecondaryIndexScan;
+						AddOrderByRequiredClausesIfNecessary(indexPath, root, rel);
+						inputPath = (Path *) indexPath;
+					}
+					else
+					{
+						*scanType = QueryScanType_SecondaryIndexBitmapScan;
+					}
+				}
+			}
+			else if (bitmapQualPath->pathtype == T_BitmapAnd)
+			{
+				/* In this path, we have a special case, we can get a bitmapAnd where there's
+				 * one branch that is just shard_key_value = <value> - see
+				 * OptimizeBitmapQualsForBitmapAnd in index_support.
+				 */
+				BitmapAndPath *bitmapAndPath = (BitmapAndPath *) bitmapQualPath;
+				if (collectionId != 0)
+				{
+					Path *newPath = OptimizeAndTrimBitmapQualsForBitmapAnd(bitmapAndPath,
+																		   collectionId);
+					if (newPath != NULL && newPath != (Path *) bitmapAndPath)
+					{
+						/* the bitmapAnd path got optimized and replaced - reclassify the new path */
+						return UpdateAndClassifyPath(newPath, root, rel, collectionId,
+													 scanType);
+					}
+				}
+
+				*scanType = QueryScanType_SecondaryIndexBitmapAnd;
+			}
+			else if (bitmapQualPath->pathtype == T_BitmapOr)
+			{
+				*scanType = QueryScanType_SecondaryIndexBitmapOr;
+			}
+
+			return inputPath;
+		}
+
+		case T_SeqScan:
+		{
+			/* See if we can convert to primary key scan */
+			IndexOptInfo *info = GetPrimaryKeyIndexOptCore(rel);
+			if (info != NULL)
+			{
+				inputPath = (Path *) create_index_path(
+					root, info, NIL, NIL, NIL, NIL, ForwardScanDirection, false,
+					rel->lateral_relids,
+					1, false);
+				*scanType = QueryScanType_PrimaryKeyScan;
+			}
+			else if ((rel->amflags & AMFLAG_HAS_TID_RANGE) != 0)
+			{
+				/* Convert a seqscan to a TidScan */
+				ItemPointer tidLowerPointPointer = palloc0(sizeof(ItemPointerData));
+				Const *tidLowerBoundConst = makeConst(TIDOID, -1, InvalidOid,
+													  sizeof(ItemPointerData),
+													  PointerGetDatum(
+														  tidLowerPointPointer),
+													  false,
+													  false);
+				OpExpr *tidLowerBoundScan = (OpExpr *) make_opclause(
+					TIDGreaterEqOperator, BOOLOID, false,
+					(Expr *) makeVar(rel->relid, SelfItemPointerAttributeNumber,
+									 TIDOID,
+									 -1, InvalidOid, 0),
+					(Expr *) tidLowerBoundConst, InvalidOid, InvalidOid);
+				RestrictInfo *rinfo = make_simple_restrictinfo(root,
+															   (Expr *)
+															   tidLowerBoundScan);
+				inputPath = (Path *) create_tidrangescan_path(root, rel, list_make1(
+																  rinfo),
+															  rel->lateral_relids);
+				*scanType = QueryScanType_TidRangeScan;
+			}
+
+			return inputPath;
+		}
+
+		default:
+		{
+			*scanType = QueryScanType_Unknown;
+			return inputPath;
+		}
+	}
+}
+
+
 static List *
 WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 											 DynamicCursorInputContinuation *
 											 inputContinuation,
-											 PathTarget *baseRelPathTarget)
+											 PathTarget *baseRelPathTarget,
+											 uint64_t optCollectionId)
 {
 	List *customPlanPaths = NIL;
 	ListCell *cell;
@@ -418,190 +627,8 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 
 		inputContinuation->scanType = QueryScanType_Unknown;
 		QueryScanType scanType = QueryScanType_Unknown;
-		switch (inputPath->pathtype)
-		{
-			case T_IndexScan:
-			{
-				IndexPath *indexPath = (IndexPath *) inputPath;
-
-				bool isPrimaryKeyPath = IsBtreePrimaryKeyIndex(
-					indexPath->indexinfo);
-				if (isPrimaryKeyPath)
-				{
-					scanType = QueryScanType_PrimaryKeyScan;
-				}
-				else if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
-													 indexPath->indexinfo->opfamily[0]))
-				{
-					/* Mark as supported indexscan */
-					scanType = QueryScanType_SecondaryIndexScan;
-					AddOrderByRequiredClausesIfNecessary(indexPath, root, rel);
-				}
-				else if (indexPath->indexinfo->amhasgetbitmap)
-				{
-					inputPath = (Path *) create_bitmap_heap_path(root, rel,
-																 inputPath,
-																 rel->lateral_relids, 1.0,
-																 0);
-					if (inputPath->total_cost == 0)
-					{
-						/* Force the output path to also be cost 0
-						 * Since the base was cost 0 (see documentdb api's planner.c)
-						 */
-						inputPath->total_cost = 0;
-						inputPath->startup_cost = 0;
-					}
-
-					scanType = QueryScanType_SecondaryIndexBitmapScan;
-				}
-
-				break;
-			}
-
-			case T_IndexOnlyScan:
-			{
-				IndexPath *indexPath = (IndexPath *) inputPath;
-				if (IsBtreePrimaryKeyIndex(indexPath->indexinfo))
-				{
-					/* Convert back to index scan to get cursors */
-					inputPath->pathtype = T_IndexScan;
-					scanType = QueryScanType_PrimaryKeyScan;
-				}
-				else if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
-													 indexPath->indexinfo->opfamily[0]))
-				{
-					/* IndexOnlyScan is always an ordered scan - nothing to do here */
-					scanType = QueryScanType_SecondaryIndexOnlyScan;
-				}
-				else if (indexPath->indexinfo->amhasgetbitmap)
-				{
-					inputPath = (Path *) create_bitmap_heap_path(root, rel,
-																 inputPath,
-																 rel->lateral_relids, 1.0,
-																 0);
-					if (inputPath->total_cost == 0)
-					{
-						/* Force the output path to also be cost 0
-						 * Since the base was cost 0 (see documentdb api's planner.c)
-						 */
-						inputPath->total_cost = 0;
-						inputPath->startup_cost = 0;
-					}
-
-					scanType = QueryScanType_SecondaryIndexBitmapScan;
-				}
-
-				break;
-			}
-
-			case T_BitmapHeapScan:
-			{
-				BitmapHeapPath *bitmapHeapPath = (BitmapHeapPath *) inputPath;
-				Path *bitmapQualPath = bitmapHeapPath->bitmapqual;
-
-				if (bitmapQualPath->pathtype == T_IndexScan ||
-					bitmapQualPath->pathtype == T_IndexOnlyScan)
-				{
-					IndexPath *indexPath = (IndexPath *) bitmapQualPath;
-					if (IsBtreePrimaryKeyIndex(indexPath->indexinfo))
-					{
-						inputPath = (Path *) indexPath;
-						if (inputPath->pathtype == T_IndexOnlyScan)
-						{
-							inputPath->pathtype = T_IndexScan;
-						}
-
-						scanType = QueryScanType_PrimaryKeyScan;
-					}
-					else if (bitmapQualPath->pathtype == T_IndexOnlyScan)
-					{
-						if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
-														indexPath->indexinfo->opfamily[0]))
-						{
-							/* IndexOnlyScan is always an ordered scan - nothing to do here */
-							scanType = QueryScanType_SecondaryIndexOnlyScan;
-							inputPath = (Path *) indexPath;
-						}
-						else
-						{
-							scanType = QueryScanType_SecondaryIndexBitmapScan;
-						}
-					}
-					else
-					{
-						Assert(bitmapQualPath->pathtype == T_IndexScan);
-						if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
-														indexPath->indexinfo->opfamily[0]))
-						{
-							scanType = QueryScanType_SecondaryIndexScan;
-							AddOrderByRequiredClausesIfNecessary(indexPath, root, rel);
-							inputPath = (Path *) indexPath;
-						}
-						else
-						{
-							scanType = QueryScanType_SecondaryIndexBitmapScan;
-						}
-					}
-				}
-				else if (bitmapQualPath->pathtype == T_BitmapAnd)
-				{
-					scanType = QueryScanType_SecondaryIndexBitmapAnd;
-				}
-				else if (bitmapQualPath->pathtype == T_BitmapOr)
-				{
-					scanType = QueryScanType_SecondaryIndexBitmapOr;
-				}
-
-				break;
-			}
-
-			case T_SeqScan:
-			{
-				/* See if we can convert to primary key scan */
-				IndexOptInfo *info = GetPrimaryKeyIndexOptCore(rel);
-				if (info != NULL)
-				{
-					inputPath = (Path *) create_index_path(
-						root, info, NIL, NIL, NIL, NIL, ForwardScanDirection, false,
-						rel->lateral_relids,
-						1, false);
-					scanType = QueryScanType_PrimaryKeyScan;
-				}
-				else if ((rel->amflags & AMFLAG_HAS_TID_RANGE) != 0)
-				{
-					/* Convert a seqscan to a TidScan */
-					ItemPointer tidLowerPointPointer = palloc0(sizeof(ItemPointerData));
-					Const *tidLowerBoundConst = makeConst(TIDOID, -1, InvalidOid,
-														  sizeof(ItemPointerData),
-														  PointerGetDatum(
-															  tidLowerPointPointer),
-														  false,
-														  false);
-					OpExpr *tidLowerBoundScan = (OpExpr *) make_opclause(
-						TIDGreaterEqOperator, BOOLOID, false,
-						(Expr *) makeVar(rel->relid, SelfItemPointerAttributeNumber,
-										 TIDOID,
-										 -1, InvalidOid, 0),
-						(Expr *) tidLowerBoundConst, InvalidOid, InvalidOid);
-					RestrictInfo *rinfo = make_simple_restrictinfo(root,
-																   (Expr *)
-																   tidLowerBoundScan);
-					inputPath = (Path *) create_tidrangescan_path(root, rel, list_make1(
-																	  rinfo),
-																  rel->lateral_relids);
-					scanType = QueryScanType_TidRangeScan;
-				}
-
-				break;
-			}
-
-			default:
-			{
-				scanType = QueryScanType_Unknown;
-				break;
-			}
-		}
-
+		inputPath = UpdateAndClassifyPath(inputPath, root, rel, optCollectionId,
+										  &scanType);
 		if (root->sort_pathkeys != NIL)
 		{
 			switch (scanType)
@@ -853,7 +880,8 @@ UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 	{
 		/* Walk the existing paths and wrap them in a custom scan */
 		customPlanPaths = WalkRelPathsAndCreateCustomPathsForFirstPage(
-			root, rel, &inputContinuation, baseRelPathTarget);
+			root, rel, &inputContinuation, baseRelPathTarget,
+			context->inputData.collectionId);
 	}
 
 	if (customPlanPaths == NIL)
@@ -1456,6 +1484,59 @@ ReadDynamicCursorInputContinuation(struct ExtensibleNode *node)
 
 
 static void
+RecurseAndWriteBitmapContinuation(pgbson_array_writer *arrayWriter,
+								  PlanState *planState)
+{
+	CHECK_FOR_INTERRUPTS();
+	check_stack_depth();
+
+	int numPlans;
+	PlanState **bitmapPlans;
+
+	if (IsA(planState, BitmapOrState))
+	{
+		BitmapOrState *bitmapOrState = (BitmapOrState *) planState;
+		numPlans = bitmapOrState->nplans;
+		bitmapPlans = bitmapOrState->bitmapplans;
+	}
+	else if (IsA(planState, BitmapAndState))
+	{
+		BitmapAndState *bitmapAndState = (BitmapAndState *) planState;
+		numPlans = bitmapAndState->nplans;
+		bitmapPlans = bitmapAndState->bitmapplans;
+	}
+	else if (IsA(planState, BitmapIndexScanState))
+	{
+		numPlans = 1;
+		bitmapPlans = &planState;
+	}
+	else
+	{
+		/* MultiExecProcNode only supports IndexScanState, BitmapAndState, BitmapOrState, or HashState */
+		/* HashState is not applicable here since that's only for a HashJoin. */
+		ereport(ERROR, (errmsg("Unsupported bitmap scan type %d",
+							   (int) planState->type)));
+	}
+
+	for (int i = 0; i < numPlans; i++)
+	{
+		if (IsA(bitmapPlans[i], BitmapIndexScanState))
+		{
+			BitmapIndexScanState *biss = (BitmapIndexScanState *) bitmapPlans[i];
+			Oid indexOid = biss->biss_ScanDesc->indexRelation->rd_rel->oid;
+			const char *indexName = get_rel_name(indexOid);
+			PgbsonArrayWriterWriteUtf8(arrayWriter, indexName);
+		}
+		else
+		{
+			/* It's a nested bitmap And or Or state */
+			RecurseAndWriteBitmapContinuation(arrayWriter, bitmapPlans[i]);
+		}
+	}
+}
+
+
+static void
 WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 										 QueryScanType scanType)
 {
@@ -1558,34 +1639,18 @@ WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 		case QueryScanType_SecondaryIndexBitmapOr:
 		case QueryScanType_SecondaryIndexBitmapAnd:
 		{
-			int numPlans;
-			PlanState **bitmapPlans;
 			BitmapHeapScanState *bitmapScanState = (BitmapHeapScanState *) ps;
 
-			if (scanType == QueryScanType_SecondaryIndexBitmapOr)
-			{
-				BitmapOrState *bitmapOrState =
-					(BitmapOrState *) bitmapScanState->ss.ps.lefttree;
-				numPlans = bitmapOrState->nplans;
-				bitmapPlans = bitmapOrState->bitmapplans;
-			}
-			else
-			{
-				BitmapAndState *bitmapAndState =
-					(BitmapAndState *) bitmapScanState->ss.ps.lefttree;
-				numPlans = bitmapAndState->nplans;
-				bitmapPlans = bitmapAndState->bitmapplans;
-			}
-
+			PlanState *lefttree = bitmapScanState->ss.ps.lefttree;
 			pgbson_array_writer arrayWriter;
+
+			/* We just need to write out the index names. Note that deduping
+			 * and order don't matter as in the getMore we just ensure these indexes
+			 * are picked. The scan order is determined by the fact that we have TID
+			 * ordering of the matching tuples.
+			 */
 			PgbsonWriterStartArray(writer, "idxs", 4, &arrayWriter);
-			for (int i = 0; i < numPlans; i++)
-			{
-				BitmapIndexScanState *biss = (BitmapIndexScanState *) bitmapPlans[i];
-				Oid indexOid = biss->biss_ScanDesc->indexRelation->rd_rel->oid;
-				const char *indexName = get_rel_name(indexOid);
-				PgbsonArrayWriterWriteUtf8(&arrayWriter, indexName);
-			}
+			RecurseAndWriteBitmapContinuation(&arrayWriter, lefttree);
 			PgbsonWriterEndArray(writer, &arrayWriter);
 
 			break;

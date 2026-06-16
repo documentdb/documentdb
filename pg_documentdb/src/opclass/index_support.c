@@ -5151,22 +5151,9 @@ GetOpExprClauseFromIndexOperator(const MongoIndexOperatorInfo *operator,
 }
 
 
-/*
- * In the scenario where we have a BitmapAnd of [ A AND B ]
- * if any of the nested IndexPaths are for shard_key_value = 'collid'
- * if this is true, then it's for an unsharded collection so we should remove
- * this qual.
- */
-static Path *
-OptimizeBitmapQualsForBitmapAnd(BitmapAndPath *andPath,
-								ReplaceExtensionFunctionContext *context)
+Path *
+OptimizeAndTrimBitmapQualsForBitmapAnd(BitmapAndPath *andPath, uint64_t collectionId)
 {
-	if (!context->inputData.isShardQuery ||
-		context->inputData.collectionId == 0)
-	{
-		return (Path *) andPath;
-	}
-
 	ListCell *cell;
 	foreach(cell, andPath->bitmapquals)
 	{
@@ -5187,12 +5174,13 @@ OptimizeBitmapQualsForBitmapAnd(BitmapAndPath *andPath,
 			IndexClause *clause = linitial(indexPath->indexclauses);
 			if (clause->indexcol == 0 &&
 				IsOpExprShardKeyForUnshardedCollections(clause->rinfo->clause,
-														context->inputData.collectionId))
+														collectionId))
 			{
 				/* The index path is a single restrict info on the shard_key_value = 'collectionid'
 				 * This index path can be removed.
 				 */
 				andPath->bitmapquals = foreach_delete_current(andPath->bitmapquals, cell);
+				continue;
 			}
 		}
 	}
@@ -5203,6 +5191,27 @@ OptimizeBitmapQualsForBitmapAnd(BitmapAndPath *andPath,
 	}
 
 	return (Path *) andPath;
+}
+
+
+/*
+ * In the scenario where we have a BitmapAnd of [ A AND B ]
+ * if any of the nested IndexPaths are for shard_key_value = 'collid'
+ * if this is true, then it's for an unsharded collection so we should remove
+ * this qual.
+ */
+static Path *
+OptimizeBitmapQualsForBitmapAnd(BitmapAndPath *andPath,
+								ReplaceExtensionFunctionContext *context)
+{
+	if (!context->inputData.isShardQuery ||
+		context->inputData.collectionId == 0)
+	{
+		return (Path *) andPath;
+	}
+
+	return OptimizeAndTrimBitmapQualsForBitmapAnd(andPath,
+												  context->inputData.collectionId);
 }
 
 

@@ -451,3 +451,163 @@ SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
 
 -- Restore defaults
 SET documentdb.enablePrimaryKeyCursorScan TO off;
+
+-- ===========================================================================
+-- Nested BitmapOr(BitmapAnd, BitmapAnd, BitmapIndexScan) tests
+-- Regression test for segv crash when dynamic cursor continuation writing
+-- encounters nested bitmap And/Or nodes (e.g. $or[ $and[...], $and[...], ... ]).
+-- The old code assumed all children of BitmapOr/BitmapAnd were BitmapIndexScanState,
+-- but nested $and/$or produces BitmapOr(BitmapAnd, BitmapAnd, BitmapIndexScan).
+-- ===========================================================================
+
+SET documentdb.enablePrimaryKeyCursorScan TO on;
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO on;
+
+-- Insert 2000 docs with 3 independent fields for separate indexes.
+-- a = mod(i, 10): 10 values, each matches 200 docs
+-- b = mod(i, 7):   7 values, each matches ~286 docs
+-- c = mod(i, 13): 13 values, each matches ~154 docs
+DO $$
+DECLARE i int;
+BEGIN
+FOR i IN 0..1999 LOOP
+PERFORM documentdb_api.insert_one('dyncursordb', 'dyncursor_nested_bm', FORMAT('{ "_id": %s, "a": %s, "b": %s, "c": %s, "pad": "%s" }', i, mod(i, 10), mod(i, 7), mod(i, 13), repeat('N', 200))::documentdb_core.bson);
+END LOOP;
+END;
+$$;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'dyncursordb',
+    '{ "createIndexes": "dyncursor_nested_bm", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }',
+    true
+);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'dyncursordb',
+    '{ "createIndexes": "dyncursor_nested_bm", "indexes": [ { "key": { "b": 1 }, "name": "b_1" } ] }',
+    true
+);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'dyncursordb',
+    '{ "createIndexes": "dyncursor_nested_bm", "indexes": [ { "key": { "c": 1 }, "name": "c_1" } ] }',
+    true
+);
+
+ANALYZE;
+
+-- Prepare drain helper for nested bitmap collection
+PREPARE drain_nested_bm_query(bson, bson) AS
+    (WITH RECURSIVE cte AS (
+        SELECT cursorPage, continuation FROM find_cursor_first_page(database => 'dyncursordb', commandSpec => $1, cursorId => 536)
+        UNION ALL
+        SELECT gm.cursorPage, gm.continuation FROM cte, cursor_get_more(database => 'dyncursordb', getMoreSpec => $2, continuationSpec => cte.continuation) gm
+            WHERE cte.continuation IS NOT NULL
+    )
+    SELECT bson_dollar_project(cursorPage, '{"firstBatchLength": { "$size": { "$ifNull": ["$cursor.firstBatch", []]}}, "nextBatchLength": { "$size": { "$ifNull": ["$cursor.nextBatch", []]}}}'), continuation IS NOT NULL as has_more, bson_dollar_project(continuation, '{ "dc.type": 1 }') as scan_type FROM cte);
+
+SET enable_indexscan TO off;
+SET enable_seqscan TO off;
+
+-- ===========================================================================
+-- Test 30: EXPLAIN nested bitmap - $or[ $and[a, b], $and[a, b], c ]
+-- Should produce BitmapOr(BitmapAnd(a_1, b_1), BitmapAnd(a_1, b_1), BitmapIndexScan(c_1))
+-- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_nested_bm", "filter": { "$or": [{ "$and": [{ "a": 1 }, { "b": 2 }] }, { "$and": [{ "a": 3 }, { "b": 4 }] }, { "c": 5 }] }, "projection": { "_id": 1 }, "batchSize": 3 }');
+$cmd$);
+
+-- ===========================================================================
+-- Test 31: Full drain nested bitmap OR(AND, AND, IndexScan)
+-- $or[ {a:1, b:2}, {a:3, b:4}, {c:5} ] with dynamic cursors and batchSize=5
+-- This is the exact pattern that triggered the segv before the fix:
+-- the continuation writer must recurse into nested BitmapAnd nodes inside
+-- the BitmapOr, rather than assuming all children are BitmapIndexScanState.
+-- ===========================================================================
+EXECUTE drain_nested_bm_query('{ "find": "dyncursor_nested_bm", "filter": { "$or": [{ "$and": [{ "a": 1 }, { "b": 2 }] }, { "$and": [{ "a": 3 }, { "b": 4 }] }, { "c": 5 }] }, "projection": { "_id": 1 }, "batchSize": 5 }', '{ "getMore": { "$numberLong": "536" }, "collection": "dyncursor_nested_bm", "batchSize": 5 }');
+
+-- ===========================================================================
+-- Test 32: Drain nested bitmap with smaller batch to exercise more continuation writes
+-- ===========================================================================
+EXECUTE drain_nested_bm_query('{ "find": "dyncursor_nested_bm", "filter": { "$or": [{ "$and": [{ "a": 1 }, { "b": 2 }] }, { "$and": [{ "a": 3 }, { "b": 4 }] }, { "c": 5 }] }, "projection": { "_id": 1 }, "batchSize": 3 }', '{ "getMore": { "$numberLong": "536" }, "collection": "dyncursor_nested_bm", "batchSize": 3 }');
+
+-- ===========================================================================
+-- Test 33: Nested $or of $and with $or - triple nesting
+-- $or[ $and[a:1, b:2], $or[{a:5}, {b:6}], c:9 ]
+-- Produces BitmapOr(BitmapAnd, BitmapOr, BitmapIndexScan) - all 3 node types
+-- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_nested_bm", "filter": { "$or": [{ "$and": [{ "a": 1 }, { "b": 2 }] }, { "$or": [{ "a": 5 }, { "b": 6 }] }, { "c": 9 }] }, "projection": { "_id": 1 }, "batchSize": 3 }');
+$cmd$);
+
+EXECUTE drain_nested_bm_query('{ "find": "dyncursor_nested_bm", "filter": { "$or": [{ "$and": [{ "a": 1 }, { "b": 2 }] }, { "$or": [{ "a": 5 }, { "b": 6 }] }, { "c": 9 }] }, "projection": { "_id": 1 }, "batchSize": 5 }', '{ "getMore": { "$numberLong": "536" }, "collection": "dyncursor_nested_bm", "batchSize": 5 }');
+
+SET enable_indexscan TO on;
+SET enable_seqscan TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO off;
+SET documentdb.enablePrimaryKeyCursorScan TO off;
+SET documentdb.enableDynamicCursors TO off;
+
+-- ===========================================================================
+-- Simple index filter with planner statistics, no ANALYZE
+-- Regression test for the scenario where on an unsharded collection, with
+-- planner statistics enabled and no ANALYZE run, a simple filter like
+-- { "a": "b" } with an index on "a" is executed via dynamic cursors.
+-- The shard_key_value BitmapAnd optimization strips the shard_key child,
+-- producing a single Bitmap Index Scan. This validates that the cursor
+-- drain completes correctly even with planner statistics on a new collection.
+-- ===========================================================================
+
+SET documentdb.enablePrimaryKeyCursorScan TO on;
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO on;
+
+-- Insert a few docs - do NOT run ANALYZE
+SELECT documentdb_api.insert_one('dyncursordb', 'dyncursor_shard_bm', '{ "a": "b", "pad": "x" }');
+SELECT documentdb_api.insert_one('dyncursordb', 'dyncursor_shard_bm', '{ "a": "c", "pad": "y" }');
+SELECT documentdb_api.insert_one('dyncursordb', 'dyncursor_shard_bm', '{ "a": "b", "pad": "z" }');
+
+-- Disable autovacuum to prevent auto-analyze from adding planner stats
+SELECT collection_id AS shard_bm_col FROM documentdb_api_catalog.collections
+    WHERE database_name = 'dyncursordb' AND collection_name = 'dyncursor_shard_bm' \gset
+SELECT FORMAT('ALTER TABLE documentdb_data.documents_%s SET (autovacuum_enabled = off)', :shard_bm_col) \gexec
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'dyncursordb',
+    '{ "createIndexes": "dyncursor_shard_bm", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }',
+    true
+);
+
+-- Force bitmap scan path
+SET enable_indexscan TO off;
+SET enable_seqscan TO off;
+SET seq_page_cost TO 9999999;
+
+-- ===========================================================================
+-- Test 34: Simple filter with bitmap scan, planner stats, no ANALYZE
+-- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_shard_bm", "filter": { "a": "b" }, "batchSize": 2 }');
+$cmd$);
+
+-- ===========================================================================
+-- Test 35: Drain cursor with simple filter, planner stats, no ANALYZE
+-- ===========================================================================
+PREPARE drain_shard_bm_query(bson, bson) AS
+    (WITH RECURSIVE cte AS (
+        SELECT cursorPage, continuation FROM find_cursor_first_page(database => 'dyncursordb', commandSpec => $1, cursorId => 537)
+        UNION ALL
+        SELECT gm.cursorPage, gm.continuation FROM cte, cursor_get_more(database => 'dyncursordb', getMoreSpec => $2, continuationSpec => cte.continuation) gm
+            WHERE cte.continuation IS NOT NULL
+    )
+    SELECT bson_dollar_project(cursorPage, '{"firstBatchLength": { "$size": { "$ifNull": ["$cursor.firstBatch", []]}}, "nextBatchLength": { "$size": { "$ifNull": ["$cursor.nextBatch", []]}}}'), continuation IS NOT NULL as has_more, bson_dollar_project(continuation, '{ "dc.type": 1 }') as scan_type FROM cte);
+
+EXECUTE drain_shard_bm_query('{ "find": "dyncursor_shard_bm", "filter": { "a": "b" }, "batchSize": 1 }', '{ "getMore": { "$numberLong": "537" }, "collection": "dyncursor_shard_bm", "batchSize": 1 }');
+
+SET seq_page_cost TO DEFAULT;
+SET enable_indexscan TO on;
+SET enable_seqscan TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO off;
+SET documentdb.enablePrimaryKeyCursorScan TO off;
+SET documentdb.enableDynamicCursors TO off;
